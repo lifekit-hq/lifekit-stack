@@ -10,8 +10,9 @@
  *   POST /devclaw  — legacy: body = devclaw task row JSON. Mapped onto an
  *                    envelope by task-row.js and rendered by render.js, so this
  *                    relay has exactly one renderer.
- *   POST /text     — legacy: body.text is sent verbatim, for the devclaw goal
- *                    layer. Retired once devclaw posts envelopes (US3).
+ *   POST /text     — legacy: body.text is a pre-composed string from the devclaw
+ *                    goal layer, escaped and sent as HTML. Retired once devclaw
+ *                    posts envelopes (US3).
  *
  * Required env:
  *   TELEGRAM_BOT_TOKEN     — bot token (from @BotFather)
@@ -24,6 +25,7 @@ import { createServer } from "node:http";
 
 import {
   MAX_MSG_CHARS,
+  escapeClipped,
   renderEnvelope,
   validateEnvelope,
 } from "./render.js";
@@ -45,9 +47,9 @@ if (!CHAT) {
   process.exit(1);
 }
 
-// parseMode is opt-in: /text sends a producer string that was never escaped, so
-// asking Telegram to parse it as HTML would fail the send.
-async function sendTelegram(text, parseMode) {
+// Every path through this relay escapes its producer's text, so every message
+// goes out as HTML — there is no plain-text mode to fall back to.
+async function sendTelegram(text) {
   const url = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
   const res = await fetch(url, {
     method: "POST",
@@ -55,8 +57,8 @@ async function sendTelegram(text, parseMode) {
     body: JSON.stringify({
       chat_id: CHAT,
       text,
+      parse_mode: "HTML",
       disable_web_page_preview: true,
-      ...(parseMode ? { parse_mode: parseMode } : {}),
     }),
   });
   const body = await res.json().catch(() => ({}));
@@ -127,9 +129,9 @@ async function readJson(req, res, route) {
 }
 
 /** Sends `text`, answering 200 or 502. `context` only labels the log lines. */
-async function deliver(res, text, parseMode, context) {
+async function deliver(res, text, context) {
   try {
-    const result = await sendTelegram(text, parseMode);
+    const result = await sendTelegram(text);
     log(`${context} delivered message_id=${result?.message_id ?? "?"}`);
     respond(res, 200, { ok: true });
   } catch (err) {
@@ -153,25 +155,25 @@ async function handleNotify(req, res) {
 
   const context = `/notify ${envelope.level} ${envelope.source}/${envelope.subject}`;
   log(context);
-  await deliver(res, renderEnvelope(envelope), "HTML", context);
+  await deliver(res, renderEnvelope(envelope), context);
 }
 
-// POST /text — plain-text passthrough for the devclaw GOAL layer. Unlike
-// /devclaw (which formats a task-row payload), the goal layer (goal_notify.py)
-// has already composed the owner-facing message, so we send body.text verbatim.
+// POST /text — passthrough for the devclaw GOAL layer. Unlike /devclaw (which
+// maps a task-row payload onto an envelope), the goal layer (goal_notify.py) has
+// already composed the owner-facing message, so its text is the message. It is
+// still producer text going out as HTML, so it is escaped and clipped by the
+// same helper the renderer uses: the reader sees the string verbatim, and a `<`
+// in it can neither forge markup nor fail the send.
 async function handleText(req, res) {
   const payload = await readJson(req, res, "/text");
   if (payload === undefined) return;
 
-  let text = String(payload?.text ?? "").trim();
+  const text = String(payload?.text ?? "").trim();
   if (!text) {
     respond(res, 400, { error: "missing 'text'" });
     return;
   }
-  if (text.length > MAX_MSG_CHARS) {
-    text = text.slice(0, MAX_MSG_CHARS - 14) + "\n… [truncated]";
-  }
-  await deliver(res, text, undefined, "/text");
+  await deliver(res, escapeClipped(text, MAX_MSG_CHARS), "/text");
 }
 
 // POST /devclaw — legacy devclaw task-row callback, rendered through the
@@ -183,7 +185,7 @@ async function handleDevclaw(req, res) {
   const context = `/devclaw task=${payload?.task_id ?? "?"} status=${payload?.status ?? "?"}`;
   log(context);
   const text = renderEnvelope(envelopeFromTaskRow(payload));
-  await deliver(res, text, "HTML", context);
+  await deliver(res, text, context);
 }
 
 async function route(req, res) {

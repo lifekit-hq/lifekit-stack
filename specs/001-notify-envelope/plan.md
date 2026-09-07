@@ -18,8 +18,12 @@
   link URLs are a validation failure, not a silent drop.
 - **Legacy `/text` and `/devclaw` keep working** while producers migrate. They
   are live on the VPS; retiring them in the same change would break devclaw
-  between deploys. They stay plain-text (no `parse_mode`) until US2/US3 move
-  them — sending their unescaped strings as HTML would break rendering.
+  between deploys. Both now render as HTML like `/notify`: `/text` escapes and
+  clips its payload with `escapeClipped` rather than sending it verbatim, so
+  "every producer-supplied string is HTML-escaped" holds on every path and
+  `sendTelegram` has no plain-text mode left to get wrong. The escaped string
+  reads identically to the caller's original — escaping changes the wire, not
+  the message.
 - **The endpoint is tested over real HTTP, not through a mocked handler.**
   `server.js` exports its listener and honours `NOTIFY_RELAY_PORT=0`, so the
   test binds an ephemeral port and makes actual requests; startup stays a single
@@ -59,10 +63,25 @@
   collapsed `detail` — replacing the legacy 600-char inline paste.
 - **US3** — the devclaw repo (`goal_notify.py` and the task-callback poster),
   not this one. Retire `/text` here only after devclaw's side has deployed.
-- **US4** — `compose/observability/grafana/provisioning/alerting/contact-points.yml.tmpl`
-  only. Constraint: it is a template rendered by `scripts/deploy.sh`
-  (`__TELEGRAM_CHAT_ID__`); Grafana's Go template escaping is not the same as
-  the relay's, and `disableResolveMessage: false` must stay.
+- **US4 (done)** — `contact-points.yml.tmpl` (the message template),
+  `rules.yml` (remediation split out of `description` into an `action`
+  annotation), `compose/observability/contact-points.test.js` (new) and
+  `devclaw.json` (the new test path). Constraints met: the file is a template
+  rendered by `scripts/deploy.sh` (`__TELEGRAM_CHAT_ID__`) and
+  `disableResolveMessage: false` stays — a recovery still notifies, it just
+  renders line 1 alone. Two decisions worth not relitigating: (1) **nothing is
+  escaped in the Go template.** Go's `html` builtin emits `&#39;`/`&#34;`, which
+  the Bot API is not documented to accept, and a rejected send here is the one
+  alarm that says devclaw is dead — so the constraint moves to the inputs
+  instead (every rendered string is authored in `rules.yml`; the test asserts
+  no `<`, `>` or `&` in any title or annotation, and that every rule fills all
+  four fields the template reads). For the same reason every optional block is
+  wrapped in `{{ if … }}`: an unguarded missing map key renders as Go's
+  `<no value>`, whose angle brackets would fail the send. (2) **The template is rendered
+  in the test**, by a ~90-line evaluator for the exact Go-template subset used,
+  which throws on any construct it does not model. Asserting on the template's
+  source text would pass for a template that renders wrongly, and nothing else
+  in the repo executes Go templates.
 - **US5** — `defaults/` (the OpenClaw agent workspace contract) and the
   `channels.telegram.accounts.devclaw` wiring.
 

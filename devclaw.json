@@ -1,3 +1,3 @@
 {
-  "verifyCmd": "node --test compose/notify-relay/ && python3 -m venv .venv && .venv/bin/pip install --quiet --upgrade pip pytest && .venv/bin/python -m pytest -q scripts/memory-audit/tests"
+  "verifyCmd": "node --test compose/notify-relay/ compose/observability/ && python3 -m venv .venv && .venv/bin/pip install --quiet --upgrade pip pytest && .venv/bin/python -m pytest -q scripts/memory-audit/tests"
 }

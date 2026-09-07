@@ -85,6 +85,19 @@ named ~15-line duplication, not an oversight. Any future producer whose whole
 job is to report that other things are down gets the same exemption; everyone
 else uses `/notify`.
 
+The template speaks this grammar rather than its own: line 1 is
+`<glyph> <b>grafana</b> · <b>alertname</b> — headline`, where a firing alert's
+headline is the rule's `summary` (🔴) and a resolved one's is `recovered` (🟢).
+A firing alert renders `description` as the body and the rule's `action`
+annotation as `→ <code>…</code>`; a **resolved alert renders line 1 only** — the same
+guarantee rule 2 gives the relay's producers, re-implemented so a recovery
+notice can never repeat the firing remediation. Because Grafana has no escaping
+function the Bot API is guaranteed to accept, that duplication comes with a
+duplicated constraint: everything the template renders is authored in
+`rules.yml`, so alert titles and annotations must contain no `<`, `>` or `&`.
+`compose/observability/contact-points.test.js` renders the template and holds
+both halves.
+
 ## Legacy endpoints
 
 `POST /devclaw` (devclaw task rows) and `POST /text` (pre-composed goal-layer
@@ -95,7 +108,8 @@ from this relay. New producers must not use them.
 envelope and the message comes out of the same renderer as everyone else's —
 `done` → `good`, `failed` → `act`, anything else → `info`; the goal goes in the
 headline, the error's first line in `body` and the rest of the traceback in the
-collapsed `detail`. `/text` is still sent verbatim as plain text: its payload is
-a pre-escaped-for-nothing producer string, and asking Telegram to parse it as
-HTML would fail the send. It goes away once devclaw's goal layer posts
-envelopes.
+collapsed `detail`. `/text` sends its payload as the whole message — the goal
+layer composed it already — but escaped and clipped by the same helper the
+renderer uses, so it is HTML on the wire like everything else and a `<` in it
+cannot fail the send. Send raw text there too; markup you send will be shown,
+not parsed. It goes away once devclaw's goal layer posts envelopes.

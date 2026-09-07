@@ -195,12 +195,29 @@ describe("the surface around it", () => {
     assert.deepEqual(await res.json(), { ok: true, name: "notify-relay" });
   });
 
-  it("keeps the legacy /text path on plain text", async () => {
+  // The goal layer's string is the message, but it is still producer text going
+  // out as HTML: escaped, so a `<` in it renders instead of failing the send.
+  it("escapes the legacy /text payload and sends it as HTML", async () => {
     const res = await post("/text", { text: "5 < 6 & unescaped" });
 
     assert.equal(res.status, 200);
-    assert.equal(sent[0].text, "5 < 6 & unescaped");
-    assert.equal(sent[0].parse_mode, undefined);
+    assert.equal(sent[0].text, "5 &lt; 6 &amp; unescaped");
+    assert.equal(sent[0].parse_mode, "HTML");
+  });
+
+  it("clips a /text payload too long for Telegram", async () => {
+    const res = await post("/text", { text: "x".repeat(9000) });
+
+    assert.equal(res.status, 200);
+    assert.ok(sent[0].text.length <= 3500, `sent ${sent[0].text.length} chars`);
+    assert.ok(sent[0].text.endsWith("…"), sent[0].text.slice(-20));
+  });
+
+  it("rejects a /text payload with no text", async () => {
+    const res = await post("/text", { text: "   " });
+
+    assert.equal(res.status, 400);
+    assert.deepEqual(sent, []);
   });
 
   it("renders the legacy /devclaw row through the envelope", async () => {

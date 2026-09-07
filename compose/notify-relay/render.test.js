@@ -257,16 +257,27 @@ describe("renderEnvelope", () => {
   it("escapes producer text everywhere it lands", () => {
     const out = renderEnvelope({
       ...base,
+      source: "dev&claw",
       subject: "<b>injected</b>",
-      body: "5 < 6 & 7 > 2",
+      headline: "5 < 6 & 7 > 2",
+      body: "body: 5 < 6 & 7 > 2",
       detail: "<script>alert(1)</script>",
       action: 'run --flag="x"',
-      links: [{ text: "a & b", url: "https://example.com/?a=1&b=2" }],
+      links: [{ text: "<i>a</i> & b > c", url: "https://example.com/?a=1&b=2" }],
     });
     assert.ok(!out.includes("<script>"), out);
+    assert.ok(!out.includes("<i>"), out);
+    assert.ok(out.includes("<b>dev&amp;claw</b>"), out);
     assert.ok(out.includes("&lt;b&gt;injected&lt;/b&gt;"), out);
-    assert.ok(out.includes("5 &lt; 6 &amp; 7 &gt; 2"), out);
-    assert.ok(out.includes('href="https://example.com/?a=1&amp;b=2"'), out);
+    assert.ok(out.includes("— 5 &lt; 6 &amp; 7 &gt; 2"), out);
+    assert.ok(out.includes("body: 5 &lt; 6 &amp; 7 &gt; 2"), out);
+    // The link's TEXT is producer input just as much as its href is.
+    assert.ok(
+      out.includes(
+        '<a href="https://example.com/?a=1&amp;b=2">&lt;i&gt;a&lt;/i&gt; &amp; b &gt; c</a>',
+      ),
+      out,
+    );
     assert.ok(out.includes("&quot;x&quot;"), out);
   });
 
