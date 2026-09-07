@@ -69,3 +69,7 @@ my-context.yml
 # Rendered by scripts/deploy.sh from contact-points.yml.tmpl — carries the
 # owner chat id, which never enters git (docs/PRIVATE.md).
 compose/observability/grafana/provisioning/alerting/contact-points.yml
+
+# devclaw per-goal checkouts (boilerplate revision 2) — one goal, one clone
+# under the project workspace; never this repo's own content.
+.goals/
