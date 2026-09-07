@@ -24,9 +24,29 @@ contactPoints:
           # keeps the owner's chat id out of git (docs/PRIVATE.md, #132).
           chatid: "__TELEGRAM_CHAT_ID__"
           parse_mode: HTML
+          # The notify envelope's grammar (docs/notify-envelope.md), re-implemented
+          # here because these rules post to Telegram directly — a dead relay must
+          # not be able to swallow the alarm that says devclaw is dead. Line 1 is
+          # `<glyph> <b>source</b> · <b>subject</b> — headline`; the remediation is
+          # one tap-to-copy `action`; and a RESOLVED alert renders line 1 only, so
+          # it can never repeat the firing body's "the process is dead" at 3am.
+          # These rules are all `severity: critical`, so firing is 🔴 (act) and
+          # resolved 🟢 (good) — the other two levels have no producer here.
+          #
+          # Nothing escapes HTML on this path: every string rendered below comes
+          # from rules.yml in this repo, so alert titles and annotations must stay
+          # free of `<`, `>` and `&`. compose/observability/contact-points.test.js
+          # enforces both halves of that.
+          # Every optional block is guarded: an unset annotation must render as
+          # nothing. Go's text/template prints `<no value>` for a missing map key
+          # unless the caller sets missingkey=zero, and those angle brackets would
+          # make Telegram reject the send — i.e. exactly this alarm, swallowed.
           message: |
-            {{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} <b>{{ .Status | toUpper }}</b> {{ range .Alerts }}
-            <b>{{ .Labels.alertname }}</b>{{ if .Annotations.summary }} — {{ .Annotations.summary }}{{ end }}
+            {{ range .Alerts }}{{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} <b>grafana</b> · <b>{{ .Labels.alertname }}</b> — {{ if eq .Status "firing" }}{{ .Annotations.summary }}{{ else }}recovered{{ end }}
+            {{ if eq .Status "firing" }}{{ if .Annotations.description }}
             {{ .Annotations.description }}
+            {{ end }}{{ if .Annotations.action }}
+            → <code>{{ .Annotations.action }}</code>
+            {{ end }}{{ end }}
             {{ end }}
         disableResolveMessage: false

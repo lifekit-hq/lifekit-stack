@@ -14,7 +14,8 @@
 #   loki / prometheus / grafana — the box's observability stack (moved here
 #    from finance-sentry 2026-09-06): scrapes finance-sentry + devclaw, holds
 #    the dead-man alert rules, pings Telegram directly. Loopback-bound.
-#   notify-relay         — turns devclaw's notify_url POST into a Telegram message via the gateway CLI; internal-only on :8090
+#   notify-relay         — the stack's only Telegram renderer: producers POST the notify envelope
+#                          (docs/notify-envelope.md) to /notify; internal-only on :8090
 #
 # Retired in the 2026-05-27 v2 cutover:
 #   lifekit-orchestrator — v1 LangGraph scheduler; replaced by devclaw-mcp's in-process queue.
@@ -427,10 +428,11 @@ services:
 
   notify-relay:
     <<: *policy
-    # Turns devclaw's notify_url POST into a Telegram message via direct
-    # Telegram Bot API call. See compose/notify-relay/server.js.
-    # No host port binding — devclaw reaches it on the compose network
-    # at http://notify-relay:8090/devclaw.
+    # Renders the notify envelope (docs/notify-envelope.md) into a Telegram
+    # message via direct Telegram Bot API call. See compose/notify-relay/.
+    # No host port binding — producers reach it on the compose network at
+    # http://notify-relay:8090/notify (devclaw's legacy /devclaw and /text
+    # paths still work while they migrate; spec 001).
     build:
       context: ./notify-relay
     image: notify-relay:local

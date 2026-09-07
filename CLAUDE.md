@@ -18,6 +18,7 @@ binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 pre-commit run --all-files                 # THE local gate — exactly what CI's lint job runs
 python3 -m venv .venv && .venv/bin/pip install --quiet pytest
 .venv/bin/python -m pytest scripts/memory-audit/tests   # the CI tests job
+node --test compose/notify-relay/ compose/observability/   # relay renderer + endpoint suite, and the Grafana alert template (devclaw.json verifyCmd; not CI's tests job — #134 T010)
 bash scripts/check-doc-drift.sh            # README <-> compose service-count parity
 ```
 

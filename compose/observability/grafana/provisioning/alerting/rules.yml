@@ -49,13 +49,16 @@ groups:
         labels:
           service: devclaw
           severity: critical
+        # summary → the alert's headline, description → its body, action → the one
+        # tap-to-copy command. Contact-points renders them in that grammar and
+        # never escapes them, so keep every value free of `<`, `>` and `&`.
         annotations:
           summary: devclaw-mcp is not answering /metrics
           description: >-
             Prometheus has not scraped devclaw-mcp for 3 minutes. The process is
             dead, crash-looping past the compose restart budget, or unreachable
-            on lifekit-shared. `docker ps` on the box; `docker compose -p devclaw
-            up -d` if the restart budget is spent.
+            on lifekit-shared. Check docker ps on the box first.
+          action: docker compose -p devclaw up -d
 
       - uid: devclaw-heartbeat-hung
         title: devclaw heartbeat is hung
@@ -101,5 +104,6 @@ groups:
           description: >-
             devclaw_tick_age_seconds exceeded three tick lengths with dispatch
             open for 5 minutes: the tick loop is wedged while the MCP server
-            still serves. `/health` shows last_tick_at; a restart of devclaw-mcp
-            reaps and resumes in-flight sandboxes.
+            still serves. /health shows last_tick_at; a restart reaps and
+            resumes in-flight sandboxes.
+          action: docker compose -p devclaw restart devclaw-mcp
