@@ -39,8 +39,11 @@ bash scripts/deploy.sh
 
 ## Rolling back OpenClaw
 
-`deploy.sh` keeps the previously running image as `lifekit-openclaw:prev`.
-If the new version misbehaves after the deploy checks passed:
+`deploy.sh` keeps the image that ran the previous version as
+`lifekit-openclaw:prev` and `lifekit-openclaw:pre-<new version>` (the retag
+happens only on a version change, so later deploys of the same version do
+not overwrite it). If the new version misbehaves after the deploy checks
+passed:
 
 ```bash
 ssh <your-vps-tailscale-name>
