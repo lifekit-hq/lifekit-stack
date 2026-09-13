@@ -31,6 +31,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `prometheus` | `prom/prometheus:v2.54.1` | Box-level metrics: scrapes finance-sentry's API and devclaw-mcp's `/metrics` (the dead-man signal). 30d / 5GB retention. Loopback `:9090`. |
 | `loki` | `grafana/loki:3.1.1` | Structured logs from finance-sentry (fire-and-forget push). ~14d retention. Loopback `:3100`. |
 | `grafana` | `grafana/grafana:11.2.0` | Dashboards (each product repo hands its JSON over via a mounted dir) and the **provisioned alert rules** in `compose/observability/grafana/provisioning/alerting/` — Telegram straight from Grafana, no relay in the path. Loopback `:3000`, fronted by Tailscale Serve. |
+| `container-exporter` | `container-exporter:local` (built from `compose/container-exporter/`) | The Docker daemon's own facts about **every** container on the box - running, restart count, health, exit code, memory - as Prometheus metrics. The one signal the `box` alert rules read, whichever repo owns the container. Read-only socket access as `nobody` + the docker group; internal-only on `:9417`. |
 | `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
 
 ### Uniform service policy
@@ -46,17 +47,12 @@ Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded lo
 
 ## Monitoring
 
-Per-container resource and process telemetry is collected by **[Netdata](https://www.netdata.cloud/)** installed on the host (not in a container). It is the canonical monitoring layer for this stack.
+**Alerting is one pipeline for every service on the box**: Prometheus scrapes, Grafana evaluates provisioned rules, Telegram receives - the same path whether the container belongs to this stack, devclaw, finance-sentry or the dashboard. A service does not have to export anything to be covered; it only has to be a container.
 
-- **Dashboard:** `http://<tailnet-ip>:19999` — bound to the tailnet interface only, no public ingress.
-- **Alerts:** delivered to Telegram chat `123456789`.
-
-If you want app-level logs, `docker compose logs <service>` is still the path — Netdata only watches the host + container resource envelopes.
-
-**App-level observability** (since 2026-09-06, moved here from finance-sentry) is the `prometheus` + `loki` + `grafana` trio in this compose file. Netdata stays the host layer; Grafana is the app layer and the **alerting** layer:
-
-- Prometheus scrapes finance-sentry's API over `compose_default` and devclaw-mcp's `/metrics` over `lifekit-shared`.
-- Alert rules are files, not clicks: `compose/observability/grafana/provisioning/alerting/`. (`contact-points.yml` is the one exception: `deploy.sh` renders it from the committed `.tmpl` so the owner's chat id never enters git, and fails the deploy when it is unset — a Grafana with no contact point starts happily and drops every alert.) Today's rules are devclaw's dead-man watch — *devclaw is down* (no scrape for 3 min) and *devclaw heartbeat is hung* (tick age over three tick lengths while dispatch is open, for 5 min) — delivered to Telegram directly, so a dead `notify-relay` cannot swallow them. This replaced the LLM-driven `ops-agent`.
+- **Box layer - `container-exporter`** (`compose/container-exporter/`, since 2026-09-13): the daemon's own facts about every container, running or not. The `box` rule group in `compose/observability/grafana/provisioning/alerting/rules.yml` reads them: *scrape target is down* (`up` < 1 for 3 min, any job - the old *devclaw is down* folded in), *container exited abnormally* (stopped, non-zero exit, not being restarted, 3 min), *container is restart-looping* (more than 2 daemon restarts in 15 min, 5 min), *container healthcheck is failing* (5 min), *container memory near its limit* (over 90% of its cap for 10 min, warning). The restart-loop rule is the one that would have reported finance-sentry-mcp's three-day crash loop (2026-09-10..13, 4211 restarts, found by hand).
+- **App layer** - a service that exports its own `/metrics` gets application rules on top: devclaw's *heartbeat is hung* (tick age over three tick lengths while dispatch is open, 5 min). finance-sentry's API is scraped for its dashboards.
+- **Rules are files, not clicks.** `deploy.sh` reloads them through Grafana's admin API on every deploy (Grafana reads provisioning only at startup, and `up -d` does not recreate it for a changed bind-mounted file). `contact-points.yml` is rendered from the committed `.tmpl` so the owner's chat id never enters git, and the deploy fails when it is unset - a Grafana with no contact point starts happily and drops every alert. Delivery is Telegram straight from Grafana, so a dead `notify-relay` cannot swallow the alarm. This replaced the LLM-driven `ops-agent`.
+- **Netdata** on the host was the earlier resource layer. It is not running (`systemctl is-active netdata` = `inactive`, verified 2026-09-13) and nothing depends on it; `docker compose logs <service>` and Loki are the log path.
 - Dashboards keep one home per product: finance-sentry's deploy copies its JSON into `${LIFEKIT_FINANCE_SENTRY_DASHBOARDS}` and Grafana loads that directory as a provider.
 - Data volumes are external (`docker_*`, created by finance-sentry's former project) so the history survived the move; see `.env.example`.
 
