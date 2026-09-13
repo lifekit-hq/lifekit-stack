@@ -22,7 +22,13 @@ COMPOSE_FILE="${REPO_DIR}/compose/docker-compose.yml"
 
 CURRENT_STEP="startup"
 DEPLOY_COMPLETE=0
+DEPLOY_FAILURES=()
 say() { CURRENT_STEP="$*"; printf '\n\033[1;34m→ %s\033[0m\n' "$*"; }
+# Post-deploy assertions do not abort mid-flight (a half-deployed box is
+# worse than a deployed one with a red log); they queue here and fail the
+# run at the end so CI goes red and the log says exactly what is wrong.
+fail_later() { DEPLOY_FAILURES+=("$*"); printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; }
+warn() { printf '\033[1;33m! %s\033[0m\n' "$*" >&2; }
 
 # A deploy that dies mid-script must announce it — `set -e` otherwise skips
 # the post-up steps (cli reattach, session reset, runner verify) with nothing
@@ -211,6 +217,21 @@ if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_V
     docker tag "${PREV_IMAGE}" lifekit-openclaw:prev
     docker tag "${PREV_IMAGE}" "lifekit-openclaw:pre-${BUILT_VER}"
   fi
+  # Every file under the state dir must belong to the container user (uid
+  # 1000). Root-owned leftovers from hand edits (.bak-*, sqlite copies) make
+  # `backup create` fail with EACCES and stall the Codex session-sidecar
+  # migration (2026-09-13). Refuse to migrate over them; the fix is one line.
+  say "asserting ${OPENCLAW_CONFIG_DIR} is owned by uid 1000"
+  FOREIGN="$(find "${OPENCLAW_CONFIG_DIR}" -xdev ! -uid 1000 \
+    -not -path "${OPENCLAW_CONFIG_DIR}/workspace*" -not -path "${OPENCLAW_CONFIG_DIR}/wiki*" \
+    2>/dev/null | head -5 || true)"
+  if [[ -n "${FOREIGN}" ]]; then
+    echo "${FOREIGN}" >&2
+    echo "Files not owned by uid 1000 under ${OPENCLAW_CONFIG_DIR}. Fix, then re-run:" >&2
+    echo "  sudo find ${OPENCLAW_CONFIG_DIR} -xdev ! -uid 1000 -exec chown 1000:1000 {} +" >&2
+    exit 1
+  fi
+
   say "OpenClaw ${RUNNING_VER} -> ${BUILT_VER}: stopping gateway, migrating state"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli \
     stop openclaw-cli openclaw-gateway
@@ -220,6 +241,40 @@ if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_V
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
     run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
       doctor --fix --non-interactive
+
+  # Official plugins installed into the state dir (npm/) carry their own
+  # version pin. One built against an older core refuses to load under the
+  # new one (codex 2026.6.8 vs core 2026.9.4 on 2026-09-13: the whole codex
+  # runtime gone, gateway "healthy"). The doctor pass re-pins them; verify
+  # it did, try one explicit update if not, and flag the deploy otherwise.
+  say "asserting official plugins match core ${BUILT_VER}"
+  plugin_mismatches() {
+    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+      run --rm --no-deps -T --entrypoint openclaw openclaw-gateway plugins list --json 2>/dev/null \
+    | python3 -c '
+import json, re, sys
+core = sys.argv[1]
+items = json.load(sys.stdin)
+items = items if isinstance(items, list) else items.get("plugins", [])
+for p in items:
+    if not p.get("enabled"): continue
+    v = str(p.get("version") or "")
+    if p.get("origin") not in ("bundled", "global") or not re.match(r"^\d{4}\.\d+\.\d+", v): continue
+    if v != core: print(f"{p[\"id\"]} {v}")
+' "${BUILT_VER}"
+  }
+  MISMATCH="$(plugin_mismatches || true)"
+  if [[ -n "${MISMATCH}" ]]; then
+    while read -r pid pver; do
+      [[ -z "${pid}" ]] && continue
+      warn "plugin ${pid} is ${pver}, core is ${BUILT_VER}; updating"
+      docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+        run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+          plugins update "@openclaw/${pid}@latest" || true
+    done <<< "${MISMATCH}"
+    MISMATCH="$(plugin_mismatches || true)"
+    [[ -n "${MISMATCH}" ]] && fail_later "plugins still off core ${BUILT_VER} after update: ${MISMATCH//$'\n'/, }"
+  fi
 else
   say "OpenClaw version unchanged (${BUILT_VER:-unknown}); no state migration"
 fi
@@ -418,6 +473,51 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run -
 
 say "container status"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
+
+# ─── Smoke turns: one real agent turn per runtime ───────────────────────────
+#
+# doctor/health/channels all passed on 2026-09-13 while two of three runtimes
+# were dead (claude-cli binary without its native part, codex auth expired).
+# The only check that sees that is a real turn. One agent per runtime; keep
+# this list in step with agents.entries.*.model when routing changes:
+#   fable -> claude-cli (Claude-only, no fallback: exercises that backend and
+#            nothing else); kit -> codex (OpenAI primary).
+# An explicit per-agent session id keeps the turn out of the agents' main
+# sessions (one shared id fails: a session is placed with its first agent
+# and the gateway refuses another agent in it); no --deliver, so nothing
+# reaches Telegram. Auth and quota errors are external
+# state (re-login, weekly cap) and only warn; anything else fails the run.
+SMOKE_AGENTS="${SMOKE_AGENTS:-fable kit}"
+say "smoke turns (${SMOKE_AGENTS})"
+for agent in ${SMOKE_AGENTS}; do
+  OUT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T openclaw-gateway \
+    openclaw agent --agent "${agent}" --session-id "deploy-smoke-${agent}" --timeout 150 --json \
+      -m "Deploy smoke test: reply with exactly the word pong and nothing else." 2>&1 || true)"
+  VERDICT="$(printf '%s' "${OUT}" | python3 -c '
+import json, re, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+except Exception:
+    print("FAIL no JSON: " + raw[:200].replace("\n", " ")); sys.exit()
+if d.get("ok"):
+    print("PASS"); sys.exit()
+err = json.dumps(d.get("error"))
+soft = re.search(r"rate_limit|weekly limit|usage limit|no usable profiles|expired|not logged in|auth", err, re.I)
+print(("WARN " if soft else "FAIL ") + err[:300])
+')"
+  case "${VERDICT}" in
+    PASS)   echo "  ${agent}: ok" ;;
+    WARN*)  warn "${agent}: ${VERDICT#WARN }" ;;
+    *)      fail_later "${agent}: ${VERDICT#FAIL }" ;;
+  esac
+done
+
+if (( ${#DEPLOY_FAILURES[@]} )); then
+  say "post-deploy assertions failed"
+  printf '  - %s\n' "${DEPLOY_FAILURES[@]}" >&2
+  exit 1
+fi
 
 DEPLOY_COMPLETE=1
 say "✓ deploy complete."
