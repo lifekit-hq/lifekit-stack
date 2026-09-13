@@ -164,7 +164,15 @@ def container_samples(
             parse_docker_time(state.get("StartedAt")),
         ),
     ]
-    health = (state.get("Health") or {}).get("Status")
+    # A stopped container keeps its last Health verdict; reporting it would
+    # make every stopped container "unhealthy" on top of "exited" (seen on the
+    # first live evaluation, 2026-09-13). Health is a statement about a
+    # running process only.
+    health = (
+        (state.get("Health") or {}).get("Status")
+        if state.get("Status") == "running"
+        else None
+    )
     if health:
         samples.append(
             ("docker_container_healthy", labels, 1.0 if health == "healthy" else 0.0)

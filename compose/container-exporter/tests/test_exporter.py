@@ -139,6 +139,15 @@ class ContainerSamplesTests(unittest.TestCase):
         self.assertEqual(sample(starting, "docker_container_healthy", "api"), 0.0)
         self.assertEqual(sample(unhealthy, "docker_container_healthy", "api"), 0.0)
 
+    def test_stopped_container_reports_no_health(self):
+        samples = exporter.container_samples(
+            inspect_doc("cli", "exited", exit_code=1, health="unhealthy")
+        )
+        self.assertIsNone(
+            sample(samples, "docker_container_healthy", "cli"),
+            "a stopped container's stale health verdict must not fire the unhealthy rule beside exited-abnormally",
+        )
+
     def test_memory_matches_docker_stats_semantics(self):
         samples = exporter.container_samples(
             inspect_doc("gw", "running"),

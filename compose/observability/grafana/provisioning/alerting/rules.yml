@@ -14,6 +14,12 @@
 # is not - the exporter's own absence is target-down's job.
 apiVersion: 1
 
+# File provisioning only adds and updates; a rule dropped from `groups` stays
+# loaded until it is named here. Keep retired uids listed.
+deleteRules:
+  - orgId: 1
+    uid: devclaw-down  # folded into box/target-down, 2026-09-13
+
 groups:
   - orgId: 1
     name: box
