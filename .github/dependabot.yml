@@ -1,0 +1,28 @@
+# Dependabot: the OpenClaw upgrade loop.
+#
+# The gateway's OpenClaw version is the literal FROM tag in
+# compose/openclaw-gateway/Dockerfile. Dependabot watches that tag on ghcr and
+# opens a bump PR; CI lints it, a human merges it (squash), and the main-push
+# deploy job builds + ships the new image with the usual doctor/health/channels
+# checks. Rollback: docs/runbook.md "Rolling back OpenClaw".
+#
+# cooldown: OpenClaw cuts several stable releases a week. Waiting 7 days after
+# a release lets upstream's own hotfix cycle (x.y.1 -> x.y.4) land first, so
+# the PR we get is the settled build, not the day-one one.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /compose/openclaw-gateway
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Dublin
+    cooldown:
+      default-days: 7
+    labels:
+      - dependencies
+      - openclaw
+    commit-message:
+      prefix: "chore(openclaw)"
+    open-pull-requests-limit: 1

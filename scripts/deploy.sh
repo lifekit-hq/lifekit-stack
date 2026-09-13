@@ -173,6 +173,16 @@ sed "s/__TELEGRAM_CHAT_ID__/${CHAT_ID}/" \
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
+# Keep the image that is running right now reachable as lifekit-openclaw:prev
+# so an OpenClaw bump that passes doctor/health but misbehaves in real traffic
+# has a one-command rollback (docs/runbook.md "Rolling back OpenClaw"). The
+# `local` tag is rebuilt in place by the build below, so without this the
+# previous image is unreachable the moment the build finishes.
+if docker image inspect lifekit-openclaw:local >/dev/null 2>&1; then
+  say "tagging current lifekit-openclaw:local as :prev (rollback target)"
+  docker tag lifekit-openclaw:local lifekit-openclaw:prev
+fi
+
 say "docker compose up -d --build"
 # docker's recreate path can trip on a stale temp-name reservation
 # ("Conflict. The container name \"/<hash>_compose-<svc>-1\" is already in

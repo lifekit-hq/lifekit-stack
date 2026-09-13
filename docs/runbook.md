@@ -4,47 +4,79 @@ Operational guide. How to update, roll back, back up, and recover when things br
 
 > **Status:** pre-release. Some procedures are aspirational until v0.1.0 ships.
 
-## Updating
+## Updating OpenClaw
 
-```bash
-# On your laptop
-cd lifekit-stack
-git pull
-lifekit init-stack --target <your-vps-tailscale-name>
-```
+The OpenClaw version is the `FROM` tag in `compose/openclaw-gateway/Dockerfile`
+and nothing else. Dependabot (`.github/dependabot.yml`) watches that tag on
+ghcr and opens a `chore(openclaw): bump ...` PR on Mondays, after a 7-day
+cooldown so upstream's own hotfix cycle has landed. The loop:
 
-The wizard reads the existing `wizard.yaml` on the target, reapplies templates, and `docker compose up -d --build` restarts only services touched by the changeset. Idempotent — re-running with no upstream changes is a no-op.
+1. Dependabot opens the PR. CI lint runs on it.
+2. Skim the upstream release notes it links. Merge (squash).
+3. The main-push deploy job runs `scripts/deploy.sh`: tags the running image
+   as `lifekit-openclaw:prev`, builds the new image, recreates the gateway,
+   then runs `openclaw doctor`, `health`, `channels status`. Read that log.
+4. First real Telegram message + first cron run are the true smoke test; the
+   deploy checks only prove the config loads and channels connect.
 
-If you just want to bump OpenClaw or pull skill updates without changing wizard inputs, you can SSH directly:
+Do NOT use the dashboard's "Update now" or `openclaw update` inside the
+container. The install is an npm package baked into the image (no git
+checkout, so the UI refuses it), and anything it did install would be gone
+on the next container recreate while the Dockerfile still says the old
+version. The image is the unit of deployment.
+
+To force a version by hand (skip the Dependabot wait): edit the `FROM` tag,
+open a PR, merge. Same path, same checks.
+
+Skill/vault/compose changes without an OpenClaw bump deploy the same way:
+merge to `main`, CI deploys. Direct on the VPS only when CI is down:
 
 ```bash
 ssh <your-vps-tailscale-name>
-cd /srv/lifekit-stack
-git pull
-docker compose -f compose/docker-compose.yml -f compose/docker-compose.extra.yml up -d --build
-docker compose --profile cli run --rm -T openclaw-cli openclaw doctor
-docker compose --profile cli run --rm -T openclaw-cli openclaw health
+cd /srv/lifekit-stack && git pull
+bash scripts/deploy.sh
 ```
 
-## Rolling back
+## Rolling back OpenClaw
 
-If a deploy breaks something:
+`deploy.sh` keeps the previously running image as `lifekit-openclaw:prev`.
+If the new version misbehaves after the deploy checks passed:
 
 ```bash
 ssh <your-vps-tailscale-name>
-cd /srv/lifekit-stack
-git log --oneline -n 5             # find the last-known-good commit
-git checkout <good-commit>
-docker compose up -d --build
+cd /srv/lifekit-stack/compose
+docker tag lifekit-openclaw:local lifekit-openclaw:bad-$(date +%Y%m%d)   # keep for the bug report
+docker tag lifekit-openclaw:prev  lifekit-openclaw:local
+docker compose --env-file /srv/openclaw/config/.env -f docker-compose.yml \
+  up -d --no-build --force-recreate openclaw-gateway
 ```
 
-For a more disciplined rollback, prefer reverting on `main` in the repo:
+Then revert the bump PR on `main` (below), or the next CI deploy rebuilds the
+bad version over your rollback. OpenClaw's gateway runs startup migrations on
+mounted state; check the upstream release notes before rolling back across a
+version that migrated config, and keep the pre-deploy config snapshot
+(`/srv/openclaw/config` is on the host, not in the image).
+
+## Rolling back the stack
+
+If a deploy of anything else breaks something, revert on `main` and let CI
+redeploy:
 
 ```bash
 # On your laptop
 git revert <bad-commit>
 git push
 # wait for CI deploy workflow to apply on the VPS
+```
+
+Only when CI itself is down, roll the VPS checkout back by hand:
+
+```bash
+ssh <your-vps-tailscale-name>
+cd /srv/lifekit-stack
+git log --oneline -n 5             # find the last-known-good commit
+git checkout <good-commit>
+bash scripts/deploy.sh
 ```
 
 ## Backups

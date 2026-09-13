@@ -59,10 +59,10 @@ services:
 
   openclaw-gateway:
     <<: *policy
+    # OpenClaw version = the FROM tag in openclaw-gateway/Dockerfile (Dependabot
+    # bumps it). No build-arg override: one place decides what runs.
     build:
       context: ./openclaw-gateway
-      args:
-        OPENCLAW_BASE_IMAGE: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     image: lifekit-openclaw:local
     # Cross-project seam (devclaw spec 005): join the external lifekit-shared
     # network so the waiter can reach devclaw-mcp (in devclaw's own project) by
