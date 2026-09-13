@@ -13,11 +13,18 @@ cooldown so upstream's own hotfix cycle has landed. The loop:
 
 1. Dependabot opens the PR. CI lint runs on it.
 2. Skim the upstream release notes it links. Merge (squash).
-3. The main-push deploy job runs `scripts/deploy.sh`: tags the running image
-   as `lifekit-openclaw:prev`, builds the new image, recreates the gateway,
-   then runs `openclaw doctor`, `health`, `channels status`. Read that log.
+3. The main-push deploy job runs `scripts/deploy.sh`: builds the new image,
+   and because the version changed: tags the running image as
+   `lifekit-openclaw:prev` and `:pre-<new version>`, stops the gateway,
+   writes a config-only backup to `/srv/openclaw/config/backups/`, runs
+   `doctor --fix --non-interactive` with the new image against the live
+   state (config rewrite, SQLite migrations, official-plugin re-pin), then
+   recreates the gateway and runs `openclaw doctor`, `health`,
+   `channels status`. Read that log.
 4. First real Telegram message + first cron run are the true smoke test; the
-   deploy checks only prove the config loads and channels connect.
+   deploy checks only prove the config loads and channels connect. One
+   `openclaw agent --agent <id> -m "reply pong" --json` per runtime
+   (claude-cli and codex) is the cheap version of that.
 
 Do NOT use the dashboard's "Update now" or `openclaw update` inside the
 container. The install is an npm package baked into the image (no git
@@ -27,6 +34,36 @@ version. The image is the unit of deployment.
 
 To force a version by hand (skip the Dependabot wait): edit the `FROM` tag,
 open a PR, merge. Same path, same checks.
+
+Before a jump across several months of releases, take a full verified state
+backup first (the migrations are one-way; an older gateway cannot read the
+migrated state, so the image tags alone do not roll back). Roughly 6 GB
+compressed, 20+ minutes, the gateway can stay up:
+
+```bash
+ssh <your-vps-tailscale-name>
+sudo docker run -d --name openclaw-backup --entrypoint openclaw \
+  -e HOME=/home/node -e OPENCLAW_STATE_DIR=/home/node/.openclaw \
+  -e OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json \
+  --env-file /srv/openclaw/config/.env \
+  -v /srv/openclaw/config:/home/node/.openclaw \
+  -v /srv/openclaw/workspace:/home/node/.openclaw/workspace \
+  -v /srv/openclaw/backups:/backups \
+  lifekit-openclaw:local backup create --output /backups --verify --no-include-workspace
+docker logs -f openclaw-backup     # ends with {"ok": true, ...}; then docker rm openclaw-backup
+```
+
+Run it detached (`-d`) as above: an SSH session that drops mid-archive
+takes a foreground `docker run` with it. Everything under
+`/srv/openclaw/config` must be owned by uid 1000 (the container user);
+root-owned `.bak-*` leftovers from hand edits make the archive fail with
+EACCES and stall the Codex session-sidecar migration. Fix with
+`sudo find /srv/openclaw/config ! -user lifekit -exec chown lifekit:lifekit {} +`.
+
+To rehearse a bump without touching live state: rsync `/srv/openclaw/config`
+(minus `browser`, `tools`, `logs`) and the workspace to scratch dirs, run
+the same `doctor --fix --non-interactive` with the new image against the
+copies, read the doctor log and `doctor --json`, then delete the copies.
 
 Skill/vault/compose changes without an OpenClaw bump deploy the same way:
 merge to `main`, CI deploys. Direct on the VPS only when CI is down:
