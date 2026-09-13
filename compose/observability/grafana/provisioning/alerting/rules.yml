@@ -1,20 +1,27 @@
-# The dead-man watch for devclaw (devclaw tinyspec deadman-metrics, 2026-09-06).
-# devclaw reports everything it can see about itself over Telegram; these two
-# rules cover the only things it structurally cannot: its own death and a hung
-# heartbeat. Both read the /metrics scrape and nothing devclaw writes.
+# Provisioned alert rules. Files, not clicks: deploy.sh reloads them through
+# Grafana's admin API on every deploy. Delivery is policies.yml -> Telegram.
 #
-# Every rule: A = Prometheus instant query, B = reduce(last), C = threshold —
-# the shape Grafana's UI produces, so a rule edited there exports back to this.
+# Two groups. `box` is the ONE pipeline for every service on the box, read
+# from compose/container-exporter (the daemon's own facts) and from `up`:
+# a service does not have to export anything to be covered - it only has to
+# be a container. `devclaw-deadman` keeps devclaw's application-level rule
+# (a loop can be wedged while its process is healthy); "devclaw is down"
+# moved into the generic target-down rule.
+#
+# Multi-series queries make one alert instance per label set, so every rule
+# names the container in its summary. noDataState is chosen per rule: a
+# vanished scrape target is an alarm (target-down); an empty container query
+# is not - the exporter's own absence is target-down's job.
 apiVersion: 1
 
 groups:
   - orgId: 1
-    name: devclaw-deadman
+    name: box
     folder: lifekit
     interval: 1m
     rules:
-      - uid: devclaw-down
-        title: devclaw is down
+      - uid: target-down
+        title: scrape target is down
         condition: C
         data:
           - refId: A
@@ -22,7 +29,10 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              expr: up{job="devclaw"}
+              # Every scrape job, one instance each. `up` is always present
+              # for a configured target, so a missing series means the
+              # target left the config - or Prometheus itself is gone.
+              expr: up
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -47,16 +57,201 @@ groups:
         execErrState: Alerting
         for: 3m
         labels:
-          service: devclaw
           severity: critical
         annotations:
-          summary: devclaw-mcp is not answering /metrics
+          summary: "{{ $labels.job }} is not answering /metrics"
           description: >-
-            Prometheus has not scraped devclaw-mcp for 3 minutes. The process is
-            dead, crash-looping past the compose restart budget, or unreachable
-            on lifekit-shared. `docker ps` on the box; `docker compose -p devclaw
-            up -d` if the restart budget is spent.
+            Prometheus has not scraped {{ $labels.job }} ({{ $labels.instance }})
+            for 3 minutes. The process is dead, crash-looping past the compose
+            restart budget, or unreachable on the compose network. `docker ps`
+            on the box; for devclaw `docker compose -p devclaw up -d` if the
+            restart budget is spent.
 
+      - uid: container-exited-abnormally
+        title: container exited abnormally
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 1 for a container that is not running, not between restarts,
+              # and whose last exit code is non-zero: a crash the restart
+              # policy gave up on (on-failure:5 spent), or a one-shot that
+              # failed. Exit 0 is a stop, not an incident.
+              expr: (1 - docker_container_running) * (1 - docker_container_restarting) * (docker_container_exit_code != bool 0)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: OK
+        execErrState: Error
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.name }} exited and is not coming back"
+          description: >-
+            Container {{ $labels.name }} (compose {{ $labels.project }}/{{ $labels.service }})
+            has been stopped with a non-zero exit code for 3 minutes and the
+            daemon is not restarting it. `docker logs --tail 100 {{ $labels.name }}`,
+            then `docker compose -p {{ $labels.project }} up -d {{ $labels.service }}`.
+
+      - uid: container-restarting
+        title: container is restart-looping
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Restarts the daemon performed in the last 15 minutes. A
+              # crash loop under restart:unless-stopped never trips
+              # container-exited-abnormally - the daemon keeps trying - so
+              # this is the rule that would have caught finance-sentry-mcp
+              # (4211 restarts over three days, 2026-09-10..13, unreported).
+              expr: increase(docker_container_restart_count[15m])
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [2]}
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.name }} is restart-looping"
+          description: >-
+            The daemon restarted {{ $labels.name }} (compose {{ $labels.project }}/{{ $labels.service }})
+            more than twice in the last 15 minutes and it is still happening.
+            `docker logs --tail 50 {{ $labels.name }}` shows why each start dies.
+
+      - uid: container-unhealthy
+        title: container healthcheck is failing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Only containers that declare a healthcheck have this series;
+              # 0 covers both unhealthy and stuck in starting.
+              expr: docker_container_healthy
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.name }} is unhealthy"
+          description: >-
+            {{ $labels.name }} (compose {{ $labels.project }}/{{ $labels.service }})
+            has failed its own healthcheck for 5 minutes: the process is up but
+            not serving. `docker inspect --format '{{"{{"}}json .State.Health{{"}}"}}' {{ $labels.name }}`
+            shows the last probe output.
+
+      - uid: container-memory-near-limit
+        title: container memory near its limit
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Working set over the cgroup limit (the compose memory cap).
+              # A container without a cap reports the host total as its
+              # limit and stays far below this.
+              expr: docker_container_memory_usage_bytes / docker_container_memory_limit_bytes
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.9]}
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.name }} is above 90% of its memory limit"
+          description: >-
+            {{ $labels.name }} (compose {{ $labels.project }}/{{ $labels.service }})
+            has used more than 90% of its memory cap for 10 minutes. The next
+            step is the OOM killer and a restart. `docker stats --no-stream {{ $labels.name }}`.
+
+  - orgId: 1
+    name: devclaw-deadman
+    folder: lifekit
+    interval: 1m
+    rules:
       - uid: devclaw-heartbeat-hung
         title: devclaw heartbeat is hung
         condition: C
@@ -89,7 +284,7 @@ groups:
               expression: B
               conditions:
                 - evaluator: {type: gt, params: [0]}
-        # No data here means the target is gone — that is the down rule's job.
+        # No data here means the target is gone — that is target-down's job.
         noDataState: OK
         execErrState: Error
         for: 5m

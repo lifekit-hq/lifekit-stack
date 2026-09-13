@@ -171,6 +171,14 @@ fi
 sed "s/__TELEGRAM_CHAT_ID__/${CHAT_ID}/" \
   "${ALERT_DIR}/contact-points.yml.tmpl" > "${ALERT_DIR}/contact-points.yml"
 
+# container-exporter reads the docker socket as nobody + the docker group; the
+# group id differs per box, so take it from the socket itself unless the env
+# file pins DOCKER_GID.
+if [[ -z "${DOCKER_GID:-}" ]] && ! grep -qE '^[[:space:]]*DOCKER_GID=' "${ENV_FILE}"; then
+  DOCKER_GID="$(stat -c %g /var/run/docker.sock)"
+  export DOCKER_GID
+fi
+
 # ─── Build + start ───────────────────────────────────────────────────────────
 
 # Keep the image that is running right now reachable as lifekit-openclaw:prev
@@ -202,6 +210,34 @@ if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build 
   fi
 fi
 rm -f "${UP_LOG}"
+
+# ─── Reload Grafana's provisioned alerting ───────────────────────────────────
+#
+# Grafana reads provisioning/alerting/*.yml at STARTUP only, and `up -d` does
+# not recreate grafana when only a bind-mounted file changed - so a rule
+# merged to main would sit on disk unloaded until the next unrelated
+# recreate. The admin reload endpoint applies rules, contact points and
+# policies from the files now. Fails the deploy if Grafana never answers:
+# alert rules that did not load are the failure this stack exists to prevent.
+say "reloading Grafana alerting provisioning"
+GRAFANA_USER="$(sed -nE 's/^[[:space:]]*GRAFANA_ADMIN_USER=["'"'"']?([^"'"'"']*)["'"'"']?[[:space:]]*$/\1/p' "${ENV_FILE}" | head -1)"
+GRAFANA_PASS="$(sed -nE 's/^[[:space:]]*GRAFANA_ADMIN_PASSWORD=["'"'"']?([^"'"'"']*)["'"'"']?[[:space:]]*$/\1/p' "${ENV_FILE}" | head -1)"
+GRAFANA_PORT_VALUE="$(sed -nE 's/^[[:space:]]*GRAFANA_PORT=["'"'"']?([0-9]+)["'"'"']?[[:space:]]*$/\1/p' "${ENV_FILE}" | head -1)"
+GRAFANA_URL="http://127.0.0.1:${GRAFANA_PORT_VALUE:-3000}"
+for _ in $(seq 1 30); do
+  if curl -sf -o /dev/null "${GRAFANA_URL}/api/health"; then break; fi
+  sleep 2
+done
+# Credentials go in through a curl config on stdin: not on the command line
+# (visible in `ps`), not in a -u flag (gitleaks' curl-auth-user rule).
+if ! curl -sf -o /dev/null -X POST -K - "${GRAFANA_URL}/api/admin/provisioning/alerting/reload" <<CURLCFG
+user = "${GRAFANA_USER:-admin}:${GRAFANA_PASS:-admin}"
+CURLCFG
+then
+  echo "Grafana did not reload alerting provisioning at ${GRAFANA_URL}." >&2
+  echo "Rules on disk are not the rules loaded. Check the grafana container." >&2
+  exit 1
+fi
 
 # ─── Reattach openclaw-cli to new gateway network namespace ──────────────────
 #

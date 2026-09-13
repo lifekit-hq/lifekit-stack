@@ -425,6 +425,47 @@ services:
     networks:
       - default
 
+  container-exporter:
+    <<: *policy
+    # The Docker daemon's own facts about EVERY container on the box - state,
+    # restart count, health, exit code, memory - as Prometheus metrics. The
+    # one signal the `box` alert rules in observability/grafana/provisioning/
+    # alerting/rules.yml read, whichever repo owns the container. See
+    # compose/container-exporter/exporter.py for the why.
+    #
+    # Read-only GETs on the socket, as nobody plus the docker group: deploy.sh
+    # exports DOCKER_GID from the socket's owner group (override in .env).
+    build:
+      context: ./container-exporter
+    image: container-exporter:local
+    user: "65534:65534"
+    group_add:
+      - "${DOCKER_GID:-990}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "9417"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        # urlopen raises on any non-2xx, so a bad status is a non-zero exit.
+        - "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:9417/health', timeout=3)\""
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - default
+
   notify-relay:
     <<: *policy
     # Turns devclaw's notify_url POST into a Telegram message via direct
