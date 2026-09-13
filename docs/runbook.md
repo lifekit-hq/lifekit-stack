@@ -21,10 +21,14 @@ cooldown so upstream's own hotfix cycle has landed. The loop:
    state (config rewrite, SQLite migrations, official-plugin re-pin), then
    recreates the gateway and runs `openclaw doctor`, `health`,
    `channels status`. Read that log.
-4. First real Telegram message + first cron run are the true smoke test; the
-   deploy checks only prove the config loads and channels connect. One
-   `openclaw agent --agent <id> -m "reply pong" --json` per runtime
-   (claude-cli and codex) is the cheap version of that.
+4. deploy.sh then runs one real agent turn per runtime (`fable` for
+   claude-cli, `kit` for codex; `SMOKE_AGENTS` overrides) in a throwaway
+   `deploy-smoke-<agent>` session. A runtime error fails the run; auth and quota
+   errors (expired OAuth, weekly cap) only warn. On a version change it also
+   refuses to migrate over files not owned by uid 1000 and asserts every
+   official plugin matches the core version afterwards (one update attempt,
+   then a red run). First real Telegram message + first cron run remain the
+   final word.
 
 Do NOT use the dashboard's "Update now" or `openclaw update` inside the
 container. The install is an npm package baked into the image (no git
