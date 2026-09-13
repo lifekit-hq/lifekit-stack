@@ -145,9 +145,13 @@ services:
       - |
         export NPM_CONFIG_PREFIX=/home/node/.npm-global
         export PATH="/home/node/.npm-global/bin:$$PATH"
+        # npm >= 12 (openclaw base image since 2026.9.x) blocks package install
+        # scripts unless allow-listed; claude-code fetches its platform-native
+        # binary in postinstall, so without this the CLI installs but every
+        # invocation fails with "claude native binary not installed" (2026-09-13).
         if ! command -v claude >/dev/null 2>&1; then
           mkdir -p /home/node/.npm-global
-          npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
+          npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code 2>&1 | tail -3
         fi
         if ! command -v clawhub >/dev/null 2>&1; then
           npm install -g clawhub 2>&1 | tail -3
@@ -297,7 +301,7 @@ services:
         export PATH="/home/node/.npm-global/bin:/home/node/.orchestrator-venv/bin:$$PATH"
         if ! command -v claude >/dev/null 2>&1; then
           mkdir -p /home/node/.npm-global
-          npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
+          npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code 2>&1 | tail -3
         fi
         if [ ! -x /home/node/.orchestrator-venv/bin/pip ]; then
           python3 -m venv /home/node/.orchestrator-venv

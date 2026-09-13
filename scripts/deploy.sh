@@ -181,16 +181,6 @@ fi
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
-# Keep the image that is running right now reachable as lifekit-openclaw:prev
-# so an OpenClaw bump that passes doctor/health but misbehaves in real traffic
-# has a one-command rollback (docs/runbook.md "Rolling back OpenClaw"). The
-# `local` tag is rebuilt in place by the build below, so without this the
-# previous image is unreachable the moment the build finishes.
-if docker image inspect lifekit-openclaw:local >/dev/null 2>&1; then
-  say "tagging current lifekit-openclaw:local as :prev (rollback target)"
-  docker tag lifekit-openclaw:local lifekit-openclaw:prev
-fi
-
 # ─── OpenClaw version bump: migrate state BEFORE the new gateway boots ───────
 #
 # OpenClaw's state and config migrations are one-way and the Gateway refuses
@@ -210,6 +200,17 @@ RUNNING_VER="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
   exec -T openclaw-gateway openclaw --version 2>/dev/null | awk '{print $2}' || true)"
 BUILT_VER="$(docker run --rm --entrypoint openclaw lifekit-openclaw:local --version 2>/dev/null | awk '{print $2}' || true)"
 if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_VER}" ]]; then
+  # Keep the image that ran the OLD version reachable as :prev and
+  # :pre-<new version> (docs/runbook.md "Rolling back OpenClaw"). Only on a
+  # version change: 2026-09-13 the unconditional retag ran on three queued
+  # deploys in a row and :prev ended up pointing at the new version.
+  PREV_IMAGE="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    images -q openclaw-gateway 2>/dev/null | head -1 || true)"
+  if [[ -n "${PREV_IMAGE}" ]]; then
+    say "tagging running image ${PREV_IMAGE:0:12} as :prev and :pre-${BUILT_VER}"
+    docker tag "${PREV_IMAGE}" lifekit-openclaw:prev
+    docker tag "${PREV_IMAGE}" "lifekit-openclaw:pre-${BUILT_VER}"
+  fi
   say "OpenClaw ${RUNNING_VER} -> ${BUILT_VER}: stopping gateway, migrating state"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli \
     stop openclaw-cli openclaw-gateway
