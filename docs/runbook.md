@@ -52,10 +52,11 @@ docker compose --env-file /srv/openclaw/config/.env -f docker-compose.yml \
 ```
 
 Then revert the bump PR on `main` (below), or the next CI deploy rebuilds the
-bad version over your rollback. OpenClaw's gateway runs startup migrations on
-mounted state; check the upstream release notes before rolling back across a
-version that migrated config, and keep the pre-deploy config snapshot
-(`/srv/openclaw/config` is on the host, not in the image).
+bad version over your rollback. This only works when the bump did not migrate
+state. When it did (the deploy log shows "migrating state"), the old gateway
+cannot read the migrated state dir: restore the full pre-upgrade backup
+(`openclaw backup restore`, or untar the archive over `/srv/openclaw/config`
+with the gateway stopped) before starting the `:prev` image.
 
 ## Rolling back the stack
 

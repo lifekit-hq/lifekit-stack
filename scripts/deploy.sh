@@ -191,6 +191,38 @@ if docker image inspect lifekit-openclaw:local >/dev/null 2>&1; then
   docker tag lifekit-openclaw:local lifekit-openclaw:prev
 fi
 
+# ─── OpenClaw version bump: migrate state BEFORE the new gateway boots ───────
+#
+# OpenClaw's state and config migrations are one-way and the Gateway refuses
+# to boot on a config it no longer recognizes (2026.6.11 -> 2026.9.4 dropped
+# four keys and re-keyed agents.list). Rehearsed 2026-09-13 on a state copy:
+# one `doctor --fix --non-interactive` pass with the NEW image does all of it
+# (config rewrite, SQLite migrations, official-plugin re-pin to the new core)
+# and a second pass is a no-op. It must run with the old Gateway stopped.
+# Gated on an actual version change so ordinary deploys keep zero downtime.
+# The config-only backup is seconds; a full `backup create` of the state dir
+# is the manual step before a multi-month jump (docs/runbook.md).
+
+say "docker compose build"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build openclaw-gateway
+
+RUNNING_VER="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  exec -T openclaw-gateway openclaw --version 2>/dev/null | awk '{print $2}' || true)"
+BUILT_VER="$(docker run --rm --entrypoint openclaw lifekit-openclaw:local --version 2>/dev/null | awk '{print $2}' || true)"
+if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_VER}" ]]; then
+  say "OpenClaw ${RUNNING_VER} -> ${BUILT_VER}: stopping gateway, migrating state"
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli \
+    stop openclaw-cli openclaw-gateway
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+      backup create --only-config --verify --output /home/node/.openclaw/backups
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+      doctor --fix --non-interactive
+else
+  say "OpenClaw version unchanged (${BUILT_VER:-unknown}); no state migration"
+fi
+
 say "docker compose up -d --build"
 # docker's recreate path can trip on a stale temp-name reservation
 # ("Conflict. The container name \"/<hash>_compose-<svc>-1\" is already in
