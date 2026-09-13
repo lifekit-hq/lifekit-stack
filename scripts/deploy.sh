@@ -243,6 +243,18 @@ if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build 
 fi
 rm -f "${UP_LOG}"
 
+# ─── Reload Prometheus' scrape config ────────────────────────────────────────
+#
+# Same shape as the Grafana reload below: prometheus.yml is bind-mounted, so
+# `up -d` leaves the container alone when only the file changed, and
+# Prometheus reads its config at startup - the `containers` job merged in
+# #139 stayed unscraped until a hand recreate (2026-09-13). SIGHUP is the
+# reload path with --web.enable-lifecycle off; it works because the config is
+# mounted as a DIRECTORY (a single-file bind mount keeps the old inode after
+# git replaces the file, and a reload would re-read the stale copy).
+say "reloading Prometheus config"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" kill -s HUP prometheus
+
 # ─── Reload Grafana's provisioned alerting ───────────────────────────────────
 #
 # Grafana reads provisioning/alerting/*.yml at STARTUP only, and `up -d` does

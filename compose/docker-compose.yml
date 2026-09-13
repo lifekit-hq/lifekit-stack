@@ -376,13 +376,16 @@ services:
     <<: *policy
     image: prom/prometheus:v2.54.1
     command:
-      - --config.file=/etc/prometheus/prometheus.yml
+      - --config.file=/etc/prometheus/lifekit/prometheus.yml
       - --storage.tsdb.retention.time=30d
       - --storage.tsdb.retention.size=5GB
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
-      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # The directory, not the file: git replaces prometheus.yml with a new
+      # inode on deploy, and a single-file bind mount keeps serving the old
+      # one - deploy.sh's SIGHUP reload would re-read the stale config.
+      - ./observability/prometheus:/etc/prometheus/lifekit:ro
       - prometheus_data:/prometheus
     deploy:
       resources:
