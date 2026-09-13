@@ -171,7 +171,57 @@ fi
 sed "s/__TELEGRAM_CHAT_ID__/${CHAT_ID}/" \
   "${ALERT_DIR}/contact-points.yml.tmpl" > "${ALERT_DIR}/contact-points.yml"
 
+# container-exporter reads the docker socket as nobody + the docker group; the
+# group id differs per box, so take it from the socket itself unless the env
+# file pins DOCKER_GID.
+if [[ -z "${DOCKER_GID:-}" ]] && ! grep -qE '^[[:space:]]*DOCKER_GID=' "${ENV_FILE}"; then
+  DOCKER_GID="$(stat -c %g /var/run/docker.sock)"
+  export DOCKER_GID
+fi
+
 # ─── Build + start ───────────────────────────────────────────────────────────
+
+# Keep the image that is running right now reachable as lifekit-openclaw:prev
+# so an OpenClaw bump that passes doctor/health but misbehaves in real traffic
+# has a one-command rollback (docs/runbook.md "Rolling back OpenClaw"). The
+# `local` tag is rebuilt in place by the build below, so without this the
+# previous image is unreachable the moment the build finishes.
+if docker image inspect lifekit-openclaw:local >/dev/null 2>&1; then
+  say "tagging current lifekit-openclaw:local as :prev (rollback target)"
+  docker tag lifekit-openclaw:local lifekit-openclaw:prev
+fi
+
+# ─── OpenClaw version bump: migrate state BEFORE the new gateway boots ───────
+#
+# OpenClaw's state and config migrations are one-way and the Gateway refuses
+# to boot on a config it no longer recognizes (2026.6.11 -> 2026.9.4 dropped
+# four keys and re-keyed agents.list). Rehearsed 2026-09-13 on a state copy:
+# one `doctor --fix --non-interactive` pass with the NEW image does all of it
+# (config rewrite, SQLite migrations, official-plugin re-pin to the new core)
+# and a second pass is a no-op. It must run with the old Gateway stopped.
+# Gated on an actual version change so ordinary deploys keep zero downtime.
+# The config-only backup is seconds; a full `backup create` of the state dir
+# is the manual step before a multi-month jump (docs/runbook.md).
+
+say "docker compose build"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build openclaw-gateway
+
+RUNNING_VER="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  exec -T openclaw-gateway openclaw --version 2>/dev/null | awk '{print $2}' || true)"
+BUILT_VER="$(docker run --rm --entrypoint openclaw lifekit-openclaw:local --version 2>/dev/null | awk '{print $2}' || true)"
+if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_VER}" ]]; then
+  say "OpenClaw ${RUNNING_VER} -> ${BUILT_VER}: stopping gateway, migrating state"
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli \
+    stop openclaw-cli openclaw-gateway
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+      backup create --only-config --verify --output /home/node/.openclaw/backups
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+      doctor --fix --non-interactive
+else
+  say "OpenClaw version unchanged (${BUILT_VER:-unknown}); no state migration"
+fi
 
 say "docker compose up -d --build"
 # docker's recreate path can trip on a stale temp-name reservation
@@ -192,6 +242,34 @@ if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build 
   fi
 fi
 rm -f "${UP_LOG}"
+
+# ─── Reload Grafana's provisioned alerting ───────────────────────────────────
+#
+# Grafana reads provisioning/alerting/*.yml at STARTUP only, and `up -d` does
+# not recreate grafana when only a bind-mounted file changed - so a rule
+# merged to main would sit on disk unloaded until the next unrelated
+# recreate. The admin reload endpoint applies rules, contact points and
+# policies from the files now. Fails the deploy if Grafana never answers:
+# alert rules that did not load are the failure this stack exists to prevent.
+say "reloading Grafana alerting provisioning"
+GRAFANA_USER="$(sed -nE 's/^[[:space:]]*GRAFANA_ADMIN_USER=["'"'"']?([^"'"'"']*)["'"'"']?[[:space:]]*$/\1/p' "${ENV_FILE}" | head -1)"
+GRAFANA_PASS="$(sed -nE 's/^[[:space:]]*GRAFANA_ADMIN_PASSWORD=["'"'"']?([^"'"'"']*)["'"'"']?[[:space:]]*$/\1/p' "${ENV_FILE}" | head -1)"
+GRAFANA_PORT_VALUE="$(sed -nE 's/^[[:space:]]*GRAFANA_PORT=["'"'"']?([0-9]+)["'"'"']?[[:space:]]*$/\1/p' "${ENV_FILE}" | head -1)"
+GRAFANA_URL="http://127.0.0.1:${GRAFANA_PORT_VALUE:-3000}"
+for _ in $(seq 1 30); do
+  if curl -sf -o /dev/null "${GRAFANA_URL}/api/health"; then break; fi
+  sleep 2
+done
+# Credentials go in through a curl config on stdin: not on the command line
+# (visible in `ps`), not in a -u flag (gitleaks' curl-auth-user rule).
+if ! curl -sf -o /dev/null -X POST -K - "${GRAFANA_URL}/api/admin/provisioning/alerting/reload" <<CURLCFG
+user = "${GRAFANA_USER:-admin}:${GRAFANA_PASS:-admin}"
+CURLCFG
+then
+  echo "Grafana did not reload alerting provisioning at ${GRAFANA_URL}." >&2
+  echo "Rules on disk are not the rules loaded. Check the grafana container." >&2
+  exit 1
+fi
 
 # ─── Reattach openclaw-cli to new gateway network namespace ──────────────────
 #

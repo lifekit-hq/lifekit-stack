@@ -1,17 +1,20 @@
 # Extends upstream OpenClaw with ffmpeg + openai-whisper for voice transcription.
 # Without this, OpenClaw's tools.media.audio config has nothing to shell out to
 # and Telegram voice notes silently fail to transcribe.
-ARG OPENCLAW_BASE_IMAGE=ghcr.io/openclaw/openclaw:latest
-FROM ${OPENCLAW_BASE_IMAGE}
+#
+# The OpenClaw version is THIS tag and nothing else. It is a literal (no ARG,
+# no compose build-arg) so Dependabot's docker updater can track it
+# (.github/dependabot.yml) and open the bump PR; merging that PR is the
+# upgrade, CI's deploy job ships it. Do not layer `npm i -g openclaw@x` on top:
+# that hid a stale `:latest` base (cached June 2026 while the pin said 6.11)
+# and left node/native deps at whatever the old base carried.
+#
+# In-container `openclaw update` (and the dashboard's "Update now") is the
+# wrong surface here on purpose: the image is the unit of deployment, and
+# anything installed inside a running container is gone on the next recreate.
+FROM ghcr.io/openclaw/openclaw:2026.9.4
 
 USER root
-
-# Pin OpenClaw to a specific version on top of the base image. The base
-# image bakes in whatever openclaw was current when it was built; we pin
-# explicitly so version upgrades survive container recreates. Bump this
-# line to upgrade.
-ARG OPENCLAW_VERSION=2026.6.11
-RUN npm i -g --force openclaw@${OPENCLAW_VERSION}
 
 # Enforce pipefail in any RUN that pipes commands (hadolint DL4006).
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
