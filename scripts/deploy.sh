@@ -293,10 +293,21 @@ fi
 #
 # Force-recreate whenever the CLI is running (--profile cli covers the
 # profile gate; the command is a no-op if the CLI container is stopped).
-say "reattaching openclaw-cli to new gateway network namespace"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-  --profile cli up -d --force-recreate openclaw-cli \
-  || echo "(openclaw-cli force-recreate skipped — not running)"
+# Only when the persistent CLI container is actually running. `up -d
+# --force-recreate` STARTS the service regardless, and on OpenClaw >= 2026.9
+# the bare `openclaw` entrypoint opens a TUI that refuses to start with
+# several agents configured ("TUI startup has no explicit owner") - so every
+# deploy resurrected a container that died five times and tripped the
+# container-exited-abnormally alert (2026-09-13). One-shot `run --rm` calls
+# below never needed the persistent container.
+CLI_STATE="$(docker inspect compose-openclaw-cli-1 --format '{{.State.Status}}' 2>/dev/null || echo absent)"
+if [[ "${CLI_STATE}" == "running" ]]; then
+  say "reattaching openclaw-cli to new gateway network namespace"
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    --profile cli up -d --force-recreate openclaw-cli
+else
+  say "openclaw-cli persistent container is ${CLI_STATE}; not started (on-demand only)"
+fi
 
 # ─── Reset stuck agent sessions ───────────────────────────────────────────────
 #
