@@ -203,7 +203,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          # 2026-09-13: doctor on 2026.9.4 was OOM-killed at 512m on both
+          # deploys (dmesg: openclaw-doctor, CONSTRAINT_MEMCG); the post-deploy
+          # checks then ran against a dead process.
+          memory: 2g
     stdin_open: true
     tty: true
     environment:
