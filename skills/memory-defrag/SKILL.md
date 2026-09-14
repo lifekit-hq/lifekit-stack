@@ -22,7 +22,7 @@ description: Defragment the memory vault - dedupe/merge overlapping pages (the l
 3. **Sync-timer coordination** (the main operational risk - per-change commits racing the auto-sync timers):
    - **VPS:** stop the timer for the session: `sudo systemctl stop memory-sync.timer`. Restart it in step 6 no matter how the run ends.
    - **PC / workstation:** if an auto-backup task runs on this machine (git log showing `auto-backup PC ...` commits is the tell), pause it if you control it. If you cannot pause it, use the **atomic fallback**: keep each edit->commit cycle under a minute, check `git status` before every commit, and reconcile any interleaved timer commit with `git pull --rebase` before continuing.
-4. Baseline scan: `python3 <lifekit-stack>/skills/memory-vault/scripts/vault_scan.py --vault $VAULT`. Record the finding count - the run must not end with more findings than it started with.
+4. Baseline scan: `sh $VAULT/bin/lint.sh` (the vault harness, since 2026-09-14). Record the finding count - the run must not end with more findings than it started with.
 5. Note the session token count (or start a fresh session so the delta is readable). The report in step 5 needs it.
 
 ## 2. Scan for candidates
@@ -65,7 +65,7 @@ Write `audits/YYYY-MM-DD-defrag-report.md` (structural frontmatter: `name`, `sum
 
 ## 6. Close out (every run, even aborted ones)
 
-1. `vault_scan.py` - finding count <= the baseline from step 1.4.
+1. `sh $VAULT/bin/lint.sh` - finding count <= the baseline from step 1.4.
 2. Commits: one per change, message `defrag(<area>): <what and why in one line>`. No batch commits, no agent co-author line. Push.
 3. Restart anything paused in step 1.3 (VPS: `sudo systemctl start memory-sync.timer`).
 4. If typed pages (`concepts/`, `sources/`, ...) changed: `openclaw wiki compile` on the VPS (not installed on PC - note "compile pending" if running there).

@@ -20,33 +20,19 @@ In order: `$MEMORY_VAULT` env var → `~/memory` → `/srv/memory`. Everything b
 ## 2. Scan (structure, links, orphans, frontmatter)
 
 ```bash
-python3 scripts/vault_scan.py [--vault $VAULT]
+sh $VAULT/bin/lint.sh            # whole vault; exit 1 on high/medium
+sh $VAULT/bin/index.sh           # regenerate index.md after adding/removing a page
+sh $VAULT/bin/contradictions.sh  # before editing a decided subject
+sh $VAULT/bin/audit.sh           # full report -> audits/latest.md
 ```
 
-Checks, per the contract: structure allowlist (parsed from the README's `vault-structure` block), **scope coverage** (see below), broken wikilinks (report ≥3x targets — contract says write those pages or de-link), orphan wiki pages, missing frontmatter, legacy `last_updated`, per-project `plan.md`/`log.md`/`journal.md` completeness, empty folders, non-kebab / hashed filenames, missing category `INDEX.md` (≥2 pages), and runtime/code files under a knowledge dir (`*.jsonl`/`*.db`/`*.py`/`*.log`; `/tasks/`+`/runs/` scaffold excluded, `system/rotate-extras.py` allowlisted). Exit 0 = clean, 1 = findings. Run it before and after any multi-file change.
-
-**Scan scope is derived from the allowlist, never hand-listed.** Every top-level
-allowlist entry must fall into exactly one class, declared at the top of
-`vault_scan.py`: `WIKI_DIRS` (fully linted), `GENERATED_DIRS` (machine-written —
-`reports/`, `audits/`), `EVIDENCE_DIRS` (`sources/` — cited by `claims[]`, not
-wikilinks), `OPAQUE_DIRS` (runtime — `state/`, `scout/`, `Clippings/`), or
-`DATA_ROOTS`. Root `.md` files in the allowlist are linted for links
-automatically, so `CORE.md` and `CLAUDE.md` are covered without being listed
-anywhere.
-
-Two findings guard the classification itself: `scope-unclassified` (an allowlist
-entry no class claims) and `scope-stale` (a class naming a path the allowlist
-dropped). An unclassified directory falls through to **full wiki lint**, not to
-being skipped — unknown paths get more scrutiny, never less. The invariant:
-*a directory the contract protects still gets linted*; "protected" and
-"unchecked" must never be the same state. Do not silence a `scope-unclassified`
-finding by inventing a class for the path — decide what the path IS first.
+The harness lives in the vault (`bin/`, since 2026-09-14) so PC hooks, sessions and the weekly cron share one implementation. Scope classes (wiki / evidence / generated / opaque / tool) are declared in `bin/lib.sh` and validated against the README allowlist: an unclassified directory is a finding, never a silent skip.
 
 ## 3. New-page checklist (all steps, every time)
 
 1. Right home per the README decision rule (sources / log / project / domain / typed page).
-2. Frontmatter per the page's layer (plugin layer: `pageType`/`id`/`claims[]`…; structural layer: `name`/`summary`/`updatedAt`/`status`). `summary` is load-bearing.
-3. Add a hook line to the category `INDEX.md` **and** root `index.md`.
+2. Frontmatter in the one schema: `name` (unique), `summary` (load-bearing), `updatedAt` (`YYYY-MM-DD`), `status`. `sh $VAULT/bin/normalize.sh <page>` fixes shape.
+3. Run `sh $VAULT/bin/index.sh` (root `index.md` is generated; never hand-edit it).
 4. Wikilinks liberally; `[[path/file|alias]]` when basenames collide.
 5. Append the `log.md` entry (formats in §5).
 
@@ -68,7 +54,7 @@ A lesson/rule discovered in a journal entry, incident, or session gets **promote
 
 ## 7. Structure freeze
 
-The README carries a machine-readable `vault-structure` allowlist. **No new top-level folder or artifact pattern without a graded `proposals.md` entry first.** The scanner flags violations; do not "fix" a violation by adding it to the allowlist — file the proposal.
+The README carries a machine-readable `vault-structure` allowlist. **No new top-level folder or artifact pattern without a graded `proposals.md` entry first.** `bin/lint.sh` flags violations; do not "fix" a violation by adding it to the allowlist — file the proposal.
 
 ## 8. Per-surface notes
 

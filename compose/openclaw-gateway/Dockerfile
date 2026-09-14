@@ -21,6 +21,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
+        git \
+        jq \
         python3 \
         python3-venv \
         make \
