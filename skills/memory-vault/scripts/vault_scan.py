@@ -246,9 +246,20 @@ def main():
             dd = os.path.join(proj, d)
             if not os.path.isdir(dd):
                 continue
+            # README rotation policy: a concluded project folds its triad down to
+            # plan.md (facts + outcome) + compacted log.md and deletes the rest,
+            # so an archived project legitimately has no journal.md.
+            archived = False
+            try:
+                with open(os.path.join(dd, "plan.md"), encoding="utf-8") as fh:
+                    head = fh.read(2048)
+                archived = bool(re.search(r"^status:\s*archived\s*$", head, re.M))
+            except OSError:
+                pass
+            required = ("plan.md", "log.md") if archived else ("plan.md", "log.md", "journal.md")
             missing = [
                 f
-                for f in ("plan.md", "log.md", "journal.md")
+                for f in required
                 if not os.path.exists(os.path.join(dd, f))
             ]
             if missing:
