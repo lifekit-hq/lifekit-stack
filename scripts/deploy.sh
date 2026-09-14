@@ -78,6 +78,25 @@ git reset -q --hard "origin/${STACK_DEFAULT}"
 # NOTE (ecosystem decoupling): when the OpenClaw entity gets its own deploy
 # script, this block migrates there — the audit cron is an OpenClaw cron.
 
+# ─── claw state: /srv/memory/state -> /var/lib/lifekit/state (one-time move) ─────
+#
+# The claw data stores (workout-claw, nutrition-claw, life-state) are runtime
+# state, not knowledge; the vault's README (2026-09-14) evicts them from the
+# tracked vault. The compose mounts now point at $LIFEKIT_STATE_DIR_HOST/state.
+# Move the existing data once, only when the new location is still empty, so a
+# redeploy never overwrites live state. The vault copy is deleted from git
+# separately, after this has run.
+STATE_DST="${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state"
+STATE_SRC="${LIFEKIT_LIFE_DIR:-/srv/memory}/state"
+for claw in workout-claw nutrition-claw life-state; do
+  if [ -d "${STATE_SRC}/${claw}" ] && [ ! -e "${STATE_DST}/${claw}" ]; then
+    say "claw state move: ${STATE_SRC}/${claw} -> ${STATE_DST}/${claw}"
+    mkdir -p "${STATE_DST}"
+    cp -a "${STATE_SRC}/${claw}" "${STATE_DST}/${claw}"
+    chown -R 1000:1000 "${STATE_DST}/${claw}" 2>/dev/null || true
+  fi
+done
+
 say "memory-audit sync (repo -> gateway workspace)"
 AUDIT_DST="${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}/memory-audit"
 mkdir -p "${AUDIT_DST}"
