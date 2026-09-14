@@ -119,17 +119,17 @@ services:
       # workout-claw data store. The CLI hardcodes $HOME/.workout-claw
       # (src/lib/storage.ts); map it to the same logs dir under ~/.life so
       # sessions persist and match the host/PC layout.
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/state/workout-claw:/home/node/.workout-claw
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state/workout-claw:/home/node/.workout-claw
       # nutrition-claw data store. Same $HOME hardcode pattern as workout-claw.
       # This mount was missing when the CLI was linked into the persisted npm
       # prefix (2026-06-20), so the in-container store was ephemeral and meal
       # logs vanished on every recreate. Host dir is the canonical claw store.
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/state/nutrition-claw:/home/node/.nutrition-claw
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state/nutrition-claw:/home/node/.nutrition-claw
       # life-state data store. The CLI hardcodes $HOME/.life/state
       # (src/lib/storage.ts) with no env override; same persistence pattern as
       # the other two claws. Without this mount, daily state written in the
       # container vanished on every recreate (broken since 2026-05-27).
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/state/life-state:/home/node/.life/state
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state/life-state:/home/node/.life/state
     cap_drop:
       - NET_RAW
       - NET_ADMIN

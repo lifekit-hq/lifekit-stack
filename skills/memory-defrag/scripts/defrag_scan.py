@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Defrag-candidate scanner for the memory vault (read-only, stdlib-only).
 
-Companion to skills/memory-vault/scripts/vault_scan.py: that script lints the
+Companion to the vault harness ($VAULT/bin/lint.sh, since 2026-09-14): that lints the
 contract; this one surfaces REORGANIZATION candidates for a /defrag session
 (decision of record: vault system/proposals.md 2026-07-20-dreaming-as-defragmentation).
 

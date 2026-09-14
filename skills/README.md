@@ -11,7 +11,7 @@ Two kinds of skills live here:
 | Skill | Purpose |
 |---|---|
 | `lifekit-router` | Route every user intent to the right capability module using `~/.life/system/modules.yaml` |
-| `memory-vault` | Operate the markdown memory vault: sync discipline, structure/link scanner (`vault_scan.py`), new-page checklist, log formats |
+| `memory-vault` | Operate the markdown memory vault: sync discipline, structure/link scanner (the vault `bin/lint.sh`), new-page checklist, log formats |
 | `memory-defrag` | Manual-first `/defrag` pass over the vault: dedupe/merge candidates, splits, INDEX drift, orphan sources (`defrag_scan.py`); propose-don't-apply for merges. No cron without a separate graded proposal |
 | `morning-brief` | Daily cross-project brief to Telegram (repo sweep via `gh` + devclaw live state) ending in numbered recommendations; a reply ("1 and 3") dispatches the selected items to devclaw via MCP. Owned by the `devclaw` waiter agent; installed + cron-ensured by `scripts/ensure-morning-brief.sh` (cron state lives in the gateway DB, not openclaw.json — the script is the git-side declaration) |
 
