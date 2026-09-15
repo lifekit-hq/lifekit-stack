@@ -29,3 +29,10 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ['container-exporter:9417']
+
+  # Host-level metrics (root fs free space today). The `box` rule group's
+  # target-down alert already covers this target vanishing.
+  - job_name: node-exporter
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['node-exporter:9100']
