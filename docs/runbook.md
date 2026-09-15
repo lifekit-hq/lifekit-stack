@@ -15,8 +15,9 @@ cooldown so upstream's own hotfix cycle has landed. The loop:
 2. Skim the upstream release notes it links. Merge (squash).
 3. The main-push deploy job runs `scripts/deploy.sh`: builds the new image,
    and because the version changed: tags the running image as
-   `lifekit-openclaw:prev` and `:pre-<new version>`, stops the gateway,
-   writes a config-only backup to `/srv/openclaw/config/backups/`, runs
+   `lifekit-openclaw:prev` (the [one-rollback rule](#the-one-rollback-rule)),
+   stops the gateway, writes a config-only backup to
+   `/srv/openclaw/config/backups/`, runs
    `doctor --fix --non-interactive` with the new image against the live
    state (config rewrite, SQLite migrations, official-plugin re-pin), then
    recreates the gateway and runs `openclaw doctor`, `health`,
@@ -80,16 +81,26 @@ bash scripts/deploy.sh
 
 ## Rolling back OpenClaw
 
-`deploy.sh` keeps the image that ran the previous version as
-`lifekit-openclaw:prev` and `lifekit-openclaw:pre-<new version>` (the retag
-happens only on a version change, so later deploys of the same version do
-not overwrite it). If the new version misbehaves after the deploy checks
-passed:
+### The one-rollback rule
+
+`deploy.sh` keeps exactly one fallback image, `lifekit-openclaw:prev`: the
+image that ran the previous version, retagged only on a version change (so
+later deploys of the same version do not overwrite it). When the retag
+moves `:prev` to a new image, `deploy.sh` also drops the image the old
+`:prev` pointed to, once nothing else tags or runs it - one rollback deep,
+never more. Left unchecked (pre-2026.9, `deploy.sh` also stamped an ad-hoc
+`pre-<version>` tag on every bump) these pile up at ~14 GB apiece and sit on
+the box for months; don't reintroduce a second standing tag for this. If you
+need to keep a bad build around past its rollback window - for a bug report,
+or to compare two versions by hand - tag it explicitly for that one purpose
+and untag it yourself once you're done; `deploy.sh` will not do that
+bookkeeping for you.
+
+If the new version misbehaves after the deploy checks passed:
 
 ```bash
 ssh <your-vps-tailscale-name>
 cd /srv/lifekit-stack/compose
-docker tag lifekit-openclaw:local lifekit-openclaw:bad-$(date +%Y%m%d)   # keep for the bug report
 docker tag lifekit-openclaw:prev  lifekit-openclaw:local
 docker compose --env-file /srv/openclaw/config/.env -f docker-compose.yml \
   up -d --no-build --force-recreate openclaw-gateway

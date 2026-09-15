@@ -225,16 +225,27 @@ RUNNING_VER="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
   exec -T openclaw-gateway openclaw --version 2>/dev/null | awk '{print $2}' || true)"
 BUILT_VER="$(docker run --rm --entrypoint openclaw lifekit-openclaw:local --version 2>/dev/null | awk '{print $2}' || true)"
 if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_VER}" ]]; then
-  # Keep the image that ran the OLD version reachable as :prev and
-  # :pre-<new version> (docs/runbook.md "Rolling back OpenClaw"). Only on a
-  # version change: 2026-09-13 the unconditional retag ran on three queued
+  # Keep the image that ran the OLD version reachable as :prev, and only
+  # :prev - the one-rollback rule (docs/runbook.md "Rolling back OpenClaw").
+  # Ad-hoc pre-<version> tags used to pile up one per bump, at ~14 GB each,
+  # never cleaned up; moving :prev now also drops the image the old :prev
+  # pointed to, once nothing else tags or runs it. Retag itself is gated on
+  # a version change: 2026-09-13 the unconditional retag ran on three queued
   # deploys in a row and :prev ended up pointing at the new version.
   PREV_IMAGE="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
     images -q openclaw-gateway 2>/dev/null | head -1 || true)"
+  OLD_PREV_IMAGE="$(docker images -q lifekit-openclaw:prev 2>/dev/null || true)"
   if [[ -n "${PREV_IMAGE}" ]]; then
-    say "tagging running image ${PREV_IMAGE:0:12} as :prev and :pre-${BUILT_VER}"
+    say "tagging running image ${PREV_IMAGE:0:12} as :prev"
     docker tag "${PREV_IMAGE}" lifekit-openclaw:prev
-    docker tag "${PREV_IMAGE}" "lifekit-openclaw:pre-${BUILT_VER}"
+    if [[ -n "${OLD_PREV_IMAGE}" && "${OLD_PREV_IMAGE}" != "${PREV_IMAGE}" ]]; then
+      OLD_PREV_TAGS="$(docker inspect --format '{{json .RepoTags}}' "${OLD_PREV_IMAGE}" 2>/dev/null || echo '[]')"
+      OLD_PREV_IN_USE="$(docker ps -a -q --filter "ancestor=${OLD_PREV_IMAGE}" 2>/dev/null || true)"
+      if [[ "${OLD_PREV_TAGS}" == "[]" && -z "${OLD_PREV_IN_USE}" ]]; then
+        say "removing image ${OLD_PREV_IMAGE:0:12} the old :prev pointed to (now untagged, unused)"
+        docker rmi "${OLD_PREV_IMAGE}" 2>/dev/null || true
+      fi
+    fi
   fi
   # Every file under the state dir must belong to the container user (uid
   # 1000). Root-owned leftovers from hand edits (.bak-*, sqlite copies) make
