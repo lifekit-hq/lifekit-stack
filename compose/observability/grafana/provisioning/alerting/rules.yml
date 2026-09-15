@@ -253,6 +253,51 @@ groups:
             has used more than 90% of its memory cap for 10 minutes. The next
             step is the OOM killer and a restart. `docker stats --no-stream {{ $labels.name }}`.
 
+      - uid: root-filesystem-low-space
+        title: root filesystem is low on free space
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Free space as a fraction of size, root mount only - node-exporter's
+              # mount-points-exclude filter keeps pseudo and overlay filesystems
+              # out of this series entirely, so there is exactly one instance.
+              expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [0.15]}
+        # A vanished node-exporter target is target-down's job, not this rule's.
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "root filesystem has less than 15% free space"
+          description: >-
+            node_filesystem_avail_bytes / node_filesystem_size_bytes for / has
+            been below 15% for 10 minutes. `df -h /` on the box, then
+            `docker system df` to find reclaimable image and build cache.
+
   - orgId: 1
     name: devclaw-deadman
     folder: lifekit

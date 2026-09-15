@@ -14,6 +14,8 @@
 #   loki / prometheus / grafana — the box's observability stack (moved here
 #    from finance-sentry 2026-09-06): scrapes finance-sentry + devclaw, holds
 #    the dead-man alert rules, pings Telegram directly. Loopback-bound.
+#   node-exporter         — host metrics (root fs free space today); read-only root
+#    mount, loopback-bound, scraped by prometheus alongside the other targets.
 #   notify-relay         — turns devclaw's notify_url POST into a Telegram message via the gateway CLI; internal-only on :8090
 #
 # Retired in the 2026-05-27 v2 cutover:
@@ -401,6 +403,38 @@ services:
     networks:
       - default
       - lifekit-shared
+
+  node-exporter:
+    <<: *policy
+    # Host metrics - the box has none today (2026-09-15: root fs hit 85% used
+    # unnoticed, no node_filesystem_* series existed to alert on it). Root fs
+    # mounted read-only for filesystem stats only; --collector.disable-defaults
+    # + enabling just `filesystem` keeps this to the one signal we alert on,
+    # matching container-exporter's narrow-scope shape. Loopback-bound, no
+    # --net=host: the filesystem collector reads its own /proc/self/mountinfo,
+    # which does not require host PID/network namespaces.
+    image: prom/node-exporter:v1.8.2
+    command:
+      - --path.rootfs=/host
+      - --collector.disable-defaults
+      - --collector.filesystem
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containers/storage/.+|host/(dev|proc|sys|run))($|/)
+      - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs)$
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      - "127.0.0.1:${NODE_EXPORTER_PORT:-9100}:9100"
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - default
 
   grafana:
     <<: *policy
