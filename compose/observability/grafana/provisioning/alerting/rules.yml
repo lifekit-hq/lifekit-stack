@@ -377,6 +377,10 @@ groups:
               # the exporter creates a series at its first event, and
               # increase() reads a series born at 1 as 0 - without the second
               # half the first failure after every gateway restart is missed.
+              # The second half is gated on the target having been up 15
+              # minutes ago: a failed scrape writes staleness markers, so
+              # `offset 15m` briefly finds nothing and every old failure series
+              # would look new; the same holds on the first scrapes after deploy.
               # Command-kind cron jobs start no agent run and are not seen here.
               # Trigger values seen in OpenClaw 2026.9.4 core: user, cron,
               # heartbeat, memory, overflow, manual, cli. Interactive turns
@@ -392,23 +396,26 @@ groups:
                 sum by (trigger, outcome) (
                   (increase(openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}[15m]) > 0)
                   or
-                  (openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}
+                  ((openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}
                     unless openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"} offset 15m)
+                    and on() (up{job="openclaw"} offset 15m == 1))
                 )
                 or
                 sum by (trigger, outcome) (
                   (increase(openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}[15m]) > 0)
                   or
-                  (openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}
+                  ((openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}
                     unless openclaw_run_completed_total{trigger!~"cron|user", outcome="error"} offset 15m)
+                    and on() (up{job="openclaw"} offset 15m == 1))
                 )
                 or
                 sum by (trigger, outcome) (
                   label_replace(label_replace(
                     (increase(openclaw_prometheus_series_dropped_total[15m]) > 0)
                     or
-                    (openclaw_prometheus_series_dropped_total
-                      unless openclaw_prometheus_series_dropped_total offset 15m),
+                    ((openclaw_prometheus_series_dropped_total
+                      unless openclaw_prometheus_series_dropped_total offset 15m)
+                      and on() (up{job="openclaw"} offset 15m == 1)),
                   "trigger", "exporter", "", ""), "outcome", "series_dropped", "", "")
                 )
               instant: true
