@@ -27,6 +27,13 @@ VPS self-hosted runner (`git reset --hard origin/main && bash scripts/deploy.sh`
 `scripts/deploy.sh` on the VPS directly — it is idempotent. Host-level changes use the `denys`
 account (sudo); see README "VPS users".
 
+The live OpenClaw config (`/srv/openclaw/config/openclaw.json`) is host state, hand-edited and
+only mirrored to a separate repo — not in this repo. A change that needs it ships as an operator
+step (an `openclaw config patch` snippet) in the PR description. Check keys against the installed
+schema (`openclaw config schema` inside the gateway), not just docs.openclaw.ai. Anything the
+gateway must load survives `--force-recreate` only if it is baked into the image
+(`compose/openclaw-gateway/Dockerfile`): `~/.openclaw` is a host bind mount.
+
 ## Mandatory gates (every PR, no soft-fail)
 
 - **Lint** = `pre-commit run --all-files`: gitleaks (secrets), hygiene hooks, yamllint,
