@@ -97,7 +97,12 @@ loads, answers the scrape with HTTP 200 and an empty body, and no alert can
 fire. Being a state-dir install, the deploy's plugin-parity check re-pins it
 on a version bump. The host-config patch below enables it.
 
-### Host-config patch: plugin load and the 2026-09-16 audit warnings
+Prometheus scrapes it as job `openclaw` with the gateway token (compose
+secret `openclaw_gateway_token`, from `OPENCLAW_GATEWAY_TOKEN` in the env
+file); rotating that token means recreating `prometheus` too. Check it with
+`curl -s localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="openclaw") | .health'`.
+
+### Host-config patch: plugin enable and the 2026-09-16 audit warnings
 
 `/srv/openclaw/config/openclaw.json` is host state: this repo does not apply
 it, it only documents the patch. The patch below enables the plugin and
@@ -164,11 +169,6 @@ and `models.weak_tier` cleared; `security_full_configured` (devclaw) and
 Follow-up, out of scope for this change: the boundary-drift remediation
 (sandbox those agents, or split the sensitive MCP servers into a separate
 gateway).
-
-Prometheus scrapes it as job `openclaw` with the gateway token (compose
-secret `openclaw_gateway_token`, from `OPENCLAW_GATEWAY_TOKEN` in the env
-file); rotating that token means recreating `prometheus` too. Check it with
-`curl -s localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="openclaw") | .health'`.
 
 ## Rolling back OpenClaw
 
