@@ -41,6 +41,7 @@ on_exit() {
     printf '\033[1;31m  Later steps (cli reattach, session reset, runner verify) did NOT run.\033[0m\n' >&2
     printf '\033[1;31m  Fix the failure and re-run deploy.sh — it is idempotent.\033[0m\n' >&2
   fi
+  if [[ -n "${DEPLOY_DOCKER_CONFIG:-}" ]]; then rm -rf "${DEPLOY_DOCKER_CONFIG}"; fi
 }
 trap on_exit EXIT
 
@@ -222,6 +223,15 @@ fi
 # Gated on an actual version change so ordinary deploys keep zero downtime.
 # The config-only backup is seconds; a full `backup create` of the state dir
 # is the manual step before a multi-month jump (docs/runbook.md).
+
+# Private, empty Docker config for every docker call from here on. The
+# dashboard and devclaw deploy jobs `docker login ghcr.io` with their
+# job-scoped GITHUB_TOKEN into the shared lifekit config and never log out;
+# once that token expires every ghcr pull through that config fails with
+# "failed to fetch oauth token: denied" (2026-09-15/16). All images this
+# stack pulls are public, so anonymous pulls are enough.
+DEPLOY_DOCKER_CONFIG="$(mktemp -d)"
+export DOCKER_CONFIG="${DEPLOY_DOCKER_CONFIG}"
 
 say "docker compose build"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build openclaw-gateway
@@ -533,16 +543,22 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 # this list in step with agents.entries.*.model when routing changes:
 #   fable -> claude-cli (Claude-only, no fallback: exercises that backend and
 #            nothing else); kit -> codex (OpenAI primary).
-# An explicit per-agent session id keeps the turn out of the agents' main
+# A per-agent, per-run session id keeps the turn out of the agents' main
 # sessions (one shared id fails: a session is placed with its first agent
-# and the gateway refuses another agent in it); no --deliver, so nothing
-# reaches Telegram. Auth and quota errors are external
-# state (re-login, weekly cap) and only warn; anything else fails the run.
+# and the gateway refuses another agent in it) and out of any earlier smoke
+# session: a fixed id carries CLI history across a credential change, which
+# the gateway refuses ("cli session history refused across auth boundary").
+# No --deliver, so nothing reaches Telegram. A good turn is status "ok" with
+# a non-empty reply (there is no top-level "ok" key); anything else prints
+# the error, or status/summary/reply when there is none. Auth and quota
+# errors are external state (re-login, weekly cap) and only warn; anything
+# else fails the run.
 SMOKE_AGENTS="${SMOKE_AGENTS:-fable kit}"
+SMOKE_RUN="$(date -u +%Y%m%dT%H%M%SZ)"
 say "smoke turns (${SMOKE_AGENTS})"
 for agent in ${SMOKE_AGENTS}; do
   OUT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T openclaw-gateway \
-    openclaw agent --agent "${agent}" --session-id "deploy-smoke-${agent}" --timeout 150 --json \
+    openclaw agent --agent "${agent}" --session-id "deploy-smoke-${agent}-${SMOKE_RUN}" --timeout 150 --json \
       -m "Deploy smoke test: reply with exactly the word pong and nothing else." 2>&1 || true)"
   VERDICT="$(printf '%s' "${OUT}" | python3 -c '
 import json, re, sys
@@ -551,9 +567,10 @@ try:
     d = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
 except Exception:
     print("FAIL no JSON: " + raw[:200].replace("\n", " ")); sys.exit()
-if d.get("ok"):
+texts = [p.get("text") or "" for p in (d.get("result") or {}).get("payloads") or []]
+if d.get("status") == "ok" and "".join(texts).strip():
     print("PASS"); sys.exit()
-err = json.dumps(d.get("error"))
+err = json.dumps(d.get("error") or {"status": d.get("status"), "summary": d.get("summary"), "reply": texts})
 soft = re.search(r"rate_limit|weekly limit|usage limit|no usable profiles|expired|not logged in|auth", err, re.I)
 print(("WARN " if soft else "FAIL ") + err[:300])
 ')"
