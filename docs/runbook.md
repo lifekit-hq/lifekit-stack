@@ -87,17 +87,77 @@ base image's own OpenClaw version, so a bump moves it too. If a bump build
 fails at `npm pack @openclaw/diagnostics-prometheus@<version>`, upstream has
 not published that plugin release yet: wait for it, do not unpin. It is not
 in the state dir, so `plugins update` and the deploy's plugin-parity check do
-not touch it. The gateway only loads it when the host `openclaw.json` says so
-(one-time, then recreate the gateway):
+not touch it. The gateway only loads it when the host `openclaw.json` says so;
+that load step ships in the host-config patch below.
+
+### Host-config patch: plugin load and the 2026-09-16 audit warnings
+
+`/srv/openclaw/config/openclaw.json` is host state: this repo does not apply
+it, it only documents the patch. The patch below loads the plugin and
+addresses the four `openclaw security audit` warnings from 2026-09-16
+(`gateway.auth_no_rate_limit`, `tools.exec.security_full_configured`,
+`tools.exec.agent_skill_mcp_boundary_drift`, `models.weak_tier`). It is
+checked against the 2026.9.4 schema (`openclaw config schema`); objects
+merge and arrays replace (`openclaw config patch --help`). Save it as
+`openclaw.patch.json5`:
 
 ```json5
 {
+  gateway: {
+    auth: {
+      rateLimit: { maxAttempts: 10, windowMs: 60000, lockoutMs: 300000, exemptLoopback: true },
+    },
+  },
   plugins: {
     load: { paths: ["/opt/openclaw-plugins/diagnostics-prometheus"] },
     entries: { "diagnostics-prometheus": { enabled: true } },
   },
+  agents: {
+    defaults: { model: { fallbacks: [] } },
+    entries: {
+      kit: { model: { fallbacks: [] } },
+      health: { model: { fallbacks: [] } },
+      career: { model: { fallbacks: [] }, tools: { exec: { mode: "ask" } } },
+      learning: { model: { fallbacks: [] }, tools: { exec: { mode: "ask" } } },
+      social: { model: { fallbacks: [] }, tools: { exec: { mode: "ask" } } },
+      devclaw: { model: { fallbacks: [] } },
+      fable: { tools: { exec: { mode: "ask" } } },
+    },
+  },
 }
 ```
+
+Apply it (dry run first), then recreate the gateway from the compose dir -
+this interrupts Kit briefly. `gateway.reload` defaults to `hybrid`, so the
+`plugins` change may restart the gateway on its own:
+
+```bash
+docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin --dry-run < openclaw.patch.json5
+docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin < openclaw.patch.json5
+cd /srv/lifekit-stack/compose
+docker compose --env-file /srv/openclaw/config/.env -f docker-compose.yml \
+  up -d --force-recreate openclaw-gateway
+```
+
+Exec policy per agent:
+
+- career, learning, social: set to `ask` - 0 exec calls in 30 days and no domain cron.
+- fable: `full` to `ask` - no sessions ever; its only automated turn is the deploy pong smoke.
+- devclaw keeps `full` - its daily morning-brief cron sweeps repos with `gh` and writes briefs.
+- kit keeps `full` - skills github, gh-issues and summarize need host binaries (145 exec calls in 30 days).
+- health keeps `full` - its three claw CLIs are its only write path.
+- finance keeps `full` - it writes state logs via bash (2160 exec calls in 30 days).
+
+Command-kind crons (`memory_vault_audit`, `weekly_log_summary`) bypass exec
+policy.
+
+Expected `openclaw security audit` after the patch: `gateway.auth_no_rate_limit`
+and `models.weak_tier` cleared; `security_full_configured` (devclaw) and
+`agent_skill_mcp_boundary_drift` (kit, health, finance) remain.
+
+Follow-up, out of scope for this change: the boundary-drift remediation
+(sandbox those agents, or split the sensitive MCP servers into a separate
+gateway).
 
 Prometheus scrapes it as job `openclaw` with the gateway token (compose
 secret `openclaw_gateway_token`, from `OPENCLAW_GATEWAY_TOKEN` in the env
