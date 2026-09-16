@@ -374,6 +374,22 @@ then
   exit 1
 fi
 
+# ─── Reload Grafana's provisioned datasources ────────────────────────────────
+#
+# Same trap as alerting above: datasources.yml is bind-mounted and Grafana
+# reads provisioning/datasources/*.yml at STARTUP only, so the Tempo
+# datasource (#144) added to disk would sit unloaded until the next
+# unrelated grafana recreate. Same stdin curl-config credential pattern.
+say "reloading Grafana datasource provisioning"
+if ! curl -sf -o /dev/null -X POST -K - "${GRAFANA_URL}/api/admin/provisioning/datasources/reload" <<CURLCFG
+user = "${GRAFANA_USER:-admin}:${GRAFANA_PASS:-admin}"
+CURLCFG
+then
+  echo "Grafana did not reload datasource provisioning at ${GRAFANA_URL}." >&2
+  echo "Datasources on disk are not the datasources loaded. Check the grafana container." >&2
+  exit 1
+fi
+
 # ─── Reattach openclaw-cli to new gateway network namespace ──────────────────
 #
 # openclaw-cli uses network_mode: service:openclaw-gateway. When only the

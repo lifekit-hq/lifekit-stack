@@ -14,6 +14,9 @@
 #   loki / prometheus / grafana — the box's observability stack (moved here
 #    from finance-sentry 2026-09-06): scrapes finance-sentry + devclaw, holds
 #    the dead-man alert rules, pings Telegram directly. Loopback-bound.
+#   otel-collector / tempo — OTLP trace receiver (#144): apps export traces to
+#    the collector, which fans them into Tempo; Grafana links trace <-> log via
+#    the Tempo/Loki datasource wiring. No host ports — reached in-network only.
 #   node-exporter         — host metrics (root fs free space today); read-only root
 #    mount, loopback-bound, scraped by prometheus alongside the other targets.
 #   notify-relay         — turns devclaw's notify_url POST into a Telegram message via the gateway CLI; internal-only on :8090
@@ -436,6 +439,66 @@ services:
     networks:
       - default
 
+  otel-collector:
+    <<: *policy
+    # OTLP fan-in for the box: apps export traces to one place, we decide
+    # sampling/batching/where they go without touching every app. finance-sentry
+    # exports OTLP/HTTP here already (finance-sentry PR 628). Same cross-project
+    # seam as loki/prometheus: default for in-project DNS (-> tempo), lifekit-shared
+    # so finance-sentry-api (compose_default there) and devclaw-mcp (lifekit-shared)
+    # can both reach us. No hot reload -> config mounted as a directory, same as
+    # prometheus; a config change means a recreate.
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    command:
+      - --config=/etc/otel/otel-collector-config.yml
+    volumes:
+      - ./observability/otel-collector:/etc/otel:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "4317"
+      - "4318"
+    depends_on:
+      - tempo
+    networks:
+      - default
+      - lifekit-shared
+
+  tempo:
+    <<: *policy
+    # Trace storage, local backend on a project volume (new -> not external
+    # like the docker_* observability volumes). Retention MUST stay bounded:
+    # the box disk was 83% full at grounding time (2026-09-13) -> compactor
+    # block_retention: 168h (7d) in tempo-config.yml. Only otel-collector and
+    # grafana reach it, both in-project -> default network only.
+    image: grafana/tempo:2.6.1
+    command:
+      - -config.file=/etc/tempo/tempo-config.yml
+    volumes:
+      - ./observability/tempo:/etc/tempo:ro
+      - tempo_data:/var/tempo
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "3200"
+      - "4317"
+    networks:
+      - default
+
   grafana:
     <<: *policy
     image: grafana/grafana:11.2.0
@@ -462,6 +525,7 @@ services:
     depends_on:
       - prometheus
       - loki
+      - tempo
     deploy:
       resources:
         limits:
@@ -623,7 +687,10 @@ networks:
 # Observability data is EXTERNAL: it predates this project (finance-sentry's
 # compose created it as docker_<name>) and must survive recreates. On a fresh
 # box create the three volumes first (`docker volume create ...`) or point the
-# LIFEKIT_*_VOLUME vars at the ones that exist.
+# LIFEKIT_*_VOLUME vars at the ones that exist. tempo_data is new with this
+# project (issue #144), so it's a normal (non-external) project volume —
+# LIFEKIT_TEMPO_VOLUME is a name override for parity with the pattern above,
+# not a requirement to pre-create it.
 volumes:
   loki_data:
     external: true
@@ -634,3 +701,5 @@ volumes:
   grafana_data:
     external: true
     name: ${LIFEKIT_GRAFANA_VOLUME:-docker_grafana_data}
+  tempo_data:
+    name: ${LIFEKIT_TEMPO_VOLUME:-compose_tempo_data}

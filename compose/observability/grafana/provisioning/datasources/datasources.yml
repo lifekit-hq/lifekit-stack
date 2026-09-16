@@ -10,9 +10,28 @@ datasources:
     isDefault: true
     editable: false
 
+  # $$ below escapes Grafana's own env-var expansion in provisioning files —
+  # without it, Grafana tries to resolve ${__value.raw} as an env var and
+  # drops it, rendering a dead link on the derived field.
   - name: Loki
     uid: loki
     type: loki
     access: proxy
     url: http://loki:3100
     editable: false
+    jsonData:
+      derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: '"TraceId":"(\w+)"'
+          name: TraceId
+          url: '$${__value.raw}'
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki

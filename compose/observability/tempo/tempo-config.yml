@@ -1,0 +1,28 @@
+# Tempo single binary, local backend (issue #144). Retention MUST stay
+# bounded — disk was 83% full on the live box at grounding time (2026-09-13) —
+# so compactor.block_retention is the one knob that keeps trace storage from
+# growing unbounded. Mounted as a directory, same reasoning as prometheus/otel-collector.
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 168h        # 7 days
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal

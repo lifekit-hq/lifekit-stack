@@ -20,7 +20,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ## Services
 
-[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines eight services — one of which, `openclaw-cli`, is gated behind the `cli` compose profile (on-demand only). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo (devclaw spec 005), so they no longer appear below; the `ops-agent` watchdog that used to be built here was retired on 2026-09-06 in favour of the observability stack's alert rules. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
+[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines ten services — one of which, `openclaw-cli`, is gated behind the `cli` compose profile (on-demand only). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo (devclaw spec 005), so they no longer appear below; the `ops-agent` watchdog that used to be built here was retired on 2026-09-06 in favour of the observability stack's alert rules. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
 
 | Service | Image | Role |
 | --- | --- | --- |
@@ -31,6 +31,8 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `prometheus` | `prom/prometheus:v2.54.1` | Box-level metrics: scrapes finance-sentry's API and devclaw-mcp's `/metrics` (the dead-man signal). 30d / 5GB retention. Loopback `:9090`. |
 | `loki` | `grafana/loki:3.1.1` | Structured logs from finance-sentry (fire-and-forget push). ~14d retention. Loopback `:3100`. |
 | `grafana` | `grafana/grafana:11.2.0` | Dashboards (each product repo hands its JSON over via a mounted dir) and the **provisioned alert rules** in `compose/observability/grafana/provisioning/alerting/` — Telegram straight from Grafana, no relay in the path. Loopback `:3000`, fronted by Tailscale Serve. |
+| `otel-collector` | `otel/opentelemetry-collector-contrib:0.110.0` | OTLP trace receiver (`:4317` gRPC, `:4318` HTTP) — apps export traces here, the batch processor fans them into Tempo. Same cross-project seam as `loki`/`prometheus`: joins `default` and `lifekit-shared` so finance-sentry-api and devclaw-mcp can both reach it. Internal-only, no host ports. |
+| `tempo` | `grafana/tempo:2.6.1` | Trace storage, local backend on a project volume. Retention bounded at `compactor.block_retention: 168h` (7d) — the disk was 83% full at grounding time. Internal-only, no host ports; Grafana reaches it at `tempo:3200`. |
 | `container-exporter` | `container-exporter:local` (built from `compose/container-exporter/`) | The Docker daemon's own facts about **every** container on the box - running, restart count, health, exit code, memory - as Prometheus metrics. The one signal the `box` alert rules read, whichever repo owns the container. Read-only socket access as `nobody` + the docker group; internal-only on `:9417`. |
 | `node-exporter` | `prom/node-exporter:v1.8.2` | Host metrics - root filesystem free space, the signal that was missing when the box hit 85% used unnoticed. Read-only root mount, filesystem collector only. Loopback `:9100`. |
 | `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
