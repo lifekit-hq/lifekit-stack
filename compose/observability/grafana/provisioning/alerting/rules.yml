@@ -371,13 +371,18 @@ groups:
               # agent run, reported once as run.completed with its outcome.
               # A timeout is outcome="aborted" and a hook block
               # outcome="blocked", so the cron block counts all three. Other
-              # triggers (the captain's turns, subagents) count errors only:
-              # an abort there is usually a deliberate stop.
+              # background triggers count errors only: an abort there is
+              # usually a deliberate stop.
               # Each block pairs increase() with `x unless x offset 15m`:
               # the exporter creates a series at its first event, and
               # increase() reads a series born at 1 as 0 - without the second
               # half the first failure after every gateway restart is missed.
               # Command-kind cron jobs start no agent run and are not seen here.
+              # Trigger values seen in OpenClaw 2026.9.4 core: user, cron,
+              # heartbeat, memory, overflow, manual, cli. Interactive turns
+              # (trigger="user") are excluded on purpose - the person chatting
+              # already sees the error - so background task or subagent runs
+              # labelled "user" are not covered either.
               # The third block covers the exporter itself: it caps its store
               # at 2048 series and refuses new ones once full, so a first-ever
               # failure series on a long-running gateway would never appear.
@@ -392,10 +397,10 @@ groups:
                 )
                 or
                 sum by (trigger, outcome) (
-                  (increase(openclaw_run_completed_total{trigger!="cron", outcome="error"}[15m]) > 0)
+                  (increase(openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}[15m]) > 0)
                   or
-                  (openclaw_run_completed_total{trigger!="cron", outcome="error"}
-                    unless openclaw_run_completed_total{trigger!="cron", outcome="error"} offset 15m)
+                  (openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}
+                    unless openclaw_run_completed_total{trigger!~"cron|user", outcome="error"} offset 15m)
                 )
                 or
                 sum by (trigger, outcome) (
