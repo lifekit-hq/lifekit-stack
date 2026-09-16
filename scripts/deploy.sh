@@ -305,7 +305,7 @@ for p in items:
     if not p.get("enabled"): continue
     v = str(p.get("version") or "")
     if p.get("origin") not in ("bundled", "global") or not re.match(r"^\d{4}\.\d+\.\d+", v): continue
-    if v != core: print(f"{p[\"id\"]} {v}")
+    if v != core: print(p["id"], v)
 ' "${BUILT_VER}"
   }
   MISMATCH="$(plugin_mismatches || true)"

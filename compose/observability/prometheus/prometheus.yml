@@ -37,8 +37,9 @@ scrape_configs:
     static_configs:
       - targets: ['node-exporter:9100']
 
-  # OpenClaw's own runtime metrics (the diagnostics-prometheus plugin, baked
-  # into lifekit-openclaw and loaded via plugins.load.paths). The route needs
+  # OpenClaw's own runtime metrics (the diagnostics-prometheus plugin, a
+  # trusted `openclaw plugins install` in the state dir, docs/runbook.md; a
+  # baked or plugins.load.paths copy loads untrusted and exports nothing). The route needs
   # gateway auth with operator.read: the operator token arrives as a compose
   # secret (docker-compose.yml `secrets:`), never as a value in this file.
   # The `openclaw` rule group alerts on the openclaw_run_completed_total
