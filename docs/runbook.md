@@ -79,21 +79,28 @@ cd /srv/lifekit-stack && git pull
 bash scripts/deploy.sh
 ```
 
-### The baked diagnostics-prometheus plugin
+### The diagnostics-prometheus plugin
 
-The image carries `@openclaw/diagnostics-prometheus` at
-`/opt/openclaw-plugins/diagnostics-prometheus`, pinned at build time to the
-base image's own OpenClaw version, so a bump moves it too. If a bump build
-fails at `npm pack @openclaw/diagnostics-prometheus@<version>`, upstream has
-not published that plugin release yet: wait for it, do not unpin. It is not
-in the state dir, so `plugins update` and the deploy's plugin-parity check do
-not touch it. The gateway only loads it when the host `openclaw.json` says so;
-that load step ships in the host-config patch below.
+`@openclaw/diagnostics-prometheus` is an official plugin installed into the
+state dir, at the core's own version, once per host:
+
+```bash
+V="$(docker exec compose-openclaw-gateway-1 openclaw --version | awk '{print $2}')"
+docker exec compose-openclaw-gateway-1 openclaw plugins install "@openclaw/diagnostics-prometheus@${V}"
+docker exec compose-openclaw-gateway-1 openclaw plugins inspect diagnostics-prometheus | grep Trust
+```
+
+`Trust` must read `reason=trusted-official`. Do not bake it into the image or
+load it through `plugins.load.paths`: OpenClaw only hands the internal
+diagnostics feed to bundled or trusted-official installs, so such a copy
+loads, answers the scrape with HTTP 200 and an empty body, and no alert can
+fire. Being a state-dir install, the deploy's plugin-parity check re-pins it
+on a version bump. The host-config patch below enables it.
 
 ### Host-config patch: plugin load and the 2026-09-16 audit warnings
 
 `/srv/openclaw/config/openclaw.json` is host state: this repo does not apply
-it, it only documents the patch. The patch below loads the plugin and
+it, it only documents the patch. The patch below enables the plugin and
 addresses the four `openclaw security audit` warnings from 2026-09-16
 (`gateway.auth_no_rate_limit`, `tools.exec.security_full_configured`,
 `tools.exec.agent_skill_mcp_boundary_drift`, `models.weak_tier`). It is
@@ -109,7 +116,6 @@ merge and arrays replace (`openclaw config patch --help`). Save it as
     },
   },
   plugins: {
-    load: { paths: ["/opt/openclaw-plugins/diagnostics-prometheus"] },
     entries: { "diagnostics-prometheus": { enabled: true } },
   },
   agents: {

@@ -83,27 +83,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN printf 'export PATH="/home/node/.npm-global/bin:$PATH"\n' > /etc/profile.d/zz-skill-clis.sh \
     && chmod 0644 /etc/profile.d/zz-skill-clis.sh
 
-# Prometheus diagnostics exporter (GET /api/diagnostics/prometheus, scraped by
-# the box Prometheus). Baked into the image, NOT `openclaw plugins install`ed:
-# that writes under ~/.openclaw, the host bind mount, where the image cannot
-# own or pin it. The gateway loads it from here via plugins.load.paths in the
-# host openclaw.json. Its version is the base image's own OpenClaw version,
-# read at build time, so a Dependabot FROM bump moves both together (the
-# plugin refuses to load against a different core: pluginApi >= its build);
-# a core without a matching npm release fails the build instead of the boot.
-# Root-owned and not writable by `node`: agents cannot swap the code the
-# gateway loads, and the loader accepts root as owner.
-RUN OPENCLAW_VERSION="$(node -p 'require("/app/package.json").version')" \
-    && mkdir -p /opt/openclaw-plugins/diagnostics-prometheus \
-    && npm pack --silent --cache /tmp/npm-cache --pack-destination /tmp \
-        "@openclaw/diagnostics-prometheus@${OPENCLAW_VERSION}" \
-    && tar -xzf "/tmp/openclaw-diagnostics-prometheus-${OPENCLAW_VERSION}.tgz" \
-        --strip-components=1 --no-same-owner \
-        -C /opt/openclaw-plugins/diagnostics-prometheus \
-    && rm -rf /tmp/npm-cache "/tmp/openclaw-diagnostics-prometheus-${OPENCLAW_VERSION}.tgz" \
-    && chmod -R go-w /opt/openclaw-plugins \
-    && test "$(node -p 'require("/opt/openclaw-plugins/diagnostics-prometheus/package.json").version')" = "${OPENCLAW_VERSION}"
-
 USER node
 
 # Pre-fetch the Playwright Chromium build into the runtime user's cache so
