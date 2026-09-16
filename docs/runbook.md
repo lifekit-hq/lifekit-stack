@@ -79,6 +79,31 @@ cd /srv/lifekit-stack && git pull
 bash scripts/deploy.sh
 ```
 
+### The baked diagnostics-prometheus plugin
+
+The image carries `@openclaw/diagnostics-prometheus` at
+`/opt/openclaw-plugins/diagnostics-prometheus`, pinned at build time to the
+base image's own OpenClaw version, so a bump moves it too. If a bump build
+fails at `npm pack @openclaw/diagnostics-prometheus@<version>`, upstream has
+not published that plugin release yet: wait for it, do not unpin. It is not
+in the state dir, so `plugins update` and the deploy's plugin-parity check do
+not touch it. The gateway only loads it when the host `openclaw.json` says so
+(one-time, then recreate the gateway):
+
+```json5
+{
+  plugins: {
+    load: { paths: ["/opt/openclaw-plugins/diagnostics-prometheus"] },
+    entries: { "diagnostics-prometheus": { enabled: true } },
+  },
+}
+```
+
+Prometheus scrapes it as job `openclaw` with the gateway token (compose
+secret `openclaw_gateway_token`, from `OPENCLAW_GATEWAY_TOKEN` in the env
+file); rotating that token means recreating `prometheus` too. Check it with
+`curl -s localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="openclaw") | .health'`.
+
 ## Rolling back OpenClaw
 
 ### The one-rollback rule

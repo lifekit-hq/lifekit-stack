@@ -349,3 +349,85 @@ groups:
             open for 5 minutes: the tick loop is wedged while the MCP server
             still serves. `/health` shows last_tick_at; a restart of devclaw-mcp
             reaps and resumes in-flight sandboxes.
+
+  - orgId: 1
+    name: openclaw
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: openclaw-run-failed
+        title: openclaw scheduled or background run failed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Failed agent runs in the last 15 minutes, from the
+              # diagnostics-prometheus exporter. OpenClaw 2026.9.4 exports no
+              # cron- or task-ledger series (checked against the plugin
+              # source); every cron agentTurn and background task is an
+              # agent run, reported once as run.completed with its outcome.
+              # A timeout is outcome="aborted" and a hook block
+              # outcome="blocked", so the cron block counts all three. Other
+              # triggers (the captain's turns, subagents) count errors only:
+              # an abort there is usually a deliberate stop.
+              # Each block pairs increase() with `x unless x offset 15m`:
+              # the exporter creates a series at its first event, and
+              # increase() reads a series born at 1 as 0 - without the second
+              # half the first failure after every gateway restart is missed.
+              # Command-kind cron jobs start no agent run and are not seen here.
+              expr: >-
+                sum by (trigger, outcome) (
+                  (increase(openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}[15m]) > 0)
+                  or
+                  (openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}
+                    unless openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"} offset 15m)
+                )
+                or
+                sum by (trigger, outcome) (
+                  (increase(openclaw_run_completed_total{trigger!="cron", outcome="error"}[15m]) > 0)
+                  or
+                  (openclaw_run_completed_total{trigger!="cron", outcome="error"}
+                    unless openclaw_run_completed_total{trigger!="cron", outcome="error"} offset 15m)
+                )
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # No failures means no series. The exporter being gone is
+        # target-down's job (job="openclaw").
+        noDataState: OK
+        execErrState: Error
+        # One failure is the signal: the window is 15 minutes, so a longer
+        # pending period would let a single failed daily cron resolve unseen.
+        for: 0s
+        labels:
+          service: openclaw
+          severity: critical
+        annotations:
+          summary: "OpenClaw {{ $labels.trigger }} runs ended {{ $labels.outcome }}"
+          description: >-
+            {{ printf "%.0f" $values.B.Value }} OpenClaw agent run(s) with trigger
+            {{ $labels.trigger }} ended {{ $labels.outcome }} in the last 15
+            minutes. On the box: `docker exec compose-openclaw-gateway-1 openclaw
+            cron list --all`, then `openclaw cron runs <job-id>` for the error;
+            `openclaw tasks list --status failed` (also timed_out, lost) and
+            `openclaw tasks audit` for background tasks. An expired Claude or
+            OpenAI login fails every run at once.
