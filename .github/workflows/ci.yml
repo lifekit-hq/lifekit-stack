@@ -77,14 +77,42 @@ jobs:
       group: deploy-vps
       cancel-in-progress: false
     steps:
+      # Four merges within ~50 minutes on 2026-09-13 queued four deploys on
+      # this concurrency group; each one deployed whatever origin/main was at
+      # ITS start, not the commit that triggered it (#147). Killing an
+      # in-progress deploy mid-migration is not acceptable
+      # (cancel-in-progress: true), so instead: if a newer run is already
+      # queued behind us, it will deploy a newer SHA moments after we finish —
+      # deploying now is wasted work, skip it. GitHub reports a run blocked by
+      # this concurrency group as "queued" at the run level, which is what
+      # this checks.
+      - name: Skip if superseded
+        id: superseded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          newer=$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml --branch main \
+            --status queued --json databaseId \
+            --jq "[.[] | select(.databaseId > ${GITHUB_RUN_ID})] | length")
+          if [[ "${newer}" -gt 0 ]]; then
+            echo "Superseded by a newer queued run for main; skipping deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy
+        if: steps.superseded.outputs.skip != 'true'
+        env:
+          # Deploy the SHA that triggered this run, not "origin/main right
+          # now" — see the comment above and DEPLOY_REF in deploy.sh.
+          DEPLOY_REF: ${{ github.sha }}
         run: |
           cd /srv/lifekit-stack
-          git fetch origin main
-          git reset --hard origin/main
           bash scripts/deploy.sh
 
       - name: Smoke check
+        if: steps.superseded.outputs.skip != 'true'
         run: |
           cd /srv/lifekit-stack
           docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env ps \
