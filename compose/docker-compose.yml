@@ -70,6 +70,23 @@ services:
     build:
       context: ./openclaw-gateway
     image: lifekit-openclaw:local
+    # Platform contract (scripts/platform-contract.py, docs/platform-contract.md).
+    # /readyz answers only loopback or an attributed proxy, so it is probed
+    # through the edge once that lands (captain Q7) and SKIPs until then.
+    # Metrics come from the diagnostics-prometheus plugin behind gateway auth:
+    # the up `openclaw` Prometheus target is the proof. JSON stdout comes from
+    # the host openclaw.json (logging.consoleStyle + diagnostics.otel stdout
+    # logs) - see docs/platform-contract.md.
+    labels:
+      lifekit.contract: "v1"
+      lifekit.contract.port: "18789"
+      lifekit.contract.health: /healthz
+      lifekit.contract.ready: /readyz
+      lifekit.contract.ready.via: edge
+      lifekit.contract.metrics: /api/diagnostics/prometheus
+      lifekit.contract.metrics.auth: token
+      lifekit.contract.ingress: edge
+      lifekit.contract.service: openclaw-gateway
     # Cross-project seam (devclaw spec 005): join the external lifekit-shared
     # network so the waiter can reach devclaw-mcp (in devclaw's own project) by
     # service name. `default` keeps in-project DNS to the other OpenClaw services.
@@ -151,28 +168,38 @@ services:
       - |
         export NPM_CONFIG_PREFIX=/home/node/.npm-global
         export PATH="/home/node/.npm-global/bin:$$PATH"
+        # Platform contract: stdout is JSON lines. npm's install chatter is
+        # wrapped in the same shape as the gateway's JSON console lines.
+        jlog() {
+          node -e '
+            require("readline").createInterface({ input: process.stdin }).on("line", (l) => {
+              if (l.trim()) console.log(JSON.stringify({
+                time: new Date().toISOString(), level: "info", subsystem: "entrypoint", message: l,
+              }));
+            });'
+        }
         # npm >= 12 (openclaw base image since 2026.9.x) blocks package install
         # scripts unless allow-listed; claude-code fetches its platform-native
         # binary in postinstall, so without this the CLI installs but every
         # invocation fails with "claude native binary not installed" (2026-09-13).
         if ! command -v claude >/dev/null 2>&1; then
           mkdir -p /home/node/.npm-global
-          npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code 2>&1 | tail -3
+          npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code 2>&1 | tail -3 | jlog
         fi
         if ! command -v clawhub >/dev/null 2>&1; then
-          npm install -g clawhub 2>&1 | tail -3
+          npm install -g clawhub 2>&1 | tail -3 | jlog
         fi
         if ! command -v summarize >/dev/null 2>&1; then
-          npm install -g @steipete/summarize 2>&1 | tail -3
+          npm install -g @steipete/summarize 2>&1 | tail -3 | jlog
         fi
         if ! command -v workout-claw >/dev/null 2>&1; then
-          npm install -g /opt/workout-claw 2>&1 | tail -3
+          npm install -g /opt/workout-claw 2>&1 | tail -3 | jlog
         fi
         if ! command -v nutrition-claw >/dev/null 2>&1; then
-          npm install -g /home/node/.openclaw/agents/health/workspace/skills/nutrition-claw 2>&1 | tail -3
+          npm install -g /home/node/.openclaw/agents/health/workspace/skills/nutrition-claw 2>&1 | tail -3 | jlog
         fi
         if ! command -v life-state >/dev/null 2>&1; then
-          npm install -g /home/node/.openclaw/agents/health/workspace/skills/life-state 2>&1 | tail -3
+          npm install -g /home/node/.openclaw/agents/health/workspace/skills/life-state 2>&1 | tail -3 | jlog
         fi
         exec "$$@"
       - --
@@ -203,6 +230,8 @@ services:
     profiles:
       - cli
     image: lifekit-openclaw:local
+    labels:
+      lifekit.contract: "none"  # on-demand CLI, serves no traffic
     network_mode: "service:openclaw-gateway"
     depends_on:
       - openclaw-gateway
@@ -257,6 +286,8 @@ services:
     profiles:
       - orchestrator-v1
     image: lifekit-openclaw:local
+    labels:
+      lifekit.contract: "none"  # retired, profile-gated
     deploy:
       resources:
         limits:
@@ -371,6 +402,8 @@ services:
   loki:
     <<: *policy
     image: grafana/loki:3.1.1
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
     command: -config.file=/etc/loki/loki-config.yml
     ports:
       - "127.0.0.1:${LOKI_PORT:-3100}:3100"
@@ -388,6 +421,8 @@ services:
   prometheus:
     <<: *policy
     image: prom/prometheus:v2.54.1
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
     command:
       - --config.file=/etc/prometheus/lifekit/prometheus.yml
       - --storage.tsdb.retention.time=30d
@@ -424,6 +459,8 @@ services:
     # --net=host: the filesystem collector reads its own /proc/self/mountinfo,
     # which does not require host PID/network namespaces.
     image: prom/node-exporter:v1.8.2
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
     command:
       - --path.rootfs=/host
       - --collector.disable-defaults
@@ -456,6 +493,8 @@ services:
     # can both reach us. No hot reload -> config mounted as a directory, same as
     # prometheus; a config change means a recreate.
     image: otel/opentelemetry-collector-contrib:0.110.0
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
     command:
       - --config=/etc/otel/otel-collector-config.yml
     volumes:
@@ -486,6 +525,8 @@ services:
     # block_retention: 168h (7d) in tempo-config.yml. Only otel-collector and
     # grafana reach it, both in-project -> default network only.
     image: grafana/tempo:2.6.1
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
     command:
       - -config.file=/etc/tempo/tempo-config.yml
     volumes:
@@ -509,6 +550,8 @@ services:
   grafana:
     <<: *policy
     image: grafana/grafana:11.2.0
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
@@ -553,6 +596,8 @@ services:
     build:
       context: ./container-exporter
     image: container-exporter:local
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
     user: "65534:65534"
     group_add:
       - "${DOCKER_GID:-990}"
@@ -590,6 +635,16 @@ services:
     build:
       context: ./notify-relay
     image: notify-relay:local
+    # Platform contract (scripts/platform-contract.py): /ready is a cached
+    # Telegram getMe, /metrics is scraped as job `notify-relay`, logs are JSON
+    # lines with a trace id.
+    labels:
+      lifekit.contract: "v1"
+      lifekit.contract.port: "8090"
+      lifekit.contract.health: /health
+      lifekit.contract.ready: /ready
+      lifekit.contract.metrics: /metrics
+      lifekit.contract.ingress: internal
     # Cross-project seam (devclaw spec 005): join the external lifekit-shared
     # network so devclaw-mcp (in devclaw's own project) can reach us by service
     # name at http://notify-relay:8090. `default` keeps in-project DNS.
@@ -637,6 +692,8 @@ services:
     # OpenClaw gateway reaches it via service DNS at http://google-workspace-mcp:8000/mcp/.
     # Pin to a release tag; bump intentionally. See docs/google-mcp-setup.md.
     image: ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0
+    labels:
+      lifekit.contract: "none"  # upstream image we do not change, not a product
     deploy:
       resources:
         limits:
