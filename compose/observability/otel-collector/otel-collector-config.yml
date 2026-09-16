@@ -1,0 +1,27 @@
+# OTLP receiver fan-in (issue #144): apps send OTLP/HTTP or OTLP/gRPC here
+# instead of each picking its own backend; the collector batches and forwards
+# to Tempo. Mounted as a directory (no hot reload — same reasoning as the
+# prometheus dir mount): a config change means a recreate.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  otlp:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp]

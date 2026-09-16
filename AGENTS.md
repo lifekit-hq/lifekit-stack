@@ -7,7 +7,7 @@ binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 
 | Piece | What | Where it runs |
 | --- | --- | --- |
-| `compose/` | `docker-compose.yml` + Dockerfiles: openclaw-gateway, openclaw-cli (profile `cli`), lifekit-orchestrator, notify-relay, google-workspace-mcp, plus the box observability trio (prometheus, loki, grafana) and its `observability/` config — datasources, dashboard providers, and the **provisioned alert rules** | The VPS, as compose project |
+| `compose/` | `docker-compose.yml` + Dockerfiles: openclaw-gateway, openclaw-cli (profile `cli`), lifekit-orchestrator, notify-relay, google-workspace-mcp, plus the box observability stack (prometheus, loki, grafana, node-exporter, otel-collector, tempo) and its `observability/` config — datasources, dashboard providers, and the **provisioned alert rules**. New observability services join both `default` and the external `lifekit-shared` network only if a cross-project caller needs them (otherwise `default` alone); Grafana provisioning (alerting, datasources) needs a `deploy.sh` reload after merge since Grafana reads it at startup only. | The VPS, as compose project |
 | `scripts/` | `bootstrap-vps.sh` (host setup), `deploy.sh` (idempotent redeploy), `check-doc-drift.sh`, memory-audit cron wrapper (audit logic lives in the vault `bin/`), sync tooling | The VPS |
 | `skills/` | Jinja2-templated workspace skills (`{{ user.* }}` substitutions — never baked personal data) | OpenClaw workspace |
 | `defaults/` | Agent workspace defaults (AGENTS.md contract, modules.yaml, openclaw config) | OpenClaw workspace |
