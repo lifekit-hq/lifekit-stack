@@ -12,8 +12,9 @@
 #    reached over the external `lifekit-shared` network. The ops-agent it used
 #    to run was retired 2026-09-06.)
 #   loki / prometheus / grafana — the box's observability stack (moved here
-#    from finance-sentry 2026-09-06): scrapes finance-sentry + devclaw, holds
-#    the dead-man alert rules, pings Telegram directly. Loopback-bound.
+#    from finance-sentry 2026-09-06): scrapes finance-sentry, devclaw and the
+#    gateway's diagnostics exporter, holds the dead-man alert rules, pings
+#    Telegram directly. Loopback-bound.
 #   otel-collector / tempo — OTLP trace receiver (#144): apps export traces to
 #    the collector, which fans them into Tempo; Grafana links trace <-> log via
 #    the Tempo/Loki datasource wiring. No host ports — reached in-network only.
@@ -399,6 +400,12 @@ services:
       # one - deploy.sh's SIGHUP reload would re-read the stale config.
       - ./observability/prometheus:/etc/prometheus/lifekit:ro
       - prometheus_data:/prometheus
+    # The gateway's operator token, for the `openclaw` scrape job
+    # (/api/diagnostics/prometheus needs operator.read). Compose writes it
+    # from the env file into /run/secrets at create time: no token file on
+    # the host, nothing in git. Rotating the token = recreate prometheus.
+    secrets:
+      - openclaw_gateway_token
     deploy:
       resources:
         limits:
@@ -682,6 +689,12 @@ services:
 networks:
   lifekit-shared:
     external: true
+
+# ── Secrets ─────────────────────────────────────────────────────────────────
+# Sourced from the --env-file environment, not from a file on disk.
+secrets:
+  openclaw_gateway_token:
+    environment: OPENCLAW_GATEWAY_TOKEN
 
 # ── Volumes ─────────────────────────────────────────────────────────────────
 # Observability data is EXTERNAL: it predates this project (finance-sentry's

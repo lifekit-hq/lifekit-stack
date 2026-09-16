@@ -79,6 +79,97 @@ cd /srv/lifekit-stack && git pull
 bash scripts/deploy.sh
 ```
 
+### The diagnostics-prometheus plugin
+
+`@openclaw/diagnostics-prometheus` is an official plugin installed into the
+state dir, at the core's own version, once per host:
+
+```bash
+V="$(docker exec compose-openclaw-gateway-1 openclaw --version | awk '{print $2}')"
+docker exec compose-openclaw-gateway-1 openclaw plugins install "@openclaw/diagnostics-prometheus@${V}"
+docker exec compose-openclaw-gateway-1 openclaw plugins inspect diagnostics-prometheus | grep Trust
+```
+
+`Trust` must read `reason=trusted-official`. Do not bake it into the image or
+load it through `plugins.load.paths`: OpenClaw only hands the internal
+diagnostics feed to bundled or trusted-official installs, so such a copy
+loads, answers the scrape with HTTP 200 and an empty body, and no alert can
+fire. Being a state-dir install, the deploy's plugin-parity check re-pins it
+on a version bump. The host-config patch below enables it.
+
+Prometheus scrapes it as job `openclaw` with the gateway token (compose
+secret `openclaw_gateway_token`, from `OPENCLAW_GATEWAY_TOKEN` in the env
+file); rotating that token means recreating `prometheus` too. Check it with
+`curl -s localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="openclaw") | .health'`.
+
+### Host-config patch: plugin enable and the 2026-09-16 audit warnings
+
+`/srv/openclaw/config/openclaw.json` is host state: this repo does not apply
+it, it only documents the patch. The patch below enables the plugin and
+addresses the four `openclaw security audit` warnings from 2026-09-16
+(`gateway.auth_no_rate_limit`, `tools.exec.security_full_configured`,
+`tools.exec.agent_skill_mcp_boundary_drift`, `models.weak_tier`). It is
+checked against the 2026.9.4 schema (`openclaw config schema`); objects
+merge and arrays replace (`openclaw config patch --help`). Save it as
+`openclaw.patch.json5`:
+
+```json5
+{
+  gateway: {
+    auth: {
+      rateLimit: { maxAttempts: 10, windowMs: 60000, lockoutMs: 300000, exemptLoopback: true },
+    },
+  },
+  plugins: {
+    entries: { "diagnostics-prometheus": { enabled: true } },
+  },
+  agents: {
+    defaults: { model: { fallbacks: [] } },
+    entries: {
+      kit: { model: { fallbacks: [] } },
+      health: { model: { fallbacks: [] } },
+      career: { model: { fallbacks: [] }, tools: { exec: { mode: "ask" } } },
+      learning: { model: { fallbacks: [] }, tools: { exec: { mode: "ask" } } },
+      social: { model: { fallbacks: [] }, tools: { exec: { mode: "ask" } } },
+      devclaw: { model: { fallbacks: [] } },
+      fable: { tools: { exec: { mode: "ask" } } },
+    },
+  },
+}
+```
+
+Apply it (dry run first), then recreate the gateway from the compose dir -
+this interrupts Kit briefly. `gateway.reload` defaults to `hybrid`, so the
+`plugins` change may restart the gateway on its own:
+
+```bash
+docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin --dry-run < openclaw.patch.json5
+docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin < openclaw.patch.json5
+cd /srv/lifekit-stack/compose
+docker compose --env-file /srv/openclaw/config/.env -f docker-compose.yml \
+  up -d --force-recreate openclaw-gateway
+```
+
+Exec policy per agent:
+
+- career, learning, social: set to `ask` - 0 exec calls in 30 days and no domain cron.
+- fable: `full` to `ask` - no sessions ever; its only automated turn is the deploy pong smoke.
+- devclaw keeps `full` - its daily morning-brief cron sweeps repos with `gh` and writes briefs.
+- kit keeps `full` - skills github, gh-issues and summarize need host binaries (145 exec calls in 30 days).
+- health keeps `full` - its three claw CLIs are its only write path.
+- finance keeps `full` - it writes state logs via bash (2160 exec calls in 30 days).
+
+Command-kind crons (`memory_vault_audit`, `weekly_log_summary`) bypass exec
+policy.
+
+Expected `openclaw security audit` after the patch: `gateway.auth_no_rate_limit`
+and `models.weak_tier` cleared; `security_full_configured` (devclaw) and
+`agent_skill_mcp_boundary_drift` (kit, health, finance) remain.
+
+Follow-up, out of scope for this change: the boundary-drift remediation
+(sandbox those agents, or split the sensitive MCP servers into a separate
+gateway).
+
 ## Rolling back OpenClaw
 
 ### The one-rollback rule

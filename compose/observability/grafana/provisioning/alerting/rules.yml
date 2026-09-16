@@ -349,3 +349,122 @@ groups:
             open for 5 minutes: the tick loop is wedged while the MCP server
             still serves. `/health` shows last_tick_at; a restart of devclaw-mcp
             reaps and resumes in-flight sandboxes.
+
+  - orgId: 1
+    name: openclaw
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: openclaw-run-failed
+        title: openclaw scheduled or background run failed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Failed agent runs in the last 15 minutes, from the
+              # diagnostics-prometheus exporter. OpenClaw 2026.9.4 exports no
+              # cron- or task-ledger series (checked against the plugin
+              # source); every cron agentTurn and background task is an
+              # agent run, reported once as run.completed with its outcome.
+              # A timeout is outcome="aborted" and a hook block
+              # outcome="blocked", so the cron block counts all three. Other
+              # background triggers count errors only: an abort there is
+              # usually a deliberate stop.
+              # Each block pairs increase() with a missing-sample check: the
+              # exporter creates a series at its first event, and increase()
+              # reads a series born at 1 as 0 - also when the same label set
+              # stood at 1 before a gateway restart, since 1 -> 1 is no reset.
+              # So a series also fires while it has fewer samples in the window
+              # than the openclaw target had successful scrapes: it was absent
+              # from a good scrape, i.e. (re)born inside the window. A failed
+              # scrape drops one sample from both counts, and the first scrapes
+              # after a deploy have both counts equal, so neither pages.
+              # Command-kind cron jobs start no agent run and are not seen here.
+              # Trigger values seen in OpenClaw 2026.9.4 core: user, cron,
+              # heartbeat, memory, overflow, manual, cli. Interactive turns
+              # (trigger="user") are excluded on purpose - the person chatting
+              # already sees the error - so background task or subagent runs
+              # labelled "user" are not covered either.
+              # The third block covers the exporter itself: it caps its store
+              # at 2048 series and refuses new ones once full, so a first-ever
+              # failure series on a long-running gateway would never appear.
+              # A rise in openclaw_prometheus_series_dropped_total fires the
+              # same rule, relabelled trigger="exporter", outcome="series_dropped".
+              expr: >-
+                sum by (trigger, outcome) (
+                  (increase(openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}[15m]) > 0)
+                  or
+                  (openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}
+                    and (count_over_time(openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}[15m])
+                      < on() group_left() sum_over_time(up{job="openclaw"}[15m])))
+                )
+                or
+                sum by (trigger, outcome) (
+                  (increase(openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}[15m]) > 0)
+                  or
+                  (openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}
+                    and (count_over_time(openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}[15m])
+                      < on() group_left() sum_over_time(up{job="openclaw"}[15m])))
+                )
+                or
+                sum by (trigger, outcome) (
+                  label_replace(label_replace(
+                    (increase(openclaw_prometheus_series_dropped_total[15m]) > 0)
+                    or
+                    (openclaw_prometheus_series_dropped_total
+                      and (count_over_time(openclaw_prometheus_series_dropped_total[15m])
+                        < on() group_left() sum_over_time(up{job="openclaw"}[15m]))),
+                  "trigger", "exporter", "", ""), "outcome", "series_dropped", "", "")
+                )
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # No failures means no series. The exporter being gone is
+        # target-down's job (job="openclaw").
+        noDataState: OK
+        execErrState: Error
+        # One failure is the signal: the window is 15 minutes, so a longer
+        # pending period would let a single failed daily cron resolve unseen.
+        for: 0s
+        labels:
+          service: openclaw
+          severity: critical
+        annotations:
+          summary: >-
+            {{ if eq $labels.outcome "series_dropped" }}OpenClaw metrics exporter
+            is dropping new series{{ else }}OpenClaw {{ $labels.trigger }} runs
+            ended {{ $labels.outcome }}{{ end }}
+          description: >-
+            {{ if eq $labels.outcome "series_dropped" }}The diagnostics-prometheus
+            exporter dropped {{ printf "%.0f" $values.B.Value }} new series in the
+            last 15 minutes: it hit its 2048-series cap, so new failure series
+            may be missing and this rule can miss failed runs until the gateway
+            restarts. Recreate openclaw-gateway, then check `openclaw cron list
+            --all` and `openclaw tasks list --status failed` for anything missed
+            meanwhile.{{ else }}{{ printf "%.0f" $values.B.Value }} OpenClaw agent
+            run(s) with trigger {{ $labels.trigger }} ended {{ $labels.outcome }}
+            in the last 15 minutes. On the box: `docker exec
+            compose-openclaw-gateway-1 openclaw cron list --all`, then `openclaw
+            cron runs <job-id>` for the error; `openclaw tasks list --status
+            failed` (also timed_out, lost) and `openclaw tasks audit` for
+            background tasks. An expired Claude or OpenAI login fails every run
+            at once.{{ end }}
