@@ -148,7 +148,7 @@ def container(labels, published=False):
 def target(address, path="/metrics", health="up", job="notify-relay"):
     return {
         "discoveredLabels": {"__address__": address, "__metrics_path__": path},
-        "labels": {"job": job},
+        "labels": {"job": job, "instance": address},
         "health": health,
     }
 
@@ -163,12 +163,14 @@ def box(monkeypatch):
             "/metrics": (200, "text/plain; version=0.0.4"),
         },
         "logs": [JSON_LINE] * 5,
+        "samples": 20.0,
     }
     monkeypatch.setattr(
         pc,
         "get",
         lambda url, headers=None: state["http"].get(url.split(":8090")[1], (404, "")),
     )
+    monkeypatch.setattr(pc, "scraped_samples", lambda job, instance: state["samples"])
     monkeypatch.setattr(
         pc.subprocess,
         "run",
@@ -239,3 +241,11 @@ def test_unenforced_failures_are_skipped(box):
 def test_enforced_failure_is_not_skipped(box):
     box["logs"] = ["plain text"]
     assert pc.check(container(V1), [target("notify-relay:8090")])["logs"][0] == "FAIL"
+
+
+def test_up_target_without_samples_fails(box):
+    box["samples"] = 0.0
+    labels = dict(V1, **{"lifekit.contract.metrics.auth": "token"})
+    r = pc.check(container(labels), [target("notify-relay:8090")])
+    assert r["scraped"] == ("FAIL", "job=notify-relay up but exports no samples")
+    assert r["metrics"][0] == "FAIL"

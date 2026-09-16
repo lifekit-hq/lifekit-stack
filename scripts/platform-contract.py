@@ -61,6 +61,7 @@ import secrets
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090")
@@ -281,7 +282,15 @@ def check(c: dict, targets: list[dict]) -> dict[str, tuple[str, str]]:
         ]
         up = [t for t in hit if t["health"] == "up"]
         if up:
-            scraped = ("PASS", f"job={up[0]['labels']['job']} up")
+            job, instance = up[0]["labels"]["job"], up[0]["labels"].get("instance", "")
+            # An up target can still export nothing: an untrusted OpenClaw
+            # plugin copy answers 200 with an empty body.
+            n = scraped_samples(job, instance)
+            scraped = (
+                ("PASS", f"job={job} up, {n:.0f} samples")
+                if n
+                else ("FAIL", f"job={job} up but exports no samples")
+            )
         elif hit:
             scraped = ("FAIL", f"job={hit[0]['labels']['job']} {hit[0]['health']}")
         else:
@@ -333,6 +342,21 @@ def check(c: dict, targets: list[dict]) -> dict[str, tuple[str, str]]:
         if item not in ENFORCED and verdict == "FAIL":
             r[item] = ("SKIP", f"{SKIP_REASON[item]}: {detail}")
     return r
+
+
+def scraped_samples(job: str, instance: str) -> float:
+    """Samples in the target's last scrape (0 when unknown)."""
+    query = urllib.parse.urlencode(
+        {"query": f'scrape_samples_scraped{{job="{job}",instance="{instance}"}}'}
+    )
+    try:
+        with urllib.request.urlopen(
+            f"{PROMETHEUS_URL}/api/v1/query?{query}", timeout=TIMEOUT
+        ) as resp:
+            result = json.load(resp)["data"]["result"]
+        return float(result[0]["value"][1]) if result else 0.0
+    except (OSError, ValueError, KeyError, IndexError):
+        return 0.0
 
 
 def prometheus_targets() -> list[dict]:

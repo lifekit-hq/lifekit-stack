@@ -53,7 +53,7 @@ Put service `labels:` in the product's own compose file:
 | health | Unauthenticated GET to the container IP returns 2xx and is not `text/html` (that rules out an SPA fallback page). | yes |
 | ready | Same rules as health, on a different path. With `ready.via: edge`, the check is SKIP until the edge lands; it will then probe through Traefik (captain Q7). | yes |
 | metrics | GET returns Prometheus text. With `metrics.auth: token`, the up target (next row) counts instead. | yes |
-| scraped | A Prometheus target with this container's address and metrics path is `up`. | yes |
+| scraped | A Prometheus target with this container's address and metrics path is `up`, and its last scrape returned samples. | yes |
 | logs | At least 90% of the last 300 stdout/stderr lines are JSON, and at least one line has a trace id (`trace_id`, `traceId`, `@tr`, `trace.id`, …). | yes |
 | traces | Reported only. The trace rule is decided when the collector work settles (Q8). | SKIP |
 | edge | `internal` means no host port is published. `edge` means `traefik.enable` is set and no host port is published. | SKIP until Traefik |
@@ -71,12 +71,20 @@ that ships that piece. SKIP is never set per product.
   - Its logs are JSON lines that carry the caller's `traceparent` trace id or a
     fresh one.
 - **openclaw-gateway** needs host state that this repo does not ship: the live
-  `openclaw.json`. It meets the contract only after these steps, in order:
-  1. The image carries `diagnostics-prometheus`, and Prometheus scrapes it as
-     job `openclaw` (the observability-wiring change).
-  2. This patch is applied to the live config, then the gateway is recreated.
-     The patch was validated with `--dry-run` against 2026.9.4, except
-     `plugins.load.paths`, which needs the image from step 1:
+  `openclaw.json` and the plugins installed in the state dir. It meets the
+  contract only after these steps, in order:
+  1. **Metrics.** Merge and deploy
+     [PR 160](https://github.com/lifekit-hq/lifekit-stack/pull/160), then follow
+     its `docs/runbook.md` steps:
+     - install `@openclaw/diagnostics-prometheus` into the state dir, at the core
+       version, and confirm `Trust` reads `reason=trusted-official`;
+     - apply its host-config patch and recreate the gateway.
+
+     This gives the Prometheus job `openclaw`. Its up target counts for
+     `metrics` and `scraped` only when the last scrape returned samples: an
+     untrusted plugin copy answers with an empty body.
+  2. **JSON logs.** PR 160's patch does not cover logs. Apply this patch as
+     well; it can go in the same config write and recreate as step 1:
 
      ```bash
      docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin <<'EOF'
@@ -94,23 +102,20 @@ that ships that piece. SKIP is never set per product.
            logsExporter: "stdout",
          },
        },
-       plugins: {
-         load: { paths: ["/opt/openclaw-plugins/diagnostics-prometheus"] },
-         entries: {
-           "diagnostics-prometheus": { enabled: true },
-           "diagnostics-otel": { enabled: true },
-         },
-       },
+       plugins: { entries: { "diagnostics-otel": { enabled: true } } },
      }
      EOF
      ```
+
+     This patch passed `--dry-run` against 2026.9.4.
 
      **Why two log settings:**
      - `logging.consoleStyle: "json"` is the only switch for the gateway's
        console format. OpenClaw reads it from the config file; there is no
        environment variable for it.
-     - `diagnostics.otel` with `logsExporter: "stdout"` adds OTLP log records as
-       JSON lines. Each record carries `trace_id` when one is active.
+     - `diagnostics.otel` with `logsExporter: "stdout"` (the bundled
+       `diagnostics-otel` plugin) adds OTLP log records as JSON lines. Each
+       record carries `trace_id` when one is active.
      - `metrics: false` because the collector has no metrics pipeline; metrics
        reach Prometheus through `diagnostics-prometheus`.
      - The entrypoint wraps its npm install output as JSON, so the only
