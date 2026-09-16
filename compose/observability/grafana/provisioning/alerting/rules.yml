@@ -373,14 +373,15 @@ groups:
               # outcome="blocked", so the cron block counts all three. Other
               # background triggers count errors only: an abort there is
               # usually a deliberate stop.
-              # Each block pairs increase() with `x unless x offset 15m`:
-              # the exporter creates a series at its first event, and
-              # increase() reads a series born at 1 as 0 - without the second
-              # half the first failure after every gateway restart is missed.
-              # The second half is gated on the target having been up 15
-              # minutes ago: a failed scrape writes staleness markers, so
-              # `offset 15m` briefly finds nothing and every old failure series
-              # would look new; the same holds on the first scrapes after deploy.
+              # Each block pairs increase() with a missing-sample check: the
+              # exporter creates a series at its first event, and increase()
+              # reads a series born at 1 as 0 - also when the same label set
+              # stood at 1 before a gateway restart, since 1 -> 1 is no reset.
+              # So a series also fires while it has fewer samples in the window
+              # than the openclaw target had successful scrapes: it was absent
+              # from a good scrape, i.e. (re)born inside the window. A failed
+              # scrape drops one sample from both counts, and the first scrapes
+              # after a deploy have both counts equal, so neither pages.
               # Command-kind cron jobs start no agent run and are not seen here.
               # Trigger values seen in OpenClaw 2026.9.4 core: user, cron,
               # heartbeat, memory, overflow, manual, cli. Interactive turns
@@ -396,26 +397,26 @@ groups:
                 sum by (trigger, outcome) (
                   (increase(openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}[15m]) > 0)
                   or
-                  ((openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}
-                    unless openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"} offset 15m)
-                    and on() (up{job="openclaw"} offset 15m == 1))
+                  (openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}
+                    and (count_over_time(openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}[15m])
+                      < on() group_left() sum_over_time(up{job="openclaw"}[15m])))
                 )
                 or
                 sum by (trigger, outcome) (
                   (increase(openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}[15m]) > 0)
                   or
-                  ((openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}
-                    unless openclaw_run_completed_total{trigger!~"cron|user", outcome="error"} offset 15m)
-                    and on() (up{job="openclaw"} offset 15m == 1))
+                  (openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}
+                    and (count_over_time(openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}[15m])
+                      < on() group_left() sum_over_time(up{job="openclaw"}[15m])))
                 )
                 or
                 sum by (trigger, outcome) (
                   label_replace(label_replace(
                     (increase(openclaw_prometheus_series_dropped_total[15m]) > 0)
                     or
-                    ((openclaw_prometheus_series_dropped_total
-                      unless openclaw_prometheus_series_dropped_total offset 15m)
-                      and on() (up{job="openclaw"} offset 15m == 1)),
+                    (openclaw_prometheus_series_dropped_total
+                      and (count_over_time(openclaw_prometheus_series_dropped_total[15m])
+                        < on() group_left() sum_over_time(up{job="openclaw"}[15m]))),
                   "trigger", "exporter", "", ""), "outcome", "series_dropped", "", "")
                 )
               instant: true
