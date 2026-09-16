@@ -58,15 +58,20 @@ fi
 #
 # fetch + hard-reset is race-proof and branch-agnostic. A bare `git pull
 # --ff-only` aborts when the local branch has diverged (e.g. VPS is on
-# feat/goalclaw-service while origin/main moved on). The CI workflow does the
-# same thing before invoking this script, so this is a no-op in CI and a
-# self-update when run directly on the VPS.
+# feat/goalclaw-service while origin/main moved on).
+#
+# DEPLOY_REF pins the reset target to the commit that triggered the deploy
+# (CI passes $GITHUB_SHA) rather than "whatever origin/main is right now" —
+# with several deploys queued on the same concurrency group, main can move
+# again before an earlier queued run starts, which used to attribute that
+# run's changes to the wrong merge (#147). Left unset, it's a self-update to
+# the remote's default branch, for running this directly on the VPS.
 
 say "git pull"
 STACK_DEFAULT="$(git remote show origin | sed -n 's/.*HEAD branch: //p' | head -1)"
 STACK_DEFAULT="${STACK_DEFAULT:-main}"
 git fetch -q origin "${STACK_DEFAULT}"
-git reset -q --hard "origin/${STACK_DEFAULT}"
+git reset -q --hard "${DEPLOY_REF:-origin/${STACK_DEFAULT}}"
 
 # ─── memory-audit: sync cron assets to the gateway workspace ─────────────────
 #
