@@ -1,0 +1,44 @@
+{
+  "logging": {
+    "consoleStyle": "json"
+  },
+  "diagnostics": {
+    "enabled": true,
+    "otel": {
+      "enabled": true,
+      "endpoint": "http://otel-collector:4318",
+      "serviceName": "openclaw-gateway",
+      "traces": true,
+      "metrics": false,
+      "logs": true,
+      "logsExporter": "stdout"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "diagnostics-prometheus": {
+        "enabled": true
+      },
+      "diagnostics-otel": {
+        "enabled": true
+      }
+    }
+  },
+  "gateway": {
+    "auth": {
+      "rateLimit": {
+        "maxAttempts": 10,
+        "windowMs": 60000,
+        "lockoutMs": 300000,
+        "exemptLoopback": true
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "heartbeat": {
+        "every": "0m"
+      }
+    }
+  }
+}
