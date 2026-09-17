@@ -1,0 +1,12 @@
+# Per-repo no-mistakes overrides.
+#
+# Pin the gate's lint and test steps to the exact commands CI runs
+# (.github/workflows/ci.yml, jobs `lint` and `tests`) so validation rigor is
+# encoded here instead of decided per run by the test agent. Both commands
+# self-provision a throwaway venv the way the CI jobs do, because the runner
+# and the gate worktrees have only system python3 (no pre-commit / pytest on
+# PATH); `.venv/` is gitignored. Keep this file, AGENTS.md "Commands", and
+# ci.yml in step - ci.yml is the source of truth.
+commands:
+  lint: 'python3 -m venv .venv && .venv/bin/pip install --quiet pre-commit && .venv/bin/pre-commit run --all-files --show-diff-on-failure'
+  test: 'python3 -m venv .venv && .venv/bin/pip install --quiet pytest && .venv/bin/python -m pytest -q compose/container-exporter/tests scripts/quota-share/tests scripts/tests'
