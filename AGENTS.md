@@ -8,7 +8,7 @@ binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 | Piece | What | Where it runs |
 | --- | --- | --- |
 | `compose/` | `docker-compose.yml` + Dockerfiles: openclaw-gateway, openclaw-cli (profile `cli`), lifekit-orchestrator, notify-relay, google-workspace-mcp, plus the box observability stack (prometheus, loki, grafana, node-exporter, otel-collector, tempo) and its `observability/` config — datasources, dashboard providers, and the **provisioned alert rules**. New observability services join both `default` and the external `lifekit-shared` network only if a cross-project caller needs them (otherwise `default` alone); Grafana provisioning (alerting, datasources) needs a `deploy.sh` reload after merge since Grafana reads it at startup only. | The VPS, as compose project |
-| `scripts/` | `bootstrap-vps.sh` (host setup), `deploy.sh` (idempotent redeploy), `check-doc-drift.sh`, memory-audit cron wrapper (audit logic lives in the vault `bin/`), sync tooling | The VPS |
+| `scripts/` | `bootstrap-vps.sh` (host setup), `deploy.sh` (idempotent redeploy), `check-doc-drift.sh`, memory-audit cron wrapper (audit logic lives in the vault `bin/`), `quota-share/` (read-only report: shares quota-axi's account % across consumers by logged Claude Code session usage — see `scripts/quota-share/README.md`), sync tooling | The VPS |
 | `skills/` | Jinja2-templated workspace skills (`{{ user.* }}` substitutions — never baked personal data) | OpenClaw workspace |
 | `defaults/` | Agent workspace defaults (AGENTS.md contract, modules.yaml, openclaw config) | OpenClaw workspace |
 
@@ -17,7 +17,7 @@ binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 ```bash
 pre-commit run --all-files                 # THE local gate — exactly what CI's lint job runs
 python3 -m venv .venv && .venv/bin/pip install --quiet pytest
-.venv/bin/python -m pytest compose/container-exporter/tests   # the CI tests job
+.venv/bin/python -m pytest compose/container-exporter/tests scripts/quota-share/tests   # the CI tests job
 bash scripts/check-doc-drift.sh            # README <-> compose service-count parity
 ```
 
@@ -40,7 +40,7 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
 - **Lint** = `pre-commit run --all-files`: gitleaks (secrets), hygiene hooks, yamllint,
   shellcheck, hadolint (`--failure-threshold error`), ruff + ruff-format, doc-drift.
 - **Gitleaks full-history scan** (OSS binary, pinned to the pre-commit rev).
-- **Tests**: the container-exporter pytest suite (the memory-audit logic moved to the vault `bin/` on 2026-09-14 - shellcheck covers its wrapper).
+- **Tests**: the container-exporter and quota-share pytest suites (the memory-audit logic moved to the vault `bin/` on 2026-09-14 - shellcheck covers its wrapper).
 - **Doc drift** (separate workflow): README service table must match `compose/docker-compose.yml`.
 - Privacy is a gate too: read [`docs/PRIVATE.md`](./docs/PRIVATE.md) before committing — gitleaks
   catches secrets, the human pass catches personal context. Skills must be `{{ user.* }}`
