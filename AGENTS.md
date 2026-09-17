@@ -27,10 +27,15 @@ VPS self-hosted runner (`git reset --hard origin/main && bash scripts/deploy.sh`
 `scripts/deploy.sh` on the VPS directly — it is idempotent. Host-level changes use the `denys`
 account (sudo); see README "VPS users".
 
-The live OpenClaw config (`/srv/openclaw/config/openclaw.json`) is host state, hand-edited and
-only mirrored to a separate repo — not in this repo. A change that needs it ships as an operator
-step (an `openclaw config patch` snippet) in the PR description. Check keys against the installed
-schema (`openclaw config schema` inside the gateway), not just docs.openclaw.ai. Official
+The live OpenClaw config (`/srv/openclaw/config/openclaw.json`) has two halves. Platform keys
+(logging, diagnostics, plugin enables, gateway auth rate limit, heartbeat) live in
+`compose/openclaw-gateway/platform.patch.json`: `deploy.sh` compares it with the live file, applies
+it with `openclaw config patch` only when a key differs, and recreates the gateway only when the
+CLI's apply hint says the changed keys need it — a new platform key goes there, never in a PR
+body. The personal half (`agents.entries`, `channels`, auth profiles, MCP tokens) stays host
+state, hand-edited and only mirrored to a separate repo; a change that needs it ships as an
+operator step (an `openclaw config patch` snippet) in the PR description. Check keys against the
+installed schema (`openclaw config schema` inside the gateway), not just docs.openclaw.ai. Official
 plugins that need core capabilities (e.g. diagnostics exporters) only get them as a trusted npm
 install in the state dir (`openclaw plugins install @openclaw/<id>@<core version>`); a copy baked
 into the image or loaded via `plugins.load.paths` loads untrusted and silently gets nothing.

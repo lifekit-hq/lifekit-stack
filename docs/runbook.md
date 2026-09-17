@@ -104,27 +104,33 @@ secret `openclaw_gateway_token`, from `OPENCLAW_GATEWAY_TOKEN` in the env
 file); rotating that token means recreating `prometheus` too. Check it with
 `curl -s localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="openclaw") | .health'`.
 
-### Host-config patch: plugin enable and the 2026-09-16 audit warnings
+### Host-config patch: the platform half is in git, the per-agent half is not
 
-`/srv/openclaw/config/openclaw.json` is host state: this repo does not apply
-it, it only documents the patch. The patch below enables the plugin and
-addresses the four `openclaw security audit` warnings from 2026-09-16
-(`gateway.auth_no_rate_limit`, `tools.exec.security_full_configured`,
-`tools.exec.agent_skill_mcp_boundary_drift`, `models.weak_tier`). It is
-checked against the 2026.9.4 schema (`openclaw config schema`); objects
-merge and arrays replace (`openclaw config patch --help`). Save it as
-`openclaw.patch.json5`:
+`/srv/openclaw/config/openclaw.json` has two halves. The platform keys -
+`logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
+`diagnostics-otel` plugin enables, `gateway.auth.rateLimit`,
+`agents.defaults.heartbeat.every` - live in
+`compose/openclaw-gateway/platform.patch.json`. On every deploy `deploy.sh`
+compares that file with the live config, applies it with
+`openclaw config patch` only when a key differs, and force-recreates the
+gateway only when the CLI's apply hint says the changed keys need it
+(`plugins.entries` does; the rest hot-reloads under the default
+`gateway.reload` hybrid mode). A deploy that finds nothing to change writes
+nothing and leaves the gateway alone. A new platform key goes in that file,
+never in a PR body; objects merge and scalars replace
+(`openclaw config patch --help`), and the file is strict JSON so the deploy
+can read it with stdlib Python. Check new keys against the installed schema
+(`openclaw config schema`).
+
+The per-agent half stays host state and is still applied by hand. The patch
+below addresses the 2026-09-16 `openclaw security audit` warnings that name
+agents (`tools.exec.security_full_configured`,
+`tools.exec.agent_skill_mcp_boundary_drift`, `models.weak_tier`); the
+platform file above clears `gateway.auth_no_rate_limit`. It is checked
+against the 2026.9.4 schema. Save it as `openclaw.patch.json5`:
 
 ```json5
 {
-  gateway: {
-    auth: {
-      rateLimit: { maxAttempts: 10, windowMs: 60000, lockoutMs: 300000, exemptLoopback: true },
-    },
-  },
-  plugins: {
-    entries: { "diagnostics-prometheus": { enabled: true } },
-  },
   agents: {
     defaults: { model: { fallbacks: [] } },
     entries: {
@@ -140,16 +146,13 @@ merge and arrays replace (`openclaw config patch --help`). Save it as
 }
 ```
 
-Apply it (dry run first), then recreate the gateway from the compose dir -
-this interrupts Kit briefly. `gateway.reload` defaults to `hybrid`, so the
-`plugins` change may restart the gateway on its own:
+Apply it (dry run first). These keys hot-reload: the CLI prints
+`Change will apply without restarting the gateway.` and no recreate is
+needed (applied this way on 2026-09-17).
 
 ```bash
 docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin --dry-run < openclaw.patch.json5
 docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin < openclaw.patch.json5
-cd /srv/lifekit-stack/compose
-docker compose --env-file /srv/openclaw/config/.env -f docker-compose.yml \
-  up -d --force-recreate openclaw-gateway
 ```
 
 Exec policy per agent:

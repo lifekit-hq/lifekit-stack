@@ -70,44 +70,22 @@ that ships that piece. SKIP is never set per product.
   - Its `/metrics` is scraped as job `notify-relay`.
   - Its logs are JSON lines that carry the caller's `traceparent` trace id or a
     fresh one.
-- **openclaw-gateway** needs host state that this repo does not ship: the live
-  `openclaw.json` and the plugins installed in the state dir. It meets the
-  contract only after these steps, in order:
-  1. **Metrics.** Merge and deploy
-     [PR 160](https://github.com/lifekit-hq/lifekit-stack/pull/160), then follow
-     its `docs/runbook.md` steps:
-     - install `@openclaw/diagnostics-prometheus` into the state dir, at the core
-       version, and confirm `Trust` reads `reason=trusted-official`;
-     - apply its host-config patch and recreate the gateway.
-
-     This gives the Prometheus job `openclaw`. Its up target counts for
-     `metrics` and `scraped` only when the last scrape returned samples: an
-     untrusted plugin copy answers with an empty body.
-  2. **JSON logs.** PR 160's patch does not cover logs. Apply this patch as
-     well; it can go in the same config write and recreate as step 1:
-
-     ```bash
-     docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin <<'EOF'
-     {
-       logging: { consoleStyle: "json" },
-       diagnostics: {
-         enabled: true,
-         otel: {
-           enabled: true,
-           endpoint: "http://otel-collector:4318",
-           serviceName: "openclaw-gateway",
-           traces: true,
-           metrics: false,
-           logs: true,
-           logsExporter: "stdout",
-         },
-       },
-       plugins: { entries: { "diagnostics-otel": { enabled: true } } },
-     }
-     EOF
-     ```
-
-     This patch passed `--dry-run` against 2026.9.4.
+- **openclaw-gateway** meets the contract through one host step and one file
+  in this repo:
+  1. **Plugins, once per host.** The `diagnostics-prometheus` and
+     `diagnostics-otel` plugins must be present in the gateway with `Trust`
+     reading `reason=trusted-official` (`openclaw plugins inspect <id>`; the
+     install is in `docs/runbook.md`, "The diagnostics-prometheus plugin").
+     Prometheus job `openclaw` counts for `metrics` and `scraped` only when
+     the last scrape returned samples: an untrusted plugin copy answers with
+     an empty body.
+  2. **Config keys, from git.** `compose/openclaw-gateway/platform.patch.json`
+     carries `logging.consoleStyle: "json"`, `diagnostics.otel` (stdout log
+     records, traces to `otel-collector`) and both plugin enables. `deploy.sh`
+     compares it with the live `openclaw.json`, applies it with
+     `openclaw config patch` only when a key differs, and recreates the
+     gateway only when the CLI's apply hint says the changed keys need it.
+     Nothing is applied by hand.
 
      **Why two log settings:**
      - `logging.consoleStyle: "json"` is the only switch for the gateway's
