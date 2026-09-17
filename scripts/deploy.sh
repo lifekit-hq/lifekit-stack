@@ -239,6 +239,18 @@ if [[ -z "${DOCKER_GID:-}" ]] && ! grep -qE '^[[:space:]]*DOCKER_GID=' "${ENV_FI
   export DOCKER_GID
 fi
 
+# ─── Platform contract: declarations (pre-up gate) ───────────────────────────
+#
+# Guardrail 1 (2026-09-16): every product meets the platform contract -
+# health + readiness, metrics that reach Prometheus, JSON logs with a trace
+# id, OTLP traces, behind the edge, owns its topics. No waivers. Each service
+# declares how it meets it in lifekit.contract.* labels; a service with a
+# missing or inconsistent declaration never reaches `up`. The running
+# containers are checked after the smoke turns below. docs/platform-contract.md
+say "platform contract: declarations"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format json \
+  | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
+
 # ─── Build + start ───────────────────────────────────────────────────────────
 
 # ─── OpenClaw version bump: migrate state BEFORE the new gateway boots ───────
@@ -614,6 +626,20 @@ print(("WARN " if soft else "FAIL ") + err[:300])
     *)      fail_later "${agent}: ${VERDICT#FAIL }" ;;
   esac
 done
+
+# ─── Platform contract: running containers ──────────────────────────────────
+#
+# After the smoke turns on purpose: they are real traffic, so the gateway has
+# logged traced work, and Prometheus has scraped since the reload above. This
+# project's containers gate the deploy (a failure goes red like any other
+# post-deploy assertion - the containers are already up). The rest of the box
+# prints as a report-only census: finance-sentry, devclaw and the dashboard
+# deploy from their own repos and run this same script on their own project.
+say "platform contract: running containers"
+STACK_PROJECT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format json \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')"
+python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" \
+  || fail_later "platform contract: ${STACK_PROJECT} containers fail it (table above)"
 
 if (( ${#DEPLOY_FAILURES[@]} )); then
   say "post-deploy assertions failed"

@@ -60,6 +60,10 @@ Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded lo
 - Dashboards keep one home per product: finance-sentry's deploy copies its JSON into `${LIFEKIT_FINANCE_SENTRY_DASHBOARDS}` and Grafana loads that directory as a provider.
 - Data volumes are external (`docker_*`, created by finance-sentry's former project) so the history survived the move; see `.env.example`.
 
+## Platform contract
+
+Every product on the box declares, in `lifekit.contract.*` compose labels, how it meets the platform contract (health + readiness, metrics in Prometheus, JSON logs with a trace id, and - once their platform pieces land - traces, edge, topics). `deploy.sh` refuses to `up` an undeclared service and goes red when a running one fails; product repos run the same `scripts/platform-contract.py` on their own project. No waivers. See [`docs/platform-contract.md`](docs/platform-contract.md).
+
 ## How it fits together
 
 ```
