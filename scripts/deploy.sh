@@ -321,9 +321,13 @@ if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_V
   say "OpenClaw ${RUNNING_VER} -> ${BUILT_VER}: stopping gateway, migrating state"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli \
     stop openclaw-cli openclaw-gateway
+  # openclaw backup create --output takes an archive FILE path, not a directory;
+  # a fixed path here would collide with an earlier deploy's archive and refuse
+  # to overwrite it. One unique path per run instead.
+  UPGRADE_BACKUP="/home/node/.openclaw/openclaw-config-${RUNNING_VER}-to-${BUILT_VER}-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
     run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-      backup create --only-config --verify --output /home/node/.openclaw/backups
+      backup create --only-config --verify --output "${UPGRADE_BACKUP}"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
     run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
       doctor --fix --non-interactive
