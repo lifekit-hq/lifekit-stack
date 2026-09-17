@@ -1,0 +1,14 @@
+[Unit]
+Description=Export the shared Claude account quota to node-exporter's textfile collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The account that holds the Claude credentials quota-axi reads (README "VPS
+# users"). bootstrap-vps.sh substitutes the placeholder at install time.
+User=__ADMIN_USER__
+ExecStart=/usr/local/bin/claude-quota-gauge.sh /var/lib/node_exporter/textfile
+
+[Install]
+WantedBy=multi-user.target

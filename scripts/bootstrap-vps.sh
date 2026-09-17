@@ -27,6 +27,7 @@ set -euo pipefail
 
 LIFEKIT_USER="${LIFEKIT_USER:-lifekit}"
 LIFEKIT_UID="${LIFEKIT_UID:-1000}"
+ADMIN_USER="${ADMIN_USER:-denys}"          # the sudo human account that also holds the Claude credentials (README "VPS users")
 REPO_URL="${REPO_URL:-https://github.com/lifekit-hq/lifekit-stack.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 REPO_DIR="${REPO_DIR:-/srv/lifekit-stack}"
@@ -195,6 +196,25 @@ install -m 644 "$REPO_DIR/scripts/rotate/memory-rotate.timer" \
   /etc/systemd/system/memory-rotate.timer
 systemctl daemon-reload
 systemctl enable --now memory-rotate.timer
+
+# ─── Claude quota gauge timer ─────────────────────────────────────────────────
+# Every 5 minutes, write the shared Claude account's remaining quota per window
+# (quota-axi --json) into node-exporter's textfile collector directory; Grafana's
+# claude-quota-* rules alert on it. Runs as ADMIN_USER because that account holds
+# the Claude credentials and the nvm-installed quota-axi. The directory must be
+# owned by that account and world-readable (node-exporter reads it as nobody).
+
+say "Installing Claude quota gauge script + systemd units"
+install -d -o "$ADMIN_USER" -g "$ADMIN_USER" -m 755 /var/lib/node_exporter/textfile
+install -m 755 "$REPO_DIR/scripts/quota-gauge/claude-quota-gauge.sh" \
+  /usr/local/bin/claude-quota-gauge.sh
+sed "s/__ADMIN_USER__/${ADMIN_USER}/" \
+  "$REPO_DIR/scripts/quota-gauge/claude-quota-gauge.service" \
+  > /etc/systemd/system/claude-quota-gauge.service
+install -m 644 "$REPO_DIR/scripts/quota-gauge/claude-quota-gauge.timer" \
+  /etc/systemd/system/claude-quota-gauge.timer
+systemctl daemon-reload
+systemctl enable --now claude-quota-gauge.timer
 
 # ─── GitHub Actions self-hosted runner ────────────────────────────────────────
 
