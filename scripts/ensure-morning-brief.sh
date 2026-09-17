@@ -62,6 +62,7 @@ add_out="$(docker exec "$GATEWAY" openclaw cron add \
   --message "Morning brief: run the morning-brief skill in BRIEF mode end-to-end — sweep the repos with gh, read devclaw live state, persist briefs/latest.md plus the dated copy, and output the numbered brief as your final message." \
   --announce --channel telegram --to "$CHAT_ID" \
   --best-effort-deliver \
+  --failure-alert --failure-alert-channel telegram --failure-alert-to "$CHAT_ID" \
   --timeout-seconds 900)"
 echo "$add_out"
 job_id="$(printf '%s' "$add_out" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"

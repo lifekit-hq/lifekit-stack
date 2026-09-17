@@ -22,9 +22,11 @@ cooldown so upstream's own hotfix cycle has landed. The loop:
    state (config rewrite, SQLite migrations, official-plugin re-pin), then
    recreates the gateway and runs `openclaw doctor`, `health`,
    `channels status`. Read that log.
-4. deploy.sh then runs one real agent turn per runtime (`fable` for
-   claude-cli, `kit` for codex; `SMOKE_AGENTS` overrides) in a throwaway
-   `deploy-smoke-<agent>` session. A runtime error fails the run; auth and quota
+4. deploy.sh then runs one real agent turn each for `fable` and `kit`
+   (`SMOKE_AGENTS` overrides) in a throwaway `deploy-smoke-<agent>` session —
+   both on claude-cli since the 2026-09-16 all-agents switch to Claude
+   primary (see `scripts/deploy.sh` smoke-turn comment); OpenAI/codex is not
+   primary for any agent right now. A runtime error fails the run; auth and quota
    errors (expired OAuth, weekly cap) only warn. On a version change it also
    refuses to migrate over files not owned by uid 1000 and asserts every
    official plugin matches the core version afterwards (one update attempt,
