@@ -1,0 +1,33 @@
+{
+  "_comment": "Placeholder shares from guard-45-agent-registry-quota/report.md Part B. quota-share runs read-only for a week (from 2026-09-16) before the captain sets real numbers; shares here are not enforced by anything.",
+  "consumers": {
+    "captain": {
+      "share": 35,
+      "match": "residual"
+    },
+    "firstmate": {
+      "share": 30,
+      "match": [
+        "~/firstmate",
+        "~/fm-vps",
+        "~/.treehouse/*",
+        "~/.no-mistakes/worktrees/*"
+      ]
+    },
+    "devclaw": {
+      "share": 20,
+      "match": [
+        "lifekit:/app",
+        "lifekit:*/agents/devclaw*",
+        "metric:devclaw_tokens_total"
+      ]
+    },
+    "openclaw": {
+      "share": 15,
+      "match": [
+        "lifekit:*/agents/*",
+        "lifekit:*/workspace/main"
+      ]
+    }
+  }
+}
