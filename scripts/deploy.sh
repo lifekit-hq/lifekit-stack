@@ -568,10 +568,15 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 #
 # doctor/health/channels all passed on 2026-09-13 while two of three runtimes
 # were dead (claude-cli binary without its native part, codex auth expired).
-# The only check that sees that is a real turn. One agent per runtime; keep
-# this list in step with agents.entries.*.model when routing changes:
+# The only check that sees that is a real turn. Keep this list in step with
+# agents.entries.*.model when routing changes:
 #   fable -> claude-cli (Claude-only, no fallback: exercises that backend and
-#            nothing else); kit -> codex (OpenAI primary).
+#            nothing else); kit -> claude-cli (Claude primary since the
+#            2026-09-16 all-agents switch off OpenAI-primary; guard-45 report).
+# Both currently exercise the same backend (OpenAI/codex is not primary for
+# any agent right now) — kept as two agents because they cover different
+# fallback shapes (none vs Claude->OpenAI), not different runtimes. Revisit
+# this comment if OpenAI-primary routing returns for any agent.
 # A per-agent, per-run session id keeps the turn out of the agents' main
 # sessions (one shared id fails: a session is placed with its first agent
 # and the gateway refuses another agent in it) and out of any earlier smoke
