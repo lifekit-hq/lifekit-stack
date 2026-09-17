@@ -15,6 +15,10 @@
 
 set -euo pipefail
 
+# Resolved before anything below can change this file on disk (see the
+# re-exec block after "git pull").
+SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+
 REPO_DIR="${REPO_DIR:-/srv/lifekit-stack}"
 ENV_FILE="${ENV_FILE:-/srv/openclaw/config/.env}"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
@@ -45,6 +49,16 @@ on_exit() {
 }
 trap on_exit EXIT
 
+# Everything that follows is a `main` body: bash must fully parse a function
+# definition (matching the closing brace) before it runs any of it, so the
+# whole thing — including the git pull below and the re-exec right after it —
+# is already in memory as parsed commands before that pull can touch this
+# file's bytes on disk. Without this wrapper, a top-level script keeps
+# reading itself line-by-line straight off disk as it executes, and a
+# `git reset --hard` partway through corrupts whatever runs after it (see the
+# re-exec comment below for the incident this fixes).
+main() {
+
 cd "${REPO_DIR}"
 
 # ─── Sanity ──────────────────────────────────────────────────────────────────
@@ -73,6 +87,21 @@ STACK_DEFAULT="$(git remote show origin | sed -n 's/.*HEAD branch: //p' | head -
 STACK_DEFAULT="${STACK_DEFAULT:-main}"
 git fetch -q origin "${STACK_DEFAULT}"
 git reset -q --hard "${DEPLOY_REF:-origin/${STACK_DEFAULT}}"
+
+# The `main` wrapper above stops THIS run from corrupting on the hard-reset,
+# but it was still parsed from whatever revision was on disk when the caller
+# invoked `bash scripts/deploy.sh` — on merge run 35142022831 for #162, that
+# was the pre-merge revision, so the rest of this run would silently execute
+# stale deploy logic (old smoke block, old fixes) even though the repo is now
+# at the merge commit. Re-exec a fresh `bash` on the just-pulled file so the
+# actual deploy logic that runs is always the revision this pull just landed.
+# Guarded by an env marker so this fires once even though the second pass
+# repeats the pull (a no-op — it's already at the target ref).
+if [[ -z "${LIFEKIT_DEPLOY_REEXEC:-}" ]]; then
+  say "re-executing deploy.sh at $(git rev-parse --short HEAD) (post-pull, run the revision just pulled)"
+  export LIFEKIT_DEPLOY_REEXEC=1
+  exec bash "${SELF}" "$@"
+fi
 
 # ─── memory-audit: sync cron assets to the gateway workspace ─────────────────
 #
@@ -589,3 +618,7 @@ fi
 
 DEPLOY_COMPLETE=1
 say "✓ deploy complete."
+
+}
+
+main "$@"
