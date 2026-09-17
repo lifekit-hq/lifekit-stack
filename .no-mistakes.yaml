@@ -8,5 +8,12 @@
 # PATH); `.venv/` is gitignored. Keep this file, AGENTS.md "Commands", and
 # ci.yml in step - ci.yml is the source of truth.
 commands:
-  lint: 'python3 -m venv .venv && .venv/bin/pip install --quiet pre-commit && .venv/bin/pre-commit run --all-files --show-diff-on-failure'
-  test: 'python3 -m venv .venv && .venv/bin/pip install --quiet pytest && .venv/bin/python -m pytest -q compose/container-exporter/tests scripts/quota-share/tests scripts/tests'
+  lint: >-
+    python3 -m venv .venv
+    && .venv/bin/pip install --quiet pre-commit
+    && .venv/bin/pre-commit run --all-files --show-diff-on-failure
+  test: >-
+    python3 -m venv .venv
+    && .venv/bin/pip install --quiet pytest
+    && .venv/bin/python -m pytest -q
+    compose/container-exporter/tests scripts/quota-share/tests scripts/tests
