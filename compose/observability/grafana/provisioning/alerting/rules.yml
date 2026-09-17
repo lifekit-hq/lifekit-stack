@@ -350,6 +350,61 @@ groups:
             still serves. `/health` shows last_tick_at; a restart of devclaw-mcp
             reaps and resumes in-flight sandboxes.
 
+      - uid: devclaw-token-burn-high
+        title: devclaw token burn is elevated
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Usage reports arrive in bursts, not a steady stream - only
+              # ~4% of sessions report usage at all (guard-6-gaps-secrets
+              # report, gap 3), so this counter jumps in irregular spikes
+              # rather than climbing smoothly. Summed across kind so one
+              # instance covers total spend. Live history (7d, 2026-09-17):
+              # four nonzero hourly increases out of 168, of 8.4M, 8.8M,
+              # 15.1M and 26.8M tokens; 15M is picked as the warning line so
+              # it catches the two larger bursts without paging on ordinary
+              # ones. There is no hard cap to warn ahead of yet (the gap this
+              # rule narrows) - revisit the threshold once one exists.
+              expr: sum(increase(devclaw_tokens_total[1h]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [15000000]}
+        # No data means the exporter or its target is gone - target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: devclaw
+          severity: warning
+        annotations:
+          summary: devclaw burned more than 15M tokens in the last hour
+          description: >-
+            sum(increase(devclaw_tokens_total[1h])) is {{ printf "%.0f" $values.B.Value }},
+            above the 15,000,000/hour warning line. This is a heads-up, not a
+            hard cap - none exists yet. `docker logs devclaw-mcp` and
+            `/metrics` on the box show which kind (input/output/cache_read/
+            cache_creation) moved and which sessions are running.
+
   - orgId: 1
     name: openclaw
     folder: lifekit
