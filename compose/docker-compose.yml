@@ -467,8 +467,16 @@ services:
       - --collector.filesystem
       - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containers/storage/.+|host/(dev|proc|sys|run))($|/)
       - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs)$
+      # Textfile collector: host timers drop *.prom files here (today only
+      # claude_quota_* from scripts/quota-gauge, the shared Claude account's
+      # remaining % per window). bootstrap-vps.sh creates the host directory
+      # owned by the admin account; a missing directory is created root-owned
+      # by Docker and the gauge cannot write to it.
+      - --collector.textfile
+      - --collector.textfile.directory=/textfile
     volumes:
       - /:/host:ro,rslave
+      - /var/lib/node_exporter/textfile:/textfile:ro
     ports:
       - "127.0.0.1:${NODE_EXPORTER_PORT:-9100}:9100"
     deploy:

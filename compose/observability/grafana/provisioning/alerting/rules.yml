@@ -298,6 +298,113 @@ groups:
             been below 15% for 10 minutes. `df -h /` on the box, then
             `docker system df` to find reclaimable image and build cache.
 
+      # The shared Claude account is a box-level resource like disk: one Max
+      # subscription serves every consumer on the box (the operator's sessions,
+      # firstmate, devclaw, all OpenClaw agents), and every other guard only
+      # watches its own corner. scripts/quota-gauge writes claude_quota_* from
+      # `quota-axi --json` through node-exporter's textfile collector every
+      # 5 minutes; these two rules watch the weekly window itself.
+      - uid: claude-quota-behind-pace
+        title: Claude weekly quota is behind pace
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # quota-axi's own pace condition: remaining % minus the % of the
+              # window still ahead (100 * seconds-to-reset / 7d). Negative means
+              # the week is being spent faster than it elapses.
+              expr: claude_quota_reserve_percent_points{window="seven_day"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [0]}
+        # No series means the gauge timer or node-exporter is gone: the
+        # timer's own failure shows in `systemctl --failed`, the target in
+        # target-down. Not this rule's job.
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Claude weekly quota remaining is below the fraction of the week left"
+          description: >-
+            claude_quota_reserve_percent_points{window="seven_day"} is
+            {{ printf "%.0f" $values.B.Value }} points for 15 minutes: the
+            account has less of the week left than the week has time left.
+            `quota-axi` on the box shows every window and the burn multiple;
+            the brakes are `openclaw cron disable` for non-essential crons,
+            the firstmate quota wake, and devclaw's operator hold.
+
+      - uid: claude-quota-nearly-exhausted
+        title: Claude weekly quota is nearly exhausted
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Under 10% left with more than a day until the reset. Right
+              # before the reset the same number is normal, so the reset time
+              # gates the page.
+              expr: >-
+                claude_quota_percent_remaining{window="seven_day"}
+                  and on(window) (claude_quota_resets_at_seconds{window="seven_day"} - time() > 86400)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [10]}
+        # An empty result is the normal state (reset within a day, or the
+        # gauge absent - see claude-quota-behind-pace).
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Claude weekly quota is under 10% with more than a day to the reset"
+          description: >-
+            claude_quota_percent_remaining{window="seven_day"} is
+            {{ printf "%.0f" $values.B.Value }}% and the reset is more than 24h
+            away. Every consumer on the box shares this account; the next step
+            is "You've hit your weekly limit" on every agent. Disable
+            non-essential OpenClaw crons (`openclaw cron disable <id>`), pause
+            devclaw and firstmate launches, and spend the rest by hand.
+
   - orgId: 1
     name: devclaw-deadman
     folder: lifekit
