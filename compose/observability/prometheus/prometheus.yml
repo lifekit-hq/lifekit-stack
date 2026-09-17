@@ -29,12 +29,31 @@ scrape_configs:
     static_configs:
       - targets: ['finance-sentry-gateway:8080']
 
+  # finance-sentry's MCP server and frontend serve /metrics too (finance-sentry
+  # spec 048, platform contract `scraped`); both on compose_default like the api.
+  - job_name: finance-sentry-mcp
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['finance-sentry-mcp:5100']
+
+  - job_name: finance-sentry-frontend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['finance-sentry-frontend:4200']
+
   # notify-relay's request/send counters and readiness gauge (platform
   # contract). Its own project, `default` network.
   - job_name: notify-relay
     metrics_path: /metrics
     static_configs:
       - targets: ['notify-relay:8090']
+
+  # lifekit-dashboard's /metrics (platform contract `scraped`). Its own
+  # compose project, reachable here over the external `lifekit-shared` network.
+  - job_name: lifekit-dashboard
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['lifekit-dashboard:8080']
 
   # Every container on the box, from the daemon itself (compose/container-
   # exporter): running, restart count, health, exit code, memory. The `box`
