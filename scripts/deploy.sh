@@ -389,6 +389,96 @@ if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build 
 fi
 rm -f "${UP_LOG}"
 
+# ─── OpenClaw platform config: the repo's half of openclaw.json ──────────────
+#
+# openclaw.json is host state (agents.entries, channels, auth profiles, MCP
+# tokens - mirrored to a private repo, never in this one). But the keys the
+# PLATFORM needs from it - JSON console logs and OTLP log records for the
+# contract's `logs` item, the diagnostics plugins Prometheus scrapes, the
+# gateway auth rate limit, heartbeats off - used to ship as operator steps in
+# PR bodies (#160, #161's runbook patch) and were applied by hand, so a green
+# PR could sit un-merged until someone patched the box (2026-09-17: the
+# contract gate needs logging.consoleStyle=json or every deploy goes red).
+# compose/openclaw-gateway/platform.patch.json holds exactly those keys and
+# this step applies it with `openclaw config patch` (objects merge, scalars
+# replace), so every push to main converges the live file. Personal keys
+# never go in that file; a new platform key goes there, not in a PR body.
+#
+# Idempotency is decided here, not by the CLI. `config patch --dry-run`
+# validates the patch against the installed schema but counts every
+# assignment as an update whether or not it changes anything, and a real
+# `config patch` of an already-applied patch still rewrites the file and
+# rotates the .bak ring (both checked against the 2026.9.4 CLI on a scratch
+# state dir, 2026-09-17). So the live file is compared with the patch first,
+# and an already-converged file skips the write entirely. The gateway is
+# force-recreated only when the CLI's apply hint says the changed keys need
+# it ("Restart the gateway to apply." - plugins.entries and the other
+# restart-only paths); hot-reloadable keys are picked up by the running
+# gateway on its own (gateway.reload defaults to hybrid). The one-shot
+# `run --rm --entrypoint openclaw` is the same shape as the upgrade steps
+# above; the CLI prints JSON lines once consoleStyle=json is live, so the
+# hint is matched as a substring, not a whole line.
+PLATFORM_PATCH="${REPO_DIR}/compose/openclaw-gateway/platform.patch.json"
+say "openclaw platform config: comparing ${PLATFORM_PATCH#"${REPO_DIR}/"} with the live config"
+PLATFORM_PENDING="$(python3 - "${PLATFORM_PATCH}" "${OPENCLAW_CONFIG_DIR}/openclaw.json" <<'PY'
+import json, sys
+patch = json.load(open(sys.argv[1]))
+try:
+    with open(sys.argv[2]) as f:
+        live = json.load(f)
+except Exception as e:  # unreadable, or a hand edit left JSON5: let the CLI decide
+    print(f"(cannot compare: {e.__class__.__name__} reading the live config; applying unconditionally)")
+    sys.exit()
+def leaves(node, path=""):
+    if isinstance(node, dict) and node:
+        for key, value in node.items():
+            yield from leaves(value, f"{path}.{key}" if path else key)
+    else:
+        yield path, node
+MISSING = object()
+for path, want in leaves(patch):
+    cur = live
+    for key in path.split("."):
+        cur = cur.get(key, MISSING) if isinstance(cur, dict) else MISSING
+        if cur is MISSING:
+            break
+    if want is None:  # null in a patch deletes the path
+        pending = cur is not MISSING
+    else:
+        pending = cur is MISSING or type(cur) is not type(want) or cur != want
+    if pending:
+        print(path)
+PY
+)"
+if [[ -z "${PLATFORM_PENDING}" ]]; then
+  echo "  already applied; nothing to change, gateway left alone"
+else
+  printf '  pending: %s\n' "${PLATFORM_PENDING//$'\n'/, }"
+  say "openclaw platform config: dry run against the installed schema (writes nothing)"
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+      run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+        config patch --stdin --dry-run < "${PLATFORM_PATCH}"; then
+    fail_later "openclaw platform config: dry run rejected ${PLATFORM_PATCH#"${REPO_DIR}/"}; not applied"
+  else
+    say "openclaw platform config: applying"
+    PATCH_LOG="$(mktemp)"
+    if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+        run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+          config patch --stdin < "${PLATFORM_PATCH}" 2>&1 | tee "${PATCH_LOG}"; then
+      if grep -q 'Restart the gateway to apply' "${PATCH_LOG}"; then
+        say "openclaw platform config: applied keys need a restart; recreating openclaw-gateway"
+        docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+          up -d --no-deps --force-recreate openclaw-gateway
+      else
+        echo "  applied; the running gateway hot-reloads these keys, no recreate"
+      fi
+    else
+      fail_later "openclaw platform config: apply failed (output above); gateway left as deployed"
+    fi
+    rm -f "${PATCH_LOG}"
+  fi
+fi
+
 # ─── Reload Prometheus' scrape config ────────────────────────────────────────
 #
 # Same shape as the Grafana reload below: prometheus.yml is bind-mounted, so
