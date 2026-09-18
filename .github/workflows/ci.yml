@@ -71,7 +71,9 @@ jobs:
   deploy:
     name: Deploy to VPS
     needs: [lint, tests, gitleaks-full]
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    # main only: Weekly Release dispatches this workflow on the release-please branch to
+    # get the required checks onto the release PR (#176), and that must never deploy.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: self-hosted
     concurrency:
       group: deploy-vps

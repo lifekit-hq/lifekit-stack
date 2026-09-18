@@ -4,9 +4,15 @@ name: Weekly Release
 # Release Please keeps that PR current on every merge; this job just lands it on a cadence.
 # No releasable commits since the last release → no PR → the job no-ops.
 #
-# GITHUB_TOKEN merges do not fire push-triggered workflows, so after merging this job
-# explicitly dispatches Release Please (tags + publishes the GitHub release) and CI
-# (whose deploy job ships the release commit to the VPS, same as any main push).
+# Everything here runs on GITHUB_TOKEN, and GITHUB_TOKEN activity fires no workflows
+# (workflow_dispatch is the one exemption), so every hop is dispatched explicitly:
+#   - before the merge: Release Please opens its PR as github-actions[bot], so the PR's
+#     pull_request CI runs are parked as `action_required` and never execute - the checks
+#     main requires would never report and the PR could never merge (#176). This job
+#     dispatches CI on the release branch instead; the check runs land on the PR head
+#     commit under the same names, which is what branch protection matches on.
+#   - after the merge: Release Please (tags + publishes the GitHub release) and CI
+#     (whose deploy job ships the release commit to the VPS, same as any main push).
 
 on:
   schedule:
@@ -25,11 +31,12 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: Merge pending release PR, then dispatch tag + CI (deploy)
+      - name: Run CI on the release branch, merge the release PR, then dispatch tag + CI (deploy)
         run: |
           set -euo pipefail
           pr=$(gh pr list --state open --label "autorelease: pending" --json number --jq '.[0].number // empty')
@@ -37,6 +44,45 @@ jobs:
             echo "No pending release PR — nothing to release this week."
             exit 0
           fi
+
+          branch=$(gh pr view "$pr" --json headRefName --jq .headRefName)
+
+          # main requires the branch to be up to date (strict). Release Please rebuilds
+          # the branch only when the PR content changes, so commits hidden from the
+          # changelog (ci, chore, ...) can leave it behind main.
+          behind() { gh api "repos/$GH_REPO/compare/main...$branch" --jq .behind_by; }
+          if [[ "$(behind)" -gt 0 ]]; then
+            echo "Release branch is behind main - updating it"
+            gh pr update-branch "$pr"
+            for _ in $(seq 1 24); do
+              [[ "$(behind)" -eq 0 ]] && break
+              sleep 5
+            done
+            [[ "$(behind)" -eq 0 ]] || { echo "Release branch is still behind main"; exit 1; }
+          fi
+          sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+
+          # A re-run on the same head commit reuses checks that already passed.
+          if gh pr checks "$pr" --required >/dev/null 2>&1; then
+            echo "Required checks already green on $sha"
+          else
+            ci_run() {
+              gh run list --workflow ci.yml --event workflow_dispatch --commit "$sha" \
+                --limit 1 --json databaseId --jq '.[0].databaseId // 0'
+            }
+            last=$(ci_run)
+            gh workflow run ci.yml --ref "$branch"
+            run=0
+            for _ in $(seq 1 24); do
+              run=$(ci_run)
+              [[ "$run" -gt "$last" ]] && break
+              sleep 5
+            done
+            [[ "$run" -gt "$last" ]] || { echo "Dispatched CI run for $sha never appeared"; exit 1; }
+            echo "Waiting for CI run $run on $branch ($sha)"
+            gh run watch "$run" --exit-status --interval 30
+          fi
+
           echo "Merging release PR #$pr"
           gh pr merge "$pr" --squash --delete-branch
           gh workflow run release-please.yml --ref main
