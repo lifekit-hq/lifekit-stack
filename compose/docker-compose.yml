@@ -107,6 +107,15 @@ services:
       OPENCLAW_CONFIG_DIR: /home/node/.openclaw
       OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      # Inbound hooks (openclaw-gateway/platform.patch.json): openclaw.json
+      # holds these as literal ${VAR} references and resolves them from this
+      # environment, so neither the hook token, the non-guessable hook path
+      # nor the owner's chat id is ever written to the config file or to git.
+      # The hook token is its own secret, never the gateway token. Hooks ride
+      # the existing 18789 listener: no new port, still loopback + tailnet.
+      OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
+      OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
+      OPENCLAW_FINANCE_CHAT: ${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
       OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
       PATH: /home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -261,6 +270,11 @@ services:
       OPENCLAW_DISABLE_BONJOUR: "1"
       OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      # Mirror of the gateway's hook references: the CLI loads the same
+      # openclaw.json and warns on every run about a ${VAR} it cannot resolve.
+      OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
+      OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
+      OPENCLAW_FINANCE_CHAT: ${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
       BROWSER: echo
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:

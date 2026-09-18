@@ -109,7 +109,8 @@ file); rotating that token means recreating `prometheus` too. Check it with
 `/srv/openclaw/config/openclaw.json` has two halves. The platform keys -
 `logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
 `diagnostics-otel` plugin enables, `gateway.auth.rateLimit`,
-`agents.defaults.heartbeat.every` - live in
+`agents.defaults.heartbeat.every`, the inbound `hooks` block and the finance
+agent's heartbeat - live in
 `compose/openclaw-gateway/platform.patch.json`. On every deploy `deploy.sh`
 compares that file with the live config, applies it with
 `openclaw config patch` only when a key differs, and force-recreates the
@@ -121,6 +122,53 @@ never in a PR body; objects merge and scalars replace
 (`openclaw config patch --help`), and the file is strict JSON so the deploy
 can read it with stdlib Python. Check new keys against the installed schema
 (`openclaw config schema`).
+
+#### Inbound hooks and the finance pulse (in the platform file since 2026-09-18)
+
+The same file turns on OpenClaw's inbound HTTP hooks for one caller and one
+agent, and gives the finance agent a heartbeat:
+
+- `hooks`: enabled, `allowedAgentIds: ["finance"]`, caller-supplied session
+  keys off, and one mapping - `POST <hook path>/finance-sentry` runs the
+  finance agent in an isolated session and delivers to its Telegram chat. The
+  template interpolates `kind` and `eventId` only: the push carries
+  identifiers, the agent reads the detail back through its MCP tools.
+- `agents.entries.finance.heartbeat`: every 6h inside 07:00-23:00
+  Europe/Dublin, sonnet, `lightContext`, `isolatedSession`. It is the one
+  `agents.entries` key in the platform file; every other per-agent key stays
+  host state. `agents.defaults.heartbeat.every` stays `0m`, so only this agent
+  ticks.
+- **No value is in git or in `openclaw.json`.** The file holds the literal
+  references `${OPENCLAW_HOOK_TOKEN}`, `${OPENCLAW_HOOK_PATH}` and
+  `${OPENCLAW_FINANCE_CHAT}`; OpenClaw resolves them from the container
+  environment, which compose fills from `/srv/openclaw/config/.env` (see
+  `.env.example`). `config patch` writes the reference back verbatim, so the
+  deploy's compare sees equal strings and stays idempotent. The hook token is
+  its own secret, never the gateway token (the gateway warns at startup if
+  they match).
+- **No new listener.** Hooks are routes on the gateway's existing 18789
+  server: published on `127.0.0.1` only, reachable over the tailnet and from
+  containers on the gateway's docker networks (that is how finance-sentry
+  calls it), never from the public interface.
+- **Order on a host that does not have them yet:** put the three variables in
+  the env file first, then deploy. While one is missing or empty the deploy's
+  dry run rejects the patch (`SecretRef assignment(s) could not be
+  resolved`), nothing is written, the gateway stays as it was and the deploy
+  ends red. After hooks are on, do not remove the token: a gateway with
+  `hooks.enabled` and no token refuses to start. Rotate by changing the value
+  in the env file (and in the caller's) and recreating the gateway.
+- These keys hot-reload (`Change will apply without restarting the gateway.`);
+  the patch step does not recreate the gateway for them. Adding the variables
+  to the compose `environment` does change the service definition, so the
+  deploy that first carries them recreates the gateway once in `up -d`.
+
+The pulse's checklist is not config. It is the scratch of the
+`heartbeat-finance` automation row (the workspace `HEARTBEAT.md` is a no-op in
+2026.9.4), declared by `scripts/ensure-finance-pulse.sh` from
+`scripts/finance-pulse.md`, the same way `scripts/ensure-morning-brief.sh`
+declares its cron. Run it once on the host after the deploy that applied the
+heartbeat. Until then the scratch is empty and every tick skips with
+`reason=empty-heartbeat-file` and no model call.
 
 The per-agent half stays host state and is still applied by hand. The patch
 below addresses the 2026-09-16 `openclaw security audit` warnings that name
