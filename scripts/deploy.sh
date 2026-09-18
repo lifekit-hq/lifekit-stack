@@ -404,6 +404,14 @@ rm -f "${UP_LOG}"
 # replace), so every push to main converges the live file. Personal keys
 # never go in that file; a new platform key goes there, not in a PR body.
 #
+# Secrets in that file are literal ${VAR} references (the hook token, hook
+# path and chat id - docs/runbook.md, "Inbound hooks and the finance pulse").
+# `config patch` writes the reference back verbatim, never the value, so the
+# compare below sees equal strings; and the dry run refuses the patch while a
+# referenced variable is missing or empty in the container environment, which
+# leaves the gateway alone and turns the deploy red instead of enabling hooks
+# without a token.
+#
 # Idempotency is decided here, not by the CLI. `config patch --dry-run`
 # validates the patch against the installed schema but counts every
 # assignment as an update whether or not it changes anything, and a real
