@@ -77,8 +77,9 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
 
 - **Deploys hang off push-to-main, not release-created.** This repo *deploys* (the maintainer's
   VPS tracks `main` continuously); releases exist for template consumers — version + CHANGELOG
-  cadence — not as the deploy trigger. The Weekly Release still dispatches CI after merging the
-  release PR, so the release commit deploys like any other.
+  cadence — not as the deploy trigger. The release workflows act as the `lifekit-release-bot`
+  GitHub App (`RELEASE_APP_ID` variable + `RELEASE_APP_PRIVATE_KEY` secret), never
+  `GITHUB_TOKEN`, so the release PR gets its CI and its merge deploys like any other main push.
 - **No build gate in CI.** Docker images are not built per-PR (the runner is the 4 GB production
   VPS); hadolint lints every Dockerfile on every PR, and the images build at deploy.
 - **CI runs on the VPS self-hosted runner** (deploy must; lint/tests follow it — the runner has no
