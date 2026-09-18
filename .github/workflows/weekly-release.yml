@@ -4,15 +4,13 @@ name: Weekly Release
 # Release Please keeps that PR current on every merge; this job just lands it on a cadence.
 # No releasable commits since the last release → no PR → the job no-ops.
 #
-# Everything here runs on GITHUB_TOKEN, and GITHUB_TOKEN activity fires no workflows
-# (workflow_dispatch is the one exemption), so every hop is dispatched explicitly:
-#   - before the merge: Release Please opens its PR as github-actions[bot], so the PR's
-#     pull_request CI runs are parked as `action_required` and never execute - the checks
-#     main requires would never report and the PR could never merge (#176). This job
-#     dispatches CI on the release branch instead; the check runs land on the PR head
-#     commit under the same names, which is what branch protection matches on.
-#   - after the merge: Release Please (tags + publishes the GitHub release) and CI
-#     (whose deploy job ships the release commit to the VPS, same as any main push).
+# Every step acts as the release bot app (the same app release-please pushes with), not
+# GITHUB_TOKEN, whose activity fires no workflows (#176):
+#   - before the merge: the app's pushes to the release branch trigger the pull_request CI
+#     runs, so the checks main requires report on the PR like on any other contributor's.
+#   - the merge is a real push to main: Release Please tags + publishes the GitHub release
+#     and CI's deploy job ships the release commit to the VPS through their normal push
+#     triggers.
 
 on:
   schedule:
@@ -22,7 +20,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  actions: write
 
 concurrency:
   group: weekly-release
@@ -32,11 +29,16 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}
     steps:
-      - name: Run CI on the release branch, merge the release PR, then dispatch tag + CI (deploy)
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - name: Merge pending release PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           pr=$(gh pr list --state open --label "autorelease: pending" --json number --jq '.[0].number // empty')
@@ -60,30 +62,16 @@ jobs:
             done
             [[ "$(behind)" -eq 0 ]] || { echo "Release branch is still behind main"; exit 1; }
           fi
-          sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
 
-          # A re-run on the same head commit reuses checks that already passed.
-          if gh pr checks "$pr" --required >/dev/null 2>&1; then
-            echo "Required checks already green on $sha"
-          else
-            ci_run() {
-              gh run list --workflow ci.yml --event workflow_dispatch --commit "$sha" \
-                --limit 1 --json databaseId --jq '.[0].databaseId // 0'
-            }
-            last=$(ci_run)
-            gh workflow run ci.yml --ref "$branch"
-            run=0
-            for _ in $(seq 1 24); do
-              run=$(ci_run)
-              [[ "$run" -gt "$last" ]] && break
-              sleep 5
-            done
-            [[ "$run" -gt "$last" ]] || { echo "Dispatched CI run for $sha never appeared"; exit 1; }
-            echo "Waiting for CI run $run on $branch ($sha)"
-            gh run watch "$run" --exit-status --interval 30
-          fi
+          # The release branch gets its checks from pull_request runs on every push to it.
+          # A branch update just above needs a moment to register them; then wait for any
+          # still in flight - a failed check aborts before the merge.
+          for _ in $(seq 1 24); do
+            checks=$(gh pr checks "$pr" --json name --jq length 2>/dev/null || true)
+            [[ "${checks:-0}" -gt 0 ]] && break
+            sleep 5
+          done
+          gh pr checks "$pr" --watch --fail-fast
 
           echo "Merging release PR #$pr"
           gh pr merge "$pr" --squash --delete-branch
-          gh workflow run release-please.yml --ref main
-          gh workflow run ci.yml --ref main
