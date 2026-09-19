@@ -170,7 +170,7 @@ The wizard saves your choices to `wizard.yaml` on first run, so re-runs are non-
 
 ## What's NOT in this repo
 
-This repository contains **only code, config templates, and deploy logic**. Personal data and secrets stay out by design — see [`docs/PRIVATE.md`](./docs/PRIVATE.md) for the full audit checklist. Briefly:
+This repository contains **only code, config templates, deploy logic, and SOPS-encrypted secrets**. The two encrypted env files under `secrets/` are the master and gateway boundaries of [`docs/secrets.md`](./docs/secrets.md) (age keys never in git; [`docs/secrets-runbook.md`](./docs/secrets-runbook.md) for rotation and rebuild). Personal data and plaintext secrets stay out by design — see [`docs/PRIVATE.md`](./docs/PRIVATE.md) for the full audit checklist. Briefly:
 
 - **Your `~/.life/` data** — your journal, domains, knowledge layer. Lives on your VPS. Optionally back it up to your own private git repo, never this one.
 - **Secrets** — bot tokens, API keys, encryption keys. Generated locally by the wizard, never committed.

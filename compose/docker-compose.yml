@@ -29,16 +29,19 @@
 #   cd /srv/lifekit-stack && ./scripts/deploy.sh
 #
 # Or directly:
-#   docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env up -d --build
+#   docker compose -f compose/docker-compose.yml --env-file /srv/lifekit-secrets/stack.env up -d --build
 #
 # AD-HOC COMMANDS (recreate one service, rebuild one image, etc.) MUST also
-# pass --env-file /srv/openclaw/config/.env, OR pre-source it:
-#   set -a; source /srv/openclaw/config/.env; set +a
+# pass --env-file /srv/lifekit-secrets/stack.env (the master secret file
+# rendered by scripts/secrets/render-stack-env.sh - docs/secrets.md), OR
+# pre-source it:
+#   set -a; source /srv/lifekit-secrets/stack.env; set +a
 #   docker compose up -d <service>
-# Without one of these, ${OPENCLAW_GATEWAY_TOKEN}, ${TELEGRAM_BOT_TOKEN}, and
+# Without one of these, ${OPENCLAW_GATEWAY_TOKEN}, ${DEVCLAW_BOT_TOKEN}, and
 # friends substitute to empty strings; the gateway boots and crash-loops.
 # scripts/deploy.sh handles this for you. Bypassing the script = remember the
-# flag.
+# flag. The gateway's own bot tokens are not in that file at all: it resolves
+# them from secrets/lifekit-gateway.env.sops (mounted below).
 #
 # Uniform service policy (log rotation 50MB×3, restart on-failure:5, per-service
 # memory cap) is defined in the x-policy anchor below and merged into every
@@ -116,6 +119,14 @@ services:
       OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
       OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
       OPENCLAW_FINANCE_CHAT: ${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
+      # Master-file secrets openclaw.json takes as env references (docs/secrets.md):
+      # the devclaw bot (also grafana's and notify-relay's, so it is not a
+      # gateway-file secret) and the two MCP bearers (`Bearer ${VAR}` headers
+      # are not on the SecretRef surface). The env file is no longer inside
+      # the state mount, so these reach the gateway only through here.
+      DEVCLAW_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-}
+      FINANCE_SENTRY_MCP_TOKEN: ${FINANCE_SENTRY_MCP_TOKEN:-}
+      DEVCLAW_MCP_TOKEN: ${DEVCLAW_MCP_TOKEN:-}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
       OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
       PATH: /home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -124,6 +135,15 @@ services:
       - ${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
+      # Gateway secret boundary (docs/secrets.md): the SOPS-encrypted gateway
+      # file from this checkout and the gateway's age key, both read-only and
+      # OUTSIDE the state mount (never in `openclaw backup`, never the global
+      # dotenv). The exec provider in openclaw-gateway/platform.patch.json
+      # reads them at /run/lifekit. Only the key's own directory is mounted:
+      # /srv/lifekit-secrets itself holds the rendered master env and must not
+      # be visible in any container.
+      - ../secrets:/run/lifekit/secrets:ro
+      - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/gateway:/run/lifekit/gateway:ro
       # Vault (~/memory): bind-mounted at two paths.
       # ~/memory — canonical alias used by cron jobs, skills, and agents.
       # ~/.openclaw/wiki/main — direct real bind mount (replaces symlink) so
@@ -275,12 +295,19 @@ services:
       OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
       OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
       OPENCLAW_FINANCE_CHAT: ${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
+      DEVCLAW_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-}
+      FINANCE_SENTRY_MCP_TOKEN: ${FINANCE_SENTRY_MCP_TOKEN:-}
+      DEVCLAW_MCP_TOKEN: ${DEVCLAW_MCP_TOKEN:-}
       BROWSER: echo
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
+      # Same secret mounts as the gateway: `secrets audit --allow-exec` and the
+      # deploy's post-up checks run the exec provider from this container too.
+      - ../secrets:/run/lifekit/secrets:ro
+      - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/gateway:/run/lifekit/gateway:ro
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/.openclaw/wiki/main
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
@@ -581,10 +608,12 @@ services:
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-}
       # Alert delivery — $TELEGRAM_BOT_TOKEN is expanded into
       # provisioning/alerting/contact-points.yml (the same devclaw bot
-      # notify-relay uses, falling back to Kit's). The chat id is NOT passed:
-      # Grafana re-types an all-digit env value as a number and the telegram
-      # integration rejects it, so contact-points.yml carries it literally.
-      TELEGRAM_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}
+      # notify-relay uses; a master-file secret, docs/secrets.md - Kit's own
+      # token is gateway-only now, so there is no fallback to it). The chat
+      # id is NOT passed: Grafana re-types an all-digit env value as a number
+      # and the telegram integration rejects it, so contact-points.yml
+      # carries it literally.
+      TELEGRAM_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-}
       TZ: ${OPENCLAW_TZ:-UTC}
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
@@ -682,9 +711,10 @@ services:
       # notify-relay is devclaw's ONLY outbound voice, so it speaks through the
       # dedicated devclaw bot into the devclaw channel — NOT the main Kit bot.
       # (The inbound side, /goals/answer, is already on the devclaw bot; this
-      # fixes the outbound asymmetry.) Falls back to the main bot/chat if the
-      # devclaw-specific vars are unset.
-      TELEGRAM_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}
+      # fixes the outbound asymmetry.) The chat falls back to the main chat if
+      # DEVCLAW_CHAT is unset; the token does not: Kit's token is gateway-only
+      # (docs/secrets.md), DEVCLAW_BOT_TOKEN is the master-file one.
+      TELEGRAM_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-}
       LIFEKIT_TELEGRAM_CHAT: ${DEVCLAW_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
       TZ: ${OPENCLAW_TZ:-UTC}
     cap_drop:

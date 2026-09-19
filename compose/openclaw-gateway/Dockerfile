@@ -83,6 +83,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN printf 'export PATH="/home/node/.npm-global/bin:$PATH"\n' > /etc/profile.d/zz-skill-clis.sh \
     && chmod 0644 /etc/profile.d/zz-skill-clis.sh
 
+# Secrets (docs/secrets.md): the gateway resolves its Telegram bot tokens from
+# secrets/lifekit-gateway.env.sops through an exec SecretRef provider. sops is
+# pinned + checksum-verified by install-sops.sh (the one home of that pin;
+# Dependabot does not track it - bump the script). The resolver must pass
+# OpenClaw's exec trust check: an absolute, non-symlink path, not group- or
+# world-writable, and OWNED BY THE GATEWAY UID (node). The directory stays
+# root-owned so the file cannot be swapped from inside the container; the
+# age key and the encrypted file are bind-mounted read-only by compose.
+COPY install-sops.sh /tmp/install-sops.sh
+RUN bash /tmp/install-sops.sh /usr/local/bin && rm -f /tmp/install-sops.sh
+COPY --chown=node:node --chmod=0500 sops-resolver.py /opt/lifekit-secrets/sops-resolver.py
+
 USER node
 
 # Pre-fetch the Playwright Chromium build into the runtime user's cache so

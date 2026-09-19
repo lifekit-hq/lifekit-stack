@@ -85,5 +85,66 @@
         "timeoutSeconds": 300
       }
     ]
+  },
+  "secrets": {
+    "providers": {
+      "sops": {
+        "source": "exec",
+        "command": "/opt/lifekit-secrets/sops-resolver.py",
+        "trustedDirs": [
+          "/opt/lifekit-secrets"
+        ],
+        "env": {
+          "PATH": "/usr/local/bin:/usr/bin:/bin",
+          "LIFEKIT_SOPS_BIN": "/usr/local/bin/sops",
+          "LIFEKIT_SOPS_FILE": "/run/lifekit/secrets/lifekit-gateway.env.sops",
+          "SOPS_AGE_KEY_FILE": "/run/lifekit/gateway/lifekit-gateway.agekey"
+        },
+        "jsonOnly": true,
+        "timeoutMs": 30000,
+        "noOutputTimeoutMs": 30000
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "accounts": {
+        "default": {
+          "botToken": {
+            "source": "exec",
+            "provider": "sops",
+            "id": "kit-bot-token"
+          }
+        },
+        "fable": {
+          "botToken": {
+            "source": "exec",
+            "provider": "sops",
+            "id": "fable-bot-token"
+          }
+        },
+        "finance": {
+          "botToken": {
+            "source": "exec",
+            "provider": "sops",
+            "id": "finance-bot-token"
+          }
+        },
+        "reading": {
+          "botToken": {
+            "source": "exec",
+            "provider": "sops",
+            "id": "learning-bot-token"
+          }
+        },
+        "social": {
+          "botToken": {
+            "source": "exec",
+            "provider": "sops",
+            "id": "social-bot-token"
+          }
+        }
+      }
+    }
   }
 }

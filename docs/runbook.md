@@ -123,6 +123,21 @@ never in a PR body; objects merge and scalars replace
 can read it with stdlib Python. Check new keys against the installed schema
 (`openclaw config schema`).
 
+#### Gateway secrets: the `sops` exec provider (in the platform file since 2026-09-19)
+
+The same file registers `secrets.providers.sops`, an exec SecretRef provider
+(`/opt/lifekit-secrets/sops-resolver.py` in the image, `sops` pinned by
+`compose/openclaw-gateway/install-sops.sh`), and points every Telegram
+account's `botToken` at it (`kit-bot-token` names `KIT_BOT_TOKEN` in
+`secrets/lifekit-gateway.env.sops`, mounted read-only from this checkout
+next to the gateway's age key from `/srv/lifekit-secrets/gateway/`). Under
+`channels.telegram.accounts.*` only `botToken` is platform state; the
+accounts' allowlists and policies stay host state. The deploy's dry run
+passes `--allow-exec`, so an unopenable file or a missing name rejects the
+patch before anything is written, and `openclaw secrets reload` after every
+deploy picks up a rotated value. Inventory: `docs/secrets.md`; sequences:
+`docs/secrets-runbook.md`.
+
 #### Inbound hooks and the finance pulse (in the platform file since 2026-09-18)
 
 The same file turns on OpenClaw's inbound HTTP hooks for one caller and one
@@ -141,8 +156,8 @@ agent, and gives the finance agent a heartbeat:
 - **No value is in git or in `openclaw.json`.** The file holds the literal
   references `${OPENCLAW_HOOK_TOKEN}`, `${OPENCLAW_HOOK_PATH}` and
   `${OPENCLAW_FINANCE_CHAT}`; OpenClaw resolves them from the container
-  environment, which compose fills from `/srv/openclaw/config/.env` (see
-  `.env.example`). `config patch` writes the reference back verbatim, so the
+  environment, which compose fills from `/srv/lifekit-secrets/stack.env`
+  (rendered from `secrets/lifekit.env.sops`, `docs/secrets.md`). `config patch` writes the reference back verbatim, so the
   deploy's compare sees equal strings and stays idempotent. The hook token is
   its own secret, never the gateway token (the gateway warns at startup if
   they match).
@@ -298,8 +313,12 @@ This gives you point-in-time recovery and an off-machine copy.
 **Volumes to back up if you want full disaster recovery:**
 
 - `/srv/life/` — your knowledge data (most important)
-- `/srv/openclaw/config/` — OpenClaw config + `.env`
+- `/srv/openclaw/config/` — OpenClaw config (no secrets since 2026-09-19: the
+  bot tokens are SecretRefs, the env file lives outside this dir)
 - `/srv/openclaw/secret-key/` — OpenClaw OAuth encryption key (lose this and you re-pair every channel)
+- **not** `/srv/lifekit-secrets/` — it is derived: `stack.env` re-renders
+  from `secrets/lifekit.env.sops` in git, and the gateway age key has its
+  offline copy in the captain's KeePassXC (`docs/secrets-runbook.md`, "Rebuild")
 - `/srv/openclaw/workspace/` — workspace skills (recoverable from this repo, but having a local copy is faster)
 
 Snapshot these via Hetzner Backups (built-in, ~20% extra/mo) or rsync to another box.
@@ -406,6 +425,8 @@ git clone <your-private-life-repo> .
 
 # 4. Restore /srv/openclaw/secret-key/ from your private backup.
 #    Without this, you have to re-pair every channel.
+# 5. Secrets: the captain age key from KeePassXC, then render + deploy -
+#    docs/secrets-runbook.md "Rebuild" is the exact sequence.
 ```
 
 Total recovery time: ~30 minutes if your backups are current.

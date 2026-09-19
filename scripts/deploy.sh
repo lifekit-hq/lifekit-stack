@@ -5,7 +5,9 @@
 #
 # Prerequisites on the VPS:
 #   /srv/lifekit-stack/                  ← cloned by bootstrap-vps.sh
-#   /srv/openclaw/config/.env            ← scp'd from your laptop (see .env.example)
+#   /srv/lifekit-secrets/stack.env       ← rendered from secrets/lifekit.env.sops by
+#                                          scripts/secrets/render-stack-env.sh (docs/secrets.md)
+#   /srv/lifekit-secrets/gateway/        ← the gateway's age key (scripts/secrets/init-gateway-key.sh)
 #   /srv/openclaw/workspace/skills/      ← rsync'd from your laptop's ~/.openclaw/workspace/skills/
 #   /srv/memory/                           ← rsync'd from your laptop's ~/memory/
 #   /home/lifekit/.claude/               ← either logged in on the VPS via `claude auth login`,
@@ -20,7 +22,11 @@ set -euo pipefail
 SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 REPO_DIR="${REPO_DIR:-/srv/lifekit-stack}"
-ENV_FILE="${ENV_FILE:-/srv/openclaw/config/.env}"
+# The compose env file is the master secret boundary rendered to disk
+# (docs/secrets.md): root:lifekit 0640, outside every container mount, and
+# never inside the OpenClaw state dir (the old /srv/openclaw/config/.env was
+# also the gateway's global dotenv, readable by every exec-capable agent).
+ENV_FILE="${ENV_FILE:-/srv/lifekit-secrets/stack.env}"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
 COMPOSE_FILE="${REPO_DIR}/compose/docker-compose.yml"
 
@@ -64,8 +70,9 @@ cd "${REPO_DIR}"
 # ─── Sanity ──────────────────────────────────────────────────────────────────
 
 if [[ ! -f "${ENV_FILE}" ]]; then
-  echo "Missing ${ENV_FILE}. Copy .env.example and fill it in:" >&2
-  echo "  scp .env.example user@vps:${ENV_FILE}" >&2
+  echo "Missing ${ENV_FILE}. Render it from the master secret file (docs/secrets.md):" >&2
+  echo "  sudo bash ${REPO_DIR}/scripts/secrets/render-stack-env.sh" >&2
+  echo "(as the admin account that holds the captain age key; nothing was deployed)" >&2
   exit 1
 fi
 
@@ -462,10 +469,17 @@ if [[ -z "${PLATFORM_PENDING}" ]]; then
   echo "  already applied; nothing to change, gateway left alone"
 else
   printf '  pending: %s\n' "${PLATFORM_PENDING//$'\n'/, }"
-  say "openclaw platform config: dry run against the installed schema (writes nothing)"
+  # --allow-exec: the patch carries exec SecretRefs (the gateway's bot tokens
+  # from secrets/lifekit-gateway.env.sops, docs/secrets.md). Without it the
+  # dry run skips them; with it the one-shot container runs the resolver
+  # against the mounted key and file, so an unreadable key, a file the
+  # gateway key cannot open, or a ref with no matching entry rejects the patch
+  # here - nothing written, gateway untouched, deploy red - instead of a
+  # cold Telegram account after the apply.
+  say "openclaw platform config: dry run against the installed schema, resolving exec refs (writes nothing)"
   if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
       run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-        config patch --stdin --dry-run < "${PLATFORM_PATCH}"; then
+        config patch --stdin --dry-run --allow-exec < "${PLATFORM_PATCH}"; then
     fail_later "openclaw platform config: dry run rejected ${PLATFORM_PATCH#"${REPO_DIR}/"}; not applied"
   else
     say "openclaw platform config: applying"
@@ -674,6 +688,23 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run -
 say "openclaw channels status"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
   channels status || echo "(channels status reported issues — review above)"
+
+# Re-resolve every SecretRef from the files this deploy just pulled: a rotated
+# gateway-file value (docs/secrets-runbook.md) reaches the running gateway
+# here, without a recreate. The gateway keeps last-known-good values for a
+# ref that fails, so a bad file degrades to "stale", never to "cold".
+say "openclaw secrets reload"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
+  secrets reload || fail_later "openclaw secrets reload failed: the gateway may hold pre-deploy secret values"
+
+# Report-only, like doctor: the audit also lists the pre-existing plaintext
+# auth-profile rows (anthropic:manual / anthropic:default duplicates), which
+# would turn every deploy red until they are deleted. Promote to `--check`
+# and fail_later once `openclaw secrets audit --check --allow-exec` is clean
+# on the box (docs/secrets-runbook.md, "Gate").
+say "openclaw secrets audit (exec refs resolved; report-only until the audit is clean)"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
+  secrets audit --allow-exec || echo "(secrets audit reported findings — review above)"
 
 say "container status"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps

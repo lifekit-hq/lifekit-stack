@@ -16,7 +16,8 @@
 # self-hosted runner. Fetch a fresh 1-hour token with:
 #   gh api -X POST /repos/lifekit-hq/lifekit-stack/actions/runners/registration-token --jq .token
 #
-# After this script: scp your .env to /srv/openclaw/config/.env, then run ./scripts/deploy.sh.
+# After this script: place the gateway age key and render the master secret
+# file (docs/secrets-runbook.md, "Rebuild"), then run ./scripts/deploy.sh.
 
 set -euo pipefail
 
@@ -140,6 +141,18 @@ install -d -o "$LIFEKIT_USER" -g "$LIFEKIT_USER" -m 0750 \
   /var/lib/lifekit/tasks \
   /var/lib/lifekit/.curator-proposed
 
+# ─── Secrets: sops on the host + the boundary directory ──────────────────────
+# docs/secrets.md. /srv/lifekit-secrets holds the rendered master env
+# (stack.env, root:lifekit 0640 - read by compose, mounted into nothing) and
+# gateway/, the only part any container sees (the gateway's age key, 0400).
+# sops is pinned by compose/openclaw-gateway/install-sops.sh, the same binary
+# the gateway image carries. The keys themselves are never created here:
+# scripts/secrets/init-gateway-key.sh mints the gateway key, and the captain
+# key comes from the operator's KeePassXC.
+
+say "Installing sops and creating /srv/lifekit-secrets"
+install -d -o root -g "$LIFEKIT_USER" -m 0750 /srv/lifekit-secrets /srv/lifekit-secrets/gateway
+
 # ─── Clone the stack repo ─────────────────────────────────────────────────────
 
 if [[ -d "$REPO_DIR/.git" ]]; then
@@ -149,6 +162,8 @@ else
   say "Cloning $REPO_URL → $REPO_DIR"
   sudo -u "$LIFEKIT_USER" git clone --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
 fi
+
+bash "$REPO_DIR/compose/openclaw-gateway/install-sops.sh" /usr/local/bin
 
 # (The lifekit-dashboard auto-redeploy timer was retired 2026-08-16 — the
 # dashboard deploys from its own repo's workflow now; ecosystem decoupling
@@ -254,9 +269,12 @@ fi
 say "Host bootstrap complete."
 cat <<EOF
 
-Next steps:
-  1. From your laptop, scp your real .env onto the host:
-       scp .env $LIFEKIT_USER@$TAILSCALE_HOSTNAME:/srv/openclaw/config/.env
+Next steps (docs/secrets-runbook.md, "Rebuild"):
+  1. Secrets. As $ADMIN_USER, with the captain age key at ~/.config/sops/age/keys.txt
+     (restored from KeePassXC):
+       sudo bash $REPO_DIR/scripts/secrets/init-gateway-key.sh   # mints the gateway key, prints its recipient
+       (add that recipient to .sops.yaml + \`sops updatekeys secrets/lifekit-gateway.env.sops\`, merge)
+       sudo bash $REPO_DIR/scripts/secrets/render-stack-env.sh   # -> /srv/lifekit-secrets/stack.env
   2. Optional: copy your private workspace skills onto the host:
        rsync -a ~/.openclaw/workspace/skills/ $LIFEKIT_USER@$TAILSCALE_HOSTNAME:/srv/openclaw/workspace/skills/
   3. Run the deploy script (on the host, as $LIFEKIT_USER):

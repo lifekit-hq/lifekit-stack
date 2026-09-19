@@ -104,13 +104,12 @@ Once deployed, your VPS's `/srv/life/` is the canonical knowledge layer. Your la
 
 ### 6. Templates everywhere, secrets nowhere
 
-Every config that contains user-specific values is a Jinja2 template. The wizard renders them at deploy time, reading values from a `wizard.yaml` it generated. Secrets (tokens, keys) live only in:
+Every config that contains user-specific values is a Jinja2 template. The wizard renders them at deploy time, reading values from a `wizard.yaml` it generated. Secrets (tokens, keys) have two homes, both SOPS-encrypted with age and both in this repo ([`docs/secrets.md`](./secrets.md)):
 
-- The wizard's local prompt during interactive use, OR
-- GitHub Actions encrypted secrets (for the maintainer's own deploy workflow), OR
-- The `.env` file inside `/srv/openclaw/config/` on the VPS.
+- `secrets/lifekit.env.sops` (master, captain key only) - everything compose interpolates; rendered on the VPS to `/srv/lifekit-secrets/stack.env`, outside every container mount.
+- `secrets/lifekit-gateway.env.sops` (gateway, captain + gateway key) - only the bot tokens the OpenClaw gateway resolves itself, through an exec SecretRef provider.
 
-They never appear in this repo. The `gitleaks` pre-commit hook enforces this.
+Plaintext never appears in this repo: values are ciphertext, `gitleaks` and `scripts/tests/test_secrets.py` enforce it, and the age private keys live on the box (one per boundary) and in the captain's KeePassXC.
 
 ## What we explicitly do NOT do
 

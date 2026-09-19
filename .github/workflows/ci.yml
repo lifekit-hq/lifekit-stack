@@ -33,8 +33,16 @@ jobs:
 
       # Same throwaway-venv pattern as the lint job (setup-python can't provision
       # on this arm64 self-hosted runner; system python3 + venv are bootstrapped).
+      # The secrets tests (scripts/tests/test_secrets.py) need the pinned sops
+      # binary to prove secrets/lifekit-gateway.env.sops decrypts with the
+      # gateway key this box holds (docs/secrets.md). Same pin as the gateway
+      # image; the binary lands in the run's temp dir, never on the host PATH.
+      - name: Install sops (pinned)
+        run: bash compose/openclaw-gateway/install-sops.sh "$RUNNER_TEMP/bin"
+
       - name: Run pytest
         run: |
+          export PATH="$RUNNER_TEMP/bin:$PATH"
           python3 -m venv "$RUNNER_TEMP/testvenv"
           "$RUNNER_TEMP/testvenv/bin/pip" install --quiet --upgrade pip
           "$RUNNER_TEMP/testvenv/bin/pip" install --quiet pytest
@@ -117,7 +125,7 @@ jobs:
         if: steps.superseded.outputs.skip != 'true'
         run: |
           cd /srv/lifekit-stack
-          docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env ps \
+          docker compose -f compose/docker-compose.yml --env-file /srv/lifekit-secrets/stack.env ps \
             --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
 
       # (The post-deploy devclaw eval smoke was retired 2026-08-16: it targeted

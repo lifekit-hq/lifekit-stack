@@ -55,6 +55,11 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
 - Privacy is a gate too: read [`docs/PRIVATE.md`](./docs/PRIVATE.md) before committing — gitleaks
   catches secrets, the human pass catches personal context. Skills must be `{{ user.* }}`
   templated; no names, IDs, schedules, or account details in the repo, ever.
+- **Secrets** live in two SOPS+age files under `secrets/` (master: compose env, captain key;
+  gateway: bot tokens the gateway resolves via the exec provider in `platform.patch.json`).
+  `docs/secrets.md` is the inventory CI holds the files to; `docs/secrets-runbook.md` has the
+  rotation, purge and rebuild sequences. A new secret is a row there plus `scripts/secrets/edit.sh`,
+  never a PR-body value and never a third file.
 
 ## Conventions (ecosystem-standard)
 

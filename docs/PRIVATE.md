@@ -40,6 +40,8 @@ Everything personal lives in the user-context YAML the wizard generates locally.
 
 ## What IS allowed in this repo
 
+- ✅ `secrets/*.env.sops` — SOPS-encrypted dotenv files (values are ciphertext, names are the inventory in [`secrets.md`](./secrets.md)). Never a decrypted copy, never a `.agekey`.
+
 - ✅ Maintainer's name + email in `LICENSE` and `.github/CONTRIBUTING.md`.
 - ✅ Example/placeholder values (`example.com`, `your-bot-name`, `123456789`).
 - ✅ Documentation that references the structure of a domain file but not its contents.
