@@ -179,8 +179,11 @@ wakes the agent with ids, the pulse carries the digest and the quiet-week
 check. `ledger-lit-digest` (Sunday 20:00 Dublin, two rows) is also parked; it
 is neither retired nor revived by this change. Neither the cron store nor the
 finance agent's workspace is in git, so this change is three operator steps on
-the host; the first was run on 2026-09-19, the other two stay listed here so a
-rebuilt host ends in the same state.
+the host. Step 1 ran on 2026-09-19 against the live gateway: the two parked
+`ledger-scan` rows are gone from the cron store. Steps 2 and 3 are not
+applied - the live agent still carries its fifteen skills and the untrimmed
+persona - and stay listed here as operator steps, for this host and for a
+rebuilt one.
 
 1. **Cron store.** Remove the parked `ledger-scan` rows through the gateway's
    own cron command (the ids come from `openclaw cron list --all --json`,
@@ -246,8 +249,9 @@ rebuilt host ends in the same state.
      the digest and the quiet-week check." and the THESIS BREAK bullet to
      "always notify - bypasses every silence rule." Keep the Delivery bullet.
 
-   Applied to the 2026-09-19 file this leaves 18,169 bytes (17,933
-   characters): the scan mechanics were about 500 characters of the persona;
+   On a scratch copy of the 2026-09-19 file the three edits leave 18,169
+   bytes (17,933 characters) - the size step 3 will produce, not the live
+   file's: the scan mechanics were about 500 characters of the persona;
    the rest of the bootstrap cut comes from the six skills and from
    `lightContext` on the pulse. Anything beyond these three edits is a persona
    rewrite, which this change does not do.
