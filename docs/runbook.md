@@ -296,7 +296,9 @@ Exec policy per agent:
 - devclaw keeps `full` - its daily morning-brief cron sweeps repos with `gh` and writes briefs.
 - kit keeps `full` - skills github, gh-issues and summarize need host binaries (145 exec calls in 30 days).
 - health keeps `full` - its three claw CLIs are its only write path.
-- finance keeps `full` - it writes state logs via bash (2160 exec calls in 30 days).
+- finance keeps `full` - it reaches its `state/` files (the learning journal)
+  with bash (2160 exec calls in 30 days, counted before `ledger-scan` was
+  retired).
 
 Command-kind crons (`memory_vault_audit`, `weekly_log_summary`) bypass exec
 policy.
