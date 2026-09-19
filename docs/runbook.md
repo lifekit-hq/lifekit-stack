@@ -170,6 +170,92 @@ declares its cron. Run it once on the host after the deploy that applied the
 heartbeat. Until then the scratch is empty and every tick skips with
 `reason=empty-heartbeat-file` and no model call.
 
+#### The finance agent after `ledger-scan` (retired 2026-09-19)
+
+The push path above and the pulse replace the polling scan. `ledger-scan` (two
+parked rows on the finance agent, every 2h 07:00-23:00 Dublin, disabled since
+2026-08-31) is retired, not re-enabled: finance-sentry's jobs detect, the hook
+wakes the agent with ids, the pulse carries the digest and the quiet-week
+check. `ledger-lit-digest` (Sunday 20:00 Dublin, two rows) is also parked; it
+is neither retired nor revived by this change. Neither the cron store nor the
+finance agent's workspace is in git, so this change is three operator steps on
+the host. Step 1 ran on 2026-09-19 against the live gateway: the two parked
+`ledger-scan` rows are gone from the cron store. Steps 2 and 3 are not
+applied - the live agent still carries its fifteen skills and the untrimmed
+persona - and stay listed here as operator steps, for this host and for a
+rebuilt one.
+
+1. **Cron store.** Remove the parked `ledger-scan` rows through the gateway's
+   own cron command (the ids come from `openclaw cron list --all --json`,
+   filtered on `name == "ledger-scan"`):
+
+   ```bash
+   docker exec compose-openclaw-gateway-1 openclaw cron rm <ledger-scan job id>
+   ```
+
+   The scan prompt (`state/ledger-scan.prompt.txt`), its backup and the
+   agent-side dedup log (`state/event-log.jsonl`) stay on disk as history; the
+   companion `DedupKey` and the hook's `Idempotency-Key` own dedup now.
+
+2. **Skill allowlist.** A wake turn (hook mapping, pulse) loads every assigned
+   skill's frontmatter into its bootstrap, and OpenClaw 2026.9.4 has no per-run
+   skill filter: `agents.entries.<id>.skills` is the only knob and it applies
+   to every turn of that agent. Drop the six deck and model skills from
+   Anthropic's `equity-research` marketplace plugin that no wake turn uses
+   (`earnings-analysis`, `earnings-preview`, `sector-overview`, `dcf-model`,
+   `comps-analysis`, `competitive-analysis`); keep `thesis-tracker`,
+   `catalyst-calendar` (the ceremonies the persona describes) and
+   `idea-generation` (the daily `ledger-opportunity` job). Arrays replace
+   under `config patch`, so the list below is the whole allowlist:
+
+   ```json5
+   {
+     agents: {
+       entries: {
+         finance: {
+           skills: [
+             "github", "gh-issues", "summarize", "notion", "skill-creator",
+             "project-context", "thesis-tracker", "catalyst-calendar",
+             "idea-generation",
+           ],
+         },
+       },
+     },
+   }
+   ```
+
+   Dry-run first, then apply, the same two commands as the per-agent patch
+   below; `agents.entries` keys hot-reload. Re-assign a deck or model skill
+   for an interactive session by adding it back to the list.
+
+3. **Persona.** The finance workspace `AGENTS.md` (host state, 18,667 bytes
+   against `bootstrapMaxChars` 20,000) still carries the scan's mechanics.
+   Move them out, nothing else:
+
+   - "Research-first mode", first paragraph: replace "it stays in the event
+     log. Thresholds live in the `ledger-scan` cron prompt (no config file)."
+     with "it stays unsent. Detection and thresholds are server-side in
+     finance-sentry: events reach you by push (the finance-sentry hook wakes
+     you with ids) and by the 6h pulse; you interpret, you never poll."
+   - "On-disk state": delete the `event-log.jsonl` dedup-log bullet and the
+     "There is no `config.json`" sentence (the file exists). Keep one line:
+     `state/` files (the learning journal) are reached with bash and an
+     absolute path, workspace file tools cannot reach them; watchlist, theses,
+     quotes and IPS live in Postgres via MCP, not on disk.
+   - "Cadence": delete the `ledger-scan` `dry_run` bullet and the
+     "Silence-check" bullet (the pulse checklist owns the quiet-week digest).
+     Reword the first bullet to "Event-driven only. No polling scan, no daily
+     digest, no morning brief. The pulse (`heartbeat-finance` scratch) carries
+     the digest and the quiet-week check." and the THESIS BREAK bullet to
+     "always notify - bypasses every silence rule." Keep the Delivery bullet.
+
+   On a scratch copy of the 2026-09-19 file the three edits leave 18,169
+   bytes (17,933 characters) - the size step 3 will produce, not the live
+   file's: the scan mechanics were about 500 characters of the persona;
+   the rest of the bootstrap cut comes from the six skills and from
+   `lightContext` on the pulse. Anything beyond these three edits is a persona
+   rewrite, which this change does not do.
+
 The per-agent half stays host state and is still applied by hand. The patch
 below addresses the 2026-09-16 `openclaw security audit` warnings that name
 agents (`tools.exec.security_full_configured`,
@@ -210,7 +296,9 @@ Exec policy per agent:
 - devclaw keeps `full` - its daily morning-brief cron sweeps repos with `gh` and writes briefs.
 - kit keeps `full` - skills github, gh-issues and summarize need host binaries (145 exec calls in 30 days).
 - health keeps `full` - its three claw CLIs are its only write path.
-- finance keeps `full` - it writes state logs via bash (2160 exec calls in 30 days).
+- finance keeps `full` - it reaches its `state/` files (the learning journal)
+  with bash (2160 exec calls in 30 days, counted before `ledger-scan` was
+  retired).
 
 Command-kind crons (`memory_vault_audit`, `weekly_log_summary`) bypass exec
 policy.
