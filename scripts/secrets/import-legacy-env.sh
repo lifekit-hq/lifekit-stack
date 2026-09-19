@@ -46,8 +46,9 @@ read_legacy() {
   if [[ -r "${LEGACY}" ]]; then cat "${LEGACY}"; else sudo cat "${LEGACY}"; fi
 }
 
-split() {  # stdin: legacy dotenv; $1: master|gateway; stdout: that boundary's dotenv
-  python3 - "$1" <<'PY'
+# The split runs as `python3 -c`, not a heredoc: a heredoc would become the
+# interpreter's stdin and swallow the piped legacy file.
+SPLIT_PY='
 import re, sys
 which = sys.argv[1]
 GATEWAY = {"TELEGRAM_BOT_TOKEN": "KIT_BOT_TOKEN", "FABLE_BOT_TOKEN": "FABLE_BOT_TOKEN",
@@ -73,7 +74,10 @@ for raw in sys.stdin.read().splitlines():
         out.append(f"{key}={value}"); names.append(key)
 sys.stdout.write("\n".join(out) + "\n")
 sys.stderr.write(f"{which}: " + " ".join(names) + "\n")
-PY
+'
+
+split() {  # stdin: legacy dotenv; $1: master|gateway; stdout: that boundary's dotenv
+  python3 -c "${SPLIT_PY}" "$1"
 }
 
 encrypt() {  # $1: boundary, $2: output path (the name selects the .sops.yaml rule)
