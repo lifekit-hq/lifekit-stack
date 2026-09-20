@@ -168,12 +168,21 @@ test("truncation never splits an emoji into a lone surrogate", () => {
   const html = render({ ...base, level: "info", body: "🙂".repeat(4000) });
   assert.ok(html.length <= MAX_MSG_CHARS);
   assert.ok(html.isWellFormed());
+  assert.equal(lines(html)[0], "▪️ <b>devclaw</b> · <b>issue-819</b> — needs a decision");
+  // A prefix of the body survives — it is cut, not dropped.
+  assert.match(lines(html)[1], /^(?:🙂)+…$/u);
 });
 
 test("escaping inside detail is accounted for when truncating", () => {
   const html = render({ ...base, level: "info", detail: "<&>".repeat(3000) });
   assert.ok(html.length <= MAX_MSG_CHARS, `${html.length} > ${MAX_MSG_CHARS}`);
   assert.doesNotMatch(html, /<&>/);
+  assert.equal(lines(html)[0], "▪️ <b>devclaw</b> · <b>issue-819</b> — needs a decision");
+  // The escape overhead must not swallow the whole field: a prefix survives.
+  const quoted = html.match(/<blockquote expandable>([\s\S]*)<\/blockquote>/)[1];
+  assert.ok(quoted.startsWith("&lt;&amp;&gt;"), quoted.slice(0, 40));
+  assert.ok(quoted.endsWith("…"));
+  assert.ok(quoted.length > 100, `detail kept only ${quoted.length} chars`);
 });
 
 test("validateEnvelope names every missing required field and rejects unknown levels", () => {
@@ -187,6 +196,12 @@ test("validateEnvelope names every missing required field and rejects unknown le
   assert.deepEqual(validateEnvelope({ ...base, level: "urgent" }), [
     "unknown level 'urgent' (act | wait | good | info)",
   ]);
+  // Object.prototype keys are unknown levels like any other, not free passes.
+  for (const level of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+    assert.deepEqual(validateEnvelope({ ...base, level }), [
+      `unknown level '${level}' (act | wait | good | info)`,
+    ]);
+  }
   assert.deepEqual(validateEnvelope({ ...base, level: "act", subject: "  " }), ["missing 'subject'"]);
   assert.deepEqual(validateEnvelope(null), ["envelope must be a JSON object"]);
   assert.deepEqual(validateEnvelope([]), ["envelope must be a JSON object"]);

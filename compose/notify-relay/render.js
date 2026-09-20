@@ -50,7 +50,7 @@ export function validateEnvelope(envelope) {
       problems.push(`missing '${field}'`);
     }
   }
-  if (typeof envelope.level === "string" && !(envelope.level in LEVELS)) {
+  if (typeof envelope.level === "string" && !Object.hasOwn(LEVELS, envelope.level)) {
     problems.push(`unknown level '${envelope.level}' (act | wait | good | info)`);
   }
   return problems;
@@ -64,18 +64,24 @@ function renderLinks(links) {
     .join(" · ");
 }
 
-// Cut `over` characters (plus room for the mark) off the end of a string,
-// on code-point boundaries so an emoji is never split into a lone surrogate.
+// Cut off the end of a string on code-point boundaries, so an emoji is never
+// split into a lone surrogate. `over` is a count of rendered characters, which
+// escaping inflates beyond the field's own length, so a pass never cuts more
+// than half of what is left: the caller's loop re-measures and cuts again.
+// Every pass removes at least one code point, so it terminates.
 function shrink(value, over) {
   const chars = [...value];
-  const keep = Math.max(0, chars.length - over - TRUNCATION_MARK.length);
+  const room = chars.length - TRUNCATION_MARK.length;
+  if (room <= 0) return "";
+  const cut = Math.min(Math.max(over, 1), Math.ceil(room / 2));
+  const keep = room - cut;
   return keep > 0 ? chars.slice(0, keep).join("") + TRUNCATION_MARK : "";
 }
 
 /**
- * Render an envelope to Telegram HTML. The envelope must already be valid
- * (see validateEnvelope); unknown levels fall back to `info` so a renderer
- * fault never produces an unrendered message.
+ * Render an envelope to Telegram HTML. The envelope must already have passed
+ * validateEnvelope: `level` is one of the four, and the required fields are
+ * non-empty strings.
  *
  * Layout (docs/message-format.md, "Rendering rules"):
  *   1. <glyph> <b>source</b> · <b>subject</b> — headline      (always, never cut)
@@ -85,7 +91,7 @@ function shrink(value, over) {
  *   5. → <code>action</code>                                   (act / wait only)
  */
 export function render(envelope) {
-  const level = LEVELS[envelope.level] ?? LEVELS.info;
+  const level = LEVELS[envelope.level];
   const headline =
     `${level.glyph} <b>${escapeHtml(text(envelope.source))}</b> · ` +
     `<b>${escapeHtml(text(envelope.subject))}</b> — ${escapeHtml(text(envelope.headline))}`;
@@ -109,8 +115,8 @@ export function render(envelope) {
       .join("\n");
 
   // Truncate before Telegram does: detail first, then body, never the headline.
-  // Escaping only lengthens text, so removing N raw characters removes at
-  // least N rendered characters; the loop terminates once the field is empty.
+  // Each pass strictly shortens the field, so both loops end either under the
+  // cap or with the field emptied.
   let message = build();
   while (message.length > MAX_MSG_CHARS && detail) {
     detail = shrink(detail, message.length - MAX_MSG_CHARS);
