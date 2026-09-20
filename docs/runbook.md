@@ -421,10 +421,13 @@ repo the VPS pushes to on a timer:
 
 ```bash
 # One-time: bootstrap-vps.sh leaves /srv/memory a plain directory, so make it a
-# repo pointing at your private remote before the timer runs.
+# repo pointing at your private remote before the timer runs. The identity is
+# repo-local: the unattended timer has no ~/.gitconfig to fall back on.
 cd /srv/memory
 git init -b main
 git remote add origin <your-private-vault-repo>
+git config user.email <you@example.com>
+git config user.name "lifekit backup"
 
 # /usr/local/bin/memory-backup.sh, run from a systemd timer or cron
 cd /srv/memory
@@ -509,7 +512,9 @@ rsync it across alongside the skills directory.
 
 ## When `queue.jsonl` grows without draining
 
-Symptom: `/srv/memory/queue.jsonl` keeps growing; domain files don't update.
+Symptom: `/var/lib/lifekit/queue.jsonl` (the runtime-state dir, split from the
+vault in the 2026-05-27 runtime-knowledge split) keeps growing; domain files
+under `/srv/memory/domains/` don't update.
 
 ```bash
 ssh <your-vps-tailscale-name>
@@ -520,7 +525,7 @@ Common causes:
 
 1. **Curator crashed** — `docker compose restart lifekit-curator`. Check logs for the underlying error.
 2. **Claude CLI auth in the curator container failed** — `docker compose exec lifekit-curator claude auth status`.
-3. **`/srv/memory/domains/` not writable** — `docker compose exec lifekit-curator ls -la /srv/memory/domains/`.
+3. **`/srv/memory/domains/` not writable** — `docker compose exec openclaw-gateway ls -la /home/node/memory/domains/`; the vault mounts at `/home/node/memory` inside the container, never at its host path.
 
 ## SSHFS auto-mount
 
