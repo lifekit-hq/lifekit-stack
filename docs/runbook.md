@@ -519,27 +519,32 @@ Symptom: `/var/lib/lifekit/queue.jsonl` (the runtime-state dir, split from the
 vault in the 2026-05-27 runtime-knowledge split) keeps growing; domain files
 under `/srv/memory/domains/` don't update.
 
-Nothing in this stack drains that queue. `lifekit-curator` was retired
-2026-05-25 and is not a compose service at all; `lifekit-orchestrator`, which
-succeeded it, is retired too and profile-gated behind `orchestrator-v1`, so
-`docker compose up -d` never starts it. Draining is `devclaw-mcp`'s in-process
-queue, and devclaw-mcp moved to devclaw's own compose project on 2026-08-15 —
-so there is no service to restart here. A queue that never drains is a devclaw
-problem; take it up in that project.
+Nothing in this stack drains that queue into the domain files. The component
+that did, `lifekit-curator`, was retired 2026-05-25 and is not a compose
+service at all. `lifekit-orchestrator` took over its two cron jobs
+(`task_dispatch_15m` and `curator_30m`); it is retired too and profile-gated
+behind `orchestrator-v1`, so `docker compose up -d` never starts it, and its
+stated replacement — devclaw-mcp's in-process queue — covers the task-dispatch
+half. Nothing here has taken over the curation half.
 
-What this stack can tell you is whether the gateway — which appends to the
-queue and holds the vault mount — still sees both:
+So a growing queue and stale domains are the expected state on this stack
+today, not a fault to restart your way out of: domain curation is unowned here
+until something claims it.
+
+What you can still check is that the queue file is where it should be and that
+the gateway — which appends to it — has both of its mounts:
 
 ```bash
 ssh <your-vps-tailscale-name>
+sudo -u lifekit -H bash            # owns /var/lib/lifekit and the docker group
 cd /srv/lifekit-stack
 ls -l /var/lib/lifekit/queue.jsonl                 # is it still growing?
 docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env \
-  exec openclaw-gateway ls -la /home/node/memory/domains/
+  exec openclaw-gateway ls -la /home/node/.life-state/queue.jsonl /home/node/memory/domains/
 ```
 
-The vault mounts at `/home/node/memory` inside the container, never at its host
-path.
+Inside the container the runtime-state dir is `/home/node/.life-state` and the
+vault is `/home/node/memory` — neither is reachable at its host path.
 
 ## SSHFS auto-mount
 
