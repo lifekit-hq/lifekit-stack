@@ -6,13 +6,14 @@
 #
 # Two modes:
 #   (default)  merge builder.gc into daemon.json (root; bootstrap-vps.sh runs it)
-#   --check    read-only: compare the cap the running daemon enforces with the
-#              value below and exit 1 on mismatch (deploy.sh runs it after `up`,
-#              as the deploy account, and prints the result as a report-only
-#              line — the deploy cannot apply this cap, see below)
+#   --check    read-only: compare the ceiling the running daemon enforces with
+#              the value below. Exit 0 match, 1 mismatch, 2 undetermined (the
+#              live policy could not be read). deploy.sh runs it after `up`, as
+#              the deploy account, and prints the result as a report-only line
+#              — the deploy cannot apply this cap, see below.
 #
-# Why 50GB (retuned from 20GB on 2026-09-20): without a daemon.json the cap is
-# BuildKit's disk-scaled default — 80% of the disk, 375 GiB on this 503 GB box —
+# Why 50GB (retuned from 20GB on 2026-09-20): with no daemon.json the ceiling is
+# BuildKit's disk-scaled default Max Used Space — 375.3 GiB on this 503 GB box —
 # which is why the cache reached 67.66 GB unchecked. Of that, 26.3 GB was cache
 # shared with image layers (52 images, 88 GB) and the rest private, dangling
 # records that a manual prune reclaimed. A cap below the image-shared working
@@ -26,11 +27,18 @@
 # disk back for re-running build stages on every deploy.
 #
 # Semantics (moby daemon/internal/builder-next/worker/gc.go + BuildKit
-# cache/manager.go, verified against Engine 29.5.2): the daemon reads
-# defaultKeepStorage as the reserved space of its default 4-rule policy; with
-# max-used and min-free unset, BuildKit prunes down to exactly that value once
-# the cache exceeds it. `docker buildx inspect default` shows it as the
-# "Reserved Space" of the last (All: true) rule.
+# cache/manager.go, verified against Engine 29.5.2 on this box): a GC rule
+# carries a reserved space (what GC never reclaims below) and a max used space
+# (the ceiling whose breach triggers a prune) as independent knobs, and dockerd
+# fills both from disk-scaled defaults when daemon.json is silent — here
+# Reserved Space 47.5 GiB, Max Used Space 375.3 GiB, Min Free Space 94.06 GiB.
+# Only the ceiling bounds the cache: the deprecated defaultKeepStorage is an
+# alias for the reserved value alone, so setting it would have raised the floor
+# 47.5 GiB -> 50 GiB and capped nothing — dockerd had run since 2026-06-12 with
+# that floor while the cache grew to 67.66 GB. Hence defaultReservedSpace and
+# defaultMaxUsedSpace, both at the value below: GC triggers at 50 GiB and prunes
+# back to 50 GiB. `docker buildx inspect default` prints the ceiling as the
+# "Max Used Space" of the last (All: true) rule — the field --check compares.
 #
 # Idempotent: merges builder.gc into any existing daemon.json without
 # touching unrelated keys (via `jq`), and no-ops (no write) if it's already
@@ -48,15 +56,15 @@
 #
 # Env overrides (mainly for testing — point DOCKER_DAEMON_JSON at a temp path
 # to dry-run without touching the real host config):
-#   DOCKER_DAEMON_JSON           path to daemon.json (default /etc/docker/daemon.json)
-#   DOCKER_BUILDER_KEEP_STORAGE  builder.gc.defaultKeepStorage value (default below)
+#   DOCKER_DAEMON_JSON         path to daemon.json (default /etc/docker/daemon.json)
+#   DOCKER_BUILDER_CACHE_CAP   the cap written to builder.gc (default below)
 
 set -euo pipefail
 
-DEFAULT_KEEP_STORAGE=50GB
+DEFAULT_CACHE_CAP=50GB
 
 DAEMON_JSON="${DOCKER_DAEMON_JSON:-/etc/docker/daemon.json}"
-KEEP_STORAGE="${DOCKER_BUILDER_KEEP_STORAGE:-${DEFAULT_KEEP_STORAGE}}"
+CACHE_CAP="${DOCKER_BUILDER_CACHE_CAP:-${DEFAULT_CACHE_CAP}}"
 
 say() { printf '\n\033[1;34m→ %s\033[0m\n' "$*"; }
 
@@ -74,28 +82,39 @@ to_bytes() {
   }'
 }
 
+UNDETERMINED=2
+
 check() {
   local inspect want live want_b live_b
-  inspect="$(docker buildx inspect default)"
-  # The last rule of dockerd's policy is the All: true one; its Reserved
-  # Space is what BuildKit prunes down to.
-  live="$(awk '/^ *Reserved Space:/ { v = $3 } END { print v }' <<<"${inspect}")"
-  want="${KEEP_STORAGE}"
   if [[ -f "${DAEMON_JSON}" ]]; then
     echo "  ${DAEMON_JSON}: builder.gc = $(jq -c '.builder.gc // "absent"' "${DAEMON_JSON}" 2>/dev/null || echo unreadable)"
   else
     echo "  ${DAEMON_JSON}: absent"
   fi
-  echo "  live daemon policy (docker buildx inspect default): reserved space = ${live:-unknown}; repository cap = ${want}"
+  want="${CACHE_CAP}"
+  if ! inspect="$(docker buildx inspect default 2>&1)"; then
+    echo "  live daemon policy: \`docker buildx inspect default\` failed: ${inspect}"
+    return "${UNDETERMINED}"
+  fi
+  # The last rule of dockerd's policy is the All: true one; its Max Used
+  # Space is the ceiling that bounds the cache.
+  live="$(awk '/^ *Max Used Space:/ { v = $4 } END { print v }' <<<"${inspect}")"
+  echo "  live daemon policy (docker buildx inspect default): max used space = ${live:-unreadable}; repository cap = ${want}"
+  if [[ -z "${live}" ]]; then
+    return "${UNDETERMINED}"
+  fi
   want_b="$(to_bytes "${want}")"
-  live_b="$(to_bytes "${live:-0}")" || live_b=0
+  if ! live_b="$(to_bytes "${live}")"; then
+    return "${UNDETERMINED}"
+  fi
   # buildx prints 2 decimals (46.57GiB, 47.5GiB), so allow 1% rounding.
   awk -v w="${want_b}" -v l="${live_b}" 'BEGIN { d = w - l; if (d < 0) d = -d; exit !(d <= w / 100) }'
 }
 
 if [[ "${1:-}" == "--check" ]]; then
-  check
-  exit
+  status=0
+  check || status=$?
+  exit "${status}"
 fi
 
 if [[ -f "$DAEMON_JSON" ]]; then
@@ -104,12 +123,16 @@ else
   existing="{}"
 fi
 
-merged="$(jq --arg keep "$KEEP_STORAGE" \
-  '.builder //= {} | .builder.gc //= {} | .builder.gc.enabled = true | .builder.gc.defaultKeepStorage = $keep' \
+merged="$(jq --arg cap "$CACHE_CAP" \
+  '.builder //= {} | .builder.gc //= {}
+   | .builder.gc.enabled = true
+   | .builder.gc.defaultReservedSpace = $cap
+   | .builder.gc.defaultMaxUsedSpace = $cap
+   | del(.builder.gc.defaultKeepStorage)' \
   <<<"$existing")"
 
 if [[ "$(jq -Sc . <<<"$existing")" == "$(jq -Sc . <<<"$merged")" ]]; then
-  say "Docker builder GC cap already configured in $DAEMON_JSON (keep-storage=$KEEP_STORAGE), skipping"
+  say "Docker builder GC cap already configured in $DAEMON_JSON (cap=$CACHE_CAP), skipping"
   exit 0
 fi
 
@@ -121,8 +144,8 @@ chmod 644 "$tmp"
 mv "$tmp" "$DAEMON_JSON"
 trap - EXIT
 
-say "Wrote Docker builder GC cap (keep-storage=$KEEP_STORAGE) to $DAEMON_JSON"
-cat <<EOF2
+say "Wrote Docker builder GC cap (cap=$CACHE_CAP) to $DAEMON_JSON"
+cat <<EOF
 
 NOTE: this only takes effect after dockerd re-reads its config. Apply with:
 
@@ -131,5 +154,7 @@ NOTE: this only takes effect after dockerd re-reads its config. Apply with:
 This restarts EVERY container on the host. Do not run that here — schedule
 the restart deliberately (e.g. a maintenance window) and run it by hand.
 Confirm afterwards with:  bash scripts/docker-builder-gc.sh --check
+"docker buildx inspect default" must then show Max Used Space at the cap,
+not the disk-scaled 375.3GiB default.
 
-EOF2
+EOF
