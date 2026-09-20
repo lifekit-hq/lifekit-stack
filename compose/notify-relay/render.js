@@ -167,6 +167,24 @@ export function envelopeFromDevclawRow(row) {
   };
 }
 
+// A /text producer composes its own string and can hand over a single line of
+// any length, but render() never truncates a headline. So the headline is
+// bounded here, where the envelope is built, and the overflow spills into the
+// body — which render() does truncate.
+export const MAX_TEXT_HEADLINE_CHARS = 160;
+
+// Split an over-long first line into a headline and its overflow, preferring
+// the last word boundary in the second half of the bound.
+function splitHeadline(line) {
+  const chars = [...line];
+  if (chars.length <= MAX_TEXT_HEADLINE_CHARS) return [line, ""];
+  const head = chars.slice(0, MAX_TEXT_HEADLINE_CHARS).join("");
+  const rest = chars.slice(MAX_TEXT_HEADLINE_CHARS).join("");
+  const space = head.lastIndexOf(" ");
+  if (space >= head.length / 2) return [head.slice(0, space), `${head.slice(space + 1)}${rest}`];
+  return [head, rest];
+}
+
 /**
  * Free text (POST /text, the devclaw goal layer) as an `info` envelope: the
  * first line is the headline, the rest the body. Escaping happens in render.
@@ -174,7 +192,9 @@ export function envelopeFromDevclawRow(row) {
 export function envelopeFromText(value) {
   const trimmed = text(value).trim();
   const newline = trimmed.indexOf("\n");
-  const headline = newline === -1 ? trimmed : trimmed.slice(0, newline);
-  const body = newline === -1 ? "" : trimmed.slice(newline + 1);
+  const firstLine = newline === -1 ? trimmed : trimmed.slice(0, newline);
+  const remainder = newline === -1 ? "" : trimmed.slice(newline + 1);
+  const [headline, spill] = splitHeadline(firstLine);
+  const body = [spill, remainder].filter(Boolean).join("\n");
   return { level: "info", source: "devclaw", subject: "goal", headline, body };
 }

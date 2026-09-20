@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { after, before, beforeEach, test } from "node:test";
 
 import { createApp } from "../app.js";
-import { render } from "../render.js";
+import { MAX_MSG_CHARS, render } from "../render.js";
 
 const TOKEN = "123456:test-token";
 const CHAT = "424242";
@@ -152,6 +152,20 @@ test("POST /text: free text with raw HTML characters is escaped and sent once", 
     payload.text,
     "▪️ <b>devclaw</b> · <b>goal</b> — 🟡 goal paused: &lt;workspace&gt; &amp; friends\nsee a &gt; b for details",
   );
+});
+
+test("POST /text: a single-line payload over the cap is delivered, not refused", async () => {
+  const { status } = await post("/text", { text: `goal paused: ${"detail ".repeat(900)}` });
+  assert.equal(status, 200);
+  assert.equal(calls.length, 1);
+  const payload = sent(calls[0]);
+  assert.equal(payload.parse_mode, "HTML");
+  assert.ok(
+    payload.text.length <= MAX_MSG_CHARS,
+    `outbound message is ${payload.text.length} chars, over the ${MAX_MSG_CHARS} cap`,
+  );
+  assert.ok(payload.text.startsWith("▪️ <b>devclaw</b> · <b>goal</b> — goal paused: detail"));
+  assert.ok(payload.text.endsWith("…"));
 });
 
 test("POST /text: empty text is a 400 and zero outbound calls", async () => {

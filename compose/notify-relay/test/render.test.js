@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 import {
   MAX_MSG_CHARS,
+  MAX_TEXT_HEADLINE_CHARS,
   envelopeFromDevclawRow,
   envelopeFromText,
   escapeHtml,
@@ -263,4 +264,28 @@ test("/text: first line is the headline, the rest the body, always info", () => 
     headline: "one liner",
     body: "",
   });
+});
+
+test("/text: an over-long single line is bounded and its tail spills into the body", () => {
+  const tail = "spilled ".repeat(800).trim();
+  const envelope = envelopeFromText(`goal paused: ${tail}`);
+  assert.equal(envelope.level, "info");
+  assert.ok(
+    [...envelope.headline].length <= MAX_TEXT_HEADLINE_CHARS,
+    `headline kept ${[...envelope.headline].length} chars`,
+  );
+  assert.ok(envelope.headline.startsWith("goal paused: spilled"));
+  // Nothing is lost: the headline plus the body still spell out the payload.
+  assert.equal(`${envelope.headline} ${envelope.body}`, `goal paused: ${tail}`);
+  // The renderer truncates the body, so the whole message stays deliverable.
+  const html = render(envelope);
+  assert.ok(html.length <= MAX_MSG_CHARS, `${html.length} > ${MAX_MSG_CHARS}`);
+  assert.equal(lines(html)[0], `▪️ <b>devclaw</b> · <b>goal</b> — ${envelope.headline}`);
+});
+
+test("/text: a long first line spills ahead of the lines that follow it", () => {
+  const first = "x".repeat(MAX_TEXT_HEADLINE_CHARS + 40);
+  const envelope = envelopeFromText(`${first}\nsecond line`);
+  assert.equal([...envelope.headline].length, MAX_TEXT_HEADLINE_CHARS);
+  assert.equal(envelope.body, `${"x".repeat(40)}\nsecond line`);
 });

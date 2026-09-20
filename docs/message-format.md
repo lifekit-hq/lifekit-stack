@@ -114,7 +114,7 @@ so the channel has one grammar even before devclaw migrates:
 | Route | Payload | Mapping |
 | --- | --- | --- |
 | `POST /devclaw` | task row JSON (`task_id`, `kind`, `status`, `goal`, `error`, `result_json`) | `level` from `status` (`done` → `good`, `failed` → `act`, else `info`); `source` `devclaw`; `subject` `<kind> <task_id[:8]>`; `headline` = status; `body` = goal (+ a done task's `result_json.message`); `detail` = a failed task's `error`. |
-| `POST /text` | `{ "text": "…" }` | `info`, `source` `devclaw`, `subject` `goal`; the first line is the `headline`, the rest the `body`. |
+| `POST /text` | `{ "text": "…" }` | `info`, `source` `devclaw`, `subject` `goal`; the first line is the `headline`, the rest the `body`. A first line longer than 160 characters is cut at the last word boundary and its tail spills into the `body`, so a single-line payload of any length still renders under the cap (rule 6 never truncates a headline, so no over-long one is built). |
 
 Both routes escape the text they receive — a producer emitting a literal `<` keeps working.
 Migrating devclaw's call sites onto `/notify` is a devclaw change, tracked there.
@@ -128,5 +128,9 @@ alarm that says devclaw is dead — the reason they were wired direct in #133. T
 ~15-line duplication, not an oversight: the template renders a firing alert as an `act` message
 (`source` `grafana`, `subject` = the rule name, `headline` = the rule's `summary`, `body` = its
 `description`) and a resolved one as a `good` message with no description and no remediation.
+On the resolved line the `subject` is the instance that recovered — the `name` label for the
+container rules, `job` for `target-down`, and the rule name only when a rule carries neither —
+because the rules are multi-series and the notification policy groups by `alertname`, so a
+rule-name subject would render two recoveries in one group as the same line.
 Any future producer whose whole job is to report that other things are down gets the same
 exemption; everything else goes through the relay.
