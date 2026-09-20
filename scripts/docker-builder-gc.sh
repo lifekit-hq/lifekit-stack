@@ -19,7 +19,11 @@
 # set (the old 20GB) makes GC evict live layer references on every pass, so
 # every build re-runs stages that already exist; 50GB keeps that ~27 GB set
 # plus ~23 GB of intermediate cache between GC passes (the cache grew ~10 GB in
-# the 3 days before 2026-09-20) and is 10% of the disk.
+# the 3 days before 2026-09-20) and is 10% of the disk. Note dockerd parses
+# "50GB" with go-units RAM semantics, i.e. as 50 GiB ≈ 53.7 GB, so the steady
+# state sits only ~14 GB below the 67.66 GB that motivated this work — that is
+# deliberate, not slack: anything nearer the ~27 GB image-shared set trades the
+# disk back for re-running build stages on every deploy.
 #
 # Semantics (moby daemon/internal/builder-next/worker/gc.go + BuildKit
 # cache/manager.go, verified against Engine 29.5.2): the daemon reads
@@ -46,8 +50,6 @@
 # to dry-run without touching the real host config):
 #   DOCKER_DAEMON_JSON           path to daemon.json (default /etc/docker/daemon.json)
 #   DOCKER_BUILDER_KEEP_STORAGE  builder.gc.defaultKeepStorage value (default below)
-#   DOCKER_BUILDX_INSPECT        --check only: file with `docker buildx inspect
-#                                default` output to parse instead of running it
 
 set -euo pipefail
 
@@ -74,11 +76,7 @@ to_bytes() {
 
 check() {
   local inspect want live want_b live_b
-  if [[ -n "${DOCKER_BUILDX_INSPECT:-}" ]]; then
-    inspect="$(cat "${DOCKER_BUILDX_INSPECT}")"
-  else
-    inspect="$(docker buildx inspect default)"
-  fi
+  inspect="$(docker buildx inspect default)"
   # The last rule of dockerd's policy is the All: true one; its Reserved
   # Space is what BuildKit prunes down to.
   live="$(awk '/^ *Reserved Space:/ { v = $3 } END { print v }' <<<"${inspect}")"
