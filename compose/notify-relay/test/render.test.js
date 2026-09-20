@@ -249,6 +249,14 @@ test("/devclaw row: status maps to level; failed error is the collapsed detail",
   assert.equal(envelopeFromDevclawRow({}).headline, "unknown");
 });
 
+test("/devclaw row: an Object.prototype key is an unknown status, not a level", () => {
+  for (const status of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+    const envelope = envelopeFromDevclawRow({ task_id: "abc", status, goal: "ship" });
+    assert.equal(envelope.level, "info");
+    assert.equal(render(envelope), `▪️ <b>devclaw</b> · <b>task abc</b> — ${status}\nship`);
+  }
+});
+
 test("/text: first line is the headline, the rest the body, always info", () => {
   assert.deepEqual(envelopeFromText("  🚀 goal started\nline two\nline three\n"), {
     level: "info",

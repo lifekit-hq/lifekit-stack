@@ -158,7 +158,7 @@ export function envelopeFromDevclawRow(row) {
   }
 
   return {
-    level: STATUS_LEVEL[status] ?? "info",
+    level: Object.hasOwn(STATUS_LEVEL, status) ? STATUS_LEVEL[status] : "info",
     source: "devclaw",
     subject: `${kind} ${taskId.slice(0, 8)}`,
     headline: status,
