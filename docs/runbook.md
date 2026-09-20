@@ -414,49 +414,37 @@ capping nothing, which is exactly what `--check` compares the ceiling for.
 ## Backups
 
 `/srv/memory/` (the memory vault, mounted on your laptop as `~/memory/`) is your
-data. It has exactly one backup, and it is a mirror, not an independent copy.
-The maintainer reviewed this on 2026-09-18 and accepted it as is; the section
-below describes what exists, not what a full backup would look like.
+data. Back it up.
 
-**What runs:** `memory-sync.timer` (host unit, `/etc/systemd/system/`) fires
-`memory-sync.service` two minutes after boot and every 15 minutes after that.
-The service runs `/usr/local/bin/memory-sync.sh` as `lifekit`: stash local
-uncommitted changes, fetch, `git merge -X theirs origin/main`, unstash, then
-commit and push anything that changed. Its remote is the private GitHub repo
-for the vault, on `main`.
-
-**What that gives you:** an off-machine copy of the vault, at most 15 minutes
-old, with git history for point-in-time recovery of anything that was pushed.
-
-**What it does not give you** (accepted risks, stated so nobody assumes
-otherwise during a recovery):
-
-- **Plaintext off-site.** The remote is a private repo, but the content is not
-  encrypted at rest from your side. There is no encrypted copy of the vault
-  anywhere (no R2, no `age`; the age + R2 scheme in this ecosystem belongs to
-  finance-sentry's Postgres data, not the vault).
-- **No force-push or deletion protection.** The repo is on a plan that does not
-  allow branch protection or rulesets. A force-push rewrites the only off-site
-  history; a repo deletion removes it.
-- **The sync takes the remote side.** Merges run with `-X theirs`, so a bad or
-  destructive commit on the remote reaches `/srv/memory/` on the box within 15
-  minutes. History protects you only as long as history itself is not
-  rewritten (previous point). Recovery from that is `git revert` or a reset to
-  an earlier commit while it still exists.
-- **No restore drill.** Nothing periodically proves the clone restores; the
-  last manual verification was 2026-09-18 (all files byte-identical to live).
-
-Check it is running:
+**Set up your own mirror.** The simplest backup that works is a private git
+repo the VPS pushes to on a timer:
 
 ```bash
-systemctl list-timers memory-sync.timer
-systemctl show memory-sync.service -p Result -p ExecMainStatus
-cd /srv/memory && git status --short --branch     # ahead/behind should be 0 0
+# /usr/local/bin/memory-backup.sh, run from a systemd timer or cron
+cd /srv/memory
+git add -A
+git commit -m "snapshot $(date -Iseconds)" || true
+git push origin main
 ```
+
+That gives you an off-machine copy and git history for point-in-time recovery
+of anything that was pushed. It is a mirror, not an independent backup: the
+remote holds the vault in plaintext, and there is no encrypted copy of the
+vault anywhere. Pair it with the volume snapshots below if you want more.
+Restoring from such a mirror is step 3 of
+[Recovering from a complete VPS loss](#recovering-from-a-complete-vps-loss).
+
+**On the maintainer's box** the same job runs as a `memory-sync.timer` /
+`memory-sync.service` pair in `/etc/systemd/system/`, firing
+`/usr/local/bin/memory-sync.sh` as `lifekit` every 15 minutes to sync
+`/srv/memory/` with its private GitHub remote. Those units are specific to that
+box - this repo installs `memory-rotate`, never `memory-sync` - and the script,
+the units and the vault's own risk notes live with the vault; see the private
+vault runbook for owner detail.
 
 **Volumes to back up if you want full disaster recovery:**
 
-- `/srv/memory/` — the vault (most important; the mirror above is its only copy)
+- `/srv/memory/` — the vault (most important)
 - `/srv/openclaw/config/` — OpenClaw config + `.env`
 - `/srv/openclaw/secret-key/` — OpenClaw OAuth encryption key (lose this and you re-pair every channel)
 - `/srv/openclaw/workspace/` — workspace skills (recoverable from this repo, but having a local copy is faster)
@@ -557,8 +545,8 @@ cd lifekit-stack
 lifekit init-stack --target <new-vps-ip>
 # Wizard reuses your saved wizard.yaml (from your private backup, NOT this repo).
 
-# 3. Restore /srv/memory/ from the private vault repo (the memory-sync mirror,
-#    see "Backups" above - it is plaintext and may be up to 15 minutes behind):
+# 3. Restore /srv/memory/ from your private vault mirror (see "Backups" above -
+#    it is plaintext, and only as fresh as its last push):
 ssh <new-vps>
 cd /srv/memory
 git clone <your-private-vault-repo> .
