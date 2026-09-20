@@ -420,6 +420,12 @@ data. Back it up.
 repo the VPS pushes to on a timer:
 
 ```bash
+# One-time: bootstrap-vps.sh leaves /srv/memory a plain directory, so make it a
+# repo pointing at your private remote before the timer runs.
+cd /srv/memory
+git init -b main
+git remote add origin <your-private-vault-repo>
+
 # /usr/local/bin/memory-backup.sh, run from a systemd timer or cron
 cd /srv/memory
 git add -A
@@ -546,10 +552,15 @@ lifekit init-stack --target <new-vps-ip>
 # Wizard reuses your saved wizard.yaml (from your private backup, NOT this repo).
 
 # 3. Restore /srv/memory/ from your private vault mirror (see "Backups" above -
-#    it is plaintext, and only as fresh as its last push):
+#    it is plaintext, and only as fresh as its last push). Step 2 already
+#    populated /srv/memory/ (system/modules.yaml), so a clone into it would
+#    refuse - point the directory at the remote and reset onto it instead:
 ssh <new-vps>
 cd /srv/memory
-git clone <your-private-vault-repo> .
+git init -b main
+git remote add origin <your-private-vault-repo>
+git fetch origin
+git reset --hard origin/main
 # OR rsync from a snapshot.
 
 # 4. Restore /srv/openclaw/secret-key/ from your private backup.
