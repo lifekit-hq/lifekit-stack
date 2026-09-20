@@ -161,9 +161,16 @@ fi
 # Caps BuildKit's on-box build cache at the daemon level instead of a periodic
 # prune job (postmortem: 179 GB of unbounded build cache from on-box GHA
 # runner builds). Only writes /etc/docker/daemon.json — it never restarts
-# dockerd, so it's safe to run against an already-running Docker; applying
-# the change needs a deliberate `systemctl restart docker` (see the notice
-# the script prints).
+# dockerd, so it's safe to run against an already-running Docker. Applying the
+# change is a deliberate operator sequence in this order: write the file,
+# `systemctl reload docker`, confirm `docker info` reports live restore
+# enabled, and only then `systemctl restart docker` — restarting before
+# live-restore is live stops every container on the box. The notice the script
+# prints and docs/runbook.md "Applying the Docker builder cache cap
+# (daemon.json)" carry the full sequence. On a live box this block is the only
+# writer of the cap:
+# deploy.sh runs the same script with --check and only reports whether the
+# running daemon enforces the repository value.
 
 say "Configuring Docker builder cache GC cap"
 bash "$REPO_DIR/scripts/docker-builder-gc.sh"
