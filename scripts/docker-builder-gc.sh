@@ -47,9 +47,9 @@
 # back to 50 GiB. `docker buildx inspect default` prints the ceiling as the
 # "Max Used Space" of the last (All: true) rule — the field --check compares.
 #
-# Idempotent: merges builder.gc into any existing daemon.json without
-# touching unrelated keys (via `jq`), and no-ops (no write) if it's already
-# at the desired value.
+# Idempotent: merges builder.gc + live-restore into any existing daemon.json
+# without touching unrelated keys (via `jq`), and no-ops (no write) if it's
+# already at the desired value.
 #
 # IMPORTANT: writing this file does not apply it. dockerd only reads
 # builder.* at startup (not on its SIGHUP reload list), so applying the cap

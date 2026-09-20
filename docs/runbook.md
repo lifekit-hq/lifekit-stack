@@ -373,10 +373,11 @@ bash scripts/deploy.sh
 `/etc/docker/daemon.json`: `builder.gc` (reserved and max used space at 50GB,
 which dockerd reads as 50 GiB) and `live-restore: true`. `deploy.sh` runs it
 with `--check` after every `up` and prints a red, report-only line while the
-running daemon does not enforce those values or the file is missing - the
-deploy account has no sudo and dockerd reads `builder.*` at startup only, so
-the deploy can see the drift but never close it. Closing it is one operator
-sequence as `denys`, in this order:
+running daemon's ceiling is not that cap, live-restore is off, or the file is
+missing (a yellow "undetermined" line when it cannot read the live policy at
+all) - the deploy account has no sudo and dockerd reads `builder.*` at startup
+only, so the deploy can see the drift but never close it. Closing it is one
+operator sequence as `denys`, in this order:
 
 ```bash
 sudo bash /srv/lifekit-stack/scripts/docker-builder-gc.sh    # writes the file only
