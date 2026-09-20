@@ -96,9 +96,14 @@ check() {
     echo "  live daemon policy: \`docker buildx inspect default\` failed: ${inspect}"
     return "${UNDETERMINED}"
   fi
-  # The last rule of dockerd's policy is the All: true one; its Max Used
-  # Space is the ceiling that bounds the cache.
-  live="$(awk '/^ *Max Used Space:/ { v = $4 } END { print v }' <<<"${inspect}")"
+  # Only the last (All: true) rule's Max Used Space is the ceiling that bounds
+  # the cache; the earlier, filtered rules cap unrelated subsets. Scope the
+  # read to that rule, so a policy where it carries no ceiling reads as
+  # undetermined instead of as some other rule's number.
+  live="$(awk '
+    /^[[:space:]]*All:/ { in_all = ($2 == "true"); if (in_all) v = ""; next }
+    in_all && /^[[:space:]]*Max Used Space:/ { v = $4 }
+    END { print v }' <<<"${inspect}")"
   echo "  live daemon policy (docker buildx inspect default): max used space = ${live:-unreadable}; repository cap = ${want}"
   if [[ -z "${live}" ]]; then
     return "${UNDETERMINED}"
