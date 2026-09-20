@@ -114,7 +114,7 @@ so the channel has one grammar even before devclaw migrates:
 | Route | Payload | Mapping |
 | --- | --- | --- |
 | `POST /devclaw` | task row JSON (`task_id`, `kind`, `status`, `goal`, `error`, `result_json`) | `level` from `status` (`done` → `good`, `failed` → `act`, else `info`); `source` `devclaw`; `subject` `<kind> <task_id[:8]>`; `headline` = status; `body` = goal (+ a done task's `result_json.message`); `detail` = a failed task's `error`. |
-| `POST /text` | `{ "text": "…" }` | `info`, `source` `devclaw`, `subject` `goal`; the first line is the `headline`, the rest the `body`. A first line longer than 160 characters is cut at the last word boundary and its tail spills into the `body`, so a single-line payload of any length still renders under the cap (rule 6 never truncates a headline, so no over-long one is built). |
+| `POST /text` | `{ "text": "…" }` | `info`, `source` `devclaw`, `subject` `goal`; the first line is the `headline`, the rest the `body`. A first line longer than 160 characters is cut there (at the last word boundary of that first 160, when there is one past its halfway point) and the tail spills into the `body`, so a single-line payload of any length still renders under the cap (rule 6 never truncates a headline, so no over-long one is built). |
 
 Both routes escape the text they receive — a producer emitting a literal `<` keeps working.
 Migrating devclaw's call sites onto `/notify` is a devclaw change, tracked there.
