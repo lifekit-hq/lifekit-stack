@@ -420,6 +420,9 @@ data. Back it up.
 repo the VPS pushes to on a timer:
 
 ```bash
+# Run as the lifekit account - it owns /srv/memory (0750), and the timer runs as
+# lifekit too. From the admin account: sudo -u lifekit -H bash
+#
 # One-time: bootstrap-vps.sh leaves /srv/memory a plain directory, so make it a
 # repo pointing at your private remote before the timer runs. The identity is
 # repo-local: the unattended timer has no ~/.gitconfig to fall back on.
@@ -516,16 +519,27 @@ Symptom: `/var/lib/lifekit/queue.jsonl` (the runtime-state dir, split from the
 vault in the 2026-05-27 runtime-knowledge split) keeps growing; domain files
 under `/srv/memory/domains/` don't update.
 
+Nothing in this stack drains that queue. `lifekit-curator` was retired
+2026-05-25 and is not a compose service at all; `lifekit-orchestrator`, which
+succeeded it, is retired too and profile-gated behind `orchestrator-v1`, so
+`docker compose up -d` never starts it. Draining is `devclaw-mcp`'s in-process
+queue, and devclaw-mcp moved to devclaw's own compose project on 2026-08-15 —
+so there is no service to restart here. A queue that never drains is a devclaw
+problem; take it up in that project.
+
+What this stack can tell you is whether the gateway — which appends to the
+queue and holds the vault mount — still sees both:
+
 ```bash
 ssh <your-vps-tailscale-name>
-docker compose logs -f lifekit-curator --tail 100
+cd /srv/lifekit-stack
+ls -l /var/lib/lifekit/queue.jsonl                 # is it still growing?
+docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env \
+  exec openclaw-gateway ls -la /home/node/memory/domains/
 ```
 
-Common causes:
-
-1. **Curator crashed** — `docker compose restart lifekit-curator`. Check logs for the underlying error.
-2. **Claude CLI auth in the curator container failed** — `docker compose exec lifekit-curator claude auth status`.
-3. **`/srv/memory/domains/` not writable** — `docker compose exec openclaw-gateway ls -la /home/node/memory/domains/`; the vault mounts at `/home/node/memory` inside the container, never at its host path.
+The vault mounts at `/home/node/memory` inside the container, never at its host
+path.
 
 ## SSHFS auto-mount
 
@@ -561,9 +575,12 @@ lifekit init-stack --target <new-vps-ip>
 #    populated /srv/memory/ (system/modules.yaml), so a clone into it would
 #    refuse - point the directory at the remote and reset onto it instead:
 ssh <new-vps>
+sudo -u lifekit -H bash            # /srv/memory is the lifekit account's
 cd /srv/memory
 git init -b main
 git remote add origin <your-private-vault-repo>
+git config user.email <you@example.com>
+git config user.name "lifekit backup"
 git fetch origin
 git reset --hard origin/main
 # OR rsync from a snapshot.
