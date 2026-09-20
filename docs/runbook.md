@@ -386,12 +386,8 @@ sudo systemctl restart docker                                 # applies the cap;
 bash /srv/lifekit-stack/scripts/docker-builder-gc.sh --check  # exit 0: Max Used Space 50GiB, live-restore true
 ```
 
-Read-only confirmation at any later time — the same command the deploy runs,
-which reads the ceiling off the `All: true` rule rather than a rule number:
-
-```bash
-bash /srv/lifekit-stack/scripts/docker-builder-gc.sh --check   # max used space = 50GiB, not the disk-scaled 375.3GiB
-```
+`bash /srv/lifekit-stack/scripts/docker-builder-gc.sh --check` is read-only and
+can be run at any later time to confirm the cap still holds.
 
 Why the order matters: `live-restore` is on dockerd's SIGHUP reload list and
 `builder.*` is not. A restart before live-restore reads `true` stops every

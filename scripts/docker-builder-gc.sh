@@ -13,9 +13,10 @@
 #              values below — the ceiling from `docker buildx inspect default`,
 #              live-restore from `docker info` — and require the file itself
 #              to be present (a missing daemon.json is the most broken state,
-#              not a pass). Exit 0 match, 1 mismatch, 2 undetermined (the live
-#              policy could not be read). deploy.sh runs it after `up`, as the
-#              deploy account, and prints the result as a report-only line —
+#              not a pass, and decides the verdict even when the live policy
+#              cannot be read). Exit 0 match, 1 mismatch, 2 undetermined
+#              (nothing definite known). deploy.sh runs it after `up`, as
+#              the deploy account, and prints the result as a report-only line —
 #              the deploy cannot apply this cap, see below.
 #
 # Why 50GB (retuned from 20GB on 2026-09-20): with no daemon.json the ceiling is
@@ -101,19 +102,20 @@ to_bytes() {
 UNDETERMINED=2
 
 check() {
-  local inspect want live want_b live_b file_ok=1 lr
+  local inspect want live want_b live_b file_ok=1 lr undetermined="${UNDETERMINED}"
   if [[ -f "${DAEMON_JSON}" ]]; then
     echo "  ${DAEMON_JSON}: builder.gc = $(jq -c '.builder.gc // "absent"' "${DAEMON_JSON}" 2>/dev/null || echo unreadable), live-restore = $(jq -c '."live-restore" // "absent"' "${DAEMON_JSON}" 2>/dev/null || echo unreadable)"
   else
     echo "  ${DAEMON_JSON}: absent (mismatch: the running daemon's policy is not repository-owned until this file exists)"
     file_ok=0
+    undetermined=1
   fi
   lr="$(docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null || echo unknown)"
   echo "  live daemon: live-restore = ${lr}; repository value = true"
   want="${CACHE_CAP}"
   if ! inspect="$(docker buildx inspect default 2>&1)"; then
     echo "  live daemon policy: \`docker buildx inspect default\` failed: ${inspect}"
-    return "${UNDETERMINED}"
+    return "${undetermined}"
   fi
   # Only the last (All: true) rule's Max Used Space is the ceiling that bounds
   # the cache; the earlier, filtered rules cap unrelated subsets. Scope the
@@ -125,11 +127,11 @@ check() {
     END { print v }' <<<"${inspect}")"
   echo "  live daemon policy (docker buildx inspect default): max used space = ${live:-unreadable}; repository cap = ${want}"
   if [[ -z "${live}" ]]; then
-    return "${UNDETERMINED}"
+    return "${undetermined}"
   fi
   want_b="$(to_bytes "${want}")"
   if ! live_b="$(to_bytes "${live}")"; then
-    return "${UNDETERMINED}"
+    return "${undetermined}"
   fi
   # buildx prints 2 decimals (46.57GiB, 47.5GiB), so allow 1% rounding.
   awk -v w="${want_b}" -v l="${live_b}" 'BEGIN { d = w - l; if (d < 0) d = -d; exit !(d <= w / 100) }' || return 1
