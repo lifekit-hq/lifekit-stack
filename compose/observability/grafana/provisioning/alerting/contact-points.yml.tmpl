@@ -24,9 +24,18 @@ contactPoints:
           # keeps the owner's chat id out of git (docs/PRIVATE.md, #132).
           chatid: "__TELEGRAM_CHAT_ID__"
           parse_mode: HTML
-          message: |
-            {{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} <b>{{ .Status | toUpper }}</b> {{ range .Alerts }}
-            <b>{{ .Labels.alertname }}</b>{{ if .Annotations.summary }} — {{ .Annotations.summary }}{{ end }}
-            {{ .Annotations.description }}
+          # The notification grammar of docs/message-format.md, re-implemented
+          # here because these rules bypass notify-relay on purpose (above).
+          # Firing = `act`: line 1 is the rule and its summary, the body its
+          # description. Resolved = `good`: line 1 only — no description, no
+          # remediation, so a 3am "RESOLVED" never reads as a call to act.
+          message: |-
+            {{ range .Alerts -}}
+            {{ if eq .Status "firing" -}}
+            🔴 <b>grafana</b> · <b>{{ .Labels.alertname | html }}</b> — {{ .Annotations.summary | html }}
+            {{ .Annotations.description | html }}
+            {{ else -}}
+            🟢 <b>grafana</b> · <b>{{ .Labels.alertname | html }}</b> — resolved
+            {{ end -}}
             {{ end }}
         disableResolveMessage: false

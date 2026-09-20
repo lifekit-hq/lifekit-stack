@@ -1,0 +1,174 @@
+/**
+ * notify-relay renderer — the one place a Telegram message is composed.
+ *
+ * Pure: no I/O, no env, no clock. `render(envelope)` turns a message envelope
+ * (docs/message-format.md) into Telegram HTML; the compatibility mappers turn
+ * the legacy /devclaw task row and /text payloads into envelopes so every
+ * producer goes through the same grammar.
+ *
+ * Telegram entity rules honoured here: every interpolated value is escaped
+ * (& < >); <code> never contains another tag; blockquotes never nest.
+ */
+
+export const LEVELS = Object.freeze({
+  act: { glyph: "🔴", action: true },
+  wait: { glyph: "🟡", action: true },
+  good: { glyph: "🟢", action: false },
+  info: { glyph: "▪️", action: false },
+});
+
+export const REQUIRED_FIELDS = Object.freeze(["level", "source", "subject", "headline"]);
+
+// Telegram rejects text over 4096 characters; keep the relay's headroom.
+export const MAX_MSG_CHARS = 3500;
+
+const TRUNCATION_MARK = "…";
+
+export function escapeHtml(value) {
+  return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replaceAll('"', "&quot;");
+}
+
+function text(value) {
+  return value == null ? "" : String(value);
+}
+
+/**
+ * Validate an envelope. Returns a list of problems; empty means valid.
+ */
+export function validateEnvelope(envelope) {
+  const problems = [];
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+    return ["envelope must be a JSON object"];
+  }
+  for (const field of REQUIRED_FIELDS) {
+    const value = envelope[field];
+    if (typeof value !== "string" || value.trim() === "") {
+      problems.push(`missing '${field}'`);
+    }
+  }
+  if (typeof envelope.level === "string" && !(envelope.level in LEVELS)) {
+    problems.push(`unknown level '${envelope.level}' (act | wait | good | info)`);
+  }
+  return problems;
+}
+
+function renderLinks(links) {
+  if (!Array.isArray(links)) return "";
+  return links
+    .filter((l) => l && typeof l.url === "string" && l.url && typeof l.text === "string" && l.text)
+    .map((l) => `<a href="${escapeAttr(l.url)}">${escapeHtml(l.text)}</a>`)
+    .join(" · ");
+}
+
+// Cut `over` characters (plus room for the mark) off the end of a string,
+// on code-point boundaries so an emoji is never split into a lone surrogate.
+function shrink(value, over) {
+  const chars = [...value];
+  const keep = Math.max(0, chars.length - over - TRUNCATION_MARK.length);
+  return keep > 0 ? chars.slice(0, keep).join("") + TRUNCATION_MARK : "";
+}
+
+/**
+ * Render an envelope to Telegram HTML. The envelope must already be valid
+ * (see validateEnvelope); unknown levels fall back to `info` so a renderer
+ * fault never produces an unrendered message.
+ *
+ * Layout (docs/message-format.md, "Rendering rules"):
+ *   1. <glyph> <b>source</b> · <b>subject</b> — headline      (always, never cut)
+ *   2. body                                                    (optional)
+ *   3. <blockquote expandable>detail</blockquote>              (optional, collapsed)
+ *   4. links                                                   (optional)
+ *   5. → <code>action</code>                                   (act / wait only)
+ */
+export function render(envelope) {
+  const level = LEVELS[envelope.level] ?? LEVELS.info;
+  const headline =
+    `${level.glyph} <b>${escapeHtml(text(envelope.source))}</b> · ` +
+    `<b>${escapeHtml(text(envelope.subject))}</b> — ${escapeHtml(text(envelope.headline))}`;
+  const links = renderLinks(envelope.links);
+  const action = level.action && text(envelope.action).trim()
+    ? `→ <code>${escapeHtml(text(envelope.action).trim())}</code>`
+    : "";
+
+  let body = text(envelope.body).trim();
+  let detail = text(envelope.detail).trim();
+
+  const build = () =>
+    [
+      headline,
+      body ? escapeHtml(body) : "",
+      detail ? `<blockquote expandable>${escapeHtml(detail)}</blockquote>` : "",
+      links,
+      action,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+  // Truncate before Telegram does: detail first, then body, never the headline.
+  // Escaping only lengthens text, so removing N raw characters removes at
+  // least N rendered characters; the loop terminates once the field is empty.
+  let message = build();
+  while (message.length > MAX_MSG_CHARS && detail) {
+    detail = shrink(detail, message.length - MAX_MSG_CHARS);
+    message = build();
+  }
+  while (message.length > MAX_MSG_CHARS && body) {
+    body = shrink(body, message.length - MAX_MSG_CHARS);
+    message = build();
+  }
+  return message;
+}
+
+// ---- compatibility mappers (POST /devclaw, POST /text) ----------------------
+
+const STATUS_LEVEL = { done: "good", failed: "act" };
+
+/**
+ * A devclaw task row (POST /devclaw) as an envelope: level from `status`
+ * (done → good, failed → act, else info); the goal is the body; a failure's
+ * error is the collapsed detail; a done task's result message joins the body.
+ */
+export function envelopeFromDevclawRow(row) {
+  const status = text(row?.status) || "unknown";
+  const kind = text(row?.kind) || "task";
+  const taskId = text(row?.task_id) || "?";
+  const body = [text(row?.goal).slice(0, 240)];
+  let detail = "";
+
+  if (status === "failed" && row?.error) {
+    detail = text(row.error).slice(0, 600);
+  } else if (status === "done" && row?.result_json) {
+    try {
+      const parsed =
+        typeof row.result_json === "string" ? JSON.parse(row.result_json) : row.result_json;
+      if (parsed?.message) body.push(text(parsed.message).slice(0, 400));
+    } catch {
+      // result_json wasn't JSON; skip
+    }
+  }
+
+  return {
+    level: STATUS_LEVEL[status] ?? "info",
+    source: "devclaw",
+    subject: `${kind} ${taskId.slice(0, 8)}`,
+    headline: status,
+    body: body.filter(Boolean).join("\n\n"),
+    detail,
+  };
+}
+
+/**
+ * Free text (POST /text, the devclaw goal layer) as an `info` envelope: the
+ * first line is the headline, the rest the body. Escaping happens in render.
+ */
+export function envelopeFromText(value) {
+  const trimmed = text(value).trim();
+  const newline = trimmed.indexOf("\n");
+  const headline = newline === -1 ? trimmed : trimmed.slice(0, newline);
+  const body = newline === -1 ? "" : trimmed.slice(newline + 1);
+  return { level: "info", source: "devclaw", subject: "goal", headline, body };
+}

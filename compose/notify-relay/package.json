@@ -1,0 +1,9 @@
+{
+  "name": "notify-relay",
+  "private": true,
+  "type": "module",
+  "description": "Renders message envelopes to Telegram HTML and posts them to the Bot API. No dependencies.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -650,10 +650,11 @@ services:
 
   notify-relay:
     <<: *policy
-    # Turns devclaw's notify_url POST into a Telegram message via direct
-    # Telegram Bot API call. See compose/notify-relay/server.js.
+    # The one renderer of owner notifications: a JSON envelope on /notify
+    # (docs/message-format.md) or devclaw's legacy /devclaw + /text POSTs
+    # become Telegram HTML via direct Bot API call. See compose/notify-relay/.
     # No host port binding — devclaw reaches it on the compose network
-    # at http://notify-relay:8090/devclaw.
+    # at http://notify-relay:8090.
     build:
       context: ./notify-relay
     image: notify-relay:local
