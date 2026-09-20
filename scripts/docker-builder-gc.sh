@@ -60,14 +60,10 @@
 # down with them. live-restore IS on the reload list, so the order that avoids
 # the outage is: write this file, `systemctl reload docker` (SIGHUP) and
 # confirm `docker info` shows live restore enabled, THEN `systemctl restart
-# docker` for the cap. Proven 2026-09-20 in a throwaway docker:29.5.2-dind
-# container (same engine version as this box, swarm inactive, containerd
-# image store): after the reload a running container survived the daemon
-# restart with the same pid and start time and stayed exec-able, and the
-# restarted daemon showed Max Used Space 50GiB. Inferred, not proven: the
-# same on this host's external containerd (systemd unit) rather than dind's
-# child containerd — the more favourable case, since that containerd never
-# stops. docs/runbook.md carries the operator sequence. This script never
+# docker` for the cap. That order was rehearsed on 2026-09-20 in a throwaway
+# docker:29.5.2-dind container and held. docs/runbook.md "Applying the Docker
+# builder cache cap" owns the operator sequence and the evidence behind it,
+# including which part is inferred rather than proven. This script never
 # reloads or restarts dockerd. The deploy account has no sudo, so deploy.sh
 # only checks (--check) and never writes.
 #
