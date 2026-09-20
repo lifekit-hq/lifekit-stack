@@ -743,6 +743,20 @@ STACK_PROJECT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" co
 python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" \
   || fail_later "platform contract: ${STACK_PROJECT} containers fail it (table above)"
 
+# ─── Docker builder cache cap: host fact the repo owns, report-only ──────────
+#
+# scripts/docker-builder-gc.sh carries the cap (builder.gc in daemon.json),
+# but this account cannot apply it: dockerd reads builder.* at startup only
+# and the deploy has no sudo, so writing the file and restarting the daemon is
+# a scheduled operator step (the script's own notice). What the deploy can do
+# is stop the record from lying: read the policy the running daemon enforces
+# and print, in red, when it is not the repository's value. Report-only, like
+# the census above - a host fact never turns the deploy red.
+say "docker builder cache cap (host fact, report-only)"
+if ! bash "${REPO_DIR}/scripts/docker-builder-gc.sh" --check; then
+  printf '\033[1;31m✗ docker builder cache cap: the running daemon does not enforce the repository value (apply: sudo bash scripts/docker-builder-gc.sh, then a scheduled systemctl restart docker)\033[0m\n' >&2
+fi
+
 if (( ${#DEPLOY_FAILURES[@]} )); then
   say "post-deploy assertions failed"
   printf '  - %s\n' "${DEPLOY_FAILURES[@]}" >&2

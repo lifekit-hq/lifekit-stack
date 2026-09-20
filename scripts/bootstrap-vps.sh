@@ -163,7 +163,9 @@ fi
 # runner builds). Only writes /etc/docker/daemon.json — it never restarts
 # dockerd, so it's safe to run against an already-running Docker; applying
 # the change needs a deliberate `systemctl restart docker` (see the notice
-# the script prints).
+# the script prints). On a live box this block is the only writer of the cap:
+# deploy.sh runs the same script with --check and only reports whether the
+# running daemon enforces the repository value.
 
 say "Configuring Docker builder cache GC cap"
 bash "$REPO_DIR/scripts/docker-builder-gc.sh"
