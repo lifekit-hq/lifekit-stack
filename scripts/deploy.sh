@@ -758,7 +758,7 @@ bash "${REPO_DIR}/scripts/docker-builder-gc.sh" --check || CAP_STATUS=$?
 case "${CAP_STATUS}" in
   0) ;;
   2) warn "docker builder cache cap: could not read the live GC policy, cap undetermined (output above)" ;;
-  *) printf '\033[1;31m✗ docker builder cache cap: the running daemon does not enforce the repository value (apply: sudo bash scripts/docker-builder-gc.sh, then a scheduled systemctl restart docker)\033[0m\n' >&2 ;;
+  *) printf '\033[1;31m✗ docker builder cache cap: the running daemon does not enforce the repository daemon.json (cap + live-restore); apply it with the operator sequence in docs/runbook.md "Applying the Docker builder cache cap"\033[0m\n' >&2 ;;
 esac
 
 if (( ${#DEPLOY_FAILURES[@]} )); then

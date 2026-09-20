@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
-# docker-builder-gc.sh — cap BuildKit's on-box build cache via dockerd's own
-# builder.gc policy, instead of running a periodic prune job. Evidence: 179 GB
-# of BuildKit cache accumulated on lifekit-vps from on-box builds by five
-# GitHub Actions runners; /etc/docker/daemon.json didn't exist.
+# docker-builder-gc.sh — the repository's half of /etc/docker/daemon.json:
+# cap BuildKit's on-box build cache via dockerd's own builder.gc policy,
+# instead of running a periodic prune job, and keep containers running across
+# the daemon restart that applies it (live-restore). Evidence: 179 GB of
+# BuildKit cache accumulated on lifekit-vps from on-box builds by five GitHub
+# Actions runners; /etc/docker/daemon.json didn't exist.
 #
 # Two modes:
-#   (default)  merge builder.gc into daemon.json (root; bootstrap-vps.sh runs it)
-#   --check    read-only: compare the ceiling the running daemon enforces with
-#              the value below. Exit 0 match, 1 mismatch, 2 undetermined (the
-#              live policy could not be read). deploy.sh runs it after `up`, as
-#              the deploy account, and prints the result as a report-only line
-#              — the deploy cannot apply this cap, see below.
+#   (default)  merge builder.gc + live-restore into daemon.json (root;
+#              bootstrap-vps.sh runs it)
+#   --check    read-only: compare what the running daemon enforces with the
+#              values below — the ceiling from `docker buildx inspect default`,
+#              live-restore from `docker info` — and require the file itself
+#              to be present (a missing daemon.json is the most broken state,
+#              not a pass). Exit 0 match, 1 mismatch, 2 undetermined (the live
+#              policy could not be read). deploy.sh runs it after `up`, as the
+#              deploy account, and prints the result as a report-only line —
+#              the deploy cannot apply this cap, see below.
 #
 # Why 50GB (retuned from 20GB on 2026-09-20): with no daemon.json the ceiling is
 # BuildKit's disk-scaled default Max Used Space — 375.3 GiB on this 503 GB box —
@@ -45,14 +51,24 @@
 # at the desired value.
 #
 # IMPORTANT: writing this file does not apply it. dockerd only reads
-# daemon.json at startup (builder.* is not on its SIGHUP reload list), so
-# applying a change here requires `systemctl restart docker`, which restarts
+# builder.* at startup (not on its SIGHUP reload list), so applying the cap
+# requires `systemctl restart docker`. Without live-restore that restart stops
 # EVERY container on the host — this stack's services run with
 # restart: on-failure and do not come back on their own, and the other
-# projects on the box (finance-sentry, devclaw, dashboard, xui, closeloop)
-# go down with them. This script never restarts dockerd — that restart must
-# be scheduled and run deliberately, separately from this script. The deploy
-# account has no sudo, so deploy.sh only checks (--check) and never writes.
+# projects on the box (finance-sentry, devclaw, dashboard, xui, closeloop) go
+# down with them. live-restore IS on the reload list, so the order that avoids
+# the outage is: write this file, `systemctl reload docker` (SIGHUP) and
+# confirm `docker info` shows live restore enabled, THEN `systemctl restart
+# docker` for the cap. Proven 2026-09-20 in a throwaway docker:29.5.2-dind
+# container (same engine version as this box, swarm inactive, containerd
+# image store): after the reload a running container survived the daemon
+# restart with the same pid and start time and stayed exec-able, and the
+# restarted daemon showed Max Used Space 50GiB. Inferred, not proven: the
+# same on this host's external containerd (systemd unit) rather than dind's
+# child containerd — the more favourable case, since that containerd never
+# stops. docs/runbook.md carries the operator sequence. This script never
+# reloads or restarts dockerd. The deploy account has no sudo, so deploy.sh
+# only checks (--check) and never writes.
 #
 # Env overrides (mainly for testing — point DOCKER_DAEMON_JSON at a temp path
 # to dry-run without touching the real host config):
@@ -85,12 +101,15 @@ to_bytes() {
 UNDETERMINED=2
 
 check() {
-  local inspect want live want_b live_b
+  local inspect want live want_b live_b file_ok=1 lr
   if [[ -f "${DAEMON_JSON}" ]]; then
-    echo "  ${DAEMON_JSON}: builder.gc = $(jq -c '.builder.gc // "absent"' "${DAEMON_JSON}" 2>/dev/null || echo unreadable)"
+    echo "  ${DAEMON_JSON}: builder.gc = $(jq -c '.builder.gc // "absent"' "${DAEMON_JSON}" 2>/dev/null || echo unreadable), live-restore = $(jq -c '."live-restore" // "absent"' "${DAEMON_JSON}" 2>/dev/null || echo unreadable)"
   else
-    echo "  ${DAEMON_JSON}: absent"
+    echo "  ${DAEMON_JSON}: absent (mismatch: the running daemon's policy is not repository-owned until this file exists)"
+    file_ok=0
   fi
+  lr="$(docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null || echo unknown)"
+  echo "  live daemon: live-restore = ${lr}; repository value = true"
   want="${CACHE_CAP}"
   if ! inspect="$(docker buildx inspect default 2>&1)"; then
     echo "  live daemon policy: \`docker buildx inspect default\` failed: ${inspect}"
@@ -113,7 +132,8 @@ check() {
     return "${UNDETERMINED}"
   fi
   # buildx prints 2 decimals (46.57GiB, 47.5GiB), so allow 1% rounding.
-  awk -v w="${want_b}" -v l="${live_b}" 'BEGIN { d = w - l; if (d < 0) d = -d; exit !(d <= w / 100) }'
+  awk -v w="${want_b}" -v l="${live_b}" 'BEGIN { d = w - l; if (d < 0) d = -d; exit !(d <= w / 100) }' || return 1
+  [[ "${lr}" == "true" && "${file_ok}" == 1 ]]
 }
 
 if [[ "${1:-}" == "--check" ]]; then
@@ -129,7 +149,8 @@ else
 fi
 
 merged="$(jq --arg cap "$CACHE_CAP" \
-  '.builder //= {} | .builder.gc //= {}
+  '."live-restore" = true
+   | .builder //= {} | .builder.gc //= {}
    | .builder.gc.enabled = true
    | .builder.gc.defaultReservedSpace = $cap
    | .builder.gc.defaultMaxUsedSpace = $cap
@@ -137,7 +158,7 @@ merged="$(jq --arg cap "$CACHE_CAP" \
   <<<"$existing")"
 
 if [[ "$(jq -Sc . <<<"$existing")" == "$(jq -Sc . <<<"$merged")" ]]; then
-  say "Docker builder GC cap already configured in $DAEMON_JSON (cap=$CACHE_CAP), skipping"
+  say "Docker builder GC cap + live-restore already configured in $DAEMON_JSON (cap=$CACHE_CAP), skipping"
   exit 0
 fi
 
@@ -149,17 +170,18 @@ chmod 644 "$tmp"
 mv "$tmp" "$DAEMON_JSON"
 trap - EXIT
 
-say "Wrote Docker builder GC cap (cap=$CACHE_CAP) to $DAEMON_JSON"
+say "Wrote Docker builder GC cap (cap=$CACHE_CAP) + live-restore to $DAEMON_JSON"
 cat <<EOF
 
-NOTE: this only takes effect after dockerd re-reads its config. Apply with:
+NOTE: this only takes effect after dockerd re-reads its config, and the cap
+needs a restart. Do not run these here — schedule them deliberately and run
+them by hand, in this order (docs/runbook.md):
 
-    systemctl restart docker
+    systemctl reload docker                              # SIGHUP: live-restore only
+    docker info --format '{{.LiveRestoreEnabled}}'       # must print true before going on
+    systemctl restart docker                             # applies the cap; containers stay up
+    bash scripts/docker-builder-gc.sh --check            # exit 0; Max Used Space at the cap, not 375.3GiB
 
-This restarts EVERY container on the host. Do not run that here — schedule
-the restart deliberately (e.g. a maintenance window) and run it by hand.
-Confirm afterwards with:  bash scripts/docker-builder-gc.sh --check
-"docker buildx inspect default" must then show Max Used Space at the cap,
-not the disk-scaled 375.3GiB default.
+Restarting BEFORE live-restore reads true stops every container on the host.
 
 EOF

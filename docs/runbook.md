@@ -367,6 +367,52 @@ git checkout <good-commit>
 bash scripts/deploy.sh
 ```
 
+## Applying the Docker builder cache cap (daemon.json)
+
+`scripts/docker-builder-gc.sh` owns the repository's half of
+`/etc/docker/daemon.json`: `builder.gc` (reserved and max used space at 50GB,
+which dockerd reads as 50 GiB) and `live-restore: true`. `deploy.sh` runs it
+with `--check` after every `up` and prints a red, report-only line while the
+running daemon does not enforce those values or the file is missing - the
+deploy account has no sudo and dockerd reads `builder.*` at startup only, so
+the deploy can see the drift but never close it. Closing it is one operator
+sequence as `denys`, in this order:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/docker-builder-gc.sh    # writes the file only
+sudo systemctl reload docker                                  # SIGHUP: picks up live-restore, nothing else
+docker info --format '{{.LiveRestoreEnabled}}'                # must print true - do not go on until it does
+sudo systemctl restart docker                                 # applies the cap; running containers stay up
+bash /srv/lifekit-stack/scripts/docker-builder-gc.sh --check  # exit 0: Max Used Space 50GiB, live-restore true
+```
+
+Read-only confirmation at any later time, the same line the deploy prints:
+
+```bash
+docker buildx inspect default | grep -A4 'rule#3'   # Max Used Space: 50GiB, not the disk-scaled 375.3GiB
+```
+
+Why the order matters: `live-restore` is on dockerd's SIGHUP reload list and
+`builder.*` is not. A restart before live-restore reads `true` stops every
+container on the box (this stack's `restart: on-failure` services do not come
+back on their own; finance-sentry, devclaw, the dashboard, xui and closeloop
+go down with them). With live-restore active first, the restart is a no-op
+for running containers.
+
+What was proven (2026-09-20, throwaway `docker:29.5.2-dind` container on this
+box - same engine version, swarm inactive, containerd image store, nothing
+touched on the host daemon): a daemon started without live-restore picked it
+up from the file on SIGHUP; a container started after that survived the
+daemon's SIGTERM and restart with the same pid and start time and stayed
+exec-able; the restarted daemon showed `Max Used Space: 50GiB` and
+`Reserved Space: 50GiB` on the `All: true` rule, where the disk-scaled default
+had shown 375.3GiB. Inferred, not proven: the same on this host's external
+containerd (a systemd unit that never stops, the more favourable case than
+dind's child containerd, which exited and still left the container running).
+A `defaultKeepStorage`-only setting would have reported `Reserved Space:
+50GiB` next to `Max Used Space: 375.3GiB` - a record that looks applied while
+capping nothing, which is exactly what `--check` compares the ceiling for.
+
 ## Backups
 
 `~/.life/` is your data. Back it up.
