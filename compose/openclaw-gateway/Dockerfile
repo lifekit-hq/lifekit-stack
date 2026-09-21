@@ -12,7 +12,7 @@
 # In-container `openclaw update` (and the dashboard's "Update now") is the
 # wrong surface here on purpose: the image is the unit of deployment, and
 # anything installed inside a running container is gone on the next recreate.
-FROM ghcr.io/openclaw/openclaw:2026.9.4
+FROM ghcr.io/openclaw/openclaw:2026.9.5
 
 USER root
 
