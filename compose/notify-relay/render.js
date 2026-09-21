@@ -24,6 +24,21 @@ export const MAX_MSG_CHARS = 3500;
 
 const TRUNCATION_MARK = "…";
 
+// Fields the renderer never cuts are bounded at validation instead, counted in
+// characters after HTML escaping (what render() emits). Worst case with body
+// and detail cut to nothing: line 1 is 23 + 64 + 128 + 800 = 1015; links
+// 1 + 3 × (15 + 100 + 500) + 2 × 3 = 1852; action 1 + 15 + 400 = 416;
+// 1015 + 1852 + 416 = 3283 < MAX_MSG_CHARS.
+export const FIELD_LIMITS = Object.freeze({
+  source: 64,
+  subject: 128,
+  headline: 800,
+  action: 400,
+  linkText: 100,
+  linkUrl: 500,
+});
+export const MAX_LINKS = 3;
+
 export function escapeHtml(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
@@ -52,6 +67,30 @@ export function validateEnvelope(envelope) {
   }
   if (typeof envelope.level === "string" && !Object.hasOwn(LEVELS, envelope.level)) {
     problems.push(`unknown level '${envelope.level}' (act | wait | good | info)`);
+  }
+  const tooLong = (name, rendered, limit) => {
+    if (rendered.length > limit) {
+      problems.push(`'${name}' is ${rendered.length} characters escaped; limit ${limit}`);
+    }
+  };
+  for (const field of ["source", "subject", "headline"]) {
+    if (typeof envelope[field] === "string") {
+      tooLong(field, escapeHtml(envelope[field]), FIELD_LIMITS[field]);
+    }
+  }
+  tooLong("action", escapeHtml(text(envelope.action).trim()), FIELD_LIMITS.action);
+  if (Array.isArray(envelope.links)) {
+    if (envelope.links.length > MAX_LINKS) {
+      problems.push(`'links' has ${envelope.links.length} entries; limit ${MAX_LINKS}`);
+    }
+    envelope.links.forEach((link, i) => {
+      if (typeof link?.text === "string") {
+        tooLong(`links[${i}].text`, escapeHtml(link.text), FIELD_LIMITS.linkText);
+      }
+      if (typeof link?.url === "string") {
+        tooLong(`links[${i}].url`, escapeAttr(link.url), FIELD_LIMITS.linkUrl);
+      }
+    });
   }
   return problems;
 }
@@ -133,6 +172,13 @@ export function render(envelope) {
 
 const STATUS_LEVEL = { done: "good", failed: "act" };
 
+// A code point escapes to at most 5 characters (&amp;), so these clips keep the
+// mapped subject (16 × 5 + 1 + 8 × 5 = 121) and headline (64 × 5 = 320) within
+// FIELD_LIMITS.
+function clip(value, codePoints) {
+  return [...value].slice(0, codePoints).join("");
+}
+
 /**
  * A devclaw task row (POST /devclaw) as an envelope: level from `status`
  * (done → good, failed → act, else info); the goal is the body; a failure's
@@ -140,8 +186,8 @@ const STATUS_LEVEL = { done: "good", failed: "act" };
  */
 export function envelopeFromDevclawRow(row) {
   const status = text(row?.status) || "unknown";
-  const kind = text(row?.kind) || "task";
-  const taskId = text(row?.task_id) || "?";
+  const kind = clip(text(row?.kind) || "task", 16);
+  const taskId = clip(text(row?.task_id) || "?", 8);
   const body = [text(row?.goal).slice(0, 240)];
   let detail = "";
 
@@ -160,8 +206,8 @@ export function envelopeFromDevclawRow(row) {
   return {
     level: Object.hasOwn(STATUS_LEVEL, status) ? STATUS_LEVEL[status] : "info",
     source: "devclaw",
-    subject: `${kind} ${taskId.slice(0, 8)}`,
-    headline: status,
+    subject: `${kind} ${taskId}`,
+    headline: clip(status, 64),
     body: body.filter(Boolean).join("\n\n"),
     detail,
   };
@@ -170,7 +216,8 @@ export function envelopeFromDevclawRow(row) {
 // A /text producer composes its own string and can hand over a single line of
 // any length, but render() never truncates a headline. So the headline is
 // bounded here, where the envelope is built, and the overflow spills into the
-// body — which render() does truncate.
+// body — which render() does truncate. 160 × 5 escaped stays within
+// FIELD_LIMITS.headline.
 export const MAX_TEXT_HEADLINE_CHARS = 160;
 
 // Split an over-long first line into a headline and its overflow, preferring

@@ -26,13 +26,13 @@ win and this page is wrong.
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `level` | yes | One of `act`, `wait`, `good`, `info` — see below. Nothing else encodes urgency. |
-| `source` | yes | Who is talking: `devclaw`, `grafana`, an OpenClaw agent id. Short, stable, lowercase. |
-| `subject` | yes | What it is about: an issue, a task, a service. Short — it shares line 1. |
-| `headline` | yes | The one line that shows on a lock screen. Never truncated. |
+| `source` | yes | Who is talking: `devclaw`, `grafana`, an OpenClaw agent id. Short, stable, lowercase. At most 64. |
+| `subject` | yes | What it is about: an issue, a task, a service. Short — it shares line 1. At most 128. |
+| `headline` | yes | The one line that shows on a lock screen. Never truncated; at most 800, longer is rejected. |
 | `body` | no | A paragraph of plain text. Shown in full, truncated after `detail`. |
 | `detail` | no | Long text (a stack trace, a spec excerpt). Always collapsed; truncated first. |
-| `action` | no | The command or decision the reader should take. Rendered for `act` and `wait` only. |
-| `links` | no | `[{ text, url }]`. Rendered as anchors on their own line; entries missing either key are dropped. |
+| `action` | no | The command or decision the reader should take. Rendered for `act` and `wait` only. At most 400. |
+| `links` | no | `[{ text, url }]`, at most 3 entries; `text` at most 100, `url` at most 500. Rendered as anchors on their own line; entries missing either key are dropped. |
 
 `POST /notify` with any of the four required fields missing or empty, or with an unknown
 `level`, answers `400` with the problems listed and sends nothing.
@@ -64,9 +64,14 @@ A producer that cannot pick one of the four is over-notifying. There are no othe
 5. **Every interpolated value is HTML-escaped** (`&` `<` `>`; `"` too inside `href`). Producers
    send plain text and never markup: a `TypeError: expected <str>` in an error body arrives as
    text, not as a rejected entity.
-6. **Truncate before Telegram does.** Telegram caps a message at 4096 characters; the relay renders
-   to at most 3500 (`MAX_MSG_CHARS`). `detail` is cut first, then `body`, never `headline`. Cuts
-   land on code-point boundaries and end with `…`.
+6. **Truncate before Telegram does.** Telegram caps a message at 4096 characters; the relay keeps
+   3500 (`MAX_MSG_CHARS`) of headroom. The fields it never cuts are bounded instead: `source` 64,
+   `subject` 128, `headline` 800, `action` 400, and at most 3 `links` with `text` 100 and `url` 500
+   each — counted in characters after HTML escaping (`&` counts 5, `<` and `>` 4, `"` in a `url`
+   6). `POST /notify` rejects an envelope over any of them with a 400 naming the field and its
+   limit, and sends nothing; a headline is never silently cut. `detail` is truncated first, then
+   `body`; together the limits leave room under the cap even with both emptied, so every accepted
+   envelope renders to at most 3500. Cuts land on code-point boundaries and end with `…`.
 7. `<code>` never contains another tag and blockquotes never nest (Telegram entity rules), so the
    renderer emits `action` and `detail` as escaped text only.
 
@@ -113,7 +118,7 @@ so the channel has one grammar even before devclaw migrates:
 
 | Route | Payload | Mapping |
 | --- | --- | --- |
-| `POST /devclaw` | task row JSON (`task_id`, `kind`, `status`, `goal`, `error`, `result_json`) | `level` from `status` (`done` → `good`, `failed` → `act`, else `info`); `source` `devclaw`; `subject` `<kind> <task_id[:8]>`; `headline` = status; `body` = goal (+ a done task's `result_json.message`); `detail` = a failed task's `error`. |
+| `POST /devclaw` | task row JSON (`task_id`, `kind`, `status`, `goal`, `error`, `result_json`) | `level` from `status` (`done` → `good`, `failed` → `act`, else `info`); `source` `devclaw`; `subject` `<kind[:16]> <task_id[:8]>`; `headline` = status (first 64 characters); `body` = goal (+ a done task's `result_json.message`); `detail` = a failed task's `error`. |
 | `POST /text` | `{ "text": "…" }` | `info`, `source` `devclaw`, `subject` `goal`; the first line is the `headline`, the rest the `body`. A first line longer than 160 characters is cut there (at the last word boundary of that first 160, when there is one past its halfway point) and the tail spills into the `body`, so a single-line payload of any length still renders under the cap (rule 6 never truncates a headline, so no over-long one is built). |
 
 Both routes escape the text they receive — a producer emitting a literal `<` keeps working.

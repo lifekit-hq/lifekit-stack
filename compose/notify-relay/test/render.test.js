@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  FIELD_LIMITS,
+  MAX_LINKS,
   MAX_MSG_CHARS,
   MAX_TEXT_HEADLINE_CHARS,
   envelopeFromDevclawRow,
@@ -206,6 +208,69 @@ test("validateEnvelope names every missing required field and rejects unknown le
   assert.deepEqual(validateEnvelope({ ...base, level: "act", subject: "  " }), ["missing 'subject'"]);
   assert.deepEqual(validateEnvelope(null), ["envelope must be a JSON object"]);
   assert.deepEqual(validateEnvelope([]), ["envelope must be a JSON object"]);
+});
+
+test("validateEnvelope rejects each over-long uncut field, naming it and its limit", () => {
+  const cases = [
+    ["source", { source: "s".repeat(FIELD_LIMITS.source + 1) }],
+    ["subject", { subject: "s".repeat(FIELD_LIMITS.subject + 1) }],
+    ["headline", { headline: "h".repeat(5000) }],
+    ["action", { action: "a".repeat(5000) }],
+    ["links[0].text", { links: [{ text: "t".repeat(FIELD_LIMITS.linkText + 1), url: "u" }] }],
+    ["links[1].url", { links: [{ text: "t", url: "u" }, { text: "t", url: "u".repeat(5000) }] }],
+  ];
+  for (const [field, overrides] of cases) {
+    const problems = validateEnvelope({ ...base, level: "act", ...overrides });
+    assert.equal(problems.length, 1, `${field}: ${problems}`);
+    assert.match(problems[0], new RegExp(`^'${field.replace(/[[\]]/g, "\\$&")}' is \\d+ characters`));
+  }
+  // Limits count what render() emits: escaping inflates a field toward its limit.
+  assert.deepEqual(
+    validateEnvelope({ ...base, level: "act", source: "&".repeat(13) }),
+    [`'source' is 65 characters escaped; limit ${FIELD_LIMITS.source}`],
+  );
+  const link = { text: "t", url: "https://example.com" };
+  assert.deepEqual(
+    validateEnvelope({ ...base, level: "act", links: Array(MAX_LINKS + 1).fill(link) }),
+    [`'links' has ${MAX_LINKS + 1} entries; limit ${MAX_LINKS}`],
+  );
+});
+
+test("every uncut field at its limit plus oversized body and detail renders under the cap", () => {
+  const envelope = {
+    level: "act",
+    source: "&".repeat(12) + "ssss",
+    subject: "<".repeat(FIELD_LIMITS.subject / 4),
+    headline: "&".repeat(FIELD_LIMITS.headline / 5),
+    action: ">".repeat(FIELD_LIMITS.action / 4),
+    links: Array.from({ length: MAX_LINKS }, () => ({
+      text: "&".repeat(FIELD_LIMITS.linkText / 5),
+      url: '"'.repeat(FIELD_LIMITS.linkUrl / 6) + "uu",
+    })),
+    body: "b<".repeat(5000),
+    detail: "d&".repeat(5000),
+  };
+  assert.deepEqual(validateEnvelope(envelope), []);
+  const html = render(envelope);
+  assert.ok(html.length <= MAX_MSG_CHARS, `${html.length} > ${MAX_MSG_CHARS}`);
+  assert.equal(
+    lines(html)[0],
+    `🔴 <b>${escapeHtml(envelope.source)}</b> · <b>${escapeHtml(envelope.subject)}</b> — ${escapeHtml(envelope.headline)}`,
+  );
+});
+
+test("/devclaw row: an over-long kind, task id or status still maps to a valid envelope", () => {
+  const envelope = envelopeFromDevclawRow({
+    task_id: "&".repeat(5000),
+    kind: "&".repeat(5000),
+    status: "&".repeat(5000),
+    goal: "ship",
+  });
+  assert.deepEqual(validateEnvelope(envelope), []);
+});
+
+test("/text: a maximal escaped headline is still a valid envelope", () => {
+  assert.deepEqual(validateEnvelope(envelopeFromText("&".repeat(5000))), []);
 });
 
 test("/devclaw row: status maps to level; failed error is the collapsed detail", () => {

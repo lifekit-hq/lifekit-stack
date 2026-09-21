@@ -98,6 +98,18 @@ test("POST /notify: an unknown level is a 400 and zero outbound calls", async ()
   assert.equal(calls.length, 0);
 });
 
+for (const [field, overrides] of [
+  ["action", { action: "a".repeat(5000) }],
+  ["headline", { headline: "h".repeat(5000) }],
+]) {
+  test(`POST /notify: an over-long ${field} is a 400 and zero outbound calls`, async () => {
+    const { status, body } = await post("/notify", { ...envelope, ...overrides });
+    assert.equal(status, 400);
+    assert.match(body.error, new RegExp(`^'${field}' is 5000 characters escaped; limit \\d+$`));
+    assert.equal(calls.length, 0);
+  });
+}
+
 test("POST /notify: malformed JSON is a 400 and zero outbound calls", async () => {
   const { status } = await post("/notify", "{not json");
   assert.equal(status, 400);
