@@ -119,8 +119,9 @@ function shrink(value, over) {
 
 /**
  * Render an envelope to Telegram HTML. The envelope must already have passed
- * validateEnvelope: `level` is one of the four, and the required fields are
- * non-empty strings.
+ * validateEnvelope: `level` is one of the four, the required fields are
+ * non-empty strings, and the never-cut fields are within FIELD_LIMITS — which
+ * is what keeps the result under MAX_MSG_CHARS.
  *
  * Layout (docs/message-format.md, "Rendering rules"):
  *   1. <glyph> <b>source</b> · <b>subject</b> — headline      (always, never cut)

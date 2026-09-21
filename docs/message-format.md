@@ -34,8 +34,9 @@ win and this page is wrong.
 | `action` | no | The command or decision the reader should take. Rendered for `act` and `wait` only. At most 400. |
 | `links` | no | `[{ text, url }]`, at most 3 entries; `text` at most 100, `url` at most 500. Rendered as anchors on their own line; entries missing either key are dropped. |
 
-`POST /notify` with any of the four required fields missing or empty, or with an unknown
-`level`, answers `400` with the problems listed and sends nothing.
+`POST /notify` with any of the four required fields missing or empty, an unknown `level`, or a
+field over its limit (counted after HTML escaping — rule 6), answers `400` with the problems listed
+and sends nothing.
 
 ## Levels
 
