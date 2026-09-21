@@ -353,6 +353,9 @@ groups:
             `quota-axi` on the box shows every window and the burn multiple;
             the brakes are `openclaw cron disable` for non-essential crons,
             the firstmate quota wake, and devclaw's operator hold.
+        # Paused 2026-09-21 at the owner's request. Re-enabling means deleting
+        # this one line - a paused rule is not a broken one.
+        isPaused: true
 
       - uid: claude-quota-nearly-exhausted
         title: Claude weekly quota is nearly exhausted
