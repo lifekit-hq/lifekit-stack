@@ -24,9 +24,27 @@ contactPoints:
           # keeps the owner's chat id out of git (docs/PRIVATE.md, #132).
           chatid: "__TELEGRAM_CHAT_ID__"
           parse_mode: HTML
-          message: |
-            {{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} <b>{{ .Status | toUpper }}</b> {{ range .Alerts }}
-            <b>{{ .Labels.alertname }}</b>{{ if .Annotations.summary }} — {{ .Annotations.summary }}{{ end }}
-            {{ .Annotations.description }}
+          # The notification grammar of docs/message-format.md, re-implemented
+          # here because these rules bypass notify-relay on purpose (above).
+          # Firing = `act`: line 1 is the rule and its summary, the body its
+          # description. Resolved = `good`: line 1 only — no description, no
+          # remediation, so a 3am "RESOLVED" never reads as a call to act. The
+          # container rules are multi-series and policies.yml groups by
+          # alertname, so the resolved subject is the instance that recovered:
+          # the `name` label for the container rules, `job` for target-down
+          # (the one rule that fires per scrape target), and the rule title for
+          # every other rule — on those `job` is the incidental scrape job of
+          # whichever exporter produced the series, so it names the wrong thing
+          # and collides across rules (all of node-exporter's would read
+          # "node-exporter"). Without a subject two recoveries in one group
+          # render identically.
+          message: |-
+            {{ range .Alerts -}}
+            {{ if eq .Status "firing" -}}
+            🔴 <b>grafana</b> · <b>{{ .Labels.alertname | html }}</b> — {{ .Annotations.summary | html }}
+            {{ .Annotations.description | html }}
+            {{ else -}}
+            🟢 <b>grafana</b> · <b>{{ if .Labels.name }}{{ .Labels.name | html }}{{ else if and (eq .Labels.alertname "scrape target is down") .Labels.job }}{{ .Labels.job | html }}{{ else }}{{ .Labels.alertname | html }}{{ end }}</b> — resolved
+            {{ end -}}
             {{ end }}
         disableResolveMessage: false

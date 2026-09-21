@@ -1,4 +1,5 @@
-# notify-relay — turns devclaw's notify_url POST into a Telegram message.
+# notify-relay — renders message envelopes (docs/message-format.md) and the
+# legacy devclaw payloads to Telegram HTML and posts them to the Bot API.
 #
 # Direct call to the Telegram Bot API (api.telegram.org/bot<TOKEN>/sendMessage).
 # No docker socket, no inter-container exec, no extra binaries.
@@ -7,7 +8,7 @@
 FROM node:22-trixie-slim
 
 WORKDIR /app
-COPY server.js /app/server.js
+COPY package.json server.js app.js render.js /app/
 
 ENV NOTIFY_RELAY_PORT=8090
 
