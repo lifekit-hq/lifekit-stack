@@ -18,6 +18,26 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.2](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.1...v0.1.2) (2026-09-21)
+
+
+### Features
+
+* **notify-relay:** render every notification from one envelope as Telegram HTML ([#185](https://github.com/lifekit-hq/lifekit-stack/issues/185)) ([56abf5e](https://github.com/lifekit-hq/lifekit-stack/commit/56abf5ebcd21fce8c390252a83715d7c2c910d35))
+
+
+### Bug Fixes
+
+* correct stale /srv/life vault paths in the runbook and .env.example ([#184](https://github.com/lifekit-hq/lifekit-stack/issues/184)) ([9afa50e](https://github.com/lifekit-hq/lifekit-stack/commit/9afa50e6968a3e16473a864eac7349b1a7733dc4))
+* **deploy:** cap the Docker builder cache in daemon.json and check it at deploy ([#183](https://github.com/lifekit-hq/lifekit-stack/issues/183)) ([5aca5aa](https://github.com/lifekit-hq/lifekit-stack/commit/5aca5aacafe6b25315e44eaed659c51768ff5215))
+* **observability:** pause the Claude weekly quota behind-pace alert ([#187](https://github.com/lifekit-hq/lifekit-stack/issues/187)) ([03dab37](https://github.com/lifekit-hq/lifekit-stack/commit/03dab37469ea714c72edafb11ba2891bf55d9b48))
+
+
+### Documentation
+
+* mark lifekit-orchestrator as retired in README service table ([#188](https://github.com/lifekit-hq/lifekit-stack/issues/188)) ([fa8a12c](https://github.com/lifekit-hq/lifekit-stack/commit/fa8a12c79543483ac7860d27f7dd3ccd238d2b8b))
+* **runbook:** retire ledger-scan and trim the finance agent's skills and persona ([#181](https://github.com/lifekit-hq/lifekit-stack/issues/181)) ([7a6d646](https://github.com/lifekit-hq/lifekit-stack/commit/7a6d646349f95f2e1ce1be77ccc0996bdea0666d))
+
 ## [0.1.1](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.0...v0.1.1) (2026-09-18)
 
 
