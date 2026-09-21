@@ -413,23 +413,50 @@ capping nothing, which is exactly what `--check` compares the ceiling for.
 
 ## Backups
 
-`~/.life/` is your data. Back it up.
+`/srv/memory/` (the memory vault, mounted on your laptop as `~/memory/`) is your
+data. Back it up.
 
-**Recommended:** push to a private git repo from the VPS, on a cron:
+**Set up your own mirror.** The simplest backup that works is a private git
+repo the VPS pushes to on a timer:
 
 ```bash
-# /srv/life-backup-cron, runs every 6 hours
-cd /srv/life
+# Run as the lifekit account - it owns /srv/memory (0750), and the timer runs as
+# lifekit too. From the admin account: sudo -u lifekit -H bash
+#
+# One-time: bootstrap-vps.sh leaves /srv/memory a plain directory, so make it a
+# repo pointing at your private remote before the timer runs. The identity is
+# repo-local: the unattended timer has no ~/.gitconfig to fall back on.
+cd /srv/memory
+git init -b main
+git remote add origin <your-private-vault-repo>
+git config user.email <you@example.com>
+git config user.name "lifekit backup"
+
+# /usr/local/bin/memory-backup.sh, run from a systemd timer or cron
+cd /srv/memory
 git add -A
 git commit -m "snapshot $(date -Iseconds)" || true
 git push origin main
 ```
 
-This gives you point-in-time recovery and an off-machine copy.
+That gives you an off-machine copy and git history for point-in-time recovery
+of anything that was pushed. It is a mirror, not an independent backup: the
+remote holds the vault in plaintext, and there is no encrypted copy of the
+vault anywhere. Pair it with the volume snapshots below if you want more.
+Restoring from such a mirror is step 3 of
+[Recovering from a complete VPS loss](#recovering-from-a-complete-vps-loss).
+
+**On the maintainer's box** the same job runs as a `memory-sync.timer` /
+`memory-sync.service` pair in `/etc/systemd/system/`, firing
+`/usr/local/bin/memory-sync.sh` as `lifekit` every 15 minutes to sync
+`/srv/memory/` with its private GitHub remote. Those units are specific to that
+box - this repo installs `memory-rotate`, never `memory-sync` - and the script,
+the units and the vault's own risk notes live with the vault; see the private
+vault runbook for owner detail.
 
 **Volumes to back up if you want full disaster recovery:**
 
-- `/srv/life/` — your knowledge data (most important)
+- `/srv/memory/` — the vault (most important)
 - `/srv/openclaw/config/` — OpenClaw config + `.env`
 - `/srv/openclaw/secret-key/` — OpenClaw OAuth encryption key (lose this and you re-pair every channel)
 - `/srv/openclaw/workspace/` — workspace skills (recoverable from this repo, but having a local copy is faster)
@@ -488,26 +515,44 @@ rsync it across alongside the skills directory.
 
 ## When `queue.jsonl` grows without draining
 
-Symptom: `/srv/life/queue.jsonl` keeps growing; domain files don't update.
+Symptom: `/var/lib/lifekit/queue.jsonl` (the runtime-state dir, split from the
+vault in the 2026-05-27 runtime-knowledge split) keeps growing; domain files
+under `/srv/memory/domains/` don't update.
+
+Nothing in this stack drains that queue into the domain files. The component
+that did, `lifekit-curator`, was retired 2026-05-25 and is not a compose
+service at all. `lifekit-orchestrator` took over its two cron jobs
+(`task_dispatch_15m` and `curator_30m`); it is retired too and profile-gated
+behind `orchestrator-v1`, so `docker compose up -d` never starts it, and its
+stated replacement — devclaw-mcp's in-process queue — covers the task-dispatch
+half. Nothing here has taken over the curation half.
+
+So a growing queue and stale domains are the expected state on this stack
+today, not a fault to restart your way out of: domain curation is unowned here
+until something claims it.
+
+What you can still check is that the queue file is where it should be and that
+the gateway — which appends to it — has both of its mounts:
 
 ```bash
 ssh <your-vps-tailscale-name>
-docker compose logs -f lifekit-curator --tail 100
+sudo -u lifekit -H bash            # owns /var/lib/lifekit and the docker group
+cd /srv/lifekit-stack
+ls -l /var/lib/lifekit/queue.jsonl                 # is it still growing?
+docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env \
+  exec openclaw-gateway ls -la /home/node/.life-state/queue.jsonl /home/node/memory/domains/
 ```
 
-Common causes:
-
-1. **Curator crashed** — `docker compose restart lifekit-curator`. Check logs for the underlying error.
-2. **Claude CLI auth in the curator container failed** — `docker compose exec lifekit-curator claude auth status`.
-3. **`~/.life/domains/` not writable** — `docker compose exec lifekit-curator ls -la /srv/life/domains/`.
+Inside the container the runtime-state dir is `/home/node/.life-state` and the
+vault is `/home/node/memory` — neither is reachable at its host path.
 
 ## SSHFS auto-mount
 
-To auto-mount `/srv/life/` on your laptop at login:
+To auto-mount `/srv/memory/` on your laptop at login:
 
 ```bash
 # Add to /etc/fstab (Linux) or ~/Library/LaunchAgents (macOS)
-<vps-tailscale-name>:/srv/life /home/<you>/.life fuse.sshfs \
+<vps-tailscale-name>:/srv/memory /home/<you>/memory fuse.sshfs \
   noauto,x-systemd.automount,_netdev,user,idmap=user,follow_symlinks,IdentityFile=/home/<you>/.ssh/id_ed25519,allow_other,default_permissions,uid=1000,gid=1000  0 0
 ```
 
@@ -530,10 +575,19 @@ cd lifekit-stack
 lifekit init-stack --target <new-vps-ip>
 # Wizard reuses your saved wizard.yaml (from your private backup, NOT this repo).
 
-# 3. Restore /srv/life/ from your private backup repo:
+# 3. Restore /srv/memory/ from your private vault mirror (see "Backups" above -
+#    it is plaintext, and only as fresh as its last push). Step 2 already
+#    populated /srv/memory/ (system/modules.yaml), so a clone into it would
+#    refuse - point the directory at the remote and reset onto it instead:
 ssh <new-vps>
-cd /srv/life
-git clone <your-private-life-repo> .
+sudo -u lifekit -H bash            # /srv/memory is the lifekit account's
+cd /srv/memory
+git init -b main
+git remote add origin <your-private-vault-repo>
+git config user.email <you@example.com>
+git config user.name "lifekit backup"
+git fetch origin
+git reset --hard origin/main
 # OR rsync from a snapshot.
 
 # 4. Restore /srv/openclaw/secret-key/ from your private backup.
