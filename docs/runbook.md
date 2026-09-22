@@ -411,6 +411,40 @@ A `defaultKeepStorage`-only setting would have reported `Reserved Space:
 50GiB` next to `Max Used Space: 375.3GiB` - a record that looks applied while
 capping nothing, which is exactly what `--check` compares the ceiling for.
 
+## Moving /tmp off RAM (agent scratch)
+
+`scripts/tmp-scratch-policy.sh` owns the repository's half of getting
+build/session scratch off a RAM-backed `/tmp` and onto disk, and retiring it
+on a short horizon instead of letting it accumulate until it breaks
+something: masking the distro's default tmpfs-on-`/tmp` mount unit
+(`tmp.mount`), and an `/etc/tmpfiles.d` drop-in that ages `/tmp` out much
+sooner than the 10-day distro default. `deploy.sh` runs it with `--check`
+after every `up` and prints a red, report-only line while the box has not
+converged - the deploy account has no sudo, so it can see the drift but never
+close it.
+
+Neither half needs a restart of anything to be *written*: masking a mount
+unit and writing a tmpfiles.d file both take effect on their own schedule
+(next boot for the mount, next `systemd-tmpfiles-clean.timer` pass for the
+age). `bootstrap-vps.sh` runs the script in that safe, unattended mode.
+Making both effective *now* instead of on that schedule is a deliberate
+operator sequence, because live-unmounting an active tmpfs while something
+has open files under it is not something to do unattended:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh   # masks tmp.mount, writes the tmpfiles.d drop-in
+sudo systemctl stop tmp.mount                                 # unmounts the live tmpfs now instead of at next boot
+sudo systemd-tmpfiles --create                                 # applies the tightened age now instead of at the next scheduled pass
+bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh --check  # exit 0: drop-in matches, tmp.mount masked, /tmp not tmpfs
+```
+
+`bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh --check` is read-only
+and can be run at any later time to confirm the policy still holds.
+
+To undo: `sudo systemctl unmask tmp.mount && sudo systemctl start tmp.mount`
+puts `/tmp` back on tmpfs, and removing the tmpfiles.d drop-in (path printed
+by `--check`) reverts the age to the distro default.
+
 ## Backups
 
 `/srv/memory/` (the memory vault, mounted on your laptop as `~/memory/`) is your
