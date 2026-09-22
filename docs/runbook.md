@@ -427,8 +427,7 @@ until it breaks something:
   root, from a root-owned copy the script installs in `/usr/local/bin` when
   applied as root - never from the deploy account's checkout, so a change to
   the sweep reaches the timer only on the next root apply (`--check` reports
-  the copy stale until then). It
-  removes a top-level `/tmp` entry only when no running process has a file
+  the copy stale until then). It removes a top-level `/tmp` entry only when no running process has a file
   under it open, as its working directory, or as its executable, and it holds
   no socket; an age backstop (a week without writes) narrows the candidates
   but never decides alone. If it cannot read every process's open files it
