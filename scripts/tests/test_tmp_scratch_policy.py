@@ -169,3 +169,24 @@ def test_check_is_undetermined_only_when_nothing_else_is_wrong(converged, tmp_pa
 
     Path(converged["TMPFILES_DROPIN"]).write_text("q /tmp 1777 root root 1d\n")
     assert run("--check", env={**converged, "SCRATCH_ROOT": missing}).returncode == 1
+
+
+def test_sweep_keeps_a_held_entry_too_large_to_scan_in_one_pipe_buffer(
+    tmp_path, procs
+):
+    scratch = tmp_path / "scratch"
+    big = scratch / "big"
+    (big / "files").mkdir(parents=True)
+    for i in range(10000):
+        (big / "files" / str(i)).touch()
+    procs(cwd=big)
+    env = {
+        "SCRATCH_ROOT": str(scratch),
+        "PROC_ROOT": str(procs.root),
+        "TMP_SCRATCH_AGE_DAYS": "0",
+    }
+
+    result = run("--sweep", env=env)
+
+    assert result.returncode == 0, result.stderr
+    assert big.exists()

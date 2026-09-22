@@ -183,11 +183,12 @@ held_inodes() {
 }
 
 sweep() {
-  local root held entry age
+  local root held inodes entry age unheld
   root="$(realpath -e "${SCRATCH_ROOT}")"
   held="$(mktemp)"
+  inodes="$(mktemp)"
   if ! held_inodes >"${held}"; then
-    rm -f "${held}"
+    rm -f "${held}" "${inodes}"
     echo "  could not read every process's open files; nothing swept" >&2
     return "${UNDETERMINED}"
   fi
@@ -198,14 +199,18 @@ sweep() {
     age="-$((AGE_DAYS * 1440))"
     [[ -z "$(find "${entry}" -xdev \( -mmin "${age}" -o -cmin "${age}" \) -print -quit)" ]] || continue
     [[ -z "$(find "${entry}" -xdev -type s -print -quit)" ]] || continue
-    if find "${entry}" -xdev -printf '%D:%i\n' | grep -qxFf "${held}"; then
-      echo "  kept ${entry}: still held by a running process"
+    unheld=0
+    if find "${entry}" -xdev -printf '%D:%i\n' >"${inodes}"; then
+      grep -qxFf "${held}" "${inodes}" || unheld=$?
+    fi
+    if [[ "${unheld}" != 1 ]]; then
+      echo "  kept ${entry}: held by a running process, or could not be fully scanned"
       continue
     fi
     rm -rf --one-file-system -- "${entry}"
     echo "  removed ${entry}"
   done < <(find "${root}" -mindepth 1 -maxdepth 1 -print0)
-  rm -f "${held}"
+  rm -f "${held}" "${inodes}"
 }
 
 case "${1:-}" in
