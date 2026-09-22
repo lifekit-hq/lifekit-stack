@@ -761,6 +761,23 @@ case "${CAP_STATUS}" in
   *) printf '\033[1;31m✗ docker builder cache cap: the running daemon does not enforce the repository daemon.json (cap + live-restore); apply it with the operator sequence in docs/runbook.md "Applying the Docker builder cache cap"\033[0m\n' >&2 ;;
 esac
 
+# ─── /tmp scratch policy: host fact the repo owns, report-only ──────────────
+#
+# scripts/tmp-scratch-policy.sh carries the policy (tmp.mount masked, /tmp
+# live on disk, no age-only tmpfiles cleanup, liveness-gated sweep timer),
+# but this account cannot apply it: moving a live tmpfs /tmp onto disk is a
+# deliberate operator step, and the deploy has no sudo. Same
+# shape as the Docker builder cache cap above - a host fact never turns the
+# deploy red.
+say "/tmp scratch policy (host fact, report-only)"
+TMP_SCRATCH_STATUS=0
+bash "${REPO_DIR}/scripts/tmp-scratch-policy.sh" --check || TMP_SCRATCH_STATUS=$?
+case "${TMP_SCRATCH_STATUS}" in
+  0) ;;
+  2) warn "/tmp scratch policy: could not read the live mount state, undetermined (output above)" ;;
+  *) printf '\033[1;31m✗ /tmp scratch policy: the box has not converged on the repository policy (/tmp off tmpfs, masked tmp.mount, liveness-gated scratch sweep); apply it with the operator sequence in docs/runbook.md "Moving /tmp off RAM (agent scratch)"\033[0m\n' >&2 ;;
+esac
+
 if (( ${#DEPLOY_FAILURES[@]} )); then
   say "post-deploy assertions failed"
   printf '  - %s\n' "${DEPLOY_FAILURES[@]}" >&2

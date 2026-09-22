@@ -411,6 +411,70 @@ A `defaultKeepStorage`-only setting would have reported `Reserved Space:
 50GiB` next to `Max Used Space: 375.3GiB` - a record that looks applied while
 capping nothing, which is exactly what `--check` compares the ceiling for.
 
+## Moving /tmp off RAM (agent scratch)
+
+`scripts/tmp-scratch-policy.sh` owns the repository's half of getting
+build/session scratch off a RAM-backed `/tmp` and onto disk, and retiring
+scratch that finished tasks leave behind instead of letting it accumulate
+until it breaks something:
+
+- it masks the distro's default tmpfs-on-`/tmp` mount unit (`tmp.mount`), so
+  `/tmp` is an ordinary directory on the root filesystem;
+- an `/etc/tmpfiles.d` drop-in turns off `systemd-tmpfiles`' age-only
+  cleanup of `/tmp`, which cannot tell whether a running task still uses an
+  entry;
+- `lifekit-tmp-scratch-sweep.timer` runs the script's `--sweep` daily, as
+  root, from a root-owned copy the script installs in `/usr/local/bin` when
+  applied as root - never from the deploy account's checkout, so a change to
+  the sweep reaches the timer only on the next root apply (`--check` reports
+  the copy stale until then). It removes a top-level `/tmp` entry only when no running process has a file
+  under it open, as its working directory, or as its executable, and it holds
+  no socket; an age backstop (a week without writes) narrows the candidates
+  but never decides alone. If it cannot read every process's open files it
+  removes nothing.
+
+What this covers and what it does not: this repository controls where
+scratch lives and can safely reclaim abandoned scratch, but it does not know
+when an agent task ends - that signal belongs to the supervisor that starts
+and ends tasks, not to host policy. Retiring a task's scratch the moment the
+task ends is follow-up work owned by that supervisor; the sweep here is the
+backstop for whatever it leaves behind.
+
+`deploy.sh` runs the script with `--check` after every `up` and prints a red,
+report-only line while the box has not converged - including while `/tmp` is
+still live on tmpfs, which is the incident state even with the unit masked.
+The deploy account has no sudo, so it can see the drift but never close it.
+
+`bootstrap-vps.sh` applies the policy unattended: it writes the drop-in, the
+sweep copy and units, enables the timer, and masks `tmp.mount`. Masking only prevents
+future mounts - an already-mounted tmpfs `/tmp` stays on RAM until the next
+boot. Moving it now is a deliberate operator sequence, because **stopping
+`tmp.mount` discards everything on the tmpfs, including scratch that running
+tasks are still using**. Finish or stop active agent work first:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh   # drop-in + sweep timer, masks tmp.mount
+sudo systemctl stop tmp.mount                                 # unmounts the tmpfs; its contents are gone
+bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh --check  # exit 0 only once /tmp is no longer tmpfs
+```
+
+If the stop is refused because the target is busy, something still has files
+open under `/tmp`: list the holders with `sudo fuser -vm /tmp`, finish or stop
+that work, and retry. Do not force it with a lazy unmount - that hides files
+still in use instead of freeing them. Rebooting also completes the move, since
+the masked unit keeps `/tmp` off tmpfs at the next boot.
+
+`bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh --check` is read-only
+and can be run at any later time; `sudo bash
+/srv/lifekit-stack/scripts/tmp-scratch-policy.sh --sweep` runs the sweep on
+demand and prints what it removed or kept.
+
+To undo: `sudo systemctl unmask tmp.mount && sudo systemctl start tmp.mount`
+puts `/tmp` back on tmpfs; `sudo systemctl disable --now
+lifekit-tmp-scratch-sweep.timer` stops the sweep; removing the drop-in, the
+sweep copy and the two unit files (paths printed by `--check`) followed by `sudo systemctl
+daemon-reload` restores the distro defaults.
+
 ## Backups
 
 `/srv/memory/` (the memory vault, mounted on your laptop as `~/memory/`) is your
