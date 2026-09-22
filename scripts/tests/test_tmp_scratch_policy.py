@@ -54,9 +54,7 @@ def scratch_tree(tmp_path):
     return scratch
 
 
-def test_sweep_keeps_scratch_a_live_process_holds_and_removes_the_rest(
-    tmp_path, procs
-):
+def test_sweep_keeps_scratch_a_live_process_holds_and_removes_the_rest(tmp_path, procs):
     scratch = scratch_tree(tmp_path)
     with open(scratch / "open-file" / "data") as held:
         holder = procs(stdin=held)
@@ -172,9 +170,7 @@ def test_check_is_undetermined_only_when_nothing_else_is_wrong(converged, tmp_pa
     assert run("--check", env={**converged, "SCRATCH_ROOT": missing}).returncode == 1
 
 
-def test_sweep_keeps_a_held_entry_too_large_to_scan_in_one_pipe_buffer(
-    tmp_path, procs
-):
+def test_sweep_keeps_a_held_entry_too_large_to_scan_in_one_pipe_buffer(tmp_path, procs):
     scratch = tmp_path / "scratch"
     big = scratch / "big"
     (big / "files").mkdir(parents=True)
