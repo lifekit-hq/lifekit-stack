@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # tmp-scratch-policy.sh — the repository's half of moving /tmp off a
 # RAM-backed filesystem: mask the distro's default tmpfs-on-/tmp mount unit
-# and tighten how fast stale entries age out, so scratch that used to build
-# up on RAM-backed /tmp instead lands on disk and gets swept on a short
-# schedule instead of accumulating until something breaks.
+# so scratch lands on disk, and retire scratch that finished tasks leave
+# behind with a sweep that never removes anything still in use.
 #
 # Evidence: a RAM-backed /tmp filled to capacity from build/session scratch
 # left behind by finished tasks, which both broke any host command that needs
@@ -11,7 +10,13 @@
 # the leftovers was remediation, not a fix — the underlying filesystem was
 # still RAM, and nothing retired a task's scratch once the task ended.
 #
-# The fix has two independent halves, same shape as scripts/docker-builder-gc.sh:
+# What this repository owns, and what it does not: it controls WHERE scratch
+# lives and can safely reclaim ABANDONED scratch. It does not know when an
+# agent task ends — that signal belongs to the supervisor that starts and
+# ends tasks, and end-of-task retirement is follow-up work owned there. The
+# sweep below is the host-side backstop, not a task-lifecycle hook.
+#
+# The policy, same shape as scripts/docker-builder-gc.sh:
 #   1. `systemctl mask tmp.mount` — stops systemd from remounting /tmp as
 #      tmpfs. /tmp then falls back to being an ordinary directory on the root
 #      filesystem, where the disk has room. Masking a unit only prevents
@@ -20,117 +25,229 @@
 #      does not move existing scratch off RAM until the next boot or an
 #      explicit `systemctl stop tmp.mount`.
 #   2. /etc/tmpfiles.d/lifekit-tmp-scratch.conf — overrides the distro
-#      default (/usr/lib/tmpfiles.d/tmp.conf ages /tmp out after 10 days) with
-#      a much shorter age, so scratch left behind by a finished task is swept
-#      by the next systemd-tmpfiles-clean.timer pass rather than sitting
-#      until it becomes a capacity incident. This is a real file under
-#      /etc/tmpfiles.d, not a new timer: the clean timer already ships and
-#      runs on its own schedule, and systemd-tmpfiles(5) documents this exact
-#      override pattern ("Clear tmp directories separately, to make them
-#      easier to override").
+#      /usr/lib/tmpfiles.d/tmp.conf line for /tmp with no age, so
+#      systemd-tmpfiles-clean never deletes /tmp entries on age alone (it
+#      cannot tell whether a live task still uses them).
+#   3. lifekit-tmp-scratch-sweep.{service,timer} — a daily `--sweep`. Liveness
+#      gates deletion: a top-level /tmp entry is removed only when no running
+#      process has a file under it open, as its working directory, or as its
+#      executable, and it holds no socket. Age only narrows the candidates.
 #
-# Neither half touches Docker, any container, or any other daemon: masking a
-# mount unit and writing a tmpfiles.d drop-in take effect on their own
-# schedule (next mount attempt / next tmpfiles-clean pass) without a restart.
-# Making the change take effect immediately instead of on that schedule is a
-# deliberate operator sequence — see docs/runbook.md "Moving /tmp off RAM
-# (agent scratch)" — because live-unmounting an active tmpfs while things
-# have open files under it is not something to do unattended.
+# Nothing here unmounts /tmp or restarts a daemon. Moving an already-mounted
+# tmpfs /tmp onto disk now instead of at next boot is a deliberate operator
+# sequence — see docs/runbook.md "Moving /tmp off RAM (agent scratch)" —
+# because unmounting it discards everything on it.
 #
-# Two modes:
-#   (default)  write the tmpfiles.d drop-in and mask tmp.mount (root;
-#              bootstrap-vps.sh runs it). Idempotent — no-ops if both are
-#              already applied.
-#   --check    read-only: report whether the drop-in is present with the
-#              expected age and whether tmp.mount is masked, and separately
-#              whether /tmp is *currently* still mounted as tmpfs (which can
-#              be true even once masked, until the deliberate live cutover in
-#              the runbook). Exit 0 fully converged, 1 mismatch, 2
-#              undetermined. deploy.sh runs this after `up` and prints the
-#              result as a report-only line — the deploy account has no sudo
-#              and cannot apply either half.
+# Modes:
+#   (default)  write the drop-in and sweep units, enable the timer, mask
+#              tmp.mount (root; bootstrap-vps.sh runs it). Idempotent.
+#   --check    read-only: exit 0 only when the drop-in and units match, the
+#              timer is enabled, tmp.mount is masked AND /tmp is not live on
+#              tmpfs; 1 on any known mismatch (a still-live tmpfs /tmp is a
+#              mismatch — it is the incident state); 2 when the live /tmp
+#              filesystem cannot be read and nothing else is known to be
+#              wrong. deploy.sh runs it after `up` as a report-only line —
+#              the deploy account has no sudo and cannot apply any of this.
+#   --sweep    remove abandoned top-level entries of /tmp (root; the timer
+#              runs it). Exits 2 without removing anything if it cannot read
+#              every process's open files — a partial view is not proof that
+#              nothing holds an entry.
 #
 # Env overrides (mainly for testing — point these at temp paths to dry-run
-# without touching the real host config):
-#   TMPFILES_DROPIN   path to the drop-in (default /etc/tmpfiles.d/lifekit-tmp-scratch.conf)
-#   TMP_SCRATCH_AGE   age written into the drop-in (default below)
+# without touching the real host):
+#   TMPFILES_DROPIN        drop-in path (default /etc/tmpfiles.d/lifekit-tmp-scratch.conf)
+#   SWEEP_UNIT_DIR         where the sweep units go (default /etc/systemd/system)
+#   SCRATCH_ROOT           the directory checked and swept (default /tmp)
+#   PROC_ROOT              process table the sweep reads (default /proc)
+#   TMP_SCRATCH_AGE_DAYS   sweep backstop age (default below)
 
 set -euo pipefail
 
-DEFAULT_AGE=1d
+# A week: far beyond any build or agent session this box runs (those finish
+# within hours), so an entry where nothing has been written or created for
+# that long (mtime and ctime both — tar restores old mtimes) and that nothing
+# holds open is abandoned, not paused. The liveness check, not this age, is
+# what protects a running task's scratch.
+DEFAULT_AGE_DAYS=7
 
 TMPFILES_DROPIN="${TMPFILES_DROPIN:-/etc/tmpfiles.d/lifekit-tmp-scratch.conf}"
-AGE="${TMP_SCRATCH_AGE:-${DEFAULT_AGE}}"
+SWEEP_UNIT_DIR="${SWEEP_UNIT_DIR:-/etc/systemd/system}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/tmp}"
+PROC_ROOT="${PROC_ROOT:-/proc}"
+AGE_DAYS="${TMP_SCRATCH_AGE_DAYS:-${DEFAULT_AGE_DAYS}}"
+SWEEP_UNIT=lifekit-tmp-scratch-sweep
+SELF="$(realpath "${BASH_SOURCE[0]}")"
+UNDETERMINED=2
 
 say() { printf '\n\033[1;34m→ %s\033[0m\n' "$*"; }
 
 want_dropin() {
   cat <<EOF
 # Managed by lifekit-stack scripts/tmp-scratch-policy.sh — do not hand-edit.
-# Overrides /usr/lib/tmpfiles.d/tmp.conf's 10-day default: retires
-# leftover agent/task scratch on a much shorter horizon than a RAM-backed
-# /tmp can survive unnoticed. See systemd-tmpfiles.d(5) and docs/runbook.md
-# "Moving /tmp off RAM (agent scratch)".
-q /tmp 1777 root root ${AGE}
+# Overrides /usr/lib/tmpfiles.d/tmp.conf's age for /tmp: no age-only cleanup.
+# Abandoned scratch is retired by ${SWEEP_UNIT}.timer, which skips anything
+# still in use. See docs/runbook.md "Moving /tmp off RAM (agent scratch)".
+q /tmp 1777 root root -
 EOF
 }
 
-UNDETERMINED=2
+want_service() {
+  cat <<EOF
+# Managed by lifekit-stack scripts/tmp-scratch-policy.sh — do not hand-edit.
+[Unit]
+Description=Retire abandoned /tmp scratch that nothing holds open
 
-check() {
-  local dropin_ok=1 mask_ok=1 live_tmpfs
-  if [[ -f "${TMPFILES_DROPIN}" ]]; then
-    if diff -q <(want_dropin) "${TMPFILES_DROPIN}" >/dev/null 2>&1; then
-      echo "  ${TMPFILES_DROPIN}: matches (age=${AGE})"
-    else
-      echo "  ${TMPFILES_DROPIN}: present but does not match the repository content (age=${AGE})"
-      dropin_ok=0
-    fi
-  else
-    echo "  ${TMPFILES_DROPIN}: absent"
-    dropin_ok=0
-  fi
-
-  local mask_state
-  mask_state="$(systemctl is-enabled tmp.mount 2>&1 || true)"
-  echo "  tmp.mount unit state: ${mask_state}"
-  if [[ "${mask_state}" != "masked" ]]; then
-    mask_ok=0
-  fi
-
-  live_tmpfs="$(findmnt -no FSTYPE /tmp 2>/dev/null || echo unknown)"
-  echo "  /tmp live filesystem: ${live_tmpfs} (masking tmp.mount only prevents future mounts;"
-  echo "    an already-active tmpfs mount needs the live cutover in docs/runbook.md to clear now)"
-
-  if [[ "${dropin_ok}" == 1 && "${mask_ok}" == 1 ]]; then
-    return 0
-  fi
-  if [[ "${live_tmpfs}" == "unknown" ]]; then
-    return "${UNDETERMINED}"
-  fi
-  return 1
+[Service]
+Type=oneshot
+ExecStart=/bin/bash ${SELF} --sweep
+EOF
 }
 
-if [[ "${1:-}" == "--check" ]]; then
-  status=0
-  check || status=$?
-  exit "${status}"
+want_timer() {
+  cat <<EOF
+# Managed by lifekit-stack scripts/tmp-scratch-policy.sh — do not hand-edit.
+[Unit]
+Description=Daily sweep of abandoned /tmp scratch
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target
+EOF
+}
+
+MANAGED=(
+  "${TMPFILES_DROPIN}:want_dropin"
+  "${SWEEP_UNIT_DIR}/${SWEEP_UNIT}.service:want_service"
+  "${SWEEP_UNIT_DIR}/${SWEEP_UNIT}.timer:want_timer"
+)
+
+matches() { [[ -f "$1" ]] && diff -q <("$2") "$1" >/dev/null 2>&1; }
+
+check() {
+  local mismatch=0 item path gen state live_fs
+  for item in "${MANAGED[@]}"; do
+    path="${item%:*}" gen="${item##*:}"
+    if matches "${path}" "${gen}"; then
+      echo "  ${path}: matches"
+    elif [[ -f "${path}" ]]; then
+      echo "  ${path}: present but does not match the repository content"
+      mismatch=1
+    else
+      echo "  ${path}: absent"
+      mismatch=1
+    fi
+  done
+
+  state="$(systemctl is-enabled "${SWEEP_UNIT}.timer" 2>&1 || true)"
+  echo "  ${SWEEP_UNIT}.timer: ${state}"
+  [[ "${state}" == "enabled" ]] || mismatch=1
+
+  state="$(systemctl is-enabled tmp.mount 2>&1 || true)"
+  echo "  tmp.mount unit state: ${state}"
+  [[ "${state}" == "masked" ]] || mismatch=1
+
+  live_fs="$(findmnt -no FSTYPE -T "${SCRATCH_ROOT}" 2>/dev/null || true)"
+  echo "  ${SCRATCH_ROOT} live filesystem: ${live_fs:-unknown}"
+  if [[ "${live_fs}" == "tmpfs" ]]; then
+    echo "    still RAM-backed: masking tmp.mount only prevents future mounts; the live"
+    echo "    cutover in docs/runbook.md moves it onto disk now"
+    mismatch=1
+  fi
+
+  if [[ "${mismatch}" == 1 ]]; then
+    return 1
+  fi
+  if [[ -z "${live_fs}" ]]; then
+    return "${UNDETERMINED}"
+  fi
+  return 0
+}
+
+# dev:inode of everything a running process holds: open files, working
+# directory, executable. Fails if any live process's fd table is unreadable.
+held_inodes() {
+  local p
+  for p in "${PROC_ROOT}"/[0-9]*/; do
+    p="${p%/}"
+    if [[ ! -r "${p}/fd" || ! -x "${p}/fd" ]]; then
+      [[ -e "${p}/fd" ]] || continue
+      echo "  cannot read ${p}/fd" >&2
+      return 1
+    fi
+    stat -L -c '%d:%i' "${p}/cwd" "${p}/exe" "${p}"/fd/* 2>/dev/null || true
+  done
+}
+
+sweep() {
+  local root held entry age
+  root="$(realpath -e "${SCRATCH_ROOT}")"
+  held="$(mktemp)"
+  if ! held_inodes >"${held}"; then
+    rm -f "${held}"
+    echo "  could not read every process's open files; nothing swept" >&2
+    return "${UNDETERMINED}"
+  fi
+  while IFS= read -r -d '' entry; do
+    case "${entry##*/}" in
+      systemd-private-* | snap-private-tmp | .X11-unix | .ICE-unix | .XIM-unix | .font-unix | .Test-unix) continue ;;
+    esac
+    age="-$((AGE_DAYS * 1440))"
+    [[ -z "$(find "${entry}" -xdev \( -mmin "${age}" -o -cmin "${age}" \) -print -quit)" ]] || continue
+    [[ -z "$(find "${entry}" -xdev -type s -print -quit)" ]] || continue
+    if find "${entry}" -xdev -printf '%D:%i\n' | grep -qxFf "${held}"; then
+      echo "  kept ${entry}: still held by a running process"
+      continue
+    fi
+    rm -rf --one-file-system -- "${entry}"
+    echo "  removed ${entry}"
+  done < <(find "${root}" -mindepth 1 -maxdepth 1 -print0)
+  rm -f "${held}"
+}
+
+case "${1:-}" in
+  --check)
+    status=0
+    check || status=$?
+    exit "${status}"
+    ;;
+  --sweep)
+    status=0
+    sweep || status=$?
+    exit "${status}"
+    ;;
+esac
+
+UNITS_CHANGED=0
+for item in "${MANAGED[@]}"; do
+  path="${item%:*}" gen="${item##*:}"
+  if matches "${path}" "${gen}"; then
+    say "${path} already matches, skipping"
+    continue
+  fi
+  install -d -m 755 "$(dirname "${path}")"
+  tmp="$(mktemp "${path}.XXXXXX")"
+  trap 'rm -f "$tmp"' EXIT
+  "${gen}" >"$tmp"
+  chmod 644 "$tmp"
+  mv "$tmp" "${path}"
+  trap - EXIT
+  say "Wrote ${path}"
+  [[ "${path}" == "${TMPFILES_DROPIN}" ]] || UNITS_CHANGED=1
+done
+
+if [[ "${UNITS_CHANGED}" == 1 ]]; then
+  systemctl daemon-reload
 fi
 
-CHANGED=0
-
-if [[ -f "${TMPFILES_DROPIN}" ]] && diff -q <(want_dropin) "${TMPFILES_DROPIN}" >/dev/null 2>&1; then
-  say "${TMPFILES_DROPIN} already matches (age=${AGE}), skipping"
+if [[ "$(systemctl is-enabled "${SWEEP_UNIT}.timer" 2>&1 || true)" == "enabled" ]]; then
+  say "${SWEEP_UNIT}.timer already enabled, skipping"
 else
-  install -d -m 755 "$(dirname "${TMPFILES_DROPIN}")"
-  tmp="$(mktemp "${TMPFILES_DROPIN}.XXXXXX")"
-  trap 'rm -f "$tmp"' EXIT
-  want_dropin >"$tmp"
-  chmod 644 "$tmp"
-  mv "$tmp" "${TMPFILES_DROPIN}"
-  trap - EXIT
-  say "Wrote ${TMPFILES_DROPIN} (age=${AGE})"
-  CHANGED=1
+  systemctl enable --now "${SWEEP_UNIT}.timer"
+  say "Enabled ${SWEEP_UNIT}.timer"
 fi
 
 if [[ "$(systemctl is-enabled tmp.mount 2>&1 || true)" == "masked" ]]; then
@@ -138,18 +255,15 @@ if [[ "$(systemctl is-enabled tmp.mount 2>&1 || true)" == "masked" ]]; then
 else
   systemctl mask tmp.mount
   say "Masked tmp.mount"
-  CHANGED=1
 fi
 
-if [[ "${CHANGED}" == 1 ]]; then
+if [[ "$(findmnt -no FSTYPE -T "${SCRATCH_ROOT}" 2>/dev/null || true)" == "tmpfs" ]]; then
   cat <<EOF
 
-NOTE: neither change is live yet. Masking tmp.mount only stops FUTURE mounts,
-and the tmpfiles.d age only applies on the next scheduled
-systemd-tmpfiles-clean.timer pass. Making both effective now instead of on
-their own schedule is a deliberate operator sequence — see docs/runbook.md
-"Moving /tmp off RAM (agent scratch)". This script never unmounts /tmp or
-runs systemd-tmpfiles itself.
+NOTE: ${SCRATCH_ROOT} is still a live tmpfs. Masking tmp.mount only stops
+FUTURE mounts; it moves onto disk at the next boot, or now via the operator
+sequence in docs/runbook.md "Moving /tmp off RAM (agent scratch)". This
+script never unmounts it.
 
 EOF
 fi

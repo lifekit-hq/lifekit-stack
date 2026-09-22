@@ -176,15 +176,14 @@ say "Configuring Docker builder cache GC cap"
 bash "$REPO_DIR/scripts/docker-builder-gc.sh"
 
 # ─── /tmp scratch policy ───────────────────────────────────────────────────────
-# Masks the distro default tmpfs-on-/tmp mount unit and tightens the
-# systemd-tmpfiles age for /tmp (scripts/tmp-scratch-policy.sh). Only masks
-# the unit and writes /etc/tmpfiles.d — it never unmounts a live /tmp or
-# restarts anything, so it's safe to run against an already-booted box. Both
-# halves take effect on their own schedule (next boot / next
-# systemd-tmpfiles-clean.timer pass); making them effective immediately is a
-# deliberate operator sequence, see docs/runbook.md "Moving /tmp off RAM
-# (agent scratch)". deploy.sh runs the same script with --check and only
-# reports whether the running box has converged.
+# Masks the distro default tmpfs-on-/tmp mount unit, turns off age-only
+# systemd-tmpfiles cleanup of /tmp, and enables a daily sweep that retires
+# abandoned scratch only when nothing holds it (scripts/tmp-scratch-policy.sh).
+# It never unmounts a live /tmp, so it's safe to run against an already-booted
+# box; the mask takes effect at next boot, and moving a live tmpfs /tmp onto
+# disk now is a deliberate operator sequence, see docs/runbook.md "Moving /tmp
+# off RAM (agent scratch)". deploy.sh runs the same script with --check and
+# only reports whether the running box has converged.
 
 say "Configuring /tmp scratch policy"
 bash "$REPO_DIR/scripts/tmp-scratch-policy.sh"
