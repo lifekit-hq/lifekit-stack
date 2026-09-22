@@ -29,8 +29,9 @@
 #      systemd-tmpfiles-clean never deletes /tmp entries on age alone (it
 #      cannot tell whether a live task still uses them).
 #   3. lifekit-tmp-scratch-sweep.{service,timer} — a daily `--sweep`, run as
-#      root from the root-owned copy bootstrap-vps.sh installs at the
-#      SWEEP_BIN path below, never from the deploy account's checkout. Liveness
+#      root from the copy of this script that the root apply installs at the
+#      SWEEP_BIN path below, never from the deploy account's checkout (a
+#      deploy's git reset does not reach it; --check reports it stale). Liveness
 #      gates deletion: a top-level /tmp entry is removed only when no running
 #      process has a file under it open, as its working directory, or as its
 #      executable, and it holds no socket. Age only narrows the candidates.
@@ -41,9 +42,10 @@
 # because unmounting it discards everything on it.
 #
 # Modes:
-#   (default)  write the drop-in and sweep units, enable the timer, mask
-#              tmp.mount (root; bootstrap-vps.sh runs it). Idempotent.
-#   --check    read-only: exit 0 only when the drop-in and units match, the
+#   (default)  write the drop-in, the sweep copy and units, enable the timer,
+#              mask tmp.mount (root; bootstrap-vps.sh runs it). Idempotent.
+#   --check    read-only: exit 0 only when the drop-in, the installed sweep
+#              copy (same content as this script, executable) and units match, the
 #              timer is enabled, tmp.mount is masked AND /tmp is not live on
 #              tmpfs; 1 on any known mismatch (a still-live tmpfs /tmp is a
 #              mismatch — it is the incident state); 2 when the live /tmp
@@ -59,6 +61,7 @@
 # without touching the real host):
 #   TMPFILES_DROPIN        drop-in path (default /etc/tmpfiles.d/lifekit-tmp-scratch.conf)
 #   SWEEP_UNIT_DIR         where the sweep units go (default /etc/systemd/system)
+#   SWEEP_BIN              where the sweep copy goes (default /usr/local/bin/lifekit-tmp-scratch-sweep.sh)
 #   SCRATCH_ROOT           the directory checked and swept (default /tmp)
 #   PROC_ROOT              process table the sweep reads (default /proc)
 #   TMP_SCRATCH_AGE_DAYS   sweep backstop age (default below)
@@ -78,7 +81,8 @@ SCRATCH_ROOT="${SCRATCH_ROOT:-/tmp}"
 PROC_ROOT="${PROC_ROOT:-/proc}"
 AGE_DAYS="${TMP_SCRATCH_AGE_DAYS:-${DEFAULT_AGE_DAYS}}"
 SWEEP_UNIT=lifekit-tmp-scratch-sweep
-SWEEP_BIN=/usr/local/bin/lifekit-tmp-scratch-sweep.sh
+SWEEP_BIN="${SWEEP_BIN:-/usr/local/bin/lifekit-tmp-scratch-sweep.sh}"
+SELF="$(realpath "${BASH_SOURCE[0]}")"
 UNDETERMINED=2
 
 say() { printf '\n\033[1;34m→ %s\033[0m\n' "$*"; }
@@ -92,6 +96,8 @@ want_dropin() {
 q /tmp 1777 root root -
 EOF
 }
+
+want_sweep_bin() { cat "${SELF}"; }
 
 want_service() {
   cat <<EOF
@@ -123,11 +129,15 @@ EOF
 
 MANAGED=(
   "${TMPFILES_DROPIN}:want_dropin"
+  "${SWEEP_BIN}:want_sweep_bin"
   "${SWEEP_UNIT_DIR}/${SWEEP_UNIT}.service:want_service"
   "${SWEEP_UNIT_DIR}/${SWEEP_UNIT}.timer:want_timer"
 )
 
-matches() { [[ -f "$1" ]] && diff -q <("$2") "$1" >/dev/null 2>&1; }
+matches() {
+  [[ -f "$1" ]] && diff -q <("$2") "$1" >/dev/null 2>&1 &&
+    [[ "$2" != want_sweep_bin || -x "$1" ]]
+}
 
 check() {
   local mismatch=0 item path gen state live_fs
@@ -239,11 +249,11 @@ for item in "${MANAGED[@]}"; do
   tmp="$(mktemp "${path}.XXXXXX")"
   trap 'rm -f "$tmp"' EXIT
   "${gen}" >"$tmp"
-  chmod 644 "$tmp"
+  if [[ "${gen}" == want_sweep_bin ]]; then chmod 755 "$tmp"; else chmod 644 "$tmp"; fi
   mv "$tmp" "${path}"
   trap - EXIT
   say "Wrote ${path}"
-  [[ "${path}" == "${TMPFILES_DROPIN}" ]] || UNITS_CHANGED=1
+  [[ "${path}" != "${SWEEP_UNIT_DIR}"/* ]] || UNITS_CHANGED=1
 done
 
 if [[ "${UNITS_CHANGED}" == 1 ]]; then

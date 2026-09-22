@@ -186,8 +186,6 @@ bash "$REPO_DIR/scripts/docker-builder-gc.sh"
 # only reports whether the running box has converged.
 
 say "Configuring /tmp scratch policy"
-install -m 755 "$REPO_DIR/scripts/tmp-scratch-policy.sh" \
-  /usr/local/bin/lifekit-tmp-scratch-sweep.sh
 bash "$REPO_DIR/scripts/tmp-scratch-policy.sh"
 
 # ─── openclaw-config sync timer ───────────────────────────────────────────────

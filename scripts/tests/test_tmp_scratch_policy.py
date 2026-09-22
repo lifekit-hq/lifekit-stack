@@ -129,6 +129,7 @@ def converged(tmp_path):
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "TMPFILES_DROPIN": str(tmp_path / "tmpfiles.d/lifekit-tmp-scratch.conf"),
         "SWEEP_UNIT_DIR": str(tmp_path / "systemd"),
+        "SWEEP_BIN": str(tmp_path / "bin-root/lifekit-tmp-scratch-sweep.sh"),
     }
     applied = run(env={**env, "SCRATCH_ROOT": str(REPO)})
     assert applied.returncode == 0, applied.stderr
@@ -190,3 +191,30 @@ def test_sweep_keeps_a_held_entry_too_large_to_scan_in_one_pipe_buffer(
 
     assert result.returncode == 0, result.stderr
     assert big.exists()
+
+
+def test_apply_installs_a_runnable_sweep_copy_that_check_tracks(converged, tmp_path):
+    sweep_bin = Path(converged["SWEEP_BIN"])
+    target = REPO / "scripts"
+    if fstype(target) in ("", "tmpfs"):
+        pytest.skip("repository checkout is not on a disk filesystem")
+    env = {**converged, "SCRATCH_ROOT": str(target)}
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    swept = subprocess.run(
+        [str(sweep_bin), "--sweep"],
+        env={**os.environ, "SCRATCH_ROOT": str(scratch), "PROC_ROOT": str(scratch)},
+        capture_output=True,
+        text=True,
+    )
+    assert swept.returncode == 0, swept.stderr
+
+    sweep_bin.write_text("#!/bin/sh\nexit 0\n")
+    assert run("--check", env=env).returncode == 1
+
+    sweep_bin.unlink()
+    assert run("--check", env=env).returncode == 1
+
+    assert run(env=env).returncode == 0
+    assert run("--check", env=env).returncode == 0
