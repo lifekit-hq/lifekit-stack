@@ -423,7 +423,10 @@ until it breaks something:
 - an `/etc/tmpfiles.d` drop-in turns off `systemd-tmpfiles`' age-only
   cleanup of `/tmp`, which cannot tell whether a running task still uses an
   entry;
-- `lifekit-tmp-scratch-sweep.timer` runs the script's `--sweep` daily. It
+- `lifekit-tmp-scratch-sweep.timer` runs the script's `--sweep` daily, as
+  root, from a root-owned copy `bootstrap-vps.sh` installs in
+  `/usr/local/bin` - never from the deploy account's checkout, so a change to
+  the sweep reaches the timer only on the next bootstrap run. It
   removes a top-level `/tmp` entry only when no running process has a file
   under it open, as its working directory, or as its executable, and it holds
   no socket; an age backstop (a week without writes) narrows the candidates
@@ -450,6 +453,7 @@ boot. Moving it now is a deliberate operator sequence, because **stopping
 tasks are still using**. Finish or stop active agent work first:
 
 ```bash
+sudo install -m 755 /srv/lifekit-stack/scripts/tmp-scratch-policy.sh /usr/local/bin/lifekit-tmp-scratch-sweep.sh
 sudo bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh   # drop-in + sweep timer, masks tmp.mount
 sudo systemctl stop tmp.mount                                 # unmounts the tmpfs; its contents are gone
 bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh --check  # exit 0 only once /tmp is no longer tmpfs
@@ -468,8 +472,9 @@ demand and prints what it removed or kept.
 
 To undo: `sudo systemctl unmask tmp.mount && sudo systemctl start tmp.mount`
 puts `/tmp` back on tmpfs; `sudo systemctl disable --now
-lifekit-tmp-scratch-sweep.timer` stops the sweep; removing the drop-in and the
-two unit files (paths printed by `--check`) followed by `sudo systemctl
+lifekit-tmp-scratch-sweep.timer` stops the sweep; removing the drop-in, the
+two unit files (paths printed by `--check`) and
+`/usr/local/bin/lifekit-tmp-scratch-sweep.sh` followed by `sudo systemctl
 daemon-reload` restores the distro defaults.
 
 ## Backups

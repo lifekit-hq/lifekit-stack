@@ -28,7 +28,9 @@
 #      /usr/lib/tmpfiles.d/tmp.conf line for /tmp with no age, so
 #      systemd-tmpfiles-clean never deletes /tmp entries on age alone (it
 #      cannot tell whether a live task still uses them).
-#   3. lifekit-tmp-scratch-sweep.{service,timer} — a daily `--sweep`. Liveness
+#   3. lifekit-tmp-scratch-sweep.{service,timer} — a daily `--sweep`, run as
+#      root from the root-owned copy bootstrap-vps.sh installs at the
+#      SWEEP_BIN path below, never from the deploy account's checkout. Liveness
 #      gates deletion: a top-level /tmp entry is removed only when no running
 #      process has a file under it open, as its working directory, or as its
 #      executable, and it holds no socket. Age only narrows the candidates.
@@ -76,7 +78,7 @@ SCRATCH_ROOT="${SCRATCH_ROOT:-/tmp}"
 PROC_ROOT="${PROC_ROOT:-/proc}"
 AGE_DAYS="${TMP_SCRATCH_AGE_DAYS:-${DEFAULT_AGE_DAYS}}"
 SWEEP_UNIT=lifekit-tmp-scratch-sweep
-SELF="$(realpath "${BASH_SOURCE[0]}")"
+SWEEP_BIN=/usr/local/bin/lifekit-tmp-scratch-sweep.sh
 UNDETERMINED=2
 
 say() { printf '\n\033[1;34m→ %s\033[0m\n' "$*"; }
@@ -99,7 +101,7 @@ Description=Retire abandoned /tmp scratch that nothing holds open
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash ${SELF} --sweep
+ExecStart=${SWEEP_BIN} --sweep
 EOF
 }
 
