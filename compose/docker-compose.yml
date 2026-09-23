@@ -127,7 +127,8 @@ services:
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
       # Vault (~/memory): bind-mounted at two paths.
-      # ~/memory — canonical alias used by cron jobs, skills, and agents.
+      # ~/memory — canonical alias used by cron jobs, skills, and agents; also the
+      # path openclaw-gateway/platform.patch.json indexes via memory.search.extraPaths.
       # ~/.openclaw/wiki/main — direct real bind mount (replaces symlink) so
       # OpenClaw wiki tools can traverse it without hitting the symlink guard.
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory

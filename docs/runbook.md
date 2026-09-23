@@ -108,20 +108,50 @@ file); rotating that token means recreating `prometheus` too. Check it with
 
 `/srv/openclaw/config/openclaw.json` has two halves. The platform keys -
 `logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
-`diagnostics-otel` plugin enables, `gateway.auth.rateLimit`,
-`agents.defaults.heartbeat.every`, the inbound `hooks` block and the finance
-agent's heartbeat - live in
+`diagnostics-otel` plugin enables, `gateway.auth.rateLimit`, `memory.search`
+(`enabled` + `extraPaths`), `agents.defaults.heartbeat.every`, the inbound
+`hooks` block and the finance agent's heartbeat - live in
 `compose/openclaw-gateway/platform.patch.json`. On every deploy `deploy.sh`
 compares that file with the live config, applies it with
 `openclaw config patch` only when a key differs, and force-recreates the
 gateway only when the CLI's apply hint says the changed keys need it
-(`plugins.entries` does; the rest hot-reloads under the default
-`gateway.reload` hybrid mode). A deploy that finds nothing to change writes
-nothing and leaves the gateway alone. A new platform key goes in that file,
-never in a PR body; objects merge and scalars replace
+(`plugins.entries` and `memory.search.extraPaths` do; the rest hot-reloads
+under the default `gateway.reload` hybrid mode). A deploy that finds nothing
+to change writes nothing and leaves the gateway alone. A new platform key goes
+in that file, never in a PR body; objects merge and scalars replace
 (`openclaw config patch --help`), and the file is strict JSON so the deploy
 can read it with stdlib Python. Check new keys against the installed schema
 (`openclaw config schema`).
+
+#### Vault search for every agent (`memory.search`, in the platform file since 2026-09-23)
+
+Retiring the memory-wiki plugin also retired the only search the agents had
+over the vault. `memory.search.extraPaths` is memory-core's own knob for
+indexing directories or files outside an agent's workspace, and the platform
+file points it at the vault's existing gateway mount
+(`compose/docker-compose.yml`'s `/home/node/memory` bind for
+`openclaw-gateway`), so every agent's `memory_search` covers vault pages
+without a second indexer. The same block sets `memory.search.enabled: true`:
+the deploy switches memory search on for every agent. The live config had
+carried an explicit `enabled: false` since the migration; the 2026-09-18
+decision supersedes that, and because `openclaw config patch` merges objects
+the platform file has to flip the key itself or the host's `false` would
+survive every deploy. To switch search off again, set `enabled` to `false` in
+the platform file and let the next deploy converge it - a hand edit on the
+host is undone by the following deploy. The index this key builds is a
+derived layer: memory-core writes into each agent's own sqlite store under
+its workspace, never under the vault, so the index writes nothing there even
+though the gateway's `/home/node/memory` bind itself stays read-write for
+cron jobs, skills, and agents (decision record: vault `system/proposals.md`,
+`2026-09-18-memory-engines-as-derived-layers`). Applying it needs the gateway
+restart `deploy.sh` already triggers for this key (confirmed against the
+2026.9.5 schema: this key's apply hint is "Restart the gateway to apply.",
+same as `plugins.entries`). After a deploy that changes this key, the owner
+verifies on the host: one real agent turn whose tool summary shows a
+`memory_search` hit on a vault path, and that the vault's `git status` (or
+mirror equivalent) stays clean afterward - the first index over a vault-sized
+directory takes a noticeable but bounded amount of time on first run, then
+stays incremental.
 
 #### Inbound hooks and the finance pulse (in the platform file since 2026-09-18)
 
