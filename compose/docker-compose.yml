@@ -190,10 +190,14 @@ services:
               }));
             });'
         }
-        # npm >= 12 (openclaw base image since 2026.9.x) blocks package install
-        # scripts unless allow-listed; claude-code fetches its platform-native
-        # binary in postinstall, so without this the CLI installs but every
-        # invocation fails with "claude native binary not installed" (2026-09-13).
+        # claude/clawhub/summarize are baked into the image now
+        # (compose/openclaw-gateway/Dockerfile, pinned via package.json —
+        # lifekit-stack#146): a fresh recreate no longer depends on the npm
+        # registry or floats an unpinned version for these three. The guards
+        # below are fallback-only from this release (image built before the
+        # bake, or a CLI missing for some other reason) and are dropped in a
+        # follow-up release. Do not add new CLIs here — that resurrects the
+        # bug this issue fixed.
         if ! command -v claude >/dev/null 2>&1; then
           mkdir -p /home/node/.npm-global
           npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code 2>&1 | tail -3 | jlog

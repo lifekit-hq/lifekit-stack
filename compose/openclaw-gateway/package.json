@@ -1,0 +1,10 @@
+{
+  "name": "lifekit-openclaw-gateway-clis",
+  "private": true,
+  "description": "Pinned versions of the agent CLIs baked into the gateway image (compose/openclaw-gateway/Dockerfile). Dependabot's npm ecosystem (.github/dependabot.yml) opens the bump PRs; this file is not installed as a package, only read by `npm ci` for its lockfile.",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.281",
+    "clawhub": "0.23.3",
+    "@steipete/summarize": "0.23.0"
+  }
+}

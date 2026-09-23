@@ -26,3 +26,22 @@ updates:
     commit-message:
       prefix: "chore(openclaw)"
     open-pull-requests-limit: 1
+  # Agent CLIs (claude-code, clawhub, summarize) baked into the gateway image
+  # (lifekit-stack#146) via compose/openclaw-gateway/package.json. Same
+  # systemic route as the docker updater above — Dependabot opens the bump
+  # PR, a human merges it, CI ships it.
+  - package-ecosystem: npm
+    directory: /compose/openclaw-gateway
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Dublin
+    cooldown:
+      default-days: 7
+    labels:
+      - dependencies
+      - openclaw
+    commit-message:
+      prefix: "chore(openclaw)"
+    open-pull-requests-limit: 1
