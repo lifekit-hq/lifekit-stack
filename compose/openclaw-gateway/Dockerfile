@@ -89,14 +89,16 @@ RUN printf 'export PATH="/home/node/.npm-global/bin:$PATH"\n' > /etc/profile.d/z
 USER node
 
 # Agent CLIs (claude-code, clawhub, summarize) are npm-published, so unlike the
-# skill CLIs above they ARE baked into the image: pinned in package.json here,
-# installed globally at build time, so a fresh recreate no longer depends on
-# the npm registry being reachable or installs whatever version happened to be
-# current (lifekit-stack#146). `npm ci` validates package-lock.json against
-# package.json (fails the build if someone edits one without the other) before
-# the exact pinned versions are read back out of package.json and installed
-# by name@version, straight from the registry. That register install, not a
-# local-folder one, is required: claude-code's package.json carries a
+# skill CLIs above they ARE baked into the image: their three top-level
+# versions are pinned in package.json here and installed globally at build
+# time, so a fresh recreate no longer depends on the npm registry being
+# reachable or installs whatever version happened to be current
+# (lifekit-stack#146). Only those top-level versions are pinned; their
+# transitive dependency trees resolve from the registry during the build, so
+# the built image is fixed but the build itself is not bit-for-bit
+# reproducible. The pinned versions are read back out of package.json and
+# installed by name@version, straight from the registry. That registry install,
+# not a local-folder one, is required: claude-code's package.json carries a
 # publish-guard `prepare` script that npm also runs for any from-source
 # install (a local directory, or a tarball made with `npm pack` from one) and
 # fails outside Anthropic's own release pipeline; a plain registry install of
@@ -111,10 +113,9 @@ USER node
 # hand-pinned versions in this RUN line.
 ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
 ENV PATH="/home/node/.npm-global/bin:${PATH}"
-COPY --chown=node:node package.json package-lock.json /home/node/.npm-global-src/
+COPY --chown=node:node package.json /home/node/.npm-global-src/
 RUN mkdir -p /home/node/.npm-global \
     && cd /home/node/.npm-global-src \
-    && npm ci --omit=dev \
     && CLAUDE_CODE_VERSION="$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-code']")" \
     && CLAWHUB_VERSION="$(node -p "require('./package.json').dependencies['clawhub']")" \
     && SUMMARIZE_VERSION="$(node -p "require('./package.json').dependencies['@steipete/summarize']")" \
