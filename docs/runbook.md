@@ -170,10 +170,18 @@ declares its cron. Run it once on the host after the deploy that applied the
 heartbeat. Until then the scratch is empty and every tick skips with
 `reason=empty-heartbeat-file` and no model call.
 
-The pulse checklist does not hot-reload like the hook mapping does: after the
-change that adds the `record_event_verdict` step to `scripts/finance-pulse.md`
-lands, the operator re-runs `scripts/ensure-finance-pulse.sh` once on the host
-so the pulse scratch picks up the verdict step.
+The pulse checklist does not hot-reload like the hook mapping does, and a
+plain re-run of `scripts/ensure-finance-pulse.sh` leaves a non-empty scratch
+that differs from the file untouched (its convergence rule). After the change
+that adds the `record_event_verdict` step to `scripts/finance-pulse.md` lands,
+the operator overwrites the live scratch once on the host with the replace
+form, after checking what the live scratch holds
+(`docker exec compose-openclaw-gateway-1 openclaw cron scratch <id>`) in case
+the agent rewrote it:
+
+```bash
+FINANCE_PULSE_REPLACE=1 /srv/lifekit-stack/scripts/ensure-finance-pulse.sh
+```
 
 #### The finance agent after `ledger-scan` (retired 2026-09-19)
 
