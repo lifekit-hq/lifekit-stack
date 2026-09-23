@@ -32,7 +32,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "increase(devclaw_tokens_total[1d]) by (kind)",
+          "expr": "sum by (kind) (increase(devclaw_tokens_total[1d]))",
           "legendFormat": "{{kind}}",
           "refId": "A"
         }
