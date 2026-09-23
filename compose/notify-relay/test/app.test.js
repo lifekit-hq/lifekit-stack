@@ -212,22 +212,44 @@ test("GET /ready probes getMe through the transport and caches the answer", asyn
   assert.equal(calls.length, 1);
 });
 
-test("a Telegram error is a 502 and counts as a failed send", async () => {
-  const failing = async () => ({
-    ok: false,
-    status: 400,
-    json: async () => ({ ok: false, description: "Bad Request: can't parse entities" }),
-  });
-  const app = createApp({ token: TOKEN, chat: CHAT, transport: failing, log: () => {} });
+test("a Telegram error is a 502 and counts as a failed send; a success counts as ok — /metrics splits the two outcomes", async () => {
+  let fail = true;
+  const flaky = async () => {
+    if (fail) {
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({ ok: false, description: "Bad Request: can't parse entities" }),
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: 1 } }) };
+  };
+  const app = createApp({ token: TOKEN, chat: CHAT, transport: flaky, log: () => {} });
   const srv = createServer(app.requestListener);
   await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
+  const localOrigin = `http://127.0.0.1:${srv.address().port}`;
   try {
-    const res = await fetch(`http://127.0.0.1:${srv.address().port}/notify`, {
+    const failRes = await fetch(`${localOrigin}/notify`, {
       method: "POST",
       body: JSON.stringify(envelope),
     });
-    assert.equal(res.status, 502);
-    assert.match((await res.json()).error, /Telegram API 400/);
+    assert.equal(failRes.status, 502);
+    assert.match((await failRes.json()).error, /Telegram API 400/);
+
+    let metrics = await (await fetch(`${localOrigin}/metrics`)).text();
+    assert.match(metrics, /notify_relay_telegram_sends_total\{outcome="ok"\} 0/);
+    assert.match(metrics, /notify_relay_telegram_sends_total\{outcome="error"\} 1/);
+
+    fail = false;
+    const okRes = await fetch(`${localOrigin}/notify`, {
+      method: "POST",
+      body: JSON.stringify(envelope),
+    });
+    assert.equal(okRes.status, 200);
+
+    metrics = await (await fetch(`${localOrigin}/metrics`)).text();
+    assert.match(metrics, /notify_relay_telegram_sends_total\{outcome="ok"\} 1/);
+    assert.match(metrics, /notify_relay_telegram_sends_total\{outcome="error"\} 1/);
   } finally {
     await new Promise((resolve) => srv.close(resolve));
   }
