@@ -34,6 +34,13 @@
       }
     }
   },
+  "memory": {
+    "search": {
+      "extraPaths": [
+        "/home/node/memory"
+      ]
+    }
+  },
   "agents": {
     "defaults": {
       "heartbeat": {
