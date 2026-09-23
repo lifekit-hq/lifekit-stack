@@ -516,6 +516,68 @@ groups:
             cache_creation) moved and which sessions are running.
 
   - orgId: 1
+    name: notify-relay-deadman
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: notify-relay-cannot-deliver
+        title: notify-relay cannot deliver
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 1 when the last 15 minutes had at least one failed Telegram
+              # send and zero successful ones: a single transient Telegram
+              # blip must not page (it lands beside at least one ok in the
+              # same window), sustained total failure must.
+              expr: >-
+                (increase(notify_relay_telegram_sends_total{outcome="error"}[15m]) > bool 0)
+                  * (increase(notify_relay_telegram_sends_total{outcome="ok"}[15m]) == bool 0)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # A vanished target is target-down's job, not this rule's - it only
+        # reads when the counter series exists at all.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          service: notify-relay
+          severity: critical
+        annotations:
+          summary: notify-relay is up but every Telegram send is failing
+          description: >-
+            notify_relay_telegram_sends_total{outcome="error"} rose with zero
+            {outcome="ok"} in the same 15-minute window, sustained for 5
+            minutes: notify-relay answers /metrics but cannot deliver to
+            Telegram. Known limitation: this alert reaches the owner over
+            Telegram, the same channel it reports broken - that still works
+            for a bad token, a wrong chat id, or a relay bug, because Grafana
+            holds its own bot credential and posts directly, but it gives no
+            coverage when Telegram itself or the box's egress is down. Check
+            notify-relay's logs for the Telegram API error, then the bot
+            token and chat id in the env file.
+
+  - orgId: 1
     name: openclaw
     folder: lifekit
     interval: 1m
