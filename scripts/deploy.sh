@@ -168,6 +168,25 @@ if [[ ! -f "${OPENCLAW_CONFIG_DIR}/openclaw.json" ]]; then
         --gateway-port 18789
 fi
 
+# Since OpenClaw 2026.9.x the gateway rejects proxied requests with
+# `proxy_attribution_required` unless the proxy's source address is listed
+# in gateway.trustedProxies. That address is Docker-assigned at network
+# creation, so it can't be pinned in compose/openclaw-gateway/platform.patch.json
+# (host-derived, not a static platform key) — it's derived here instead, off
+# the project's default network that the onboard step above (or an earlier
+# deploy) created as a side effect.
+#
+# Runs on every deploy, not just the one that just onboarded: the script
+# itself reads the live value first and no-ops once the key already holds
+# one, so a deploy that dies between onboard writing openclaw.json and this
+# step running still retries it on the next deploy instead of leaving the
+# gateway rejecting proxied requests until someone sets the key by hand.
+# Logic lives in scripts/deploy-trusted-proxies.sh so it can be exercised
+# directly in tests.
+say "openclaw trustedProxies"
+ENV_FILE="${ENV_FILE}" COMPOSE_FILE="${COMPOSE_FILE}" OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" \
+  "${REPO_DIR}/scripts/deploy-trusted-proxies.sh"
+
 # ─── lifekit-dashboard: deployed from its own repo now (decoupling slice 2) ──
 #
 # The dashboard deploys from lifekit-hq/lifekit-dashboard's own deploy/
