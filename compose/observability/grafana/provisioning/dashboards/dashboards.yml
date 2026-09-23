@@ -2,7 +2,11 @@
 # (one home); the box hands them to Grafana through a directory the product's
 # deploy fills (finance-sentry: docker/observability/grafana/provisioning/
 # dashboards/*.json → ${LIFEKIT_FINANCE_SENTRY_DASHBOARDS}). A provider whose
-# directory is empty simply provisions nothing.
+# directory is empty simply provisions nothing. The `lifekit` provider is this
+# repo's own dashboards-as-code home: its directory is tracked in-repo (under
+# the provisioning tree the grafana service already mounts read-only) rather
+# than filled by an external deploy, since lifekit-stack owns these panels
+# directly.
 apiVersion: 1
 
 providers:
@@ -15,4 +19,15 @@ providers:
     allowUiUpdates: true
     options:
       path: /var/lib/grafana-dashboards/finance-sentry
+      foldersFromFilesStructure: false
+
+  - name: lifekit
+    orgId: 1
+    folder: lifekit
+    type: file
+    disableDeletion: false
+    editable: true
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/lifekit
       foldersFromFilesStructure: false
