@@ -41,9 +41,9 @@ def _install_run_commands() -> list[str]:
 def test_dependencies_are_pinned_to_exact_versions():
     assert DEPENDENCIES, "expected pinned CLI dependencies in package.json"
     for name, version in DEPENDENCIES.items():
-        assert EXACT_VERSION.match(version), (
-            f"{name} is not exactly pinned: {version!r}"
-        )
+        assert EXACT_VERSION.match(
+            version
+        ), f"{name} is not exactly pinned: {version!r}"
 
 
 def test_expected_clis_are_present():
@@ -67,9 +67,9 @@ def test_install_reads_every_package_json_dependency_into_the_install_args():
     install = next(c for c in commands if c.startswith("npm install"))
     for name in DEPENDENCIES:
         assert name in variables, f"{name} is not read from package.json"
-        assert f'"{name}@${{{variables[name]}}}"' in install, (
-            f"{name} is not installed as name@version from its extracted variable"
-        )
+        assert (
+            f'"{name}@${{{variables[name]}}}"' in install
+        ), f"{name} is not installed as name@version from its extracted variable"
 
 
 def test_install_allows_claude_code_postinstall_script():
