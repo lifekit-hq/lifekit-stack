@@ -45,3 +45,29 @@ def test_dockerfile_installs_from_the_pinned_package_json():
     assert "package-lock.json" in DOCKERFILE
     assert "npm ci" in DOCKERFILE
     assert "--allow-scripts=@anthropic-ai/claude-code" in DOCKERFILE
+
+
+def test_dockerfile_installs_by_name_at_version_not_local_path():
+    # claude-code's package.json carries a publish-guard `prepare` script that
+    # npm runs for any from-source install (a local node_modules/ folder, or a
+    # tarball packed from one) and fails outside Anthropic's release pipeline.
+    # A registry install of the already-published tarball only runs
+    # install/postinstall, so the Dockerfile must install `name@version`, not
+    # a `./node_modules/...` path (verified against npm 10.9.8 / claude-code
+    # 2.1.281: a local-path install/pack fails with "Direct publishing is not
+    # allowed").
+    assert "./node_modules/" not in DOCKERFILE
+    for name in ("@anthropic-ai/claude-code", "clawhub", "@steipete/summarize"):
+        assert re.search(
+            rf'"{re.escape(name)}@\$\{{\w+\}}"', DOCKERFILE
+        ), f"expected {name} installed as name@${{VERSION}} from package.json, not a hardcoded or local-path spec"
+
+
+def test_dockerfile_reads_versions_from_package_json_not_hardcoded():
+    # Single source of truth for pins: the Dockerfile must derive versions
+    # from package.json at build time rather than duplicating a version
+    # string, or a bump here could drift from the file Dependabot tracks.
+    for version in PACKAGE_JSON["dependencies"].values():
+        assert (
+            version not in DOCKERFILE
+        ), f"version {version!r} is hardcoded in the Dockerfile; read it from package.json instead"

@@ -92,11 +92,16 @@ USER node
 # skill CLIs above they ARE baked into the image: pinned in package.json here,
 # installed globally at build time, so a fresh recreate no longer depends on
 # the npm registry being reachable or installs whatever version happened to be
-# current (lifekit-stack#146). `npm ci` first validates package-lock.json
-# against package.json and resolves the exact dependency graph into a local
-# node_modules/, offline-reproducible from the lockfile; `npm install -g` from
-# those local paths then links the CLIs into NPM_CONFIG_PREFIX without a
-# second registry round-trip. claude-code needs --allow-scripts because its
+# current (lifekit-stack#146). `npm ci` validates package-lock.json against
+# package.json (fails the build if someone edits one without the other) before
+# the exact pinned versions are read back out of package.json and installed
+# by name@version, straight from the registry. That register install, not a
+# local-folder one, is required: claude-code's package.json carries a
+# publish-guard `prepare` script that npm also runs for any from-source
+# install (a local directory, or a tarball made with `npm pack` from one) and
+# fails outside Anthropic's own release pipeline; a plain registry install of
+# an already-published tarball only runs `install`/`postinstall`, which is
+# what --allow-scripts gates. claude-code needs --allow-scripts because that
 # postinstall fetches the platform-native binary (npm >= 12 blocks install
 # scripts by default); without it the CLI installs but every invocation fails
 # with "claude native binary not installed" (observed 2026-09-13 at container
@@ -110,11 +115,14 @@ COPY --chown=node:node package.json package-lock.json /home/node/.npm-global-src
 RUN mkdir -p /home/node/.npm-global \
     && cd /home/node/.npm-global-src \
     && npm ci --omit=dev \
+    && CLAUDE_CODE_VERSION="$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-code']")" \
+    && CLAWHUB_VERSION="$(node -p "require('./package.json').dependencies['clawhub']")" \
+    && SUMMARIZE_VERSION="$(node -p "require('./package.json').dependencies['@steipete/summarize']")" \
     && npm install --global --no-save \
         --allow-scripts=@anthropic-ai/claude-code \
-        ./node_modules/@anthropic-ai/claude-code \
-        ./node_modules/clawhub \
-        ./node_modules/@steipete/summarize \
+        "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+        "clawhub@${CLAWHUB_VERSION}" \
+        "@steipete/summarize@${SUMMARIZE_VERSION}" \
     && cd /home/node \
     && rm -rf /home/node/.npm-global-src
 
