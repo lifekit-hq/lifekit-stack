@@ -166,6 +166,29 @@ if [[ ! -f "${OPENCLAW_CONFIG_DIR}/openclaw.json" ]]; then
         --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
         --gateway-bind loopback \
         --gateway-port 18789
+
+  # Since OpenClaw 2026.9.x the gateway rejects proxied requests with
+  # `proxy_attribution_required` unless the proxy's source address is listed
+  # in gateway.trustedProxies. That address is Docker-assigned at network
+  # creation, so it can't be pinned in compose/openclaw-gateway/platform.patch.json
+  # (host-derived, not a static platform key) — it's derived here, once, right
+  # after the `run --rm` above created the project's default network as a
+  # side effect. Not applied on later deploys: openclaw.json already exists by
+  # then and this whole block is skipped.
+  COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$(dirname "${COMPOSE_FILE}")")}"
+  TRUSTED_PROXY_NETWORK="${COMPOSE_PROJECT}_default"
+  TRUSTED_PROXY_ADDR="$(docker network inspect "${TRUSTED_PROXY_NETWORK}" \
+    --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+  if [[ -z "${TRUSTED_PROXY_ADDR}" ]]; then
+    echo "Could not determine the gateway address of docker network ${TRUSTED_PROXY_NETWORK}." >&2
+    echo "gateway.trustedProxies was not set — the gateway will reject all proxied" >&2
+    echo "requests with proxy_attribution_required. Fix docker networking and re-run." >&2
+    exit 1
+  fi
+  say "openclaw trustedProxies (${TRUSTED_PROXY_ADDR}, from ${TRUSTED_PROXY_NETWORK})"
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    run --rm --no-deps --entrypoint openclaw openclaw-gateway \
+      config set gateway.trustedProxies "[\"${TRUSTED_PROXY_ADDR}\"]" --strict-json
 fi
 
 # ─── lifekit-dashboard: deployed from its own repo now (decoupling slice 2) ──
