@@ -36,6 +36,7 @@
   },
   "memory": {
     "search": {
+      "enabled": true,
       "extraPaths": [
         "/home/node/memory"
       ]
