@@ -96,7 +96,7 @@ that ships that piece. SKIP is never set per product.
        record carries `trace_id` when one is active.
      - `metrics: false` because the collector has no metrics pipeline; metrics
        reach Prometheus through `diagnostics-prometheus`.
-     - The entrypoint wraps its npm install output as JSON, so the only
+     - The entrypoint wraps its (fallback) npm install output as JSON, so the only
        non-JSON lines left are ones OpenClaw writes itself.
 
   3. Before the gate merges, check the result with

@@ -42,6 +42,13 @@ version. The image is the unit of deployment.
 To force a version by hand (skip the Dependabot wait): edit the `FROM` tag,
 open a PR, merge. Same path, same checks.
 
+The agent CLIs (`claude`, `clawhub`, `summarize`) are baked into the same
+image at the exact versions in `compose/openclaw-gateway/package.json`;
+Dependabot's npm ecosystem opens their bump PRs. Only those top-level
+versions are pinned, not their transitive trees. The entrypoint installs
+only remain as a fallback when a command is missing. Skill CLIs stay
+entrypoint-installed (bind-mounted host checkouts).
+
 Before a jump across several months of releases, take a full verified state
 backup first (the migrations are one-way; an older gateway cannot read the
 migrated state, so the image tags alone do not roll back). Roughly 6 GB
