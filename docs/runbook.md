@@ -108,8 +108,8 @@ file); rotating that token means recreating `prometheus` too. Check it with
 
 `/srv/openclaw/config/openclaw.json` has two halves. The platform keys -
 `logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
-`diagnostics-otel` plugin enables, `gateway.auth.rateLimit`,
-`memory.search.extraPaths`, `agents.defaults.heartbeat.every`, the inbound
+`diagnostics-otel` plugin enables, `gateway.auth.rateLimit`, `memory.search`
+(`enabled` + `extraPaths`), `agents.defaults.heartbeat.every`, the inbound
 `hooks` block and the finance agent's heartbeat - live in
 `compose/openclaw-gateway/platform.patch.json`. On every deploy `deploy.sh`
 compares that file with the live config, applies it with

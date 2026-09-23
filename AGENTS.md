@@ -29,8 +29,8 @@ VPS self-hosted runner (`git reset --hard origin/main && bash scripts/deploy.sh`
 account (sudo); see README "VPS users".
 
 The live OpenClaw config (`/srv/openclaw/config/openclaw.json`) has two halves. Platform keys
-(logging, diagnostics, plugin enables, gateway auth rate limit, heartbeat, inbound hooks - secrets
-there are `${VAR}` references resolved from the env file, never values) live in
+(logging, diagnostics, plugin enables, gateway auth rate limit, memory search, heartbeat, inbound
+hooks - secrets there are `${VAR}` references resolved from the env file, never values) live in
 `compose/openclaw-gateway/platform.patch.json`: `deploy.sh` compares it with the live file, applies
 it with `openclaw config patch` only when a key differs, and recreates the gateway only when the
 CLI's apply hint says the changed keys need it — a new platform key goes there, never in a PR
