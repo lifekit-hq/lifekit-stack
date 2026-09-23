@@ -73,17 +73,59 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Skill CLIs (nutrition-claw, life-state, workout-claw) are installed by the
-# compose entrypoint guard into NPM_CONFIG_PREFIX=/home/node/.npm-global at
-# every container start (sources are bind mounts, so reinstall is instant). Codex runs tool
-# commands via `bash -lc` (login shell), whose PATH is rebuilt from /etc/profile
-# and drops the image ENV PATH, so the linked CLIs would otherwise be
-# "command not found" under the Codex runtime. This profile.d entry puts the
-# persisted bin dir on the login-shell PATH, durable across recreates/rebuilds.
+# Skill CLIs (nutrition-claw, life-state, workout-claw) stay entrypoint-installed
+# on every container start (compose/docker-compose.yml): they are bind-mounted
+# host checkouts (nutrition-claw/life-state rsync'd under the workspace,
+# workout-claw's source repo is archived read-only upstream so /srv/workout-claw
+# is the only copy), not present in the build context, so there is nothing for
+# the image to bake. This profile.d entry puts the persisted npm-global bin dir
+# on the login-shell PATH — Codex runs tool commands via `bash -lc` (login
+# shell), whose PATH is rebuilt from /etc/profile and drops the image ENV PATH,
+# so the linked CLIs would otherwise be "command not found" under the Codex
+# runtime — durable across recreates/rebuilds.
 RUN printf 'export PATH="/home/node/.npm-global/bin:$PATH"\n' > /etc/profile.d/zz-skill-clis.sh \
     && chmod 0644 /etc/profile.d/zz-skill-clis.sh
 
 USER node
+
+# Agent CLIs (claude-code, clawhub, summarize) are npm-published, so unlike the
+# skill CLIs above they ARE baked into the image: their three top-level
+# versions are pinned in package.json here and installed globally at build
+# time, so a fresh recreate no longer depends on the npm registry being
+# reachable or installs whatever version happened to be current
+# (lifekit-stack#146). Only those top-level versions are pinned; their
+# transitive dependency trees resolve from the registry during the build, so
+# the built image is fixed but the build itself is not bit-for-bit
+# reproducible. The pinned versions are read back out of package.json and
+# installed by name@version, straight from the registry. That registry install,
+# not a local-folder one, is required: claude-code's package.json carries a
+# publish-guard `prepare` script that npm also runs for any from-source
+# install (a local directory, or a tarball made with `npm pack` from one) and
+# fails outside Anthropic's own release pipeline; a plain registry install of
+# an already-published tarball only runs `install`/`postinstall`, which is
+# what --allow-scripts gates. claude-code needs --allow-scripts because that
+# postinstall fetches the platform-native binary (npm >= 12 blocks install
+# scripts by default); without it the CLI installs but every invocation fails
+# with "claude native binary not installed" (observed 2026-09-13 at container
+# start, same failure mode this build-time install now avoids). Version bumps
+# ride Dependabot's npm ecosystem on this directory (.github/dependabot.yml),
+# the same systemic route the OpenClaw base tag above uses, rather than
+# hand-pinned versions in this RUN line.
+ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
+ENV PATH="/home/node/.npm-global/bin:${PATH}"
+COPY --chown=node:node package.json /home/node/.npm-global-src/
+RUN mkdir -p /home/node/.npm-global \
+    && cd /home/node/.npm-global-src \
+    && CLAUDE_CODE_VERSION="$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-code']")" \
+    && CLAWHUB_VERSION="$(node -p "require('./package.json').dependencies['clawhub']")" \
+    && SUMMARIZE_VERSION="$(node -p "require('./package.json').dependencies['@steipete/summarize']")" \
+    && npm install --global --no-save \
+        --allow-scripts=@anthropic-ai/claude-code \
+        "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+        "clawhub@${CLAWHUB_VERSION}" \
+        "@steipete/summarize@${SUMMARIZE_VERSION}" \
+    && cd /home/node \
+    && rm -rf /home/node/.npm-global-src
 
 # Pre-fetch the Playwright Chromium build into the runtime user's cache so
 # the playwright-mcp / chrome-devtools-mcp servers don't have to download
