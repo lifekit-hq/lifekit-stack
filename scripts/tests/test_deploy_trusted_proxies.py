@@ -83,14 +83,19 @@ def test_sets_trusted_proxies_from_the_derived_network_gateway(tmp_path, docker_
 
     assert result.returncode == 0, result.stderr
     calls = docker_stub["call_log"].read_text().splitlines()
-    assert calls[0] == f"network inspect lifekit-stack_default --format {{{{(index .IPAM.Config 0).Gateway}}}}"
+    assert (
+        calls[0]
+        == "network inspect lifekit-stack_default --format {{(index .IPAM.Config 0).Gateway}}"
+    )
     assert (
         calls[1]
-        == f'compose --env-file {env_file} -f {compose_file} run --rm --no-deps '
-        f'--entrypoint openclaw openclaw-gateway config set gateway.trustedProxies '
+        == f"compose --env-file {env_file} -f {compose_file} run --rm --no-deps "
+        f"--entrypoint openclaw openclaw-gateway config set gateway.trustedProxies "
         f'["172.30.0.1"] --strict-json'
     )
-    address = json.loads(calls[1].split("gateway.trustedProxies ", 1)[1].rsplit(" --strict-json", 1)[0])
+    address = json.loads(
+        calls[1].split("gateway.trustedProxies ", 1)[1].rsplit(" --strict-json", 1)[0]
+    )
     assert address == ["172.30.0.1"]
 
 
@@ -115,7 +120,9 @@ def test_derives_the_project_name_from_the_compose_file_directory_when_unset(
     assert calls[0].startswith("network inspect myproject_default ")
 
 
-def test_aborts_and_does_not_set_when_the_network_lookup_is_empty(tmp_path, docker_stub):
+def test_aborts_and_does_not_set_when_the_network_lookup_is_empty(
+    tmp_path, docker_stub
+):
     env_file = tmp_path / ".env"
     env_file.write_text("")
     compose_file = tmp_path / "compose" / "docker-compose.yml"
