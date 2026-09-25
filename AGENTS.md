@@ -55,7 +55,8 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
 - **Platform contract** (deploy-time, not CI): every compose service carries `lifekit.contract` labels
   (`v1` or `none`), or `deploy.sh` stops before `up`; a `v1` service that fails an enforced item
   at runtime turns the deploy red. No waivers - fix the service, or add the item to `ENFORCED`
-  only with the platform piece it needs. See [`docs/platform-contract.md`](./docs/platform-contract.md).
+  only with the platform piece it needs - except the single temporary per-service label exception,
+  removed once that service renames its label. See [`docs/platform-contract.md`](./docs/platform-contract.md).
 - **Doc drift** (separate workflow): README service table must match `compose/docker-compose.yml`.
 - Privacy is a gate too: read [`docs/PRIVATE.md`](./docs/PRIVATE.md) before committing — gitleaks
   catches secrets, the human pass catches personal context. Skills must be `{{ user.* }}`

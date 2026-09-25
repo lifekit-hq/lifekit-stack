@@ -54,10 +54,17 @@ Put service `labels:` in the product's own compose file:
 | ready | Same rules as health, on a different path. With `ready.via: edge`, the check is SKIP until the edge lands; it will then probe through Traefik (captain Q7). | yes |
 | metrics | GET returns Prometheus text. With `metrics.auth: token`, the up target (next row) counts instead. | yes |
 | scraped | A Prometheus target with this container's address and metrics path is `up`, and its last scrape returned samples. | yes |
+| labels | The scraped target's series export no `job` or `instance` label (checked as `exported_job` / `exported_instance` in Prometheus). One documented per-service exception exists in `LABEL_EXCEPTIONS`, removed once that service renames its label. | yes |
 | logs | At least 90% of the last 300 stdout/stderr lines are JSON, and at least one line has a trace id (`trace_id`, `traceId`, `@tr`, `trace.id`, …). | yes |
 | traces | Reported only. The trace rule is decided when the collector work settles (Q8). | SKIP |
 | edge | `internal` means no host port is published. `edge` means `traefik.enable` is set and no host port is published. | SKIP until Traefik |
 | topics | Nothing to check yet. | SKIP until Redpanda |
+
+**Why `labels`:** Prometheus reserves `job` and `instance` for the scrape
+target. With `honor_labels` unset (correct here; leave it that way), a metric's
+own `job` label is silently renamed `exported_job`, so any panel or query that
+groups by `job` collapses to one row with no error. Name the label something
+else (`kind`, `queue`, ...). Do not set `honor_labels: true` to work around it.
 
 `ENFORCED` in the script grows by one item for each platform piece, in the PR
 that ships that piece. SKIP is never set per product.

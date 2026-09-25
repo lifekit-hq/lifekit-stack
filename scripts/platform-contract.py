@@ -71,11 +71,22 @@ JSON_SHARE = 0.9
 
 # Grows by one id per platform piece: traces once the trace rule is decided
 # (otel-collector landed in #159), edge with Traefik, topics with Redpanda.
-ENFORCED = {"health", "ready", "metrics", "scraped", "logs"}
+ENFORCED = {"health", "ready", "metrics", "scraped", "labels", "logs"}
 SKIP_REASON = {
     "traces": "trace rule not decided yet (captain Q8)",
     "edge": "no edge proxy yet (build order step 2)",
     "topics": "no broker yet (build order step 3)",
+}
+# Prometheus reserves `job` and `instance` for the scrape target; with
+# honor_labels unset (kept that way) an app's own copy is renamed exported_*.
+RESERVED_LABELS = ("job", "instance")
+# Per-service exceptions to the `labels` rule, keyed by Prometheus job. Each is
+# removed when that service stops exporting the label; never add one without
+# naming the rule and the removal condition here.
+LABEL_EXCEPTIONS = {
+    # labels rule: a consumer service's job metrics still carry a `job` label
+    # (fix lives in its own repo). Remove once it renames that label.
+    "finance-sentry-api": {"job"},
 }
 PROM_TYPES = ("text/plain; version=0.0.4", "application/openmetrics-text")
 # Serilog compact JSON writes @tr; OpenClaw and most OTel log bridges traceId /
@@ -267,7 +278,7 @@ def check(c: dict, targets: list[dict]) -> dict[str, tuple[str, str]]:
 
     mpath = label(labels, "metrics")
     if not mpath:
-        r["metrics"] = r["scraped"] = ("FAIL", "no label")
+        r["metrics"] = r["scraped"] = r["labels"] = ("FAIL", "no label")
     else:
         hosts = {f"{name}:{port}", f"{ip}:{port}"} | {
             f"{a}:{port}"
@@ -306,6 +317,11 @@ def check(c: dict, targets: list[dict]) -> dict[str, tuple[str, str]]:
                 f"GET {mpath} -> {code} {ctype.split(';')[0]}",
             )
         r["scraped"] = scraped
+        r["labels"] = (
+            label_verdict(job, instance)
+            if up
+            else ("FAIL", "no up target to read labels from")
+        )
 
     logs = subprocess.run(
         ["docker", "logs", "--tail", str(LOG_LINES), c["Id"]],
@@ -342,6 +358,40 @@ def check(c: dict, targets: list[dict]) -> dict[str, tuple[str, str]]:
         if item not in ENFORCED and verdict == "FAIL":
             r[item] = ("SKIP", f"{SKIP_REASON[item]}: {detail}")
     return r
+
+
+def reserved_label_clashes(job: str, instance: str) -> list[str]:
+    """Reserved labels the target's own series tried to set (renamed exported_*)."""
+    found = []
+    for name in RESERVED_LABELS:
+        query = urllib.parse.urlencode(
+            {
+                "query": f'count({{job="{job}",instance="{instance}",'
+                f'exported_{name}=~".+"}})'
+            }
+        )
+        try:
+            with urllib.request.urlopen(
+                f"{PROMETHEUS_URL}/api/v1/query?{query}", timeout=TIMEOUT
+            ) as resp:
+                if json.load(resp)["data"]["result"]:
+                    found.append(name)
+        except (OSError, ValueError, KeyError):
+            return ["unreadable"]
+    return found
+
+
+def label_verdict(job: str, instance: str) -> tuple[str, str]:
+    found = reserved_label_clashes(job, instance)
+    if found == ["unreadable"]:
+        return "FAIL", "Prometheus query failed"
+    allowed = LABEL_EXCEPTIONS.get(job, set())
+    bad = [n for n in found if n not in allowed]
+    if bad:
+        return "FAIL", f"exports reserved label(s) {', '.join(bad)} (see contract)"
+    if found:
+        return "PASS", f"reserved label(s) {', '.join(found)} excepted for job={job}"
+    return "PASS", "no job/instance label exported"
 
 
 def scraped_samples(job: str, instance: str) -> float:
