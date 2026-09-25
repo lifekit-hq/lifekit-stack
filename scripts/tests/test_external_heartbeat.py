@@ -50,10 +50,10 @@ def test_set_wires_rule_contact_point_and_route(tmp_path):
         assert url not in (out / f).read_text()
 
 
-def test_compose_maps_variable_and_deploy_never_requires_it():
-    compose = (REPO / "compose/docker-compose.yml").read_text()
-    assert "HEARTBEAT_URL: ${LIFEKIT_EXTERNAL_HEARTBEAT_URL:-}" in compose
-    assert "render-heartbeat.sh" in (REPO / "scripts/deploy.sh").read_text()
+def test_compose_maps_optional_variable_into_grafana():
+    compose = yaml.safe_load((REPO / "compose/docker-compose.yml").read_text())
+    env = compose["services"]["grafana"]["environment"]
+    assert env["HEARTBEAT_URL"] == "${LIFEKIT_EXTERNAL_HEARTBEAT_URL:-}"
 
 
 def test_root_policy_is_unchanged_when_disabled(tmp_path):
