@@ -253,6 +253,100 @@ groups:
             has used more than 90% of its memory cap for 10 minutes. The next
             step is the OOM killer and a restart. `docker stats --no-stream {{ $labels.name }}`.
 
+      - uid: docker-exporter-scrape-errors
+        title: docker exporter scrape errors above zero
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # The exporter's own self-check: it stays `up` (a healthy HTTP
+              # response) even when it cannot read the Docker daemon socket,
+              # so every other `box` rule that reads docker_container_* goes
+              # blind quietly instead of loudly (ls-177 audit §3.3).
+              expr: docker_exporter_scrape_errors
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # A vanished target is target-down's job, not this rule's.
+        noDataState: OK
+        execErrState: Error
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: the container exporter cannot read the Docker daemon
+          description: >-
+            docker_exporter_scrape_errors has been above zero for 3 minutes:
+            the exporter still answers /metrics but every docker_container_*
+            series it reports may be stale or missing, so the other `box`
+            rules can no longer be trusted. `docker logs
+            compose-container-exporter-1` and check the daemon socket mount.
+
+      - uid: container-oom-killed
+        title: a container was OOM-killed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # The only signal that fires for containers without a memory
+              # cap, where the usage/limit ratio silently reads as "% of the
+              # whole box" instead of "% of its limit" (ls-177 audit §4.3).
+              expr: docker_container_oom_killed
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.name }} was OOM-killed"
+          description: >-
+            docker_container_oom_killed is 1 for {{ $labels.name }} (compose
+            {{ $labels.project }}/{{ $labels.service }}): the kernel killed a
+            process in this container for using too much memory. `dmesg -T |
+            grep -i "killed process"` and `docker logs --tail 100
+            {{ $labels.name }}` show which process and what it was doing.
+
       - uid: root-filesystem-low-space
         title: root filesystem is low on free space
         condition: C
@@ -695,3 +789,257 @@ groups:
             failed` (also timed_out, lost) and `openclaw tasks audit` for
             background tasks. An expired Claude or OpenAI login fails every run
             at once.{{ end }}
+
+  # ls-177 S1: the alerting system watching itself. Grafana and Prometheus
+  # both now feed their own /metrics into Prometheus (prometheus.yml); these
+  # rules are the alert path's self-test - without them a broken Telegram
+  # delivery, a stuck config reload, or a failing compaction all look the
+  # same as "nothing happened" from the outside.
+  - orgId: 1
+    name: observability
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: grafana-notification-delivery-failing
+        title: Grafana alert notification delivery is failing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Either counter rising means the same thing: a rule fired and
+              # the page did not reach the contact point. Every rule in this
+              # file - and every rule that follows it - is worthless if this
+              # goes unwatched (ls-177 audit §3.1, the highest-value gap).
+              expr: >-
+                sum(increase(grafana_alerting_notifications_failed_total[15m]))
+                  or
+                sum(increase(grafana_alerting_notification_requests_failed_total[15m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # A vanished Grafana target is target-down's job, not this rule's.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          service: grafana
+          severity: critical
+        annotations:
+          summary: Grafana could not deliver an alert notification
+          description: >-
+            grafana_alerting_notifications_failed_total or
+            grafana_alerting_notification_requests_failed_total rose in the
+            last 15 minutes and stayed above zero for 5 minutes: Grafana
+            evaluated a rule and the notification did not reach the contact
+            point. Known limitation: this alert itself reaches the owner
+            through the same Telegram path, so it gives no coverage if
+            Telegram or the box's egress is down - check the Grafana
+            container logs for the delivery error, then the bot token and
+            chat id in contact-points.yml.
+
+      - uid: grafana-rule-evaluation-failing
+        title: Grafana alert rule evaluation is failing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # A rule stuck in execErrState: Error shows only in the
+              # Grafana UI today; nothing outside it can see the failure.
+              expr: sum(increase(grafana_alerting_rule_evaluation_failures_total[15m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          service: grafana
+          severity: critical
+        annotations:
+          summary: a Grafana alert rule is erroring instead of evaluating
+          description: >-
+            grafana_alerting_rule_evaluation_failures_total rose in the last
+            15 minutes and stayed above zero for 5 minutes: at least one
+            provisioned rule is failing to evaluate (a bad query, a
+            datasource error) rather than reporting Normal or Alerting.
+            The Grafana alerting UI shows which rule and its last error.
+
+      - uid: prometheus-config-reload-failing
+        title: Prometheus config reload is not successful
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # deploy.sh SIGHUPs Prometheus on every deploy; a bad
+              # prometheus.yml leaves the OLD config running silently behind
+              # a green deploy (ls-177 audit §3.1).
+              expr: prometheus_config_last_reload_successful
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        # A vanished Prometheus target is target-down's job, not this rule's.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          service: prometheus
+          severity: critical
+        annotations:
+          summary: Prometheus is serving a stale config
+          description: >-
+            prometheus_config_last_reload_successful has been 0 for 5
+            minutes: the last SIGHUP reload (deploy.sh, or a manual
+            `promtool` edit) failed and Prometheus is still running its
+            previous config. Check the Prometheus container logs for the
+            parse error, fix prometheus.yml, and reload again.
+
+      - uid: prometheus-tsdb-compaction-failing
+        title: Prometheus TSDB compaction is failing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Compaction failures mean storage is degrading before the 5GB
+              # retention cap silently starts evicting history.
+              expr: increase(prometheus_tsdb_compactions_failed_total[15m])
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: prometheus
+          severity: warning
+        annotations:
+          summary: Prometheus TSDB compaction is failing
+          description: >-
+            prometheus_tsdb_compactions_failed_total rose in the last 15
+            minutes: the local block storage is not compacting cleanly.
+            Left alone this degrades query performance and can eventually
+            block ingestion. Check the Prometheus container logs for the
+            compaction error and the disk behind the `prometheus_data`
+            volume.
+
+      - uid: prometheus-notifications-dropped
+        title: Prometheus is dropping notifications
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Prometheus queues notifications for its configured
+              # Alertmanager receivers and drops them if the queue is full or
+              # every receiver is unreachable - a silent loss on the way out,
+              # independent of grafana-notification-delivery-failing.
+              expr: increase(prometheus_notifications_dropped_total[15m])
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: prometheus
+          severity: critical
+        annotations:
+          summary: Prometheus is dropping outgoing notifications
+          description: >-
+            prometheus_notifications_dropped_total rose in the last 15
+            minutes: Prometheus could not hand a notification to a
+            configured Alertmanager receiver. Check the Prometheus container
+            logs for the delivery error.
