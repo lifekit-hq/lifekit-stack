@@ -37,7 +37,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/testvenv"
           "$RUNNER_TEMP/testvenv/bin/pip" install --quiet --upgrade pip
-          "$RUNNER_TEMP/testvenv/bin/pip" install --quiet pytest
+          "$RUNNER_TEMP/testvenv/bin/pip" install --quiet pytest pyyaml
           "$RUNNER_TEMP/testvenv/bin/python" -m pytest -q compose/container-exporter/tests scripts/quota-share/tests scripts/tests
 
       # notify-relay's renderer + route tests (node:test, no deps). The runner
