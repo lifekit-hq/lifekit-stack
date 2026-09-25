@@ -591,7 +591,8 @@ services:
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-}
       # Iframe embedding by the dashboard. Removing X-Frame-Options is only safe
       # because the CSP below pins frame-ancestors to the single origin in
-      # GRAFANA_EMBED_ORIGIN; unset -> 'none', so nothing can frame Grafana.
+      # GRAFANA_EMBED_ORIGIN (set explicitly or derived by deploy.sh from the tailnet
+      # name); unset -> 'none', so nothing can frame Grafana.
       # Coupling: anonymous Viewer (GF_AUTH_ANONYMOUS_*) stays OFF here. If
       # Grafana's exposure ever changes, anonymous Viewer must be reverted in the
       # same change. The rest of the CSP is Grafana 11's stock template ($$ =
