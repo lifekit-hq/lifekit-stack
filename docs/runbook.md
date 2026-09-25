@@ -74,10 +74,15 @@ root-owned `.bak-*` leftovers from hand edits make the archive fail with
 EACCES and stall the Codex session-sidecar migration. Fix with
 `sudo find /srv/openclaw/config ! -user lifekit -exec chown lifekit:lifekit {} +`.
 
-To rehearse a bump without touching live state: rsync `/srv/openclaw/config`
-(minus `browser`, `tools`, `logs`) and the workspace to scratch dirs, run
-the same `doctor --fix --non-interactive` with the new image against the
-copies, read the doctor log and `doctor --json`, then delete the copies.
+To rehearse a bump without touching live state, run
+`scripts/rehearse-openclaw-bump.sh` as the `lifekit` account (`--help` lists
+the flags). It builds the image as `lifekit-openclaw:rehearse` (never `:local`
+or `:prev`), copies the state and workspace under `~/rehearsal/`, runs
+`doctor --fix` twice plus the SQLite dry-run and a `doctor --json` lint on the
+copy, checks plugin versions against core, and prints a summary of key paths and
+counts with no config values. `--lint-only` is the quick read-only pass against
+live state. The full doctor logs stay in the copy, which a red run keeps (pruned
+after 7 days) and a green run removes.
 
 Skill/vault/compose changes without an OpenClaw bump deploy the same way:
 merge to `main`, CI deploys. Direct on the VPS only when CI is down:
