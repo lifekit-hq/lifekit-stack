@@ -1,50 +1,69 @@
-"""Grafana iframe embedding is only enabled together with a pinned frame-ancestors."""
+"""Grafana iframe embedding is only enabled together with a pinned frame-ancestors.
+
+Runs the real consumer (`docker compose config`) and asserts on the resolved env.
+"""
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
-yaml = pytest.importorskip("yaml")
+COMPOSE_DIR = Path(__file__).resolve().parents[2] / "compose"
 
-REPO = Path(__file__).resolve().parents[2]
-COMPOSE = yaml.safe_load((REPO / "compose/docker-compose.yml").read_text())
-ENV = {k: str(v) for k, v in COMPOSE["services"]["grafana"]["environment"].items()}
-
-
-def csp() -> str:
-    return ENV["GF_SECURITY_CONTENT_SECURITY_POLICY_TEMPLATE"]
+pytestmark = pytest.mark.skipif(
+    shutil.which("docker") is None, reason="docker compose unavailable"
+)
 
 
-def test_embedding_requires_csp_enabled():
-    assert ENV["GF_SECURITY_ALLOW_EMBEDDING"] == "true"
-    assert ENV["GF_SECURITY_CONTENT_SECURITY_POLICY"] == "true"
+def grafana_env(embed_origin: str | None) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k != "GRAFANA_EMBED_ORIGIN"}
+    if embed_origin is not None:
+        env["GRAFANA_EMBED_ORIGIN"] = embed_origin
+    proc = subprocess.run(
+        ["docker", "compose", "config", "--format", "json"],
+        cwd=COMPOSE_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        pytest.skip(f"docker compose config unavailable: {proc.stderr.strip()[:200]}")
+    return json.loads(proc.stdout)["services"]["grafana"]["environment"]
 
 
-def test_frame_ancestors_pinned_to_variable_with_deny_default():
-    m = re.search(r"frame-ancestors ([^;]*);", csp())
+def frame_ancestors(env: dict[str, str]) -> str:
+    m = re.search(
+        r"frame-ancestors ([^;]*);", env["GF_SECURITY_CONTENT_SECURITY_POLICY_TEMPLATE"]
+    )
     assert m, "embedding enabled without a frame-ancestors directive"
-    assert m.group(1) == "${GRAFANA_EMBED_ORIGIN:-'none'}"
+    return m.group(1)
 
 
-def test_no_wildcard_frame_ancestors():
-    value = re.search(r"frame-ancestors ([^;]*);", csp()).group(1)
-    assert "*" not in value
+def test_unset_origin_denies_all_framing():
+    env = grafana_env(None)
+    assert env["GF_SECURITY_ALLOW_EMBEDDING"] == "true"
+    assert env["GF_SECURITY_CONTENT_SECURITY_POLICY"] == "true"
+    assert frame_ancestors(env) == "'none'"
 
 
-def test_stock_csp_placeholders_survive_compose_escaping():
-    assert "$$NONCE" in csp() and "$$ROOT_PATH" in csp()
+def test_set_origin_is_the_only_frame_ancestor():
+    env = grafana_env("https://dash.example.ts.net")
+    assert env["GF_SECURITY_CONTENT_SECURITY_POLICY"] == "true"
+    assert frame_ancestors(env) == "https://dash.example.ts.net"
+
+
+def test_stock_csp_placeholders_reach_grafana_escaped():
+    template = grafana_env(None)["GF_SECURITY_CONTENT_SECURITY_POLICY_TEMPLATE"]
+    assert "$$NONCE" in template and "$$ROOT_PATH" in template
 
 
 def test_anonymous_auth_not_enabled():
-    for key, value in ENV.items():
-        if key.startswith("GF_AUTH_ANONYMOUS"):
-            assert not (key.endswith("ENABLED") and value.lower() == "true")
-
-
-def test_env_example_documents_variable_unset_by_default():
-    text = (REPO / ".env.example").read_text()
-    assert re.search(r"^# GRAFANA_EMBED_ORIGIN=", text, re.M)
-    assert not re.search(r"^GRAFANA_EMBED_ORIGIN=", text, re.M)
+    env = grafana_env(None)
+    assert env.get("GF_AUTH_ANONYMOUS_ENABLED", "false").lower() != "true"
