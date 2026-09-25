@@ -1,63 +1,125 @@
-"""Invariants of the provisioned Grafana alert rules (no Docker, no network, no YAML dep)."""
+"""Semantics of the provisioned Grafana alert rules, parsed as YAML.
+
+Docker metric names are checked against what the exporter really emits for a
+fake daemon, not against its source text.
+"""
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 
+import pytest
+
+yaml = pytest.importorskip("yaml")
+
 REPO = Path(__file__).resolve().parents[2]
-RULES = (
-    REPO / "compose/observability/grafana/provisioning/alerting/rules.yml"
-).read_text()
+DOC = yaml.safe_load(
+    (
+        REPO / "compose/observability/grafana/provisioning/alerting/rules.yml"
+    ).read_text()
+)
+RULES = {r["uid"]: r for g in DOC["groups"] for r in g["rules"]}
 
-# Metric names the stack really produces, from the exporters' own sources and
-# node-exporter / Grafana / Prometheus built-ins.
-EXPORTER = (REPO / "compose/container-exporter/exporter.py").read_text()
-DOCKER_METRICS = set(re.findall(r'"(docker_[a-z_]+)"', EXPORTER))
+_SPEC = importlib.util.spec_from_file_location(
+    "exporter", REPO / "compose/container-exporter/exporter.py"
+)
+exporter = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(exporter)
 
 
-def rule_blocks() -> dict[str, str]:
-    parts = re.split(r"^      - uid: ([a-z0-9-]+)\n", RULES, flags=re.M)
-    return dict(zip(parts[1::2], parts[2::2]))
+def emitted_docker_metrics() -> set[str]:
+    inspect = {
+        "Id": "x",
+        "Name": "/x",
+        "RestartCount": 0,
+        "State": {
+            "Status": "running",
+            "Running": True,
+            "Restarting": False,
+            "OOMKilled": False,
+            "ExitCode": 0,
+            "StartedAt": "2026-09-13T09:23:03.800309061Z",
+            "FinishedAt": "2026-09-13T09:23:05.689913813Z",
+            "Health": {"Status": "healthy"},
+        },
+        "Config": {"Labels": {}},
+    }
+    stats = {"memory_stats": {"usage": 2, "limit": 3, "stats": {"inactive_file": 1}}}
+    samples = exporter.container_samples(inspect, stats)
+    samples.append(("docker_exporter_scrape_errors", {}, 0.0))
+    return {name for name, _, _ in samples}
 
 
-def exprs(block: str) -> str:
-    return "\n".join(
-        re.findall(r"^\s+expr: (?:>-\n)?((?:.+\n?)+?)(?=\s+instant:)", block, re.M)
-    )
+def queries(rule: dict) -> list[str]:
+    return [
+        d["model"]["expr"] for d in rule["data"] if d["datasourceUid"] == "prometheus"
+    ]
+
+
+def threshold(rule: dict) -> tuple[str, float]:
+    (cond,) = [
+        d for d in rule["data"] if d["model"]["refId"] == rule["condition"]
+    ]
+    evaluator = cond["model"]["conditions"][0]["evaluator"]
+    return evaluator["type"], evaluator["params"][0]
 
 
 def test_no_rule_is_paused():
-    assert "isPaused" not in RULES
+    assert not [uid for uid, r in RULES.items() if r.get("isPaused")]
 
 
-def test_dropped_metric_and_retired_rule_gone():
-    assert "openclaw_prometheus_series_dropped_total" not in RULES
-    assert "container-memory-near-limit" not in rule_blocks()
-    assert re.search(r"deleteRules:.*uid: container-memory-near-limit", RULES, re.S)
-    assert "docker_container_memory_limit_bytes" not in RULES
+def test_retired_rule_is_deleted_not_provisioned():
+    assert "container-memory-near-limit" not in RULES
+    assert "container-memory-near-limit" in {r["uid"] for r in DOC["deleteRules"]}
 
 
-def test_docker_metrics_referenced_exist():
-    for uid, block in rule_blocks().items():
-        for name in re.findall(r"\bdocker_[a-z_]+", exprs(block)):
-            assert name in DOCKER_METRICS, f"{uid}: {name} is not exported"
+def test_rules_only_reference_real_metrics():
+    exprs = "\n".join(e for r in RULES.values() for e in queries(r))
+    assert "openclaw_prometheus_series_dropped_total" not in exprs
+    assert "docker_container_memory_limit_bytes" not in exprs
+    real = emitted_docker_metrics()
+    for uid, rule in RULES.items():
+        for expr in queries(rule):
+            for name in re.findall(r"\bdocker_[a-z_]+", expr):
+                assert name in real, f"{uid}: {name} is not exported"
 
 
-def test_new_rules_present_with_severity():
-    blocks = rule_blocks()
-    want = {
-        "container-oom-killed": ("docker_container_oom_killed", "critical"),
-        "root-filesystem-readonly": ("node_filesystem_readonly", "critical"),
-        "textfile-collector-stale": ("node_textfile_mtime_seconds", "warning"),
-        "textfile-collector-scrape-error": ("node_textfile_scrape_error", "warning"),
-        "claude-quota-behind-pace": ("claude_quota_reserve_percent_points", "warning"),
-    }
-    for uid, (metric, severity) in want.items():
-        assert uid in blocks, uid
-        assert metric in exprs(blocks[uid]), uid
-        assert f"severity: {severity}" in blocks[uid], uid
+@pytest.mark.parametrize(
+    ("uid", "metric", "severity", "op", "limit"),
+    [
+        ("container-oom-killed", "docker_container_oom_killed", "critical", "gt", 0),
+        ("root-filesystem-readonly", "node_filesystem_readonly", "critical", "gt", 0),
+        (
+            "textfile-collector-stale",
+            "node_textfile_mtime_seconds",
+            "warning",
+            "gt",
+            900,
+        ),
+        (
+            "textfile-collector-scrape-error",
+            "node_textfile_scrape_error",
+            "warning",
+            "gt",
+            0,
+        ),
+    ],
+)
+def test_new_rules(uid, metric, severity, op, limit):
+    rule = RULES[uid]
+    assert any(metric in e for e in queries(rule))
+    assert rule["labels"]["severity"] == severity
+    assert threshold(rule) == (op, limit)
 
 
-def test_no_five_hour_quota_rule():
-    assert "five_hour" not in RULES
+def test_quota_pace_rule_active_and_no_five_hour_rule():
+    rule = RULES["claude-quota-behind-pace"]
+    assert rule["labels"]["severity"] == "warning"
+    assert any("claude_quota_reserve_percent_points" in e for e in queries(rule))
+    assert not [
+        uid
+        for uid, r in RULES.items()
+        if any("five_hour" in e for e in queries(r))
+    ]

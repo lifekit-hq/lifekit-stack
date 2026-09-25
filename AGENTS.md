@@ -16,7 +16,7 @@ binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 
 ```bash
 pre-commit run --all-files                 # THE local gate — exactly what CI's lint job runs
-python3 -m venv .venv && .venv/bin/pip install --quiet pytest
+python3 -m venv .venv && .venv/bin/pip install --quiet pytest pyyaml
 .venv/bin/python -m pytest compose/container-exporter/tests scripts/quota-share/tests scripts/tests   # the CI tests job
 (cd compose/notify-relay && node --test)   # notify-relay renderer + route tests; CI runs them in node:22-trixie-slim
 bash scripts/check-doc-drift.sh            # README <-> compose service-count parity
