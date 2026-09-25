@@ -86,3 +86,35 @@ scrape_configs:
       credentials_file: /run/secrets/openclaw_gateway_token
     static_configs:
       - targets: ['openclaw-gateway:18789']
+
+  # The observability stack scraping itself (ls-177 S1): Grafana, Prometheus,
+  # Loki, Tempo and the OTel collector all already serve /metrics on their own
+  # compose network address. Without these jobs the alert path has no way to
+  # detect its own failure - a broken Telegram delivery or a bad config
+  # reload would leave the box looking green. `up{job=~"grafana|prometheus|
+  # loki|tempo|otel-collector"}` rides the generic target-down rule like
+  # every other job here.
+  - job_name: grafana
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['grafana:3000']
+
+  - job_name: prometheus
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['prometheus:9090']
+
+  - job_name: loki
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['loki:3100']
+
+  - job_name: tempo
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['tempo:3200']
+
+  - job_name: otel-collector
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['otel-collector:8888']
