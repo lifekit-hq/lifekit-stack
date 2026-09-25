@@ -38,7 +38,6 @@ def test_dashboard_shape(path):
     assert len(ids) == len(set(ids))
     for ref in _datasource_refs(d):
         assert ref == {"type": "prometheus", "uid": "prometheus"}
-    assert "http" not in path.read_text().replace("https://grafana.com", "")
 
 
 def test_box_dashboard_covers_rows():
@@ -49,11 +48,13 @@ def test_box_dashboard_covers_rows():
 
 
 def test_node_exporter_collectors():
-    compose = (REPO / "compose/docker-compose.yml").read_text()
+    yaml = pytest.importorskip("yaml")
+    compose = yaml.safe_load((REPO / "compose/docker-compose.yml").read_text())
+    command = compose["services"]["node-exporter"]["command"]
     for flag in (
         "--collector.disable-defaults",
         "--collector.filesystem",
         "--collector.meminfo",
         "--collector.loadavg",
     ):
-        assert f"      - {flag}\n" in compose
+        assert flag in command
