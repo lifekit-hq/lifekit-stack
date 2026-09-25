@@ -589,6 +589,22 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-}
+      # Iframe embedding by the dashboard. Removing X-Frame-Options is only safe
+      # because the CSP below pins frame-ancestors to the single origin in
+      # GRAFANA_EMBED_ORIGIN; unset -> 'none', so nothing can frame Grafana.
+      # Coupling: anonymous Viewer (GF_AUTH_ANONYMOUS_*) stays OFF here. If
+      # Grafana's exposure ever changes, anonymous Viewer must be reverted in the
+      # same change. The rest of the CSP is Grafana 11's stock template ($$ =
+      # compose escape for Grafana's $NONCE / $ROOT_PATH placeholders).
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_CONTENT_SECURITY_POLICY: "true"
+      GF_SECURITY_CONTENT_SECURITY_POLICY_TEMPLATE: >-
+        script-src 'self' 'unsafe-eval' 'unsafe-inline' 'strict-dynamic' $$NONCE;
+        object-src 'none'; font-src 'self'; style-src 'self' 'unsafe-inline' blob:;
+        img-src * data:; base-uri 'self';
+        connect-src 'self' grafana.com ws://$$ROOT_PATH wss://$$ROOT_PATH;
+        manifest-src 'self'; media-src 'none'; form-action 'self';
+        frame-ancestors ${GRAFANA_EMBED_ORIGIN:-'none'};
       # Alert delivery — $TELEGRAM_BOT_TOKEN is expanded into
       # provisioning/alerting/contact-points.yml (the same devclaw bot
       # notify-relay uses, falling back to Kit's). The chat id is NOT passed:
