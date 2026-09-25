@@ -164,6 +164,7 @@ def box(monkeypatch):
         },
         "logs": [JSON_LINE] * 5,
         "samples": 20.0,
+        "clashes": [],
     }
     monkeypatch.setattr(
         pc,
@@ -171,6 +172,9 @@ def box(monkeypatch):
         lambda url, headers=None: state["http"].get(url.split(":8090")[1], (404, "")),
     )
     monkeypatch.setattr(pc, "scraped_samples", lambda job, instance: state["samples"])
+    monkeypatch.setattr(
+        pc, "reserved_label_clashes", lambda job, instance: list(state["clashes"])
+    )
     monkeypatch.setattr(
         pc.subprocess,
         "run",
@@ -186,6 +190,7 @@ def test_conforming_container_passes(box):
         "ready": "PASS",
         "metrics": "PASS",
         "scraped": "PASS",
+        "labels": "PASS",
         "logs": "PASS",
         "traces": "SKIP",
         "edge": "PASS",
@@ -249,3 +254,29 @@ def test_up_target_without_samples_fails(box):
     r = pc.check(container(labels), [target("notify-relay:8090")])
     assert r["scraped"] == ("FAIL", "job=notify-relay up but exports no samples")
     assert r["metrics"][0] == "FAIL"
+
+
+def test_labels_pass_when_no_reserved_label_exported(box):
+    r = pc.check(container(V1), [target("notify-relay:8090")])
+    assert r["labels"][0] == "PASS"
+
+
+@pytest.mark.parametrize("name", ["job", "instance"])
+def test_labels_fail_on_reserved_label(box, name):
+    box["clashes"] = [name]
+    r = pc.check(container(V1), [target("notify-relay:8090")])
+    assert r["labels"][0] == "FAIL" and name in r["labels"][1]
+
+
+def test_labels_exception_is_per_job_and_per_label(box, monkeypatch):
+    monkeypatch.setattr(pc, "LABEL_EXCEPTIONS", {"old-svc": {"job"}})
+    box["clashes"] = ["job"]
+    assert pc.label_verdict("old-svc", "x")[0] == "PASS"
+    assert pc.label_verdict("other", "x")[0] == "FAIL"
+    box["clashes"] = ["instance"]
+    assert pc.label_verdict("old-svc", "x")[0] == "FAIL"
+
+
+def test_labels_query_failure_fails(monkeypatch):
+    monkeypatch.setattr(pc, "reserved_label_clashes", lambda j, i: ["unreadable"])
+    assert pc.label_verdict("a", "b")[0] == "FAIL"
