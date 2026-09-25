@@ -263,7 +263,7 @@ sed "s/__TELEGRAM_CHAT_ID__/${CHAT_ID}/" \
   "${ALERT_DIR}/contact-points.yml.tmpl" > "${ALERT_DIR}/contact-points.yml"
 
 # Optional external dead-man heartbeat (docs/runbook.md "External heartbeat").
-# Unset = disabled: deploy continues and the heartbeat rule and contact point are deleted.
+# Unset = disabled: deploy continues and the watchdog rule is deleted.
 HEARTBEAT_URL="$(sed -nE 's/^[[:space:]]*LIFEKIT_EXTERNAL_HEARTBEAT_URL=["'"'"']?([^"'"'"'[:space:]]+)["'"'"']?[[:space:]]*$/\1/p' \
   "${ENV_FILE}" | head -1)"
 bash "${REPO_DIR}/scripts/render-heartbeat.sh" "${ALERT_DIR}" "${HEARTBEAT_URL}"

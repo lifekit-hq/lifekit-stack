@@ -29,7 +29,7 @@ def test_unset_disables_cleanly(tmp_path):
     out = render(tmp_path, "")
     hb = yaml.safe_load((out / "heartbeat.yml").read_text())
     assert hb["deleteRules"] == [{"orgId": 1, "uid": "external-heartbeat-watchdog"}]
-    assert hb["deleteContactPoints"] == [{"orgId": 1, "uid": "external-heartbeat"}]
+    assert "deleteContactPoints" not in hb
     assert "groups" not in hb and "contactPoints" not in hb
     doc = yaml.safe_load((out / "policies.yml").read_text())
     assert "routes" not in doc["policies"][0]

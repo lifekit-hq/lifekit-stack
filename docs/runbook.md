@@ -600,7 +600,7 @@ account only the owner can create; expected period a few minutes plus a grace
 period, notifying the owner by a channel independent of the box), then set its
 ping URL as `LIFEKIT_EXTERNAL_HEARTBEAT_URL` in the box env file
 and deploy. The URL is a secret: env file only, never in the repo. Unset =
-disabled; deploy renders no heartbeat files and continues. Changing the
+disabled; deploy provisions a delete of the watchdog rule (so disabling after enabling stops the pings) and continues. Changing the
 variable needs the Grafana container recreated (a deploy does it).
 
 ## When Telegram goes silent
