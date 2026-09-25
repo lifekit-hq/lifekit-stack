@@ -611,6 +611,9 @@ services:
       # Grafana re-types an all-digit env value as a number and the telegram
       # integration rejects it, so contact-points.yml carries it literally.
       TELEGRAM_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}
+      # Secret ping URL of the external dead-man check; empty = disabled
+      # (heartbeat.yml is then not rendered, scripts/render-heartbeat.sh).
+      HEARTBEAT_URL: ${LIFEKIT_EXTERNAL_HEARTBEAT_URL:-}
       TZ: ${OPENCLAW_TZ:-UTC}
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"

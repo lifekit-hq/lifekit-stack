@@ -582,6 +582,27 @@ vault runbook for owner detail.
 
 Snapshot these via Hetzner Backups (built-in, ~20% extra/mo) or rsync to another box.
 
+## External heartbeat (dead-man)
+
+The box's own alerts watch the box, so they cannot report the box, Docker,
+Grafana's alerting or the notifier being dead. An always-firing Watchdog rule
+routes to a webhook contact point that pings a heartbeat check hosted outside
+the box every few minutes; the external service alerts the owner when the pings
+stop. Because the ping is Grafana's own notification, it proves rule
+evaluation and delivery are alive, not just the host.
+
+**What its alert means:** the check has not been pinged within its grace
+period. Suspect the host, Docker, Grafana, or the box's outbound network, in
+that order; `docker ps`, then Grafana logs.
+
+**Enable:** create a heartbeat/cron-style check with an external service (an
+account only the owner can create; expected period a few minutes plus a grace
+period, notifying the owner by a channel independent of the box), then set its
+ping URL as `LIFEKIT_EXTERNAL_HEARTBEAT_URL` in the box env file
+and deploy. The URL is a secret: env file only, never in the repo. Unset =
+disabled; deploy renders no heartbeat files and continues. Changing the
+variable needs the Grafana container recreated (a deploy does it).
+
 ## When Telegram goes silent
 
 Symptom: your bot stops responding, no errors visible.

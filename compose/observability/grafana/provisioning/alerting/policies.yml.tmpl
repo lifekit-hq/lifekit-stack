@@ -1,3 +1,5 @@
+# TEMPLATE - scripts/render-heartbeat.sh renders this to policies.yml (gitignored),
+# adding the external-heartbeat route only when the heartbeat is enabled.
 # The notification policy tree: everything to the Telegram contact point.
 # One ping when an alert starts firing, one when it resolves; a still-firing
 # alert is repeated every 4h so a silent night is never mistaken for a fixed one.
@@ -10,3 +12,4 @@ policies:
     group_wait: 30s
     group_interval: 5m
     repeat_interval: 4h
+__HEARTBEAT_ROUTES__
