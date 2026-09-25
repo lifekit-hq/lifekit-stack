@@ -31,7 +31,7 @@ def resolved_services() -> dict[str, dict]:
         check=False,
     )
     if proc.returncode != 0:
-        pytest.skip(f"docker compose config unavailable: {proc.stderr.strip()[:200]}")
+        pytest.fail(f"docker compose config failed: {proc.stderr.strip()[:500]}")
     return json.loads(proc.stdout)["services"]
 
 
