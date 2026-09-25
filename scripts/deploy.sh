@@ -187,6 +187,18 @@ say "openclaw trustedProxies"
 ENV_FILE="${ENV_FILE}" COMPOSE_FILE="${COMPOSE_FILE}" OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" \
   "${REPO_DIR}/scripts/deploy-trusted-proxies.sh"
 
+# Grafana's frame-ancestors origin: an explicit GRAFANA_EMBED_ORIGIN wins,
+# otherwise derived from the host's tailnet name (none derivable -> unset,
+# embedding stays denied). Exported for compose interpolation only - the
+# live env file is never written. Logic in scripts/deploy-embed-origin.sh.
+say "grafana embed origin"
+GRAFANA_EMBED_ORIGIN="$(ENV_FILE="${ENV_FILE}" "${REPO_DIR}/scripts/deploy-embed-origin.sh" || true)"
+if [[ -n "${GRAFANA_EMBED_ORIGIN}" ]]; then
+  export GRAFANA_EMBED_ORIGIN
+else
+  unset GRAFANA_EMBED_ORIGIN
+fi
+
 # ─── lifekit-dashboard: deployed from its own repo now (decoupling slice 2) ──
 #
 # The dashboard deploys from lifekit-hq/lifekit-dashboard's own deploy/
