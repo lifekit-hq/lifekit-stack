@@ -389,7 +389,9 @@ groups:
         annotations:
           summary: "root filesystem is mounted read-only"
           description: >-
-            node_filesystem_readonly for / is 1: the kernel remounted the root filesystem read-only, usually after a disk error. Every write on the box fails until it is repaired. `dmesg -T | grep -i -E "remount|I/O error"` shows the cause.
+            node_filesystem_readonly for / is 1: the kernel remounted the root filesystem read-only, usually after a
+            disk error. Every write on the box fails until it is repaired. `dmesg -T | grep -i -E "remount|I/O error"`
+            shows the cause.
 
       - uid: textfile-collector-stale
         title: textfile metrics are stale
@@ -430,7 +432,9 @@ groups:
         annotations:
           summary: "textfile metric file {{ $labels.file }} has not been updated for over 15 minutes"
           description: >-
-            node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. The quota gauge timer refreshes it every 5 minutes, so its timer or script has stopped and the quota rules are reading stale values. `systemctl --failed` and the gauge unit's journal on the box.
+            node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. The quota gauge
+            timer refreshes it every 5 minutes, so its timer or script has stopped and the quota rules are reading stale
+            values. `systemctl --failed` and the gauge unit's journal on the box.
 
       - uid: textfile-collector-scrape-error
         title: textfile collector cannot read a file
@@ -471,7 +475,9 @@ groups:
         annotations:
           summary: "node-exporter cannot read a textfile metrics file"
           description: >-
-            node_textfile_scrape_error has been above zero for 5 minutes: node-exporter failed to parse or open a file in its textfile directory, so those gauges are missing from Prometheus. Check node-exporter's logs and the files in the textfile directory.
+            node_textfile_scrape_error has been above zero for 5 minutes: node-exporter failed to parse or open a file
+            in its textfile directory, so those gauges are missing from Prometheus. Check node-exporter's logs and the
+            files in the textfile directory.
 
       # The shared Claude account is a box-level resource like disk: one Max
       # subscription serves every consumer on the box (the operator's sessions,
