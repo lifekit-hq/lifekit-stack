@@ -44,7 +44,7 @@ Every service merges the `x-policy` anchor at the top of `compose/docker-compose
 - `init: true`
 - `restart: on-failure:5` — restart loop circuit-breaker; gives up after 5 consecutive failures instead of pinning a CPU forever.
 - `logging.driver: json-file` with `max-size: 50m` and `max-file: 3` — caps each service's on-disk log footprint at ~150MB.
-- `deploy.resources.limits.memory: 1g` — per-service ceiling. Most services override it with their own limit; `compose/docker-compose.yml` is the source for each value.
+- `deploy.resources.limits.memory: 1g` — per-service ceiling. Most services override it with their own limit; `compose/docker-compose.yml` is the source for each value. Every service, profile-gated ones included, must resolve to a limit (a container without one reports the host's total RAM as its limit, which breaks any memory-share signal); `scripts/tests/test_memory_limits.py` fails when one does not.
 
 Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded log + no memory cap on a runaway agent loop ate the disk and pinned RAM until the host froze. The host also gained a **2 GB `/swapfile`** as a second line of defense; `scripts/bootstrap-vps.sh` provisions it.
 
