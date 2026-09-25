@@ -19,6 +19,8 @@ apiVersion: 1
 deleteRules:
   - orgId: 1
     uid: devclaw-down  # folded into box/target-down, 2026-09-13
+  - orgId: 1
+    uid: container-memory-near-limit  # unfireable without a memory cap; container-oom-killed covers it
 
 groups:
   - orgId: 1
@@ -209,50 +211,6 @@ groups:
             not serving. `docker inspect --format '{{"{{"}}json .State.Health{{"}}"}}' {{ $labels.name }}`
             shows the last probe output.
 
-      - uid: container-memory-near-limit
-        title: container memory near its limit
-        condition: C
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: prometheus
-            model:
-              refId: A
-              # Working set over the cgroup limit (the compose memory cap).
-              # A container without a cap reports the host total as its
-              # limit and stays far below this.
-              expr: docker_container_memory_usage_bytes / docker_container_memory_limit_bytes
-              instant: true
-              intervalMs: 1000
-              maxDataPoints: 43200
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              refId: B
-              type: reduce
-              expression: A
-              reducer: last
-              settings: {mode: dropNN}
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: B
-              conditions:
-                - evaluator: {type: gt, params: [0.9]}
-        noDataState: OK
-        execErrState: Error
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "{{ $labels.name }} is above 90% of its memory limit"
-          description: >-
-            {{ $labels.name }} (compose {{ $labels.project }}/{{ $labels.service }})
-            has used more than 90% of its memory cap for 10 minutes. The next
-            step is the OOM killer and a restart. `docker stats --no-stream {{ $labels.name }}`.
-
       - uid: docker-exporter-scrape-errors
         title: docker exporter scrape errors above zero
         condition: C
@@ -310,9 +268,9 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              # The only signal that fires for containers without a memory
-              # cap, where the usage/limit ratio silently reads as "% of the
-              # whole box" instead of "% of its limit" (ls-177 audit §4.3).
+              # Fires with or without a memory cap; it replaced a usage/limit
+              # ratio rule that could not fire for uncapped containers, whose
+              # limit reads as the whole box (ls-177 audit §4.3).
               expr: docker_container_oom_killed
               instant: true
               intervalMs: 1000
@@ -392,12 +350,135 @@ groups:
             been below 15% for 10 minutes. `df -h /` on the box, then
             `docker system df` to find reclaimable image and build cache.
 
+      - uid: root-filesystem-readonly
+        title: root filesystem is read-only
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 1 when the root mount is read-only; exactly one series (pseudo filesystems are excluded by node-exporter).
+              expr: node_filesystem_readonly{mountpoint="/"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # A vanished node-exporter target is target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "root filesystem is mounted read-only"
+          description: >-
+            node_filesystem_readonly for / is 1: the kernel remounted the root filesystem read-only, usually after a disk error. Every write on the box fails until it is repaired. `dmesg -T | grep -i -E "remount|I/O error"` shows the cause.
+
+      - uid: textfile-collector-stale
+        title: textfile metrics are stale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Age of each textfile-collector file; the quota gauge rewrites its file every 5 minutes, so 15 minutes is three missed runs.
+              expr: time() - node_textfile_mtime_seconds
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [900]}
+        # A vanished node-exporter target is target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "textfile metric file {{ $labels.file }} has not been updated for over 15 minutes"
+          description: >-
+            node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. The quota gauge timer refreshes it every 5 minutes, so its timer or script has stopped and the quota rules are reading stale values. `systemctl --failed` and the gauge unit's journal on the box.
+
+      - uid: textfile-collector-scrape-error
+        title: textfile collector cannot read a file
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 1 when the textfile collector failed to read or parse a file.
+              expr: node_textfile_scrape_error
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # A vanished node-exporter target is target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "node-exporter cannot read a textfile metrics file"
+          description: >-
+            node_textfile_scrape_error has been above zero for 5 minutes: node-exporter failed to parse or open a file in its textfile directory, so those gauges are missing from Prometheus. Check node-exporter's logs and the files in the textfile directory.
+
       # The shared Claude account is a box-level resource like disk: one Max
       # subscription serves every consumer on the box (the operator's sessions,
       # firstmate, devclaw, all OpenClaw agents), and every other guard only
       # watches its own corner. scripts/quota-gauge writes claude_quota_* from
       # `quota-axi --json` through node-exporter's textfile collector every
-      # 5 minutes; these two rules watch the weekly window itself.
+      # 5 minutes; these two rules watch the weekly window itself. No five-hour-window rule on purpose.
       - uid: claude-quota-behind-pace
         title: Claude weekly quota is behind pace
         condition: C
@@ -447,9 +528,6 @@ groups:
             `quota-axi` on the box shows every window and the burn multiple;
             the brakes are `openclaw cron disable` for non-essential crons,
             the firstmate quota wake, and devclaw's operator hold.
-        # Paused 2026-09-21 at the owner's request. Re-enabling means deleting
-        # this one line - a paused rule is not a broken one.
-        isPaused: true
 
       - uid: claude-quota-nearly-exhausted
         title: Claude weekly quota is nearly exhausted
@@ -709,11 +787,6 @@ groups:
               # (trigger="user") are excluded on purpose - the person chatting
               # already sees the error - so background task or subagent runs
               # labelled "user" are not covered either.
-              # The third block covers the exporter itself: it caps its store
-              # at 2048 series and refuses new ones once full, so a first-ever
-              # failure series on a long-running gateway would never appear.
-              # A rise in openclaw_prometheus_series_dropped_total fires the
-              # same rule, relabelled trigger="exporter", outcome="series_dropped".
               expr: >-
                 sum by (trigger, outcome) (
                   (increase(openclaw_run_completed_total{trigger="cron", outcome=~"error|aborted|blocked"}[15m]) > 0)
@@ -729,16 +802,6 @@ groups:
                   (openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}
                     and (count_over_time(openclaw_run_completed_total{trigger!~"cron|user", outcome="error"}[15m])
                       < on() group_left() sum_over_time(up{job="openclaw"}[15m])))
-                )
-                or
-                sum by (trigger, outcome) (
-                  label_replace(label_replace(
-                    (increase(openclaw_prometheus_series_dropped_total[15m]) > 0)
-                    or
-                    (openclaw_prometheus_series_dropped_total
-                      and (count_over_time(openclaw_prometheus_series_dropped_total[15m])
-                        < on() group_left() sum_over_time(up{job="openclaw"}[15m]))),
-                  "trigger", "exporter", "", ""), "outcome", "series_dropped", "", "")
                 )
               instant: true
               intervalMs: 1000
@@ -770,25 +833,16 @@ groups:
           service: openclaw
           severity: critical
         annotations:
-          summary: >-
-            {{ if eq $labels.outcome "series_dropped" }}OpenClaw metrics exporter
-            is dropping new series{{ else }}OpenClaw {{ $labels.trigger }} runs
-            ended {{ $labels.outcome }}{{ end }}
+          summary: "OpenClaw {{ $labels.trigger }} runs ended {{ $labels.outcome }}"
           description: >-
-            {{ if eq $labels.outcome "series_dropped" }}The diagnostics-prometheus
-            exporter dropped {{ printf "%.0f" $values.B.Value }} new series in the
-            last 15 minutes: it hit its 2048-series cap, so new failure series
-            may be missing and this rule can miss failed runs until the gateway
-            restarts. Recreate openclaw-gateway, then check `openclaw cron list
-            --all` and `openclaw tasks list --status failed` for anything missed
-            meanwhile.{{ else }}{{ printf "%.0f" $values.B.Value }} OpenClaw agent
-            run(s) with trigger {{ $labels.trigger }} ended {{ $labels.outcome }}
-            in the last 15 minutes. On the box: `docker exec
+            {{ printf "%.0f" $values.B.Value }} OpenClaw agent run(s) with
+            trigger {{ $labels.trigger }} ended {{ $labels.outcome }} in the
+            last 15 minutes. On the box: `docker exec
             compose-openclaw-gateway-1 openclaw cron list --all`, then `openclaw
             cron runs <job-id>` for the error; `openclaw tasks list --status
             failed` (also timed_out, lost) and `openclaw tasks audit` for
             background tasks. An expired Claude or OpenAI login fails every run
-            at once.{{ end }}
+            at once.
 
   # ls-177 S1: the alerting system watching itself. Grafana and Prometheus
   # both now feed their own /metrics into Prometheus (prometheus.yml); these
