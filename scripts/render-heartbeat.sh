@@ -4,8 +4,9 @@
 #
 # Only the presence of the URL is used here; the URL itself reaches Grafana
 # through its container environment, so it never lands in a rendered file.
-# Empty -> heartbeat.yml is removed, policies.yml carries no heartbeat route,
-# and the always-firing watchdog rule does not exist. Never fails on empty.
+# Empty -> heartbeat.yml only deletes the watchdog rule and contact point (file
+# provisioning never removes what it once added), policies.yml carries no
+# heartbeat route. Never fails on empty.
 set -euo pipefail
 
 dir="${1:?alerting dir}"
@@ -22,7 +23,17 @@ if [[ -n "${url}" ]]; then
         group_interval: 1m
         repeat_interval: 5m'
 else
-  rm -f "${dir}/heartbeat.yml"
+  cat > "${dir}/heartbeat.yml" <<'YAML'
+apiVersion: 1
+
+deleteRules:
+  - orgId: 1
+    uid: external-heartbeat-watchdog
+
+deleteContactPoints:
+  - orgId: 1
+    uid: external-heartbeat
+YAML
   route=''
 fi
 
