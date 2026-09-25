@@ -16,9 +16,7 @@ yaml = pytest.importorskip("yaml")
 
 REPO = Path(__file__).resolve().parents[2]
 DOC = yaml.safe_load(
-    (
-        REPO / "compose/observability/grafana/provisioning/alerting/rules.yml"
-    ).read_text()
+    (REPO / "compose/observability/grafana/provisioning/alerting/rules.yml").read_text()
 )
 RULES = {r["uid"]: r for g in DOC["groups"] for r in g["rules"]}
 
@@ -59,9 +57,7 @@ def queries(rule: dict) -> list[str]:
 
 
 def threshold(rule: dict) -> tuple[str, float]:
-    (cond,) = [
-        d for d in rule["data"] if d["model"]["refId"] == rule["condition"]
-    ]
+    (cond,) = [d for d in rule["data"] if d["model"]["refId"] == rule["condition"]]
     evaluator = cond["model"]["conditions"][0]["evaluator"]
     return evaluator["type"], evaluator["params"][0]
 
@@ -119,7 +115,5 @@ def test_quota_pace_rule_active_and_no_five_hour_rule():
     assert rule["labels"]["severity"] == "warning"
     assert any("claude_quota_reserve_percent_points" in e for e in queries(rule))
     assert not [
-        uid
-        for uid, r in RULES.items()
-        if any("five_hour" in e for e in queries(r))
+        uid for uid, r in RULES.items() if any("five_hour" in e for e in queries(r))
     ]
