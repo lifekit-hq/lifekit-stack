@@ -475,7 +475,7 @@ services:
     # Host metrics - the box has none today (2026-09-15: root fs hit 85% used
     # unnoticed, no node_filesystem_* series existed to alert on it). Root fs
     # mounted read-only for filesystem stats only; --collector.disable-defaults
-    # + enabling just `filesystem` keeps this to the one signal we alert on,
+    # + enabling just `filesystem`, `meminfo` and `loadavg` keeps this narrow,
     # matching container-exporter's narrow-scope shape. Loopback-bound, no
     # --net=host: the filesystem collector reads its own /proc/self/mountinfo,
     # which does not require host PID/network namespaces.
@@ -486,6 +486,8 @@ services:
       - --path.rootfs=/host
       - --collector.disable-defaults
       - --collector.filesystem
+      - --collector.meminfo
+      - --collector.loadavg
       - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containers/storage/.+|host/(dev|proc|sys|run))($|/)
       - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs)$
       # Textfile collector: host timers drop *.prom files here (today only
