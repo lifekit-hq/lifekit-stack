@@ -262,6 +262,13 @@ fi
 sed "s/__TELEGRAM_CHAT_ID__/${CHAT_ID}/" \
   "${ALERT_DIR}/contact-points.yml.tmpl" > "${ALERT_DIR}/contact-points.yml"
 
+# Optional external dead-man heartbeat (docs/runbook.md "External heartbeat").
+# Unset = disabled: deploy continues and the watchdog rule is deleted.
+HEARTBEAT_URL="$(sed -nE 's/^[[:space:]]*LIFEKIT_EXTERNAL_HEARTBEAT_URL=["'"'"']?([^"'"'"'[:space:]]+)["'"'"']?[[:space:]]*$/\1/p' \
+  "${ENV_FILE}" | head -1)"
+bash "${REPO_DIR}/scripts/render-heartbeat.sh" "${ALERT_DIR}" "${HEARTBEAT_URL}"
+if [[ -n "${HEARTBEAT_URL}" ]]; then say "external heartbeat: enabled"; else say "external heartbeat: disabled (LIFEKIT_EXTERNAL_HEARTBEAT_URL unset)"; fi
+
 # container-exporter reads the docker socket as nobody + the docker group; the
 # group id differs per box, so take it from the socket itself unless the env
 # file pins DOCKER_GID.

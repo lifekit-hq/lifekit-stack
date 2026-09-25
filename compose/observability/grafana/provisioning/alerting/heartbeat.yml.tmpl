@@ -1,0 +1,55 @@
+# TEMPLATE - scripts/render-heartbeat.sh copies this to heartbeat.yml (gitignored)
+# ONLY when the external heartbeat is enabled (LIFEKIT_EXTERNAL_HEARTBEAT_URL set
+# in the box env file). Unset = this file is not rendered and nothing here loads.
+#
+# The Watchdog rule below always fires; its route (policies.yml.tmpl fragment)
+# repeats the notification to an external check on a steady interval. The
+# check alerts the owner when the pings STOP, so the ping proves the whole
+# chain is alive: host, Docker, Grafana's rule evaluation, its notifier.
+# The URL is a secret: Grafana expands $HEARTBEAT_URL from its container
+# environment (compose maps it from the env file); it is never written here.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: external-heartbeat
+    receivers:
+      - uid: external-heartbeat
+        type: webhook
+        settings:
+          url: "$HEARTBEAT_URL"
+          httpMethod: POST
+        disableResolveMessage: true
+
+groups:
+  - orgId: 1
+    name: heartbeat
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: external-heartbeat-watchdog
+        title: external heartbeat watchdog
+        condition: B
+        data:
+          - refId: A
+            datasourceUid: __expr__
+            model:
+              refId: A
+              type: math
+              expression: "1"
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 0s
+        labels:
+          heartbeat: external
+        annotations:
+          summary: always firing on purpose
+          description: Watchdog for the external dead-man check; routed only to the heartbeat contact point.
