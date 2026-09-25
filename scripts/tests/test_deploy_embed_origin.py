@@ -39,7 +39,7 @@ def run(tmp_path):
         if shell_value:
             env["GRAFANA_EMBED_ORIGIN"] = shell_value
         return subprocess.run(
-            ["bash", str(SCRIPT)], env=env, capture_output=True, text=True
+            ["bash", str(SCRIPT)], env=env, capture_output=True, text=True, check=False
         )
 
     return _run
