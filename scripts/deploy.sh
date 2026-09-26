@@ -188,7 +188,8 @@ ENV_FILE="${ENV_FILE}" COMPOSE_FILE="${COMPOSE_FILE}" OPENCLAW_CONFIG_DIR="${OPE
   "${REPO_DIR}/scripts/deploy-trusted-proxies.sh"
 
 # Grafana's frame-ancestors origin: an explicit GRAFANA_EMBED_ORIGIN wins,
-# otherwise derived from the host's tailnet name (none derivable -> unset,
+# otherwise derived from the host's tailnet name + the dashboard's served
+# HTTPS port (none derivable -> unset,
 # embedding stays denied). Exported for compose interpolation only - the
 # live env file is never written. Logic in scripts/deploy-embed-origin.sh.
 say "grafana embed origin"

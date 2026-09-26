@@ -14,8 +14,18 @@ SCRIPT = REPO / "scripts/deploy-embed-origin.sh"
 
 STUB = """#!/bin/sh
 [ -n "$TS_FAIL" ] && exit 1
-printf '%s' "$TS_JSON"
+if [ "$1" = serve ]; then printf '%s' "$TS_SERVE"; else printf '%s' "$TS_JSON"; fi
 """
+
+DOCKER_STUB = """#!/bin/sh
+printf '%s\\n' "$DOCKER_PORTS"
+"""
+
+
+def serve_json(name, port, target):
+    return json.dumps(
+        {"Web": {f"{name}:{port}": {"Handlers": {"/": {"Proxy": f"http://{target}"}}}}}
+    )
 
 
 @pytest.fixture
@@ -25,12 +35,29 @@ def run(tmp_path):
     stub = bin_dir / "tailscale"
     stub.write_text(STUB)
     stub.chmod(0o755)
+    dstub = bin_dir / "docker"
+    dstub.write_text(DOCKER_STUB)
+    dstub.chmod(0o755)
 
-    def _run(dns=None, fail=False, env_file_line=None, shell_value=None, raw=None):
+    def _run(
+        dns=None,
+        fail=False,
+        env_file_line=None,
+        shell_value=None,
+        raw=None,
+        serve=None,
+        ports="127.0.0.1:19999->8080/tcp",
+    ):
         env = {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
         env["TS_JSON"] = (
             raw if raw is not None else json.dumps({"Self": {"DNSName": dns}})
         )
+        env["TS_SERVE"] = (
+            serve
+            if serve is not None
+            else (serve_json(dns.rstrip("."), 8443, "127.0.0.1:19999") if dns else "{}")
+        )
+        env["DOCKER_PORTS"] = ports
         if fail:
             env["TS_FAIL"] = "1"
         ef = tmp_path / "env"
@@ -62,7 +89,30 @@ def test_explicit_shell_value_wins(run):
 def test_derived_exact_origin(run):
     r = run(dns="box.example.ts.net.")
     assert r.returncode == 0
+    assert r.stdout == "https://box.example.ts.net:8443\n"
+
+
+def test_default_port_443_is_omitted(run):
+    r = run(
+        dns="box.example.ts.net.",
+        serve=serve_json("box.example.ts.net", 443, "127.0.0.1:19999"),
+    )
     assert r.stdout == "https://box.example.ts.net\n"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"serve": serve_json("box.example.ts.net", 8443, "127.0.0.1:12345")},
+        {"serve": "{}"},
+        {"ports": ""},
+    ],
+)
+def test_dashboard_port_not_found_stays_denied(run, kwargs):
+    r = run(dns="box.example.ts.net.", **kwargs)
+    assert r.returncode == 0
+    assert r.stdout == ""
+    assert "'none'" in r.stderr
 
 
 @pytest.mark.parametrize(
