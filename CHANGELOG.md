@@ -18,6 +18,36 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.3](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.2...v0.1.3) (2026-09-26)
+
+
+### Features
+
+* **ci:** add non-required OpenClaw bump rehearsal workflow ([#208](https://github.com/lifekit-hq/lifekit-stack/issues/208)) ([fd4d480](https://github.com/lifekit-hq/lifekit-stack/commit/fd4d480ac93f11182ba610b9914f038d9778d9ab))
+* **compose:** add Box at a glance Grafana dashboard ([#199](https://github.com/lifekit-hq/lifekit-stack/issues/199)) ([17dd9c6](https://github.com/lifekit-hq/lifekit-stack/commit/17dd9c636164815da8c544f77dcfbac2d5cb51d2))
+* **compose:** add external dead-man heartbeat for box health ([#206](https://github.com/lifekit-hq/lifekit-stack/issues/206)) ([cfa8565](https://github.com/lifekit-hq/lifekit-stack/commit/cfa8565a7e8fd307253d7d8799fc1747864689da))
+* **compose:** allow Grafana iframe embedding with a pinned frame-ancestors ([#201](https://github.com/lifekit-hq/lifekit-stack/issues/201)) ([b6a7954](https://github.com/lifekit-hq/lifekit-stack/commit/b6a7954e7a16b61cb72a8b1d197753b070759cb8))
+* **compose:** bake pinned agent CLIs into the openclaw gateway image ([#196](https://github.com/lifekit-hq/lifekit-stack/issues/196)) ([922f19d](https://github.com/lifekit-hq/lifekit-stack/commit/922f19da36d4f14b0c362d74054db371c2f304ca))
+* **deploy:** derive Grafana embed origin from the tailnet name when unset ([#205](https://github.com/lifekit-hq/lifekit-stack/issues/205)) ([3012e7e](https://github.com/lifekit-hq/lifekit-stack/commit/3012e7e0df7ad1a02909e46c2a0f8f0502bfc9aa))
+* **observability:** add devclaw token usage dashboard ([#193](https://github.com/lifekit-hq/lifekit-stack/issues/193)) ([d3af2a1](https://github.com/lifekit-hq/lifekit-stack/commit/d3af2a10b86ea928cc012b7fd9b40985966df1b6))
+* **observability:** add notify-relay cannot-deliver dead-man rule ([#195](https://github.com/lifekit-hq/lifekit-stack/issues/195)) ([3c0e183](https://github.com/lifekit-hq/lifekit-stack/commit/3c0e18321d50b0351906073b9b190226ebbbc7e9))
+* **observability:** scrape and alert on the observability stack itself ([#197](https://github.com/lifekit-hq/lifekit-stack/issues/197)) ([e4d1f89](https://github.com/lifekit-hq/lifekit-stack/commit/e4d1f8908355dc2f94929bf7f94829c2b3b792b1))
+* **openclaw:** index the vault into memory-core search for every agent ([#192](https://github.com/lifekit-hq/lifekit-stack/issues/192)) ([9aa72f0](https://github.com/lifekit-hq/lifekit-stack/commit/9aa72f015a4fca35f48c8718c07cbc40b9ccac99))
+* **openclaw:** record a verdict per companion event before acknowledging it ([#191](https://github.com/lifekit-hq/lifekit-stack/issues/191)) ([06f9afc](https://github.com/lifekit-hq/lifekit-stack/commit/06f9afcd34a304317bce6f1962805a2482e19896))
+* **platform-contract:** forbid job/instance metric labels on v1 services ([#202](https://github.com/lifekit-hq/lifekit-stack/issues/202)) ([6a2387f](https://github.com/lifekit-hq/lifekit-stack/commit/6a2387f55066a35ca26ac36c03df725cd56d374a))
+* **scripts:** add OpenClaw bump rehearsal script ([#145](https://github.com/lifekit-hq/lifekit-stack/issues/145)) ([#204](https://github.com/lifekit-hq/lifekit-stack/issues/204)) ([2e631c3](https://github.com/lifekit-hq/lifekit-stack/commit/2e631c3b158fa0df40d714587fd7c42879345952))
+
+
+### Bug Fixes
+
+* **compose:** make provisioned alert rules able to fire, add unwatched-signal alerts ([#200](https://github.com/lifekit-hq/lifekit-stack/issues/200)) ([9826eef](https://github.com/lifekit-hq/lifekit-stack/commit/9826eef06fa172e22e3ac18fe24af2ca585c27ed))
+* **deploy:** include the dashboard's served HTTPS port in the derived Grafana embed origin ([#207](https://github.com/lifekit-hq/lifekit-stack/issues/207)) ([d8f7376](https://github.com/lifekit-hq/lifekit-stack/commit/d8f7376f83b9221babb7e0e0e787c7bf82fe1da1))
+* **deploy:** set gateway.trustedProxies from docker network on every deploy ([#194](https://github.com/lifekit-hq/lifekit-stack/issues/194)) ([bb824ca](https://github.com/lifekit-hq/lifekit-stack/commit/bb824ca797afcbe8b7fa133b908c457d6546e94f))
+* **observability:** bind otel-collector metrics endpoint to 0.0.0.0 ([#198](https://github.com/lifekit-hq/lifekit-stack/issues/198)) ([50b6694](https://github.com/lifekit-hq/lifekit-stack/commit/50b6694fa25043cef155069c50a65504645e732d))
+* **openclaw:** retire finance heartbeat for an isolated cron pulse ([#210](https://github.com/lifekit-hq/lifekit-stack/issues/210)) ([fd0a99a](https://github.com/lifekit-hq/lifekit-stack/commit/fd0a99a0d2674f9739583296ce29d5c7d29da360))
+* **platform-contract:** classify xui as out-of-contract in the runtime census ([#209](https://github.com/lifekit-hq/lifekit-stack/issues/209)) ([9197240](https://github.com/lifekit-hq/lifekit-stack/commit/9197240cc0a504cb373e31291d8c365c6baee96b))
+* **scripts:** move /tmp scratch off RAM and sweep abandoned entries ([#189](https://github.com/lifekit-hq/lifekit-stack/issues/189)) ([39c6c26](https://github.com/lifekit-hq/lifekit-stack/commit/39c6c26a7c4d5e2ad88b2149eec558d871bbc102))
+
 ## [0.1.2](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.1...v0.1.2) (2026-09-21)
 
 
