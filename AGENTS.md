@@ -87,7 +87,10 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
   GitHub App (`RELEASE_APP_ID` variable + `RELEASE_APP_PRIVATE_KEY` secret), never
   `GITHUB_TOKEN`, so the release PR gets its CI and its merge deploys like any other main push.
 - **No build gate in CI.** Docker images are not built per-PR (the runner is the 4 GB production
-  VPS); hadolint lints every Dockerfile on every PR, and the images build at deploy.
+  VPS); hadolint lints every Dockerfile on every PR, and the images build at deploy. The one
+  exception is `.github/workflows/openclaw-rehearsal.yml`: path-gated to same-repo PRs touching
+  `compose/openclaw-gateway/Dockerfile`, non-required, and it builds and rehearses that image
+  against a copy of live state via `scripts/rehearse-openclaw-bump.sh`.
 - **CI runs on the VPS self-hosted runner** (deploy must; lint/tests follow it — the runner has no
   provisionable Python, hence the throwaway-venv pattern in `ci.yml`). The release workflows run
   on GitHub-hosted runners, matching finance-sentry's shape.

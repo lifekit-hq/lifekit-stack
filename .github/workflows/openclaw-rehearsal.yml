@@ -1,0 +1,40 @@
+name: OpenClaw bump rehearsal
+
+# Fork policy: same-repo heads only, `pull_request` (never `pull_request_target`).
+# A fork PR touching the Dockerfile gets no rehearsal here - the check builds and
+# runs PR-authored code against a copy of live state, which is only safe when the
+# branch already required push access to create. Fork bumps use the by-hand
+# `scripts/rehearse-openclaw-bump.sh` recipe instead.
+#
+# Not a required check: a paths-filtered required check would block every PR that
+# doesn't touch this path. Red fails this job but does not block the PR.
+#
+# Privacy: the script keeps the full doctor log on the runner; only the class-only
+# summary it writes to stdout goes to the job's step summary. No artifact upload,
+# no PR comment.
+
+on:
+  pull_request:
+    paths: ["compose/openclaw-gateway/Dockerfile"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    name: Rehearse OpenClaw bump
+    runs-on: self-hosted
+    timeout-minutes: 60
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run rehearse-openclaw-bump.sh
+        run: bash scripts/rehearse-openclaw-bump.sh >>"${GITHUB_STEP_SUMMARY}"
