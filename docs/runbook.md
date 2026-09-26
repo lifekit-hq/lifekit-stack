@@ -175,11 +175,11 @@ agent, and gives the finance agent a heartbeat:
   finance agent in an isolated session and delivers to its Telegram chat. The
   template interpolates `kind` and `eventId` only: the push carries
   identifiers, the agent reads the detail back through its MCP tools.
-- `agents.entries.finance.heartbeat`: every 6h inside 07:00-23:00
-  Europe/Dublin, sonnet, `lightContext`, `isolatedSession`. It is the one
-  `agents.entries` key in the platform file; every other per-agent key stays
-  host state. `agents.defaults.heartbeat.every` stays `0m`, so only this agent
-  ticks.
+- `agents.entries.finance.heartbeat`: **retired 2026-09-26, see the fs-685
+  note below** - the key is now `{"every": "0m"}`, same shape as
+  `agents.defaults.heartbeat`, so the finance agent no longer ticks on the
+  heartbeat lane at all. It stays the one `agents.entries` key in the
+  platform file; every other per-agent key stays host state.
 - **No value is in git or in `openclaw.json`.** The file holds the literal
   references `${OPENCLAW_HOOK_TOKEN}`, `${OPENCLAW_HOOK_PATH}` and
   `${OPENCLAW_FINANCE_CHAT}`; OpenClaw resolves them from the container
@@ -224,6 +224,87 @@ the agent rewrote it:
 ```bash
 FINANCE_PULSE_REPLACE=1 /srv/lifekit-stack/scripts/ensure-finance-pulse.sh
 ```
+
+#### The finance heartbeat, retired for an isolated cron job (fs-685, 2026-09-26)
+
+The heartbeat lane above (`agents.entries.finance.heartbeat`) turned out not
+to isolate the way its `isolatedSession` key implies. A heartbeat tick is a
+system-owned automation row, not a cron job: every tick of a given agent
+reuses one persistent session (`agent:<id>:main:heartbeat`), and the row has
+no delivery block of its own - `isolatedSession`, `target`/`to` only steer
+where a heartbeat *would* deliver, they do not give the tick its own session
+or a tracked delivery the way a cron job's `sessionTarget`/`delivery` fields
+do. In practice that let a tick's working notes and recaps leak into the
+operator's own chat instead of staying confined to one tracked, delivered
+message. A cron job with `payload.kind: "agentTurn"` is structurally
+different: every run gets a fresh `agent:<id>:cron:<jobId>:run:<uuid>`
+session, and its `delivery` block is tracked per run (`deliveryStatus`:
+`delivered`/`not-requested`/etc.), the same shape `ledger-opportunity` already
+uses.
+
+The fix retires the heartbeat tick (`agents.entries.finance.heartbeat.every`
+set to `"0m"` in the platform file, deployed) and replaces it with a new
+cron row, `ledger-pulse`, that mirrors `ledger-opportunity`'s shape: isolated
+session target, Telegram announce delivery, and a prompt that requires either
+exactly one delivered message or a bare `NO_REPLY` with no other output. Both
+changes hot-reload - `agents.entries` and cron rows are both "no restart"
+categories - so applying either does not recreate the gateway container.
+
+The cron row is host state (like every other `agents.entries` key and every
+cron job), so it is not in git; recreate it on a host that does not have it
+yet with the gateway CLI, using the env var (never a literal chat id) that
+already backs the retired heartbeat:
+
+```bash
+docker exec compose-openclaw-gateway-1 sh -c '
+openclaw cron create --json <<JSON
+{
+  "name": "ledger-pulse",
+  "displayName": "Ledger pulse (finance)",
+  "agentId": "finance",
+  "schedule": {"kind": "cron", "expr": "20 9,15,21 * * *", "tz": "Europe/Dublin"},
+  "sessionTarget": "isolated",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "Periodic check-in for the Ledger finance agent pulse. There is no standing task list configured right now -- do not infer or repeat old tasks from prior chats. If nothing needs the operators attention, your entire final reply must be exactly NO_REPLY and nothing else. If something does need attention, send exactly one Telegram message covering it, then stop -- no additional messages, working notes, or recaps.",
+    "model": "anthropic/claude-sonnet-4-6",
+    "timeoutSeconds": 180,
+    "lightContext": true,
+    "toolsAllow": ["*"]
+  },
+  "delivery": {
+    "mode": "announce",
+    "channel": "telegram",
+    "to": "'"$OPENCLAW_FINANCE_CHAT"'",
+    "accountId": "finance",
+    "bestEffort": true
+  }
+}
+JSON
+'
+```
+
+**Verify** after creating or after any change to the row: trigger one run
+(`openclaw cron run <id> --expect-final --json`) and confirm the result's
+`sessionKey` matches `agent:finance:cron:<id>:run:<uuid>` (a fresh uuid per
+run, never the old `agent:finance:main:heartbeat`) and `deliveryStatus` is
+`delivered` or `not-requested` (a `NO_REPLY` reply sends nothing, so
+`not-requested` there is correct, not a failure). `openclaw cron show <id>`
+should report the row `enabled` with `sessionTarget: "isolated"`.
+
+**Rollback:** restore `agents.entries.finance.heartbeat` to its pre-fs-685
+shape (`every: "6h"`, the same `activeHours`/`model`/`lightContext`/
+`isolatedSession`/`target`/`to`/`accountId`/`timeoutSeconds` this file carried
+before, from git history) and disable or remove the `ledger-pulse` row
+(`openclaw cron edit <id> --disable` or `openclaw cron rm <id>`). Both sides
+of the rollback hot-reload the same way the fix does.
+
+**Known gap at ship time:** scheduled cron runs on this host currently fail
+on an unrelated auth problem (tracked separately, not touched by this
+change), so the acceptance criterion of one full day of scheduled wake-ups
+observed clean is not yet signed off - it is blocked on that separate fix,
+not on this one. The manual trigger above is the isolation/delivery proof
+available until scheduled runs are healthy again.
 
 #### The finance agent after `ledger-scan` (retired 2026-09-19)
 

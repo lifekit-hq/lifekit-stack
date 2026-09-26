@@ -51,19 +51,7 @@
     "entries": {
       "finance": {
         "heartbeat": {
-          "every": "6h",
-          "activeHours": {
-            "start": "07:00",
-            "end": "23:00",
-            "timezone": "Europe/Dublin"
-          },
-          "model": "anthropic/claude-sonnet-4-6",
-          "lightContext": true,
-          "isolatedSession": true,
-          "target": "telegram",
-          "to": "${OPENCLAW_FINANCE_CHAT}",
-          "accountId": "finance",
-          "timeoutSeconds": 180
+          "every": "0m"
         }
       }
     }
