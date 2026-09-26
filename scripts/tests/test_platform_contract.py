@@ -280,3 +280,34 @@ def test_labels_exception_is_per_job_and_per_label(box, monkeypatch):
 def test_labels_query_failure_fails(monkeypatch):
     monkeypatch.setattr(pc, "reserved_label_clashes", lambda j, i: ["unreadable"])
     assert pc.label_verdict("a", "b")[0] == "FAIL"
+
+
+# ─── census classification ───────────────────────────────────────────────────
+
+
+def other_project_container(project):
+    return container({"com.docker.compose.project": project})
+
+
+def test_recorded_out_of_contract_container_is_not_undeclared(monkeypatch, capsys):
+    monkeypatch.setattr(pc, "OUT_OF_CONTRACT", {"xui": "third-party, not a product"})
+    monkeypatch.setattr(
+        pc, "containers", lambda projects: [other_project_container("xui")]
+    )
+    monkeypatch.setattr(pc, "prometheus_targets", list)
+    assert pc.run_runtime([], ["compose"], False) == 0
+    out = capsys.readouterr().out
+    assert "OUT-OF-CONTRACT" in out
+    assert "UNDECLARED" not in out
+
+
+def test_unrecorded_project_is_still_undeclared(monkeypatch, capsys):
+    monkeypatch.setattr(pc, "OUT_OF_CONTRACT", {"xui": "third-party, not a product"})
+    monkeypatch.setattr(
+        pc, "containers", lambda projects: [other_project_container("devclaw")]
+    )
+    monkeypatch.setattr(pc, "prometheus_targets", list)
+    assert pc.run_runtime([], ["compose"], False) == 0
+    out = capsys.readouterr().out
+    assert "UNDECLARED" in out
+    assert "OUT-OF-CONTRACT" not in out

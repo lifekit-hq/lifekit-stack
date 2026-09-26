@@ -16,8 +16,8 @@ read-only). Its docstring is the label reference.
   - After the smoke turns, the runtime check probes the running containers. A
     failure turns the deploy red; the containers are already up, like every
     other post-deploy assertion. The rest of the box prints as a census that
-    never fails this deploy. Undeclared containers of other projects (xui, for
-    example) are reported only.
+    never fails this deploy. Undeclared containers of other projects are
+    reported only.
 - **Each product's deploy** runs the same script on its own project. The call
   lands in the PR that makes that product conform, never before:
 
@@ -45,6 +45,19 @@ Put service `labels:` in the product's own compose file:
   - `metrics.auth: token`: only Prometheus holds the credential for the metrics
     path.
   - `service`: the OTLP `service.name`.
+
+## Classifying a non-product container
+
+A census container with no `lifekit.contract` label is either an undeclared
+product (fix: add labels to its own compose file) or not a lifekit product at
+all - a third-party tool this repo does not build or deploy, running under a
+compose project we don't own. The checker records the second case in
+`OUT_OF_CONTRACT` (keyed by compose project, one line reason each) so the
+census reports it as classified instead of undeclared. This is a class
+judgment about the project, never a per-container relabel: labels on a
+running container only take effect on recreate, and there is still no waiver
+for anything that IS a lifekit product - a project only belongs in
+`OUT_OF_CONTRACT` when nothing it runs is one.
 
 ## What each item checks
 
