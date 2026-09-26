@@ -49,6 +49,15 @@ Usage (a product deploy - a missing script must fail the deploy, so no `|| true`
 Runtime exit 1 when a container of an enforced project (--enforce; default:
 every project in scope) FAILs an enforced item or has no lifekit.contract label.
 Containers of other projects are printed as a census and never fail the run.
+
+A census container with no label is either an undeclared product (fix: add
+labels to ITS compose file) or not a lifekit product at all (a third-party
+tool this repo does not build or deploy). The second case is recorded in
+OUT_OF_CONTRACT, keyed by compose project, so the census reports it as
+classified instead of undeclared - never by relabeling the running container,
+which only takes effect on recreate. There is still no waiver for a product:
+an entry here is a class judgment ("this project ships no lifekit product"),
+not an exemption for one that does.
 """
 
 from __future__ import annotations
@@ -87,6 +96,17 @@ LABEL_EXCEPTIONS = {
     # labels rule: a consumer service's job metrics still carry a `job` label
     # (fix lives in its own repo). Remove once it renames that label.
     "finance-sentry-api": {"job"},
+}
+# Containers of other projects that are not lifekit products at all (a
+# third-party tool, an external admin panel) - classified by class here, not
+# by a `lifekit.contract=none` label, because this repo does not own that
+# project's compose file and a label only takes effect on recreate. Keyed by
+# compose project, one line reason each. Never add a project here that ships
+# a lifekit product: that project declares itself in its own compose file
+# instead (see docs/platform-contract.md, "Declaring a service"); there are
+# no waivers for products.
+OUT_OF_CONTRACT = {
+    "xui": "third-party admin panel, not a lifekit product",
 }
 PROM_TYPES = ("text/plain; version=0.0.4", "application/openmetrics-text")
 # Serilog compact JSON writes @tr; OpenClaw and most OTel log bridges traceId /
@@ -431,6 +451,10 @@ def run_runtime(projects: list[str], enforce: list[str], report_only: bool) -> i
         if declared == "none":
             continue
         if declared != "v1":
+            reason = OUT_OF_CONTRACT.get(labels["com.docker.compose.project"])
+            if reason:
+                print(f"{name:34} OUT-OF-CONTRACT  {reason}")
+                continue
             print(f"{name:34} UNDECLARED  no {LABEL}=v1|none label")
             if gating:
                 failed.append(f"{name}: undeclared")
