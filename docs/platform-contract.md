@@ -59,6 +59,15 @@ running container only take effect on recreate, and there is still no waiver
 for anything that IS a lifekit product - a project only belongs in
 `OUT_OF_CONTRACT` when nothing it runs is one.
 
+## Known gaps
+
+- **devclaw-mcp** (compose project `devclaw`) is a lifekit product with no
+  `lifekit.contract` label yet. It is not in `OUT_OF_CONTRACT` - it is a
+  product, and there are no waivers - so it stays a reported, non-gating
+  census entry. Its own repo owns declaring it; that repo is currently under
+  a run-not-fix pause, so this gap is expected to persist until the pause
+  lifts and that repo adds the labels.
+
 ## What each item checks
 
 | Item | Runtime check | Enforced |
