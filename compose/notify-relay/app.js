@@ -7,7 +7,7 @@
  *   GET  /health   — liveness probe → {ok:true}
  *   GET  /ready    — readiness: the bot token works against Telegram (getMe,
  *                    cached) → 200 {ready:true} | 503 {ready:false}
- *   GET  /metrics  — Prometheus text (requests, Telegram sends, readiness)
+ *   GET  /metrics  — Prometheus text (build info, requests, Telegram sends, readiness)
  *   POST /notify   — body = message envelope (docs/message-format.md);
  *                    rendered to Telegram HTML by render.js
  *   POST /devclaw  — body = devclaw task row JSON (compatibility: mapped onto
@@ -23,6 +23,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
   envelopeFromDevclawRow,
@@ -30,6 +31,10 @@ import {
   render,
   validateEnvelope,
 } from "./render.js";
+
+const { version: BUILD_VERSION } = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+);
 
 // A pass is cached for 5 minutes; a failure only briefly, so a startup blip
 // clears on the next probe instead of reading not-ready for minutes.
@@ -130,6 +135,9 @@ export function createApp({ token, chat, transport = fetchTransport, log }) {
 
   function metricsText() {
     const out = [
+      "# HELP notify_relay_build_info Always 1; the version label identifies the running build.",
+      "# TYPE notify_relay_build_info gauge",
+      `notify_relay_build_info{version="${BUILD_VERSION}"} 1`,
       "# HELP notify_relay_requests_total HTTP requests by route and status code.",
       "# TYPE notify_relay_requests_total counter",
     ];
