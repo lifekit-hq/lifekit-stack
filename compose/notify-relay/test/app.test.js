@@ -199,6 +199,14 @@ test("GET /health needs no transport; /metrics counts routes by fixed label", as
   assert.match(metrics, /notify_relay_requests_total\{route="\/notify",code="200"\} 1/);
   assert.match(metrics, /notify_relay_requests_total\{route="other",code="404"\} 1/);
   assert.match(metrics, /notify_relay_telegram_sends_total\{outcome="ok"\} \d+/);
+  assert.match(metrics, /^notify_relay_build_info 1$/m);
+  assert.equal(calls.length, 0);
+});
+
+test("GET /metrics needs no transport and makes zero outbound calls, no bot token dependency", async () => {
+  const res = await fetch(`${origin}/metrics`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "text/plain; version=0.0.4; charset=utf-8");
   assert.equal(calls.length, 0);
 });
 
