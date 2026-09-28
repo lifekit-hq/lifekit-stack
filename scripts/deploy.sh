@@ -722,14 +722,14 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 # doctor/health/channels all passed on 2026-09-13 while two of three runtimes
 # were dead (claude-cli binary without its native part, codex auth expired).
 # The only check that sees that is a real turn. Keep this list in step with
-# agents.entries.*.model when routing changes:
-#   fable -> claude-cli (Claude-only, no fallback: exercises that backend and
-#            nothing else); kit -> claude-cli (Claude primary since the
-#            2026-09-16 all-agents switch off OpenAI-primary; guard-45 report).
-# Both currently exercise the same backend (OpenAI/codex is not primary for
-# any agent right now) — kept as two agents because they cover different
-# fallback shapes (none vs Claude->OpenAI), not different runtimes. Revisit
-# this comment if OpenAI-primary routing returns for any agent.
+# agents.entries.*.model when routing changes. Every agent is on claude-cli
+# since the 2026-09-16 all-agents switch off OpenAI-primary (guard-45
+# report), so one kit turn covers the one live runtime. fable was the
+# second smoke agent (the Claude-only, no-fallback shape) until the
+# 2026-09 fleet reshape retired it, and kit's fallbacks were emptied in the
+# 2026-09-17 host patch, so kit now carries that same shape. Add an agent
+# here again only when it runs a different runtime (OpenAI-primary routing
+# returning for any agent, say), not per agent.
 # A per-agent, per-run session id keeps the turn out of the agents' main
 # sessions (one shared id fails: a session is placed with its first agent
 # and the gateway refuses another agent in it) and out of any earlier smoke
@@ -740,7 +740,7 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 # the error, or status/summary/reply when there is none. Auth and quota
 # errors are external state (re-login, weekly cap) and only warn; anything
 # else fails the run.
-SMOKE_AGENTS="${SMOKE_AGENTS:-fable kit}"
+SMOKE_AGENTS="${SMOKE_AGENTS:-kit}"
 SMOKE_RUN="$(date -u +%Y%m%dT%H%M%SZ)"
 say "smoke turns (${SMOKE_AGENTS})"
 for agent in ${SMOKE_AGENTS}; do
