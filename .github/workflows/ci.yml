@@ -38,7 +38,7 @@ jobs:
     name: Tests (container-exporter, quota-share, platform-contract)
     uses: lifekit-hq/.github/.github/workflows/python-ci.yml@v1
     with:
-      install: "-r requirements-test.txt"
+      install: "-r requirements.txt"
       run: "python -m pytest -q compose/container-exporter/tests scripts/quota-share/tests scripts/tests"
       runner: '"ubuntu-latest"'
 
