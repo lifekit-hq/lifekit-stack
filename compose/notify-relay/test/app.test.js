@@ -199,7 +199,7 @@ test("GET /health needs no transport; /metrics counts routes by fixed label", as
   assert.match(metrics, /notify_relay_requests_total\{route="\/notify",code="200"\} 1/);
   assert.match(metrics, /notify_relay_requests_total\{route="other",code="404"\} 1/);
   assert.match(metrics, /notify_relay_telegram_sends_total\{outcome="ok"\} \d+/);
-  assert.match(metrics, /notify_relay_build_info\{version="[^"]+"\} 1/);
+  assert.match(metrics, /^notify_relay_build_info 1$/m);
   assert.equal(calls.length, 0);
 });
 
