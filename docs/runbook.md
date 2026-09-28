@@ -204,13 +204,14 @@ agent, and gives the finance agent a heartbeat:
   to the compose `environment` does change the service definition, so the
   deploy that first carries them recreates the gateway once in `up -d`.
 
-The pulse's checklist is not config. It is the scratch of the
-`heartbeat-finance` automation row (the workspace `HEARTBEAT.md` is a no-op in
-2026.9.4), declared by `scripts/ensure-finance-pulse.sh` from
-`scripts/finance-pulse.md`, the same way `scripts/ensure-morning-brief.sh`
-declares its cron. Run it once on the host after the deploy that applied the
-heartbeat. Until then the scratch is empty and every tick skips with
-`reason=empty-heartbeat-file` and no model call.
+The pulse's checklist is not config. It is the scratch of the `ledger-pulse`
+cron row (the workspace `HEARTBEAT.md` is a no-op in 2026.9.4; see "The
+finance heartbeat, retired for an isolated cron job" below for why the pulse
+is a cron row and not the heartbeat lane), declared by
+`scripts/ensure-finance-pulse.sh` from `scripts/finance-pulse.md`, the same
+way `scripts/ensure-morning-brief.sh` declares its cron. Run it once on the
+host after the `ledger-pulse` row has been created on the gateway. Until then
+the scratch is empty and every run skips with no model call.
 
 The pulse checklist does not hot-reload like the hook mapping does, and a
 plain re-run of `scripts/ensure-finance-pulse.sh` leaves a non-empty scratch
@@ -381,7 +382,7 @@ rebuilt one.
    - "Cadence": delete the `ledger-scan` `dry_run` bullet and the
      "Silence-check" bullet (the pulse checklist owns the quiet-week digest).
      Reword the first bullet to "Event-driven only. No polling scan, no daily
-     digest, no morning brief. The pulse (`heartbeat-finance` scratch) carries
+     digest, no morning brief. The pulse (`ledger-pulse` scratch) carries
      the digest and the quiet-week check." and the THESIS BREAK bullet to
      "always notify - bypasses every silence rule." Keep the Delivery bullet.
 
