@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 # ensure-finance-pulse.sh — idempotently declare the finance agent's pulse
-# checklist (the heartbeat's monitor scratch).
+# checklist (the `ledger-pulse` cron row's scratch).
 #
-# Why a script and not config: the heartbeat's CADENCE is config
-# (agents.entries.finance.heartbeat in compose/openclaw-gateway/
-# platform.patch.json, applied by deploy.sh), but its CHECKLIST is not. OpenClaw
-# 2026.9.4 retired the workspace HEARTBEAT.md (accepted, no-op); the checklist
-# is the per-automation scratch of the `heartbeat-<agent>` monitor row, which
-# lives in the gateway's SQLite state, not in openclaw.json. Same split as
-# ensure-morning-brief.sh: this script IS the git-side declaration, and
-# scripts/finance-pulse.md is the text it declares.
+# Why a script and not config: the pulse's CADENCE is host state - the
+# `ledger-pulse` cron row (docs/runbook.md, "The finance heartbeat, retired
+# for an isolated cron job"), created by hand on the gateway CLI, not in
+# git - but its CHECKLIST doesn't have to be. OpenClaw 2026.9.4 retired the
+# workspace HEARTBEAT.md (accepted, no-op); the checklist is the per-job
+# scratch of the `ledger-pulse` cron row, which lives in the gateway's SQLite
+# state, not in openclaw.json. Same split as ensure-morning-brief.sh: this
+# script IS the git-side declaration, and scripts/finance-pulse.md is the
+# text it declares.
 #
-# The cost contract this preserves: a heartbeat whose scratch is effectively
-# empty skips the run (reason=empty-heartbeat-file) with no model call. So
-# until this script has run, the pulse costs nothing; after it, the model runs
-# on the cadence in the patch file and replies NO_REPLY when nothing changed.
+# The cost contract this preserves: a run whose scratch is effectively empty
+# skips with no model call. So until this script has run, the pulse costs
+# nothing; after it, the model runs on the row's cron schedule and replies
+# NO_REPLY when nothing changed.
 #
-# Run on the VPS host as lifekit, from the repo checkout, AFTER the deploy
-# that applied the heartbeat block (the monitor row must exist):
+# Run on the VPS host as lifekit, from the repo checkout, AFTER the
+# `ledger-pulse` cron row has been created on the gateway (see docs/runbook.md):
 #   /srv/lifekit-stack/scripts/ensure-finance-pulse.sh
 #
 # Converges without fighting the agent, which may rewrite its own scratch
@@ -29,8 +30,7 @@
 set -euo pipefail
 
 GATEWAY=compose-openclaw-gateway-1
-AGENT=finance
-JOB_NAME="heartbeat-${AGENT}"
+JOB_NAME="ledger-pulse"
 REPLACE="${FINANCE_PULSE_REPLACE:-0}"
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -58,7 +58,7 @@ while (i := text.find("{", i)) != -1:
 sys.exit(1)' "$1"
 }
 
-# 1. Find the monitor row by name (ids differ per box; never hardcode one).
+# 1. Find the cron row by name (ids differ per box; never hardcode one).
 jobs="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | pick_json jobs)" || {
   echo "could not read the automation list from $GATEWAY" >&2; exit 1; }
 row="$(printf '%s' "$jobs" | python3 -c '
@@ -68,14 +68,14 @@ for job in json.load(sys.stdin)["jobs"]:
         print(job["id"], str(job.get("enabled", False)).lower())
         break' "$JOB_NAME")"
 if [ -z "$row" ]; then
-  echo "no '$JOB_NAME' automation row. The heartbeat block in" >&2
-  echo "compose/openclaw-gateway/platform.patch.json has not been applied yet" >&2
-  echo "(deploy first), or the row was never materialized: openclaw doctor --fix." >&2
+  echo "no '$JOB_NAME' automation row. It is host state, not applied by deploy:" >&2
+  echo "create it by hand on the gateway CLI (docs/runbook.md, \"The finance" >&2
+  echo "heartbeat, retired for an isolated cron job\")." >&2
   exit 1
 fi
 job_id="${row%% *}"
 enabled="${row##* }"
-[ "$enabled" = "true" ] || echo "note: '$JOB_NAME' ($job_id) is disabled; the checklist is set but will not tick until the heartbeat is enabled"
+[ "$enabled" = "true" ] || echo "note: '$JOB_NAME' ($job_id) is disabled; the checklist is set but will not tick until the cron row is enabled"
 
 # 2. Compare the live scratch with the declared text.
 current="$(docker exec "$GATEWAY" openclaw cron scratch "$job_id" --json 2>/dev/null \
@@ -99,4 +99,4 @@ fi
 docker exec -i "$GATEWAY" openclaw cron scratch "$job_id" --file - < "$checklist" >/dev/null
 echo "scratch of '$JOB_NAME' ($job_id) set from ${checklist#"${repo_root}/"}"
 echo "verify: docker exec $GATEWAY openclaw cron scratch $job_id"
-echo "        docker exec $GATEWAY openclaw system heartbeat last --json   # after the next tick"
+echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # trigger a run"
