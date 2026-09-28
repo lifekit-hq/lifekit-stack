@@ -46,7 +46,8 @@
     "defaults": {
       "heartbeat": {
         "every": "0m"
-      }
+      },
+      "utilityModel": ""
     },
     "entries": {
       "finance": {
