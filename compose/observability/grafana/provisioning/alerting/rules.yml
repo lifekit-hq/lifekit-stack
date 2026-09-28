@@ -21,6 +21,23 @@ deleteRules:
     uid: devclaw-down  # folded into box/target-down, 2026-09-13
   - orgId: 1
     uid: container-memory-near-limit  # unfireable without a memory cap; container-oom-killed covers it
+  - orgId: 1
+    # Retired 2026-09-28: permanent false positive, not a narrowable one.
+    # node-exporter's own host bind (docker-compose.yml node-exporter
+    # `volumes: - /:/host:ro,rslave`) pins the container's view of the /
+    # mount to readonly=1 unconditionally for the life of the container,
+    # regardless of the real superblock state - confirmed live: the box's
+    # actual root mount reads `rw,errors=remount-ro` while this series sat
+    # at 1. No Prometheus label (device, fstype, mountpoint, instance, job)
+    # distinguishes that permanent artifact from a genuine future remount-ro
+    # of the real host root on this box: both would be the exact same
+    # series (device=/dev/vda3, fstype=ext4, mountpoint=/). Fixing detection
+    # would require dropping node-exporter's `:ro` bind (a deliberate
+    # security hardening choice, left alone here) - out of scope for this
+    # rule file. Until that trade-off is revisited, this alert cannot fire
+    # true and false positives with the same signature, so it is retired
+    # rather than left permanently red.
+    uid: root-filesystem-readonly
 
 groups:
   - orgId: 1
@@ -349,49 +366,6 @@ groups:
             node_filesystem_avail_bytes / node_filesystem_size_bytes for / has
             been below 15% for 10 minutes. `df -h /` on the box, then
             `docker system df` to find reclaimable image and build cache.
-
-      - uid: root-filesystem-readonly
-        title: root filesystem is read-only
-        condition: C
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: prometheus
-            model:
-              refId: A
-              # 1 when the root mount is read-only; exactly one series (pseudo filesystems are excluded by node-exporter).
-              expr: node_filesystem_readonly{mountpoint="/"}
-              instant: true
-              intervalMs: 1000
-              maxDataPoints: 43200
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              refId: B
-              type: reduce
-              expression: A
-              reducer: last
-              settings: {mode: dropNN}
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: B
-              conditions:
-                - evaluator: {type: gt, params: [0]}
-        # A vanished node-exporter target is target-down's job.
-        noDataState: OK
-        execErrState: Error
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "root filesystem is mounted read-only"
-          description: >-
-            node_filesystem_readonly for / is 1: the kernel remounted the root filesystem read-only, usually after a
-            disk error. Every write on the box fails until it is repaired. `dmesg -T | grep -i -E "remount|I/O error"`
-            shows the cause.
 
       - uid: textfile-collector-stale
         title: textfile metrics are stale
