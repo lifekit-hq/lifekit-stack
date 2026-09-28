@@ -1,3 +1,8 @@
+// SUPERSEDED (2026-09-28): the live fleet is kit plus domain agents, not a
+// single Kit (docs/openclaw-agent-design.md). Kept as a historical reference
+// for the mcp/tools blocks; do not apply it. Agent entries, bindings and
+// channels are host state, changed by operator steps (docs/runbook.md).
+//
 // openclaw.single-agent.json5 — v2 target config (single Kit agent).
 //
 // ⚠ DO NOT MERGE THIS INTO /srv/openclaw/config/openclaw.json YET.

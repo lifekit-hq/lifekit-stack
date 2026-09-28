@@ -22,11 +22,12 @@ cooldown so upstream's own hotfix cycle has landed. The loop:
    state (config rewrite, SQLite migrations, official-plugin re-pin), then
    recreates the gateway and runs `openclaw doctor`, `health`,
    `channels status`. Read that log.
-4. deploy.sh then runs one real agent turn each for `fable` and `kit`
-   (`SMOKE_AGENTS` overrides) in a throwaway `deploy-smoke-<agent>` session —
-   both on claude-cli since the 2026-09-16 all-agents switch to Claude
-   primary (see `scripts/deploy.sh` smoke-turn comment); OpenAI/codex is not
-   primary for any agent right now. A runtime error fails the run; auth and quota
+4. deploy.sh then runs one real agent turn for `kit` (`SMOKE_AGENTS`
+   overrides) in a throwaway `deploy-smoke-<agent>` session - one turn per
+   runtime, and every agent is on claude-cli since the 2026-09-16 all-agents
+   switch to Claude primary (see `scripts/deploy.sh` smoke-turn comment);
+   OpenAI/codex is not primary for any agent right now. `fable`, the second
+   smoke agent, was retired in the 2026-09 fleet reshape. A runtime error fails the run; auth and quota
    errors (expired OAuth, weekly cap) only warn. On a version change it also
    refuses to migrate over files not owned by uid 1000 and asserts every
    official plugin matches the core version afterwards (one update attempt,
@@ -447,6 +448,38 @@ and `models.weak_tier` cleared; `security_full_configured` (devclaw) and
 Follow-up, out of scope for this change: the boundary-drift remediation
 (sandbox those agents, or split the sensitive MCP servers into a separate
 gateway).
+
+### The career and social weekly crons
+
+Since the 2026-09 fleet reshape (see `docs/openclaw-agent-design.md`), career
+and social each have one delivering cron job: `career-weekly` and
+`social-weekly`. What each run does is in the agent's `AGENTS.md`
+(`defaults/agents/<id>/workspace/`). The rows are host state in the gateway's
+store. To recreate one on a rebuilt host, use this shape, checked against
+2026.9.5. `cron add` has no failure-alert flags, so the alert is a follow-up
+`cron edit`. It goes through the kit `default` bot, so a broken domain bot
+still reports its own failures. `OWNER_CHAT` is `LIFEKIT_TELEGRAM_CHAT` from
+the host env file. Never write the value into git.
+
+```bash
+GW=compose-openclaw-gateway-1
+docker exec "$GW" openclaw cron add --name career-weekly \
+  --display-name "Career weekly pulse" --agent career \
+  --cron "0 9 * * 1" --tz Europe/Dublin --session isolated \
+  --message "Run the weekly career pulse (career-weekly) as your AGENTS.md defines it." \
+  --timeout-seconds 600 --announce --channel telegram --account career --to "$OWNER_CHAT" --json
+# take "id" from the output, then:
+docker exec "$GW" openclaw cron edit <id> --failure-alert --failure-alert-after 1 \
+  --failure-alert-channel telegram --failure-alert-account-id default \
+  --failure-alert-to "$OWNER_CHAT" --failure-alert-mode announce --no-best-effort-deliver
+```
+
+`social-weekly` is the same with `--agent social --account social`,
+`--cron "0 17 * * 0"` and "Run the weekly content plan (social-weekly) as
+your AGENTS.md defines it." Remove a row with `cron rm <id>`. The
+`skill-collection-review-<agent>` rows are system-owned, so `cron rm`
+refuses them. `openclaw agents delete <id>` removes them along with the
+agent's entry and bindings.
 
 ## Rolling back OpenClaw
 
