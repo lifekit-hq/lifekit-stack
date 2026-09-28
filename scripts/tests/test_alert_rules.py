@@ -67,8 +67,10 @@ def test_no_rule_is_paused():
 
 
 def test_retired_rule_is_deleted_not_provisioned():
-    assert "container-memory-near-limit" not in RULES
-    assert "container-memory-near-limit" in {r["uid"] for r in DOC["deleteRules"]}
+    deleted = {r["uid"] for r in DOC["deleteRules"]}
+    for uid in ("container-memory-near-limit", "root-filesystem-readonly"):
+        assert uid not in RULES
+        assert uid in deleted
 
 
 def test_rules_only_reference_real_metrics():
@@ -86,7 +88,6 @@ def test_rules_only_reference_real_metrics():
     ("uid", "metric", "severity", "op", "limit"),
     [
         ("container-oom-killed", "docker_container_oom_killed", "critical", "gt", 0),
-        ("root-filesystem-readonly", "node_filesystem_readonly", "critical", "gt", 0),
         (
             "textfile-collector-stale",
             "node_textfile_mtime_seconds",
