@@ -1,13 +1,18 @@
 """Behaviour of scripts/tmp-scratch-policy.sh, run as a subprocess against temp paths.
 
 The sweep reads a process table from PROC_ROOT; tests point it at a directory
-of symlinks to the real /proc entries of processes they start, so "held open
-by a live process" is a real process holding a real file.
+of fabricated /proc-shaped entries (fd/cwd/exe symlinks pointing straight at
+the target files), so "held open by a live process" is asserted from a
+process table the test built deterministically, not from real kernel /proc
+state tied to a spawned process's scheduling — a real `sleep` subprocess is
+CPU-starved and reaped unpredictably on a busy runner (#213's flake).
 """
 
 from __future__ import annotations
 
+import itertools
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -27,23 +32,36 @@ def run(*args, env=None):
     )
 
 
+class FakeProcess:
+    """A fabricated /proc/<pid> entry standing in for a live process."""
+
+    def __init__(self, entry_dir):
+        self._entry_dir = entry_dir
+
+    def kill(self):
+        shutil.rmtree(self._entry_dir, ignore_errors=True)
+
+    def wait(self):
+        pass
+
+
 @pytest.fixture
 def procs(tmp_path):
     root = tmp_path / "proc"
     root.mkdir()
-    started = []
+    pids = itertools.count(1)
 
-    def hold(**popen_kwargs):
-        p = subprocess.Popen(["sleep", "60"], **popen_kwargs)
-        started.append(p)
-        (root / str(p.pid)).symlink_to(f"/proc/{p.pid}")
-        return p
+    def hold(*, stdin=None, cwd=None):
+        entry = root / str(next(pids))
+        (entry / "fd").mkdir(parents=True)
+        (entry / "cwd").symlink_to(cwd if cwd is not None else tmp_path)
+        (entry / "exe").symlink_to("/bin/true")
+        if stdin is not None:
+            (entry / "fd" / "0").symlink_to(getattr(stdin, "name", stdin))
+        return FakeProcess(entry)
 
     hold.root = root
-    yield hold
-    for p in started:
-        p.kill()
-        p.wait()
+    return hold
 
 
 def scratch_tree(tmp_path):

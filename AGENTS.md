@@ -61,7 +61,7 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
   at runtime turns the deploy red. No waivers - fix the service, or add the item to `ENFORCED`
   only with the platform piece it needs - except the single temporary per-service label exception,
   removed once that service renames its label. See [`docs/platform-contract.md`](./docs/platform-contract.md).
-- **Doc drift** (separate workflow): README service table must match `compose/docker-compose.yml`.
+- **Doc drift** (a step in CI's `lint` job): README service table must match `compose/docker-compose.yml`.
 - Privacy is a gate too: read [`docs/PRIVATE.md`](./docs/PRIVATE.md) before committing — gitleaks
   catches secrets, the human pass catches personal context. Skills must be `{{ user.* }}`
   templated; no names, IDs, schedules, or account details in the repo, ever.
