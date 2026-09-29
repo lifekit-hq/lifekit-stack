@@ -9,7 +9,6 @@ machine. Nothing here calls Prometheus or fm-inbox.sh.
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 import unittest
 from pathlib import Path
@@ -174,7 +173,9 @@ class SeriesFingerprintTests(unittest.TestCase):
 
 class AdvanceStateTests(unittest.TestCase):
     def test_normal_to_pending_no_transition(self):
-        entry, transition = poll_alerts.advance_state(None, True, now=100, for_seconds=60)
+        entry, transition = poll_alerts.advance_state(
+            None, True, now=100, for_seconds=60
+        )
         self.assertEqual(entry["state"], poll_alerts.STATE_PENDING)
         self.assertEqual(entry["since"], 100)
         self.assertIsNone(transition)
@@ -221,7 +222,9 @@ class AdvanceStateTests(unittest.TestCase):
         self.assertIsNone(transition)
 
     def test_zero_for_fires_on_first_true_poll(self):
-        entry, transition = poll_alerts.advance_state(None, True, now=100, for_seconds=0)
+        entry, transition = poll_alerts.advance_state(
+            None, True, now=100, for_seconds=0
+        )
         self.assertEqual(entry["state"], poll_alerts.STATE_ALERTING)
         self.assertEqual(transition, "start")
 
