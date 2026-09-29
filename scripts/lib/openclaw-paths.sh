@@ -28,7 +28,8 @@ openclaw_path_matches() {
   case "$1" in
     compose/openclaw-gateway/* | compose/openclaw/* | defaults/* | skills/*) return 0 ;;
     platform.patch.json | */platform.patch.json) return 0 ;;
-    scripts/deploy-openclaw.sh | scripts/memory-audit/*) return 0 ;;
+    scripts/deploy-openclaw.sh | scripts/deploy-trusted-proxies.sh | scripts/memory-audit/*) return 0 ;;
+    # Temporary: over-triggers while this file still defines the OpenClaw services; the compose-project split drops it.
     compose/docker-compose.yml) return 0 ;;
   esac
   return 1

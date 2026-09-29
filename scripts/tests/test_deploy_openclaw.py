@@ -268,6 +268,7 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("platform.patch.json", True),
         ("elsewhere/platform.patch.json", True),
         ("scripts/deploy-openclaw.sh", True),
+        ("scripts/deploy-trusted-proxies.sh", True),
         ("scripts/memory-audit/run.sh", True),
         ("compose/docker-compose.yml", True),
         ("compose/observability/prometheus/prometheus.yml", False),
