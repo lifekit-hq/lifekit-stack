@@ -35,11 +35,11 @@ jobs:
         run: bash scripts/check-doc-drift.sh
 
   pytest:
-    name: Tests (container-exporter, quota-share, platform-contract)
+    name: Tests (container-exporter, quota-share, ops-report, platform-contract)
     uses: lifekit-hq/.github/.github/workflows/python-ci.yml@v1
     with:
       install: "-r requirements.txt"
-      run: "python -m pytest -q compose/container-exporter/tests scripts/quota-share/tests scripts/tests"
+      run: "python -m pytest -q compose/container-exporter/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests"
       runner: '"ubuntu-latest"'
 
   notify-relay-tests:
