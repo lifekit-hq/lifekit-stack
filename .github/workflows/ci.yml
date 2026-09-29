@@ -137,7 +137,7 @@ jobs:
         if: steps.superseded.outputs.skip != 'true'
         run: |
           cd /srv/lifekit-stack
-          docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env ps \
+          docker compose -f compose/docker-compose.yml --env-file /srv/lifekit-secrets/stack.env ps \
             --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
 
       # (The post-deploy devclaw eval smoke was retired 2026-08-16: it targeted

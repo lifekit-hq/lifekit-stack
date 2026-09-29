@@ -132,6 +132,14 @@ services:
       OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
       OPENCLAW_FINANCE_CHAT: ${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
+      # openclaw.json holds these as env SecretRefs / ${VAR} interpolation
+      # (docs/secrets.md: DEVCLAW_BOT_TOKEN, DEVCLAW_MCP_TOKEN,
+      # FINANCE_SENTRY_MCP_TOKEN), so they must be in this container's own
+      # environment - the gateway's global dotenv is legacy plaintext and is
+      # being retired, not a source these should ever fall back to.
+      DEVCLAW_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-}
+      DEVCLAW_MCP_TOKEN: ${DEVCLAW_MCP_TOKEN:-}
+      FINANCE_SENTRY_MCP_TOKEN: ${FINANCE_SENTRY_MCP_TOKEN:-}
       OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
       PATH: /home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       TZ: ${OPENCLAW_TZ:-UTC}
