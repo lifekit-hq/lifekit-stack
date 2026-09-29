@@ -94,6 +94,7 @@ the first rotation after this inventory sets it.
 | `GRAFANA_ADMIN_PASSWORD` | master | admin-password | grafana (first boot only - later changes need `grafana cli admin reset-admin-password`), `scripts/deploy.sh` provisioning reloads | captain | on exposure | not recorded | `secrets/lifekit.env.sops` |
 | `PARKED_BINANCE_API_KEY` | master | parked | none since 2026-07-11 (the Binance MCP was dropped). Was `BINANCE_API_KEY` in the gateway env. Not revoked: the captain rotates it at Binance later. | captain (Binance) | captain's call | not recorded | `secrets/lifekit.env.sops` |
 | `PARKED_BINANCE_API_SECRET` | master | parked | none; pair of the key above | captain (Binance) | captain's call | not recorded | `secrets/lifekit.env.sops` |
+| `LIFEKIT_EXTERNAL_HEARTBEAT_URL` | master | heartbeat-url | grafana (compose env `HEARTBEAT_URL`; external dead-man heartbeat ping, provisions/deletes the watchdog rule, `docs/runbook.md` "External heartbeat"), `scripts/deploy.sh` (reads it to log enabled/disabled). The URL itself is the credential: anyone who has it can ping (and so silence) the watchdog. | captain | on exposure; at migration | not recorded | `secrets/lifekit.env.sops` |
 
 ## Inventory: settings carried in the master file
 
@@ -140,6 +141,17 @@ file appears in one of the two inventory tables.
 | `LIFEKIT_DASHBOARD_DIR` | master | setting | dashboard checkout path |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | master | setting | optional OTLP endpoint |
 | `OTEL_SERVICE_NAME` | master | setting | optional OTLP service name |
+| `OPENCLAW_IMAGE` | master | setting | no consumer found in this repo (live env only) |
+| `LIFEKIT_WAKE_INTERVAL_SECONDS` | master | setting | no consumer found in this repo (live env only) |
+| `LIFEKIT_LOG_LEVEL` | master | setting | no consumer found in this repo (live env only) |
+| `NODE_OPTIONS` | master | setting | no consumer found in this repo (live env only) |
+| `LIFEKIT_DOCKER_GID` | master | setting | no consumer found in this repo (live env only) |
+| `LIFEKIT_DEVCLAW_WORKSPACES` | master | setting | no consumer found in this repo (live env only) |
+| `DEVCLAW_GOAL_GRILL` | master | setting | no consumer found in this repo (live env only) |
+| `DEVCLAW_RELAY_POLL` | master | setting | no consumer found in this repo (live env only) |
+| `DEVCLAW_GOAL_AUTOMERGE` | master | setting | no consumer found in this repo (live env only) |
+| `DEVCLAW_NOTIFY_ALTITUDE` | master | setting | no consumer found in this repo (live env only) |
+| `DEVCLAW_SELF_ISSUE_MIN_CYCLES` | master | setting | no consumer found in this repo (live env only) |
 
 ## Not in these files, and why
 
