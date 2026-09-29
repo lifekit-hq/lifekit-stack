@@ -48,11 +48,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # TEMP (fm/ls-deploy-no-rebuild, #221): print the hosted runner's docker
-      # compose version for the PR body, then this step is removed.
-      - name: TEMP docker compose version probe
-        run: docker compose version
-
       # notify-relay's renderer + route tests (node:test, no deps), run in the
       # image the relay itself is built from; --network none proves nothing
       # reaches Telegram.
