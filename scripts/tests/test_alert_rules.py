@@ -163,3 +163,14 @@ def test_memory_budget_rules_ship_and_use_percent_of_budget():
         assert threshold(RULES[uid]) == ("gt", 100)
         assert RULES[uid]["for"] == "15m"
     assert threshold(RULES["host-swap-high"]) == ("gt", 75)
+
+
+def test_host_group_rule_is_alert_only_on_the_documented_budgets():
+    rule = RULES["host-group-over-budget"]
+    assert threshold(rule) == ("gt", 100)
+    assert rule["for"] == "15m"
+    assert rule["labels"]["severity"] == "warning"
+    (expr,) = queries(rule)
+    for group, gib in (("operator", "3.5"), ("runners", "0.75"), ("os", "1")):
+        assert f'host_group_memory_bytes{{group="{group}"}}' in expr
+        assert f"({gib} * 1073741824)" in expr

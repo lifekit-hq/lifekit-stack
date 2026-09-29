@@ -71,14 +71,29 @@ The existing *host RAM available is critically low*, *host swap and RAM are both
 pressure* and *a container was OOM-killed* rules are unchanged; they cover real
 pressure and kills, these cover the slow drift before it.
 
-**No rule yet for operator sessions, runners and the OS.** They are not containers, so
-no metric exists to evaluate. Their budget rules land with the host cgroup gauge; until
-then the figures above are the record.
+**Host groups.** Operator sessions, runners and the OS are not containers, so
+`scripts/host-gauge/host-group-gauge.sh` (a systemd timer, every 5 minutes, installed by
+`bootstrap-vps.sh`) reads their cgroup v2 memory and writes
+`host_group_memory_bytes{group}` and `host_group_memory_swap_bytes{group}` for the
+textfile collector. RAM is `memory.current` minus `inactive_file`, the same
+"resident, no reclaimable cache" definition as the container groups. The rule
+*a host group is over its memory budget* (`host-group-over-budget`, warning, same
+30-minute average and 15 minutes) is alert only, never a cap. The groups are:
+
+| `group` | cgroups read |
+| --- | --- |
+| `operator` | `user.slice/user-1001.slice` |
+| `runners` | `system.slice/actions.runner.*.service` |
+| `os` | `system.slice/{docker,containerd,tailscaled,systemd-journald}.service` (never all of `system.slice`: docker's container scopes live there) |
+
+The swap gauge is margin, not budget: it has no rule of its own, the host-wide
+*host swap is over 75% used* rule covers it.
 
 ## Changing a budget
 
 The budget lives in three places that change together: the table above, the
 `project-memory-over-budget` (or `burst-pool-over-budget`) expression in `rules.yml`,
+the `host-group-over-budget` expression for a host group,
 and, when a group's members change, the member selectors in both of those rules. A
 budget moves because measured use moved, not because an alert was annoying: check the
 7-day peak first. A merge to `main` reloads the rules on deploy; nothing is recreated.

@@ -534,7 +534,7 @@ groups:
             model:
               refId: A
               # Age of each textfile-collector file; every gauge that writes one (the quota
-              # gauge, the /tmp usage gauge) rewrites it every 5 minutes, so 15 minutes is
+              # gauge, the /tmp usage gauge, the host-group gauge) rewrites it every 5 minutes, so 15 minutes is
               # three missed runs.
               expr: time() - node_textfile_mtime_seconds
               instant: true
@@ -566,10 +566,10 @@ groups:
           summary: "textfile metric file {{ $labels.file }} has not been updated for over 15 minutes"
           description: >-
             node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. Every gauge
-            that writes into the textfile directory (the quota gauge's systemd timer, the /tmp usage gauge's user
-            crontab) refreshes its file every 5 minutes, so its timer, cron job or script has stopped and rules
+            that writes into the textfile directory (the quota, /tmp usage and host-group gauges' systemd
+            timers) refreshes its file every 5 minutes, so its timer or script has stopped and rules
             reading that file are seeing stale values. `systemctl --failed`, the gauge unit's journal, and
-            `crontab -l` for the cron-run gauges on the box.
+            `systemctl list-timers` on the box.
 
       - uid: textfile-collector-scrape-error
         title: textfile collector cannot read a file
@@ -722,10 +722,10 @@ groups:
             devclaw and firstmate launches, and spend the rest by hand.
 
   # Memory budgets: docs/resource-budget.md is the table these thresholds
-  # come from. Only container groups can be evaluated today (they read
-  # docker_container_memory_usage_bytes, which already excludes reclaimable
-  # page cache); the host groups - operator sessions, runners, OS - wait for
-  # the cgroup gauge and have no rule yet.
+  # come from. Container groups read docker_container_memory_usage_bytes, which
+  # already excludes reclaimable page cache; the host groups - operator
+  # sessions, runners, OS - read host_group_memory_bytes from the host-group
+  # gauge (scripts/host-gauge/), also without page cache.
   #
   # Every group is one series named by a `name` label, so the resolved
   # message (subject = `name`, contact-points.yml.tmpl) says which group
@@ -814,6 +814,67 @@ groups:
             growing; a short spike would not have fired this, so it is a
             leak or a real step up in use. Fix the cause, or raise the
             budget in the doc and this rule together.
+
+      - uid: host-group-over-budget
+        title: a host group is over its memory budget
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 2100, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 30-minute average of the host cgroup gauge
+              # (scripts/host-gauge/host-group-gauge.sh, resident memory
+              # without page cache) as a percent of the group's budget in
+              # GiB: operator sessions 3.5, runners 0.75, os 1.0.
+              expr: >-
+                label_replace(
+                  100 * avg_over_time(host_group_memory_bytes{group="operator"}[30m]) / (3.5 * 1073741824),
+                  "name", "operator sessions", "", "")
+                or label_replace(
+                  100 * avg_over_time(host_group_memory_bytes{group="runners"}[30m]) / (0.75 * 1073741824),
+                  "name", "CI runners", "", "")
+                or label_replace(
+                  100 * avg_over_time(host_group_memory_bytes{group="os"}[30m]) / (1 * 1073741824),
+                  "name", "OS and daemons", "", "")
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [100]}
+        # Alert only, never a cap: these groups run interactive work. A gauge
+        # that stopped writing is textfile-collector-stale's job.
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.name }} is over its memory budget"
+          description: >-
+            The 30-minute average of {{ $labels.name }}'s resident memory
+            (page cache excluded) has been at
+            {{ printf "%.0f" $values.B.Value }}% of its budget for 15
+            minutes - see docs/resource-budget.md for the budget and what
+            the group contains. `systemd-cgtop -m` and `ps --sort=-rss` on
+            the box show which session, runner job or daemon is growing.
+            Nothing is capped; end the runaway work, or raise the budget in
+            the doc and this rule together.
 
       - uid: burst-pool-over-budget
         title: the burst pool is over its memory budget
