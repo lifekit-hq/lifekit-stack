@@ -58,7 +58,6 @@ GROUP_SELECTORS = {
     "devclaw-mcp": 'project="devclaw",service="devclaw-mcp"',
     "dashboard": 'project="dashboard"',
     "xui": 'project="xui"',
-    "closeloop": 'name="closeloop"',
 }
 BURST_POOL_BUDGET_LABEL = "burst pool"
 USAGE = "docker_container_memory_usage_bytes"
@@ -505,17 +504,13 @@ def drift_section(repo_root: Path) -> tuple[str, list[str]]:
         uncapped = sorted(
             c["name"] for c in containers if c["running"] and not c["mem_limit"]
         )
-        stray = sorted(
-            c["name"]
-            for c in containers
-            if not c["project"] and c["name"] != "closeloop"
-        )
+        stray = sorted(c["name"] for c in containers if not c["project"])
         lines.append(
             f"- Running with no memory cap: {len(uncapped)}"
             + (f" ({', '.join(uncapped)})" if uncapped else "")
         )
         lines.append(
-            f"- Stray containers (no compose project, not a named group): {', '.join(stray) or 'none'}"
+            f"- Stray containers (no compose project): {', '.join(stray) or 'none'}"
         )
         # Cross-project networks: one network reaching containers of >1 project.
         by_net: dict[str, set[str]] = {}
