@@ -70,18 +70,20 @@ services:
     # OpenClaw version = the FROM tag in openclaw-gateway/Dockerfile (Dependabot
     # bumps it). No build-arg override: one place decides what runs.
     #
-    # provenance: false — Buildx's default provenance attestation wraps every
-    # build's output in a fresh manifest list carrying a build timestamp, so
-    # even a 100%-cache-hit rebuild (no Dockerfile/context/base-image change)
-    # gets a new top-level digest and `up -d --build` recreates the container
-    # on every deploy (lifekit-stack fm/ls-deploy-no-rebuild investigation:
-    # CI runs 36536047624/36474931829/36452583710/36550718880 each showed
-    # every layer CACHED yet a new attestation + manifest list every time).
-    # Disabling it lets a true no-op build resolve to the already-published
-    # image so `up -d` leaves the container running.
+    # BUILDX_NO_DEFAULT_ATTESTATIONS=1 (scripts/deploy.sh) — Buildx's default
+    # provenance attestation wraps every build's output in a fresh manifest
+    # list carrying a build timestamp, so even a 100%-cache-hit rebuild (no
+    # Dockerfile/context/base-image change) gets a new top-level digest and
+    # `up -d --build` recreates the container on every deploy (lifekit-stack
+    # fm/ls-deploy-no-rebuild investigation: CI runs
+    # 36536047624/36474931829/36452583710/36550718880 each showed every layer
+    # CACHED yet a new attestation + manifest list every time). Suppressing it
+    # in the build env (not a compose `build.provenance` key — the GitHub-hosted
+    # runner's docker compose rejects that as an unknown schema property, #221)
+    # lets a true no-op build resolve to the already-published image so
+    # `up -d` leaves the container running.
     build:
       context: ./openclaw-gateway
-      provenance: false
     image: lifekit-openclaw:local
     # Platform contract (scripts/platform-contract.py, docs/platform-contract.md).
     # /readyz answers only loopback or an attributed proxy, so it is probed
@@ -657,13 +659,13 @@ services:
     # Read-only GETs on the socket, as nobody plus the docker group: deploy.sh
     # exports DOCKER_GID from the socket's owner group (override in .env).
     #
-    # provenance: false — see openclaw-gateway's build block above: without
-    # this, Buildx's default provenance attestation gives every build a new
-    # manifest-list digest even with 100% layer cache hit, forcing a needless
-    # recreate on every deploy.
+    # BUILDX_NO_DEFAULT_ATTESTATIONS=1 (scripts/deploy.sh) — see
+    # openclaw-gateway's build block above: without it, Buildx's default
+    # provenance attestation gives every build a new manifest-list digest
+    # even with 100% layer cache hit, forcing a needless recreate on every
+    # deploy.
     build:
       context: ./container-exporter
-      provenance: false
     image: container-exporter:local
     labels:
       lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
@@ -703,13 +705,13 @@ services:
     # No host port binding — devclaw reaches it on the compose network
     # at http://notify-relay:8090.
     #
-    # provenance: false — see openclaw-gateway's build block above: without
-    # this, Buildx's default provenance attestation gives every build a new
-    # manifest-list digest even with 100% layer cache hit, forcing a needless
-    # recreate on every deploy.
+    # BUILDX_NO_DEFAULT_ATTESTATIONS=1 (scripts/deploy.sh) — see
+    # openclaw-gateway's build block above: without it, Buildx's default
+    # provenance attestation gives every build a new manifest-list digest
+    # even with 100% layer cache hit, forcing a needless recreate on every
+    # deploy.
     build:
       context: ./notify-relay
-      provenance: false
     image: notify-relay:local
     # Platform contract (scripts/platform-contract.py): /ready is a cached
     # Telegram getMe, /metrics is scraped as job `notify-relay`, logs are JSON
