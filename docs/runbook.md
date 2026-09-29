@@ -645,6 +645,37 @@ lifekit-tmp-scratch-sweep.timer` stops the sweep; removing the drop-in, the
 sweep copy and the two unit files (paths printed by `--check`) followed by `sudo systemctl
 daemon-reload` restores the distro defaults.
 
+## /tmp usage alert
+
+`scripts/tmp-gauge/tmp-usage-gauge.sh` publishes `/tmp`'s size and available
+bytes as node-exporter textfile metrics every 5 minutes, the same shape as
+`scripts/quota-gauge/claude-quota-gauge.sh`. It exists because `/tmp` is
+tmpfs (RAM-backed) and node-exporter's own filesystem collector excludes
+tmpfs (`compose/docker-compose.yml` node-exporter
+`fs-types-exclude`), so nothing else on the box reported it before this -
+the gap behind the 2026-09-29 incident, where `/tmp` filled to 100% and
+every Claude session on the box lost its tool output. The `box` rule group's
+*`/tmp` is nearly full* (`rules.yml`, `tmp-filesystem-nearly-full`) fires
+warning when free space drops under 20% for 5 minutes; the existing
+*textfile metrics are stale* rule covers this gauge's file too, since its
+query reads every file in the textfile directory generically.
+
+**What the alert means:** `/tmp` is filling up. On this box the response is
+the host cleanup job (a user crontab, outside this repo) that removes stale
+scratch leftovers hourly - it reports root-owned leftovers it cannot remove
+rather than deleting them, so a firing alert can mean genuine growth outdoing
+that job's hourly pace, not only its absence. `df -h /tmp` and `du -sh
+/tmp/* 2>/dev/null | sort -rh | head` on the box show what is filling it.
+
+Install the gauge as a user crontab under `/var/lib/node_exporter/textfile`'s
+owner (`denys`), every 5 minutes - never a systemd unit, nothing under `/etc`:
+
+```bash
+crontab -e
+# add:
+*/5 * * * * bash /srv/lifekit-stack/scripts/tmp-gauge/tmp-usage-gauge.sh /var/lib/node_exporter/textfile
+```
+
 ## Backups
 
 `/srv/memory/` (the memory vault, mounted on your laptop as `~/memory/`) is your
