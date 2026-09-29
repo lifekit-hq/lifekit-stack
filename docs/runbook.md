@@ -138,7 +138,8 @@ file); rotating that token means recreating `prometheus` too. Check it with
 `diagnostics-otel` plugin enables, `gateway.auth.rateLimit`, `memory.search`
 (`enabled` + `extraPaths`), `agents.defaults.heartbeat.every`, the inbound
 `hooks` block and the finance agent's heartbeat - live in
-`compose/openclaw-gateway/platform.patch.json`. On every deploy `deploy.sh`
+`compose/openclaw-gateway/platform.patch.json`. On every OpenClaw deploy (see
+[Path-gated OpenClaw deploys](#path-gated-openclaw-deploys)) `deploy.sh`
 compares that file with the live config, applies it with
 `openclaw config patch` only when a key differs, and force-recreates the
 gateway only when the CLI's apply hint says the changed keys need it

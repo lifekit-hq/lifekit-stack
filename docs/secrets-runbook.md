@@ -113,7 +113,7 @@ line for archived auth files must be gone. The `PLAINTEXT_FOUND` rows for
 
 The `configure` phase of `scripts/deploy-openclaw.sh` (run by
 `scripts/deploy.sh`) runs `openclaw secrets audit --allow-exec` after every
-deploy as a report. It becomes `--check` with `fail_later` (a red deploy on
+OpenClaw deploy as a report. It becomes `--check` with `fail_later` (a red deploy on
 any finding) once the audit is clean on the box, which needs the auth-profile
 dedupe above; owner firstmate, review 2026-10-15.
 

@@ -3,7 +3,7 @@
 Run by the OpenClaw cron `memory_vault_audit` (Sun 03:30 Europe/Dublin) as a
 deterministic `--command` job from the gateway workspace mount
 (`/home/node/.openclaw/workspace/memory-audit/`, host `/srv/openclaw/workspace/memory-audit/`);
-`deploy.sh` (its `prepare` OpenClaw phase, `deploy-openclaw.sh`) rsyncs this directory there on every deploy.
+`deploy.sh` (its `prepare` OpenClaw phase, `deploy-openclaw.sh`) rsyncs this directory there on every OpenClaw deploy (a change under this directory triggers one; see `docs/runbook.md` "Path-gated OpenClaw deploys").
 
 **The audit logic is not here.** Since 2026-09-14 it lives in the vault itself -
 `~/memory/bin/` (`lint.sh`, `index.sh`, `rotate.sh`, `contradictions.sh`, `audit.sh`;
