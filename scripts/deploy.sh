@@ -313,6 +313,21 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format jso
 DEPLOY_DOCKER_CONFIG="$(mktemp -d)"
 export DOCKER_CONFIG="${DEPLOY_DOCKER_CONFIG}"
 
+# Buildx's default provenance attestation wraps every build's output in a
+# fresh manifest list carrying a build timestamp, so even a 100%-cache-hit
+# rebuild (no Dockerfile/context/base-image change) gets a new top-level
+# digest and `up -d --build` below recreates the container on every deploy
+# (lifekit-stack fm/ls-deploy-no-rebuild investigation: CI runs
+# 36536047624/36474931829/36452583710/36550718880 each showed every layer
+# CACHED yet a new attestation + manifest list every time). Suppressing it
+# here - rather than a compose-file `build.provenance: false` key - because
+# the GitHub-hosted CI runner's older docker compose rejects that key as an
+# unknown schema property (#221); this env var is honored by `docker compose
+# build`/`up --build` themselves (verified with a throwaway-tag build, not
+# just bare `docker buildx build`), covering both this build and the
+# `up -d --build` further down.
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+
 say "docker compose build"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build openclaw-gateway
 

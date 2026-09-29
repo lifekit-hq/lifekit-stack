@@ -69,6 +69,19 @@ services:
     <<: *policy
     # OpenClaw version = the FROM tag in openclaw-gateway/Dockerfile (Dependabot
     # bumps it). No build-arg override: one place decides what runs.
+    #
+    # BUILDX_NO_DEFAULT_ATTESTATIONS=1 (scripts/deploy.sh) — Buildx's default
+    # provenance attestation wraps every build's output in a fresh manifest
+    # list carrying a build timestamp, so even a 100%-cache-hit rebuild (no
+    # Dockerfile/context/base-image change) gets a new top-level digest and
+    # `up -d --build` recreates the container on every deploy (lifekit-stack
+    # fm/ls-deploy-no-rebuild investigation: CI runs
+    # 36536047624/36474931829/36452583710/36550718880 each showed every layer
+    # CACHED yet a new attestation + manifest list every time). Suppressing it
+    # in the build env (not a compose `build.provenance` key — the GitHub-hosted
+    # runner's docker compose rejects that as an unknown schema property, #221)
+    # lets a true no-op build resolve to the already-published image so
+    # `up -d` leaves the container running.
     build:
       context: ./openclaw-gateway
     image: lifekit-openclaw:local
@@ -645,6 +658,12 @@ services:
     #
     # Read-only GETs on the socket, as nobody plus the docker group: deploy.sh
     # exports DOCKER_GID from the socket's owner group (override in .env).
+    #
+    # BUILDX_NO_DEFAULT_ATTESTATIONS=1 (scripts/deploy.sh) — see
+    # openclaw-gateway's build block above: without it, Buildx's default
+    # provenance attestation gives every build a new manifest-list digest
+    # even with 100% layer cache hit, forcing a needless recreate on every
+    # deploy.
     build:
       context: ./container-exporter
     image: container-exporter:local
@@ -685,6 +704,12 @@ services:
     # become Telegram HTML via direct Bot API call. See compose/notify-relay/.
     # No host port binding — devclaw reaches it on the compose network
     # at http://notify-relay:8090.
+    #
+    # BUILDX_NO_DEFAULT_ATTESTATIONS=1 (scripts/deploy.sh) — see
+    # openclaw-gateway's build block above: without it, Buildx's default
+    # provenance attestation gives every build a new manifest-list digest
+    # even with 100% layer cache hit, forcing a needless recreate on every
+    # deploy.
     build:
       context: ./notify-relay
     image: notify-relay:local
