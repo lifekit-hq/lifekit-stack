@@ -41,6 +41,7 @@ openclaw_path_matches() {
 # push's before..after: a deploy that was superseded, skipped or failed never
 # advances the ref, so its OpenClaw change stays inside the next range. Any
 # range that cannot be established runs the phases.
+# shellcheck disable=SC2034  # read by deploy.sh
 openclaw_gate_decide() {
   local mode="${LIFEKIT_DEPLOY_OPENCLAW:-always}" base head f matched=""
   OPENCLAW_GATE_RUN=1
