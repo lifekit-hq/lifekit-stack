@@ -111,6 +111,26 @@ def test_new_rules(uid, metric, severity, op, limit):
     assert threshold(rule) == (op, limit)
 
 
+def test_host_ram_alert_uses_available_not_bare_free():
+    rule = RULES["host-ram-nearly-exhausted"]
+    assert any("node_memory_MemAvailable_bytes" in e for e in queries(rule))
+    assert rule["labels"]["severity"] == "critical"
+    assert threshold(rule) == ("lt", 0.10)
+
+
+def test_host_swap_alert_requires_ram_pressure_too():
+    # Swap used alone sits near 100% permanently on this box (no swap-back-in),
+    # so the rule must gate on available RAM as well, not swap in isolation.
+    rule = RULES["host-swap-and-ram-pressure"]
+    (expr,) = queries(rule)
+    assert "node_memory_SwapTotal_bytes" in expr
+    assert "node_memory_SwapFree_bytes" in expr
+    assert "node_memory_MemAvailable_bytes" in expr
+    assert " and " in expr
+    assert rule["labels"]["severity"] == "warning"
+    assert threshold(rule) == ("lt", 0.20)
+
+
 def test_quota_pace_rule_active_and_no_five_hour_rule():
     rule = RULES["claude-quota-behind-pace"]
     assert rule["labels"]["severity"] == "warning"
