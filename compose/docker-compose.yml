@@ -691,10 +691,12 @@ services:
       - "${DOCKER_GID:-990}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Per-container memory.swap.current (the docker API has no swap figure).
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
     deploy:
       resources:
         limits:
-          memory: 64m
+          memory: 128m
     cap_drop:
       - NET_RAW
       - NET_ADMIN

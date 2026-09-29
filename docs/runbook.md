@@ -631,7 +631,7 @@ can be run at any later time to confirm the cap still holds.
 Why the order matters: `live-restore` is on dockerd's SIGHUP reload list and
 `builder.*` is not. A restart before live-restore reads `true` stops every
 container on the box (this stack's `restart: on-failure` services do not come
-back on their own; finance-sentry, devclaw, the dashboard, xui and closeloop
+back on their own; finance-sentry, devclaw, the dashboard and xui
 go down with them). With live-restore active first, the restart is a no-op
 for running containers.
 
