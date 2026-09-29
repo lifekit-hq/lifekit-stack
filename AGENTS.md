@@ -30,11 +30,13 @@ account (sudo); see README "VPS users".
 
 The live OpenClaw config (`/srv/openclaw/config/openclaw.json`) has two halves. Platform keys
 (logging, diagnostics, plugin enables, gateway auth rate limit, memory search, heartbeat, inbound
-hooks - secrets there are `${VAR}` references resolved from the env file, never values) live in
-`compose/openclaw-gateway/platform.patch.json`: `deploy.sh` compares it with the live file, applies
-it with `openclaw config patch` only when a key differs, and recreates the gateway only when the
-CLI's apply hint says the changed keys need it — a new platform key goes there, never in a PR
-body. The personal half (`agents.entries`, `channels`, auth profiles, MCP tokens) stays host
+hooks, each Telegram account's `botToken` - secrets there are `${VAR}` references resolved from
+the env file, or, `botToken` only, a SOPS exec SecretRef resolved live (docs/secrets.md) - never
+values) live in `compose/openclaw-gateway/platform.patch.json`: `deploy.sh` compares it with the
+live file, applies it with `openclaw config patch` only when a key differs, and recreates the
+gateway only when the CLI's apply hint says the changed keys need it — a new platform key goes
+there, never in a PR body. The personal half (`agents.entries`, `channels` other than each
+account's `botToken`, auth profiles, MCP tokens) stays host
 state, hand-edited and only mirrored to a separate repo; a change that needs it ships as an
 operator step (an `openclaw config patch` snippet) in the PR description. Removing an agent is
 `openclaw agents delete <id>` (config patch refuses to drop roster entries; the delete also takes
