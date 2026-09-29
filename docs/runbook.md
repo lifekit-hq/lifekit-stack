@@ -25,7 +25,8 @@ cooldown so upstream's own hotfix cycle has landed. The loop:
 4. deploy.sh then runs one real agent turn for `kit` (`SMOKE_AGENTS`
    overrides) in a throwaway `deploy-smoke-<agent>` session - one turn per
    runtime, and every agent is on claude-cli since the 2026-09-16 all-agents
-   switch to Claude primary (see `scripts/deploy.sh` smoke-turn comment);
+   switch to Claude primary (see the smoke-turn comment in
+   `scripts/deploy-openclaw.sh`);
    OpenAI/codex is not primary for any agent right now. `fable`, the second
    smoke agent, was retired in the 2026-09 fleet reshape. A runtime error fails the run; auth and quota
    errors (expired OAuth, weekly cap) only warn. On a version change it also

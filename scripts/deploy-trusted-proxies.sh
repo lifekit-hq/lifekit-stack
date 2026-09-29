@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # scripts/deploy-trusted-proxies.sh — derive and set gateway.trustedProxies
 # once `openclaw onboard` has created the compose project's default network,
-# retrying on every deploy until the key holds a value. Extracted out of
-# deploy.sh's onboard block so it can be exercised directly with a stubbed
-# `docker` on PATH (see scripts/tests/test_deploy_trusted_proxies.py)
-# instead of only read as text.
+# retrying on every deploy until the key holds a value. Extracted out of the
+# onboard block (now deploy-openclaw.sh's `prepare` phase) so it can be
+# exercised directly with a stubbed `docker` on PATH (see
+# scripts/tests/test_deploy_trusted_proxies.py) instead of only read as text.
 #
 # Since OpenClaw 2026.9.x the gateway rejects proxied requests with
 # proxy_attribution_required unless the proxy's source address is listed in
@@ -29,7 +29,8 @@ OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:?OPENCLAW_CONFIG_DIR must be set}"
 CONFIG_FILE="${OPENCLAW_CONFIG_DIR}/openclaw.json"
 
 # Cheapest read first: the host config file is strict JSON on a normal
-# deploy (deploy.sh reads it the same way for the platform-patch compare).
+# deploy (deploy-openclaw.sh reads it the same way for the platform-patch
+# compare).
 # Only fall back to a live `config get` — a second one-shot container run —
 # when the file is missing or a hand edit left it non-strict JSON.
 CURRENT_TRUSTED_PROXIES="$(python3 -c '

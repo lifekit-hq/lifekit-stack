@@ -1,0 +1,3 @@
+# Follow `source` statements (scripts/lib/ helpers) even when pre-commit
+# passes the sourced file in a different batch.
+external-sources=true

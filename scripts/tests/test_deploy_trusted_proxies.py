@@ -5,9 +5,10 @@ Since OpenClaw 2026.9.x the gateway rejects proxied requests with
 proxy_attribution_required unless the proxy's source address is listed in
 gateway.trustedProxies. The value is host-derived (Docker assigns the compose
 project's default network gateway address at network creation), so it can't
-live in compose/openclaw-gateway/platform.patch.json — it's set from
-deploy.sh's onboard block by calling this script, on every deploy, and the
-script itself skips once the key already holds a value.
+live in compose/openclaw-gateway/platform.patch.json — it's set from the
+onboard step of deploy-openclaw.sh's `prepare` phase by calling this script,
+on every deploy, and the script itself skips once the key already holds a
+value.
 """
 
 from __future__ import annotations
