@@ -1,30 +1,31 @@
 """The deploy split: scripts/deploy-openclaw.sh and the deploy.sh that calls it.
 
 deploy.sh sources deploy-openclaw.sh and calls its OpenClaw phases between
-its own platform phases; executed directly, deploy-openclaw.sh runs the named
-phases on its own with the helpers in scripts/lib/deploy-common.sh. These
-tests pin the call order, the standalone entry point, and the phase-function
-return status (a phase whose last command is a false `[[ ]] && ...` would
-return 1 and trip deploy.sh's set -e). `docker` is a stub on PATH throughout.
+its own platform phases. These tests run deploy.sh end to end against a
+scratch copy of the repo (phase bodies and platform helper scripts replaced by
+trace-logging stubs) to pin the call order, and source deploy-openclaw.sh
+under `set -euo pipefail` to pin the build phase's return status (a phase
+whose last command is a false `[[ ]] && ...` would return 1 and trip
+deploy.sh's set -e). `docker` is a stub on PATH throughout.
 """
 
 from __future__ import annotations
 
 import os
-import re
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-DEPLOY = REPO / "scripts/deploy.sh"
 OPENCLAW = REPO / "scripts/deploy-openclaw.sh"
 LIB = REPO / "scripts/lib/deploy-common.sh"
 
 DOCKER_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_CALL_LOG"
 case " $* " in
+  *" config --format json "*) echo '{"name":"proj"}' ;;
   *" exec -T openclaw-gateway openclaw --version "*) echo "OpenClaw $RUNNING_VER (abc)" ;;
   *" lifekit-openclaw:local --version "*) echo "OpenClaw $BUILT_VER (def)" ;;
   *" plugins list --json "*)
@@ -35,11 +36,33 @@ esac
 exit 0
 """
 
+LOGGING_SH = """#!/bin/sh
+echo "%s" >> "$DOCKER_CALL_LOG"
+"""
 
-def phases() -> list[str]:
-    m = re.search(r"^OPENCLAW_PHASES=\(([^)]*)\)$", OPENCLAW.read_text(), re.M)
-    assert m, "OPENCLAW_PHASES=(...) not found in deploy-openclaw.sh"
-    return m.group(1).split()
+PHASES = ["prepare", "modules", "build", "configure", "post_up", "smoke"]
+
+# Platform steps and OpenClaw phases in the order deploy.sh ran them before the
+# split; `openclaw:<phase>` marks a phase call, the rest are platform steps.
+DEPLOY_ORDER = [
+    "openclaw:prepare",
+    "embed-origin",
+    "openclaw:modules",
+    "render-heartbeat",
+    "contract-static",
+    "openclaw:build",
+    "compose-up",
+    "openclaw:configure",
+    "prometheus-reload",
+    "grafana-alerting-reload",
+    "grafana-datasources-reload",
+    "openclaw:post_up",
+    "compose-ps",
+    "openclaw:smoke",
+    "contract-enforce",
+    "builder-gc",
+    "tmp-scratch",
+]
 
 
 @pytest.fixture
@@ -72,24 +95,138 @@ def env(tmp_path):
     }
 
 
-def run(env, *phase_args):
+def stub(path: Path, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    path.chmod(0o755)
+
+
+def marker(line: str) -> str | None:
+    if line.startswith(("openclaw:", "contract-")) or line in {
+        "embed-origin",
+        "render-heartbeat",
+        "builder-gc",
+        "tmp-scratch",
+    }:
+        return line
+    if "up -d --build" in line:
+        return "compose-up"
+    if "kill -s HUP prometheus" in line:
+        return "prometheus-reload"
+    if line.endswith(" ps"):
+        return "compose-ps"
+    if "alerting/reload" in line:
+        return "grafana-alerting-reload"
+    if "datasources/reload" in line:
+        return "grafana-datasources-reload"
+    return None
+
+
+def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
+    env, tmp_path
+):
+    fake = tmp_path / "repo"
+    (fake / "scripts/lib").mkdir(parents=True)
+    shutil.copy(REPO / "scripts/deploy.sh", fake / "scripts/deploy.sh")
+    shutil.copy(LIB, fake / "scripts/lib/deploy-common.sh")
+    stub(
+        fake / "scripts/deploy-openclaw.sh",
+        "".join(
+            f'openclaw_phase_{p}() {{ echo "openclaw:{p}" >> "$DOCKER_CALL_LOG"; }}\n'
+            for p in PHASES
+        ),
+    )
+    stub(fake / "scripts/deploy-embed-origin.sh", LOGGING_SH % "embed-origin")
+    stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
+    stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
+    stub(fake / "scripts/tmp-scratch-policy.sh", LOGGING_SH % "tmp-scratch")
+    stub(
+        fake / "scripts/platform-contract.py",
+        "import os, sys\n"
+        'open(os.environ["DOCKER_CALL_LOG"], "a").write("contract-" + sys.argv[1].lstrip("-") + "\\n")\n',
+    )
+    alert_dir = fake / "compose/observability/grafana/provisioning/alerting"
+    alert_dir.mkdir(parents=True)
+    (alert_dir / "contact-points.yml.tmpl").write_text("chat: __TELEGRAM_CHAT_ID__\n")
+    (fake / "compose/docker-compose.yml").write_text("")
+    bin_dir = tmp_path / "bin"
+    stub(bin_dir / "git", '#!/bin/sh\necho "  HEAD branch: main"\n')
+    stub(bin_dir / "curl", '#!/bin/sh\necho "curl $*" >> "$DOCKER_CALL_LOG"\n')
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    Path(env["ENV_FILE"]).write_text("LIFEKIT_TELEGRAM_CHAT=123\n")
+
+    r = subprocess.run(
+        ["bash", str(fake / "scripts/deploy.sh")],
+        env={
+            **env,
+            "REPO_DIR": str(fake),
+            "LIFEKIT_DEPLOY_REEXEC": "1",
+            "LIFEKIT_STATE_DIR_HOST": str(state_dir),
+            "DOCKER_GID": "999",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "✓ deploy complete." in r.stdout
+    trace = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    assert [m for m in map(marker, trace) if m] == DEPLOY_ORDER
+
+
+def build_phase(env, extra_env=None):
+    script = f"""
+set -euo pipefail
+source {LIB}
+source {OPENCLAW}
+rc=0
+openclaw_phase_build || rc=$?
+echo "rc=$rc"
+echo "failures=${{#DEPLOY_FAILURES[@]}}"
+for f in "${{DEPLOY_FAILURES[@]}}"; do echo "failure: $f"; done
+"""
     return subprocess.run(
-        ["bash", str(OPENCLAW), *phase_args],
-        env=env,
+        ["bash", "-c", script],
+        env={**env, **(extra_env or {})},
         capture_output=True,
         text=True,
         check=False,
     )
 
 
-def test_deploy_sh_calls_every_phase_once_in_order():
-    called = re.findall(r"^openclaw_phase_(\w+)$", DEPLOY.read_text(), re.M)
-    assert called == [p.replace("-", "_") for p in phases()]
+def test_build_on_version_bump_with_repinned_plugins_returns_zero_and_queues_nothing(
+    env,
+):
+    r = build_phase(env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "rc=0" in r.stdout.splitlines()
+    assert "failures=0" in r.stdout.splitlines()
+    assert "plugin codex is 2026.6.8, core is 2026.9.5; updating" in r.stderr
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text()
+    assert "stop openclaw-cli openclaw-gateway" in calls
+    assert "doctor --fix --non-interactive" in calls
 
 
-def test_every_phase_has_a_function():
-    defined = re.findall(r"^openclaw_phase_(\w+)\(\) \{$", OPENCLAW.read_text(), re.M)
-    assert defined == [p.replace("-", "_") for p in phases()]
+def test_build_with_plugins_still_off_core_queues_a_failure_without_aborting(env):
+    r = build_phase(env, {"PLUGINS_STUCK": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "rc=0" in r.stdout.splitlines()
+    assert (
+        "failure: plugins still off core 2026.9.5 after update: codex 2026.6.8"
+        in r.stdout
+    )
+
+
+def test_build_with_unchanged_version_migrates_nothing(env):
+    r = build_phase(env, {"RUNNING_VER": "2026.9.5"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "rc=0" in r.stdout.splitlines()
+    assert "failures=0" in r.stdout.splitlines()
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text()
+    assert "doctor --fix" not in calls
+    assert " stop " not in calls
 
 
 def test_sourcing_defines_the_phases_and_runs_nothing(env):
@@ -108,57 +245,6 @@ echo "failures=${{#DEPLOY_FAILURES[@]}}"
     )
     assert r.returncode == 0, r.stderr
     *defined, failures = r.stdout.split()
-    assert sorted(defined) == sorted(
-        f"openclaw_phase_{p.replace('-', '_')}" for p in phases()
-    )
+    assert sorted(defined) == sorted(f"openclaw_phase_{p}" for p in PHASES)
     assert failures == "failures=1"
     assert Path(env["DOCKER_CALL_LOG"]).read_text() == ""
-
-
-def test_no_phase_prints_usage(env):
-    r = run(env)
-    assert r.returncode == 2
-    assert "usage:" in r.stderr
-    assert " ".join(phases()) in r.stderr
-
-
-def test_unknown_phase_runs_nothing(env):
-    r = run(env, "modules", "bogus")
-    assert r.returncode == 2
-    assert "unknown phase: bogus" in r.stderr
-    assert not (Path(env["LIFEKIT_LIFE_DIR"]) / "system/modules.yaml").exists()
-
-
-def test_missing_env_file_fails_before_any_phase(env, tmp_path):
-    r = run({**env, "ENV_FILE": str(tmp_path / "missing.env")}, "modules")
-    assert r.returncode == 1
-    assert "Missing" in r.stderr
-    assert not (Path(env["LIFEKIT_LIFE_DIR"]) / "system/modules.yaml").exists()
-
-
-def test_modules_phase_runs_standalone(env):
-    r = run(env, "modules")
-    assert r.returncode == 0, r.stderr
-    copied = Path(env["LIFEKIT_LIFE_DIR"]) / "system/modules.yaml"
-    assert copied.read_text() == (REPO / "defaults/modules.yaml").read_text()
-    assert "✓ openclaw phases complete: modules" in r.stdout
-    # The private Docker config is cleaned up by the EXIT trap.
-    assert list(Path(env["TMPDIR"]).iterdir()) == []
-
-
-def test_build_on_version_bump_with_repinned_plugins_succeeds(env):
-    r = run(env, "build")
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "plugin codex is 2026.6.8, core is 2026.9.5; updating" in r.stderr
-    assert "plugins still off core" not in r.stderr
-    calls = Path(env["DOCKER_CALL_LOG"]).read_text()
-    assert "stop openclaw-cli openclaw-gateway" in calls
-    assert "doctor --fix --non-interactive" in calls
-
-
-def test_build_with_plugins_still_off_core_fails_at_the_end(env):
-    r = run({**env, "PLUGINS_STUCK": "1"}, "build")
-    assert r.returncode == 1
-    assert "plugins still off core 2026.9.5 after update: codex 2026.6.8" in r.stderr
-    assert "post-deploy assertions failed" in r.stdout
-    assert "OPENCLAW DEPLOY FAILED" in r.stderr

@@ -15,25 +15,16 @@
 #              doctor / health / channels status
 #   smoke      one real agent turn per runtime
 #
-# Two ways in:
-#
-#   sourced     deploy.sh sources this file before its main body and calls
-#               the phases between its platform phases, in the original
-#               order. deploy.sh stays the single deploy entry point (CI runs
-#               it on every push to main).
-#   executed    `bash scripts/deploy-openclaw.sh <phase>...` runs the named
-#               phases in the order given, with the same helpers
-#               (scripts/lib/deploy-common.sh), config defaults and private
-#               Docker config, and fails at the end on any queued assertion.
-#               It pulls nothing and runs no `docker compose up`: on a version
-#               change `build` leaves the gateway stopped until one does.
+# Sourced, never executed: deploy.sh sources this file before its main body
+# and calls the phases between its platform phases, in the original order.
+# deploy.sh stays the single deploy entry point (CI runs it on every push to
+# main); sourcing keeps the phases parsed in memory before its git pull can
+# rewrite them on disk.
 #
 # Re-runnable. Idempotent, like deploy.sh.
 
 # shellcheck source=scripts/lib/deploy-common.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/lib/deploy-common.sh"
-
-OPENCLAW_PHASES=(prepare modules build configure post-up smoke)
 
 # ═══ prepare ═════════════════════════════════════════════════════════════════
 openclaw_phase_prepare() {
@@ -602,60 +593,3 @@ print(("WARN " if soft else "FAIL ") + err[:300])
 done
 
 }
-
-# ─── Standalone run ──────────────────────────────────────────────────────────
-
-openclaw_usage() {
-  echo "usage: $(basename "$0") <phase>..." >&2
-  echo "  phases, in deploy order: ${OPENCLAW_PHASES[*]}" >&2
-  echo "  deploy.sh runs them all at their points in the platform sequence;" >&2
-  echo "  this runs only the ones named, in the order given, and no compose up." >&2
-}
-
-openclaw_on_exit() {
-  local code=$?
-  if [[ "${OPENCLAW_DEPLOY_COMPLETE}" != "1" ]]; then
-    printf '\n\033[1;31m✗ OPENCLAW DEPLOY FAILED (exit %s) during: %s\033[0m\n' "${code}" "${CURRENT_STEP}" >&2
-    printf '\033[1;31m  Fix the failure and re-run deploy-openclaw.sh — it is idempotent.\033[0m\n' >&2
-  fi
-  if [[ -n "${DEPLOY_DOCKER_CONFIG:-}" ]]; then rm -rf "${DEPLOY_DOCKER_CONFIG}"; fi
-}
-
-openclaw_standalone() {
-  local phase
-  if (( $# == 0 )); then
-    openclaw_usage
-    exit 2
-  fi
-  for phase in "$@"; do
-    if [[ " ${OPENCLAW_PHASES[*]} " != *" ${phase} "* ]]; then
-      echo "unknown phase: ${phase}" >&2
-      openclaw_usage
-      exit 2
-    fi
-  done
-
-  OPENCLAW_DEPLOY_COMPLETE=0
-  trap openclaw_on_exit EXIT
-  cd "${REPO_DIR}"
-  deploy_require_env_file
-  deploy_private_docker_config
-
-  for phase in "$@"; do
-    "openclaw_phase_${phase//-/_}"
-  done
-
-  if (( ${#DEPLOY_FAILURES[@]} )); then
-    say "post-deploy assertions failed"
-    printf '  - %s\n' "${DEPLOY_FAILURES[@]}" >&2
-    exit 1
-  fi
-
-  OPENCLAW_DEPLOY_COMPLETE=1
-  say "✓ openclaw phases complete: $*"
-}
-
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  set -euo pipefail
-  openclaw_standalone "$@"
-fi
