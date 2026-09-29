@@ -16,4 +16,4 @@ commands:
     python3 -m venv .venv
     && .venv/bin/pip install --quiet pytest
     && .venv/bin/python -m pytest -q
-    compose/container-exporter/tests scripts/quota-share/tests scripts/tests
+    compose/container-exporter/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests

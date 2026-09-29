@@ -8,7 +8,7 @@ binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 | Piece | What | Where it runs |
 | --- | --- | --- |
 | `compose/` | `docker-compose.yml` + Dockerfiles: openclaw-gateway, openclaw-cli (profile `cli`), lifekit-orchestrator, notify-relay, google-workspace-mcp, plus the box observability stack (prometheus, loki, grafana, node-exporter, otel-collector, tempo) and its `observability/` config — datasources, dashboard providers, and the **provisioned alert rules**. New observability services join both `default` and the external `lifekit-shared` network only if a cross-project caller needs them (otherwise `default` alone); Grafana provisioning (alerting, datasources) needs a `deploy.sh` reload after merge since Grafana reads it at startup only. | The VPS, as compose project |
-| `scripts/` | `bootstrap-vps.sh` (host setup), `deploy.sh` (idempotent redeploy), `check-doc-drift.sh`, `docker-builder-gc.sh` (Docker BuildKit cache cap — writes `/etc/docker/daemon.json`, needs an operator restart to apply, see `docs/runbook.md` "Applying the Docker builder cache cap"), `tmp-scratch-policy.sh` (masks the tmpfs `/tmp` mount unit so build/session scratch lives on disk + a daily sweep that retires only scratch nothing holds — operator live-cutover in `docs/runbook.md` "Moving /tmp off RAM"), memory-audit cron wrapper (audit logic lives in the vault `bin/`), `quota-share/` (read-only report: shares quota-axi's account % across consumers by logged Claude Code session usage — see `scripts/quota-share/README.md`), sync tooling | The VPS |
+| `scripts/` | `bootstrap-vps.sh` (host setup), `deploy.sh` (idempotent redeploy), `check-doc-drift.sh`, `docker-builder-gc.sh` (Docker BuildKit cache cap — writes `/etc/docker/daemon.json`, needs an operator restart to apply, see `docs/runbook.md` "Applying the Docker builder cache cap"), `tmp-scratch-policy.sh` (masks the tmpfs `/tmp` mount unit so build/session scratch lives on disk + a daily sweep that retires only scratch nothing holds — operator live-cutover in `docs/runbook.md` "Moving /tmp off RAM"), memory-audit cron wrapper (audit logic lives in the vault `bin/`), `quota-share/` (read-only report: shares quota-axi's account % across consumers by logged Claude Code session usage — see `scripts/quota-share/README.md`), `ops-report/weekly.py` (read-only weekly VPS ops report to stdout — usage in its docstring), sync tooling | The VPS |
 | `skills/` | Jinja2-templated workspace skills (`{{ user.* }}` substitutions — never baked personal data) | OpenClaw workspace |
 | `defaults/` | Agent workspace defaults (AGENTS.md contract, modules.yaml, openclaw config) | OpenClaw workspace |
 
@@ -17,7 +17,7 @@ binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 ```bash
 pre-commit run --all-files                 # THE local gate — exactly what CI's lint job runs
 python3 -m venv .venv && .venv/bin/pip install --quiet -r requirements.txt
-.venv/bin/python -m pytest compose/container-exporter/tests scripts/quota-share/tests scripts/tests   # the CI tests job
+.venv/bin/python -m pytest compose/container-exporter/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests   # the CI tests job
 (cd compose/notify-relay && node --test)   # notify-relay renderer + route tests; CI runs them in node:22-trixie-slim
 bash scripts/check-doc-drift.sh            # README <-> compose service-count parity
 ```
@@ -53,7 +53,7 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
 - **Lint** = `pre-commit run --all-files`: gitleaks (secrets), hygiene hooks, yamllint,
   shellcheck, hadolint (`--failure-threshold error`), ruff + ruff-format, doc-drift.
 - **Gitleaks full-history scan** (OSS binary, pinned to the pre-commit rev).
-- **Tests**: the container-exporter, quota-share and platform-contract pytest suites, plus the
+- **Tests**: the container-exporter, quota-share, ops-report and platform-contract pytest suites, plus the
   notify-relay `node:test` suite (the memory-audit logic moved to the vault `bin/` on 2026-09-14 -
   shellcheck covers its wrapper). Owner notifications have one wire format,
   [`docs/message-format.md`](./docs/message-format.md): notify-relay is the only renderer, and
