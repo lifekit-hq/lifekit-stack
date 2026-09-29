@@ -1,0 +1,41 @@
+# SOPS creation rules for the two secret boundaries (docs/secrets.md).
+#
+# Recipients are age PUBLIC keys and belong in git. The private halves:
+#   captain  - the operator's age key. This is the SAME identity
+#              finance-sentry's docker/.env.sops is encrypted to - one
+#              operator, one host, one key reused across both repos'
+#              master boundaries (captain's call, 2026-09-29; not a
+#              per-repo key). On the box it is the admin account's
+#              ~/.config/sops/age/keys.txt (0600); an offline copy lives in
+#              the captain's KeePassXC. Never on a service account.
+#   gateway  - the OpenClaw gateway resolver's key, generated on the box by
+#              scripts/secrets/init-gateway-key.sh into
+#              /srv/lifekit-secrets/gateway/lifekit-gateway.agekey (0400,
+#              service account). It can open the gateway file and nothing
+#              else.
+#
+# secrets/lifekit.env.sops          master   captain only
+# secrets/lifekit-gateway.env.sops  gateway  captain + gateway
+#
+# PENDING (gateway rule only): the gateway key above has not been minted
+# yet - that is a captain-only, on-box step (docs/secrets-runbook.md,
+# "One-time cutover" step 1; scripts/secrets/init-gateway-key.sh). Until
+# then this rule is a TEMPORARY placeholder that reuses the captain
+# recipient, because no gateway key exists yet to point at - the gateway
+# file below is captain-only in practice, not captain+gateway. Once the box
+# mints the real gateway key, replace the age value on the gateway rule
+# below with the printed recipient and re-key:
+#   sops updatekeys secrets/lifekit-gateway.env.sops
+# scripts/tests/test_secrets.py's test_sops_yaml_boundaries documents and
+# checks this transitional, single-key state; the PR that wires in the real
+# gateway key restores the strict two-key invariant.
+#
+# Editing: scripts/secrets/edit.sh <master|gateway>. Re-keying after a
+# recipient change: sops updatekeys secrets/<file> (docs/secrets-runbook.md).
+creation_rules:
+  - path_regex: secrets/lifekit\.env\.sops$
+    age: age146hmku2m4667lmx63ysge7szjlyc48a6x7r5zg8ur56wxlq4t3pqsyv390
+  - path_regex: secrets/lifekit-gateway\.env\.sops$
+    # PENDING - see the comment block above. Placeholder = captain key
+    # reused until the gateway key is minted (captain-only step).
+    age: age146hmku2m4667lmx63ysge7szjlyc48a6x7r5zg8ur56wxlq4t3pqsyv390

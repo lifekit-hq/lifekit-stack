@@ -11,10 +11,16 @@ wizard.yaml
 # Secrets
 *.pem
 *.key
+*.agekey
 *-token
 *.tskey
 auth-profiles.json
-secrets/
+# secrets/ holds ONLY the two SOPS-encrypted env files and their README
+# (docs/secrets.md). Everything else that lands there - a decrypted copy, an
+# editor swap file, a key - stays out.
+secrets/*
+!secrets/*.env.sops
+!secrets/README.md
 
 # OpenClaw runtime state (if someone runs the stack locally inside the repo)
 .openclaw/
