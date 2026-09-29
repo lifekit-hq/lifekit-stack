@@ -556,15 +556,25 @@ fi
 # secrets/lifekit-gateway.env.sops, so a bot-token rotation in that file takes
 # effect without a gateway recreate - unconditional, like the Prometheus/
 # Grafana reloads below, since the file can change independently of
-# platform.patch.json. `secrets audit` is report-only: it proves every
-# configured SecretRef still resolves (a trip-wire for a bad re-key or a
-# missing id) and never prints a value. `secrets reload` resolves refs as
-# part of its normal operation and does not take --allow-exec (OpenClaw
-# 2026.9.5: "does not recognize option --allow-exec"); `secrets audit`
-# does, for the same reason the config patch dry run above does.
+# platform.patch.json. Unlike the `run --rm` one-shot calls elsewhere in this
+# script, `reload` must reach the ALREADY-RUNNING gateway process (it's an RPC
+# against its live in-memory state, not a fresh CLI invocation) - `run` starts
+# a brand-new one-off container in its own network namespace, so its loopback
+# is not the running gateway's and every reload failed with "Gateway not
+# reachable at ws://127.0.0.1:18789 (ECONNREFUSED)". `exec` instead runs
+# inside the running gateway container itself, sharing its netns, same as the
+# stuck-session reset below - no --profile cli / openclaw-cli detour needed
+# since exec doesn't need a second container to share that namespace with.
+# `secrets audit` is report-only: it proves every configured SecretRef still
+# resolves (a trip-wire for a bad re-key or a missing id) and never prints a
+# value; it stays a `run` one-shot since it's offline (doesn't need the live
+# gateway) and that's already proven to pass. `secrets reload` resolves refs
+# as part of its normal operation and does not take --allow-exec (OpenClaw
+# 2026.9.5: "does not recognize option --allow-exec"); `secrets audit` does,
+# for the same reason the config patch dry run above does.
 say "reloading gateway secrets"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-  run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+  exec -T openclaw-gateway openclaw \
     secrets reload || fail_later "openclaw secrets reload failed"
 say "auditing gateway secrets (report only, no values printed)"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \

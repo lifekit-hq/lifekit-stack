@@ -16,7 +16,9 @@
 # self-hosted runner. Fetch a fresh 1-hour token with:
 #   gh api -X POST /repos/lifekit-hq/lifekit-stack/actions/runners/registration-token --jq .token
 #
-# After this script: scp your .env to /srv/openclaw/config/.env, then run ./scripts/deploy.sh.
+# After this script: restore the captain's age key (~/.config/sops/age/keys.txt,
+# from KeePassXC), run scripts/secrets/render-stack-env.sh to produce
+# /srv/lifekit-secrets/stack.env, then run ./scripts/deploy.sh.
 
 set -euo pipefail
 
@@ -275,8 +277,9 @@ say "Host bootstrap complete."
 cat <<EOF
 
 Next steps:
-  1. From your laptop, scp your real .env onto the host:
-       scp .env $LIFEKIT_USER@$TAILSCALE_HOSTNAME:/srv/openclaw/config/.env
+  1. Restore the captain's age key onto the host, as $LIFEKIT_USER
+     (~/.config/sops/age/keys.txt, from KeePassXC), then on the host render
+     the secrets: sudo bash scripts/secrets/render-stack-env.sh
   2. Optional: copy your private workspace skills onto the host:
        rsync -a ~/.openclaw/workspace/skills/ $LIFEKIT_USER@$TAILSCALE_HOSTNAME:/srv/openclaw/workspace/skills/
   3. Run the deploy script (on the host, as $LIFEKIT_USER):

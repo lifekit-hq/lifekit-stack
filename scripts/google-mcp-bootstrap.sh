@@ -44,4 +44,4 @@ echo "  1. On your PC, generate the refresh token (see docs/google-mcp-setup.md)
 echo "  2. scp ~/.google_workspace_mcp/credentials/* \\"
 echo "         ${LIFEKIT_USER}@<vps>:${CREDS_DIR}/"
 echo "  3. docker compose -f /srv/lifekit-stack/compose/docker-compose.yml \\"
-echo "         --env-file /srv/openclaw/config/.env up -d google-workspace-mcp"
+echo "         --env-file /srv/lifekit-secrets/stack.env up -d google-workspace-mcp"

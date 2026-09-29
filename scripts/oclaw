@@ -10,13 +10,13 @@
 #
 # Env:
 #   VPS                 SSH target (default: denys@100.87.201.43)
-#   OCLAW_ENV_FILE      Compose env file on VPS (default: /srv/openclaw/config/.env)
+#   OCLAW_ENV_FILE      Compose env file on VPS (default: /srv/lifekit-secrets/stack.env)
 #   OCLAW_COMPOSE_DIR   Compose dir on VPS (default: /srv/lifekit-stack/compose)
 
 set -euo pipefail
 
 VPS="${VPS:-denys@100.87.201.43}"
-ENV_FILE="${OCLAW_ENV_FILE:-/srv/openclaw/config/.env}"
+ENV_FILE="${OCLAW_ENV_FILE:-/srv/lifekit-secrets/stack.env}"
 COMPOSE_DIR="${OCLAW_COMPOSE_DIR:-/srv/lifekit-stack/compose}"
 
 # Decide whether to allocate a TTY. Many openclaw subcommands (login, configure)

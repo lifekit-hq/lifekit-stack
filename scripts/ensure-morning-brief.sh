@@ -15,7 +15,7 @@
 # After a fresh skill install/update, restart the gateway so it re-reads the
 # skill manifest (plain `restart` is NOT sufficient):
 #   cd /srv/lifekit-stack/compose && docker compose \
-#     --env-file /srv/openclaw/config/.env -f docker-compose.yml \
+#     --env-file /srv/lifekit-secrets/stack.env -f docker-compose.yml \
 #     up -d --force-recreate openclaw-gateway
 #
 # Env overrides:

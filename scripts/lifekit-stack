@@ -153,7 +153,7 @@ cmd_migrate() {
 
   say "stopping gateway on $VPS"
   ssh "$VPS" 'cd /srv/lifekit-stack/compose && \
-    docker compose --env-file /srv/openclaw/config/.env stop openclaw-gateway'
+    docker compose --env-file /srv/lifekit-secrets/stack.env stop openclaw-gateway'
 
   say "backing up /srv/openclaw/config -> config.bak-$TS"
   # shellcheck disable=SC2029 # $TS expanding client-side is intentional
@@ -199,11 +199,11 @@ Next steps on the VPS:
 
   ssh $VPS
   cd /srv/lifekit-stack/compose
-  docker compose --env-file /srv/openclaw/config/.env up -d openclaw-gateway
+  docker compose --env-file /srv/lifekit-secrets/stack.env up -d openclaw-gateway
 
   # If this is the first migrate (auth-profiles.json doesn't exist), wire
   # the Anthropic provider to use Claude CLI auth (one-time, needs a TTY):
-  docker compose --env-file /srv/openclaw/config/.env exec openclaw-gateway sh -c \\
+  docker compose --env-file /srv/lifekit-secrets/stack.env exec openclaw-gateway sh -c \\
     'export PATH=/home/node/.npm-global/bin:\$PATH; \\
      openclaw models auth login --provider anthropic --method cli --set-default'
 
