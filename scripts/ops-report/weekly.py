@@ -251,9 +251,7 @@ def memory_section(base: str, budgets: dict[str, float]) -> tuple[str, list[str]
 def reliability_section(base: str) -> tuple[str, list[str]]:
     decisions: list[str] = []
     try:
-        oom = names(
-            prom_query(base, "increase(docker_container_oom_killed[7d]) > 0")
-        )
+        oom = names(prom_query(base, "increase(docker_container_oom_killed[7d]) > 0"))
         restarts = prom_query(base, "increase(docker_container_restart_count[7d]) > 0")
         unhealthy = names(
             prom_query(
