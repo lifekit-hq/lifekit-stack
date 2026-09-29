@@ -6,43 +6,51 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     name: Pre-commit (gitleaks, yamllint, shellcheck, hadolint, ruff)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # gitleaks needs history
 
-      # setup-python@v5 can't provision Python on this arm64 self-hosted runner
-      # ("version '3.13' ... not found for Debian 13"). The runner already ships
-      # system python3 + python3-venv (installed by bootstrap), so run pre-commit
-      # from a throwaway venv instead.
+      # setup-python@v5 can't provision Python on the arm64 self-hosted deploy
+      # runner, so pre-commit runs from a throwaway venv rather than relying on
+      # a provisioned interpreter that would differ between hosted and
+      # self-hosted jobs.
       - name: Run pre-commit
         run: |
           python3 -m venv "$RUNNER_TEMP/pcvenv"
           "$RUNNER_TEMP/pcvenv/bin/pip" install --quiet --upgrade pip pre-commit
           "$RUNNER_TEMP/pcvenv/bin/pre-commit" run --all-files --show-diff-on-failure --color=always
 
-  tests:
-    name: Tests (container-exporter, quota-share, platform-contract, notify-relay)
-    runs-on: self-hosted
+      # Folded in from the former standalone doc-drift.yml so it no longer
+      # consumes its own runner slot per PR.
+      - name: Check doc drift (README <-> compose service-count parity)
+        run: bash scripts/check-doc-drift.sh
+
+  pytest:
+    name: Tests (container-exporter, quota-share, platform-contract)
+    uses: lifekit-hq/.github/.github/workflows/python-ci.yml@v1
+    with:
+      install: "-r requirements.txt"
+      run: "python -m pytest -q compose/container-exporter/tests scripts/quota-share/tests scripts/tests"
+      runner: '"ubuntu-latest"'
+
+  notify-relay-tests:
+    name: Tests (notify-relay)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Same throwaway-venv pattern as the lint job (setup-python can't provision
-      # on this arm64 self-hosted runner; system python3 + venv are bootstrapped).
-      - name: Run pytest
-        run: |
-          python3 -m venv "$RUNNER_TEMP/testvenv"
-          "$RUNNER_TEMP/testvenv/bin/pip" install --quiet --upgrade pip
-          "$RUNNER_TEMP/testvenv/bin/pip" install --quiet pytest pyyaml
-          "$RUNNER_TEMP/testvenv/bin/python" -m pytest -q compose/container-exporter/tests scripts/quota-share/tests scripts/tests
-
-      # notify-relay's renderer + route tests (node:test, no deps). The runner
-      # has no provisionable Node either, so run them in the image the relay
-      # itself is built from; --network none proves nothing reaches Telegram.
+      # notify-relay's renderer + route tests (node:test, no deps), run in the
+      # image the relay itself is built from; --network none proves nothing
+      # reaches Telegram.
       - name: Run notify-relay tests
         run: |
           docker run --rm --network none \
@@ -51,35 +59,14 @@ jobs:
 
   gitleaks-full:
     name: Gitleaks full-history scan
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # gitleaks/gitleaks-action@v2 requires a paid GITLEAKS_LICENSE for
-      # org-owned repos (it hard-fails "License key is required" once the repo
-      # moved dsdevq -> lifekit-hq). The OSS gitleaks BINARY is MIT-licensed and
-      # unaffected, so run it directly — same full-history scan, its exit code is
-      # the gate (the action wrapper only added the SARIF upload we already
-      # disabled). Pinned to the same rev as the pre-commit gitleaks hook.
-      - name: Gitleaks (OSS binary, full history)
-        run: |
-          VERSION=8.21.2
-          case "$(uname -m)" in
-            aarch64|arm64) GL_ARCH=arm64 ;;
-            x86_64|amd64)  GL_ARCH=x64 ;;
-            *) echo "unsupported arch $(uname -m)"; exit 1 ;;
-          esac
-          curl -sSfL \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_${GL_ARCH}.tar.gz" \
-            | tar -xz -C "$RUNNER_TEMP" gitleaks
-          "$RUNNER_TEMP/gitleaks" version
-          "$RUNNER_TEMP/gitleaks" git --no-banner --redact "$GITHUB_WORKSPACE"
+    uses: lifekit-hq/.github/.github/workflows/secrets-scan.yml@v1
+    with:
+      mode: git
+      runner: '"ubuntu-latest"'
 
   deploy:
     name: Deploy to VPS
-    needs: [lint, tests, gitleaks-full]
+    needs: [lint, pytest, notify-relay-tests, gitleaks-full]
     # main only: Weekly Release dispatches this workflow on the release-please branch to
     # get the required checks onto the release PR (#176), and that must never deploy.
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')

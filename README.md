@@ -138,7 +138,7 @@ lifekit-stack/
 ├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw
 ├── skills/               # parameterized workspace skills (opt-in via wizard)
 ├── docs/                 # quickstart, architecture, runbook, google-mcp-setup, customizing-skills, PRIVATE.md (the never-commit audit checklist)
-└── .github/workflows/    # CI (pre-commit lint, gitleaks full-history, tests, deploy — VPS self-hosted runner), doc-drift, release-please + weekly release
+└── .github/workflows/    # CI (pre-commit lint + doc-drift, gitleaks full-history, tests on hosted runners, deploy on the VPS self-hosted runner), release-please + weekly release
 ```
 
 ## VPS users
