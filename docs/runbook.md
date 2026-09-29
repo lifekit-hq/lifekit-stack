@@ -697,6 +697,29 @@ vault runbook for owner detail.
 
 Snapshot these via Hetzner Backups (built-in, ~20% extra/mo) or rsync to another box.
 
+## Pull-based alert-to-inbox polling
+
+Grafana's alerts route to Telegram only, so nothing reaches an agent unless
+something pulls. `scripts/alert-inbox/poll_alerts.py` (see
+`scripts/alert-inbox/README.md`) reads the provisioned alert rules' own
+PromQL from `rules.yml` and evaluates them against Prometheus's open,
+loopback-bound query API — no Grafana admin credentials, no new listener.
+Install as a user crontab (every 5 minutes), not a systemd unit or anything
+under `/etc`:
+
+```bash
+crontab -e
+# add:
+*/5 * * * * FM_INBOX_BIN=/path/to/fm-inbox.sh FM_INBOX_HOME=/path/to/target/home \
+  python3 /path/to/lifekit-stack/scripts/alert-inbox/poll_alerts.py >> \
+  "$HOME/.local/state/lifekit-alert-inbox/poll.log" 2>&1
+```
+
+Notifies only on transitions (a rule starting to fire, the same rule
+resolving) via `fm-inbox.sh note`; a Prometheus outage is its own transition
+so it is reported once, not every poll. Does not touch Grafana contact
+points, policies, or credentials.
+
 ## External heartbeat (dead-man)
 
 The box's own alerts watch the box, so they cannot report the box, Docker,
