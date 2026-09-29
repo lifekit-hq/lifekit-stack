@@ -107,4 +107,3 @@ def test_prom_format_has_help_and_type(dirs):
     text = (out / "host_group.prom").read_text()
     for name in ("host_group_memory_bytes", "host_group_memory_swap_bytes"):
         assert f"# TYPE {name} gauge" in text
-
