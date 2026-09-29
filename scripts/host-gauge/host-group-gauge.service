@@ -4,7 +4,7 @@ Description=Export host-group (operator sessions, CI runners, OS) memory to node
 [Service]
 Type=oneshot
 # The textfile directory is owned by the admin account (README "VPS users");
-# the cgroup files it reads are world-readable. bootstrap-vps.sh substitutes
+# the cgroup files it reads are world-readable. install-host-gauges.sh substitutes
 # the placeholder at install time.
 User=__ADMIN_USER__
 ExecStart=/usr/local/bin/host-group-gauge.sh /var/lib/node_exporter/textfile
