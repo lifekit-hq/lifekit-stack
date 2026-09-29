@@ -146,7 +146,7 @@ scp ~/.google_workspace_mcp/credentials/* \
 On the VPS:
 
 ```bash
-docker compose -f /srv/lifekit-stack/compose/docker-compose.yml \
+docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \
     --env-file /srv/openclaw/config/.env \
     up -d google-workspace-mcp
 ```
@@ -154,9 +154,9 @@ docker compose -f /srv/lifekit-stack/compose/docker-compose.yml \
 Watch it become healthy:
 
 ```bash
-docker compose -f /srv/lifekit-stack/compose/docker-compose.yml \
+docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \
     ps google-workspace-mcp
-docker compose -f /srv/lifekit-stack/compose/docker-compose.yml \
+docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \
     logs -f --tail=50 google-workspace-mcp
 ```
 
@@ -177,7 +177,7 @@ into the `mcp.servers` array. The final entry should look like:
 Then restart the gateway so it picks up the new MCP block:
 
 ```bash
-docker compose -f /srv/lifekit-stack/compose/docker-compose.yml \
+docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \
     --env-file /srv/openclaw/config/.env \
     restart openclaw-gateway
 ```
@@ -187,13 +187,13 @@ docker compose -f /srv/lifekit-stack/compose/docker-compose.yml \
 **Container is unhealthy.**  Check the logs — most failures here are credential
 file path mismatches. The container expects credentials under
 `/home/app/.google_workspace_mcp/credentials/`; verify the bind-mount in
-`docker-compose.yml` points there and that the host dir is readable by the
+`compose/openclaw/docker-compose.yml` points there and that the host dir is readable by the
 `app` user inside the container.
 
 **Verify the MCP server is reachable from inside the gateway.**
 
 ```bash
-docker compose -f /srv/lifekit-stack/compose/docker-compose.yml \
+docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \
     exec openclaw-gateway curl -fsSv http://google-workspace-mcp:8000/mcp/
 ```
 

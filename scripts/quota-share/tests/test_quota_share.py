@@ -2,14 +2,15 @@
 """Tests for scripts/quota-share/quota_share.py.
 
 Covers the pure logic only: usage weighting, JSONL dedup/parsing, consumer
-matching, and share math. Nothing here calls quota-axi, docker, or
-Prometheus.
+matching, and share math, plus the gateway container lookup against a
+stubbed subprocess. Nothing here calls quota-axi, docker, or Prometheus.
 """
 
 import importlib.util
 import os
 import sys
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -279,6 +280,50 @@ class LoadConfigTests(unittest.TestCase):
             path = f.name
         with self.assertRaises(ValueError):
             quota_share.load_config(quota_share.Path(path))
+
+
+class GatewaySessionsTests(unittest.TestCase):
+    """The docker fallback finds the gateway by compose labels, not a name."""
+
+    def _run(self, ps_stdout):
+        calls = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(argv)
+            out = ps_stdout if argv[:2] == ["docker", "ps"] else ""
+            return mock.Mock(returncode=0, stdout=out, stderr="")
+
+        with (
+            mock.patch.object(
+                quota_share, "GATEWAY_PROJECTS_DIR", quota_share.Path("/nonexistent")
+            ),
+            mock.patch.object(quota_share.subprocess, "run", side_effect=fake_run),
+        ):
+            result = quota_share.gateway_sessions(datetime.now(timezone.utc))
+        return calls, result
+
+    def test_execs_into_the_openclaw_projects_gateway(self):
+        calls, (_sessions, warning) = self._run("abc123\n")
+        self.assertIsNone(warning)
+        self.assertEqual(
+            calls[0],
+            [
+                "docker",
+                "ps",
+                "-q",
+                "--filter",
+                "label=com.docker.compose.project=openclaw",
+                "--filter",
+                "label=com.docker.compose.service=openclaw-gateway",
+            ],
+        )
+        self.assertEqual(calls[1][:3], ["docker", "exec", "abc123"])
+
+    def test_warns_when_no_gateway_is_running(self):
+        calls, (sessions, warning) = self._run("")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(sessions, [])
+        self.assertIn("compose project openclaw", warning)
 
 
 if __name__ == "__main__":

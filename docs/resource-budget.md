@@ -34,7 +34,7 @@ host groups have no history yet, so their figure is a one-off snapshot.
 
 | Group | Budget (GiB) | Contains | 7-day peak |
 | --- | --- | --- | --- |
-| openclaw | 3.5 | `openclaw-gateway`, `google-workspace-mcp` (compose project `compose`) | 3723 + 153 MiB |
+| openclaw | 3.5 | `openclaw-gateway`, `google-workspace-mcp` (compose project `openclaw`) | 3723 + 153 MiB |
 | platform | 1.5 | prometheus, loki, grafana, tempo, otel-collector, node-exporter, container-exporter, notify-relay (compose project `compose`) | 1.3 GiB (sum of peaks) |
 | finance-sentry | 1.25 | api, postgres, mcp, gateway, frontend (`finance-sentry-*`, compose project `docker`) | 1.05 GiB (average 0.81) |
 | devclaw-mcp | 0.25 | `devclaw-mcp` (compose project `devclaw`; its sandboxes count in the burst pool) | 130 MiB |
@@ -49,8 +49,9 @@ host groups have no history yet, so their figure is a one-off snapshot.
 
 Membership is by compose project and service label, so a new container is in the burst
 pool until it is added to a group; platform is every service of compose project
-`compose` that is not openclaw, `openclaw-cli`, `lifekit-orchestrator` or the retired
-`lifekit-dashboard`, so the orchestrator counts in the burst pool. The one non-label exception is
+`compose` that is not `lifekit-orchestrator` or the retired `lifekit-dashboard`, so the
+orchestrator counts in the burst pool, as do `openclaw-cli` runs (compose project
+`openclaw`, outside the openclaw group). The one non-label exception is
 finance-sentry, whose compose project name (`docker`) is too generic to match on.
 
 ## Alerts

@@ -13,7 +13,7 @@
 #
 # Why an agentTurn on the existing kit agent, not a new agent/skill/service:
 # the vault (/srv/memory) is already bind-mounted read-write into the gateway
-# at /home/node/memory for every agent (compose/docker-compose.yml), and kit
+# at /home/node/memory for every agent (compose/openclaw/docker-compose.yml), and kit
 # already owns the command-kind memory_vault_audit cron. The vault's own
 # .claude/skills/memory-audit/SKILL.md is plain instructions on a mounted
 # path — the agent turn reads and follows it directly, applying its whole
@@ -72,7 +72,11 @@
 #                               memory_vault_audit)
 set -euo pipefail
 
-GATEWAY=compose-openclaw-gateway-1
+# The gateway container of the `openclaw` compose project, found by its
+# compose labels rather than a fixed container name.
+GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 JOB_NAME=memory-vault-cleanup
 AGENT=kit
 CRON_EXPR="${MEMORY_VAULT_CLEANUP_CRON:-50 3 * * 0}"

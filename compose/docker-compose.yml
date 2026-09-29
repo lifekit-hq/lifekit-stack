@@ -1,11 +1,9 @@
 # lifekit-stack compose file.
 #
 # Services:
-#   openclaw-gateway     — the runtime gateway (channels, cron, skills, agent); loopback bind on 18789
-#   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations.
-#                          On-demand only (compose profile `cli`); not started by `docker compose up -d`.
-#                          Invoke via: `docker compose --profile cli run --rm openclaw-cli <command>`
-#   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
+#   (openclaw-gateway, openclaw-cli and google-workspace-mcp run in their OWN
+#    compose project `openclaw` now — compose/openclaw/docker-compose.yml;
+#    lifekit-vps initiative 1.2 step 4.)
 #   (lifekit-dashboard runs in its OWN compose project now — deployed from
 #    lifekit-hq/lifekit-dashboard's deploy/; ecosystem decoupling slice 2.)
 #   (devclaw-mcp runs in devclaw's OWN compose project now — devclaw spec 005;
@@ -65,270 +63,11 @@ x-policy:
 
 services:
 
-  openclaw-gateway:
-    <<: *policy
-    # OpenClaw version = the FROM tag in openclaw-gateway/Dockerfile (Dependabot
-    # bumps it). No build-arg override: one place decides what runs.
-    #
-    # BUILDX_NO_DEFAULT_ATTESTATIONS=1 (scripts/deploy.sh) — Buildx's default
-    # provenance attestation wraps every build's output in a fresh manifest
-    # list carrying a build timestamp, so even a 100%-cache-hit rebuild (no
-    # Dockerfile/context/base-image change) gets a new top-level digest and
-    # `up -d --build` recreates the container on every deploy (lifekit-stack
-    # fm/ls-deploy-no-rebuild investigation: CI runs
-    # 36536047624/36474931829/36452583710/36550718880 each showed every layer
-    # CACHED yet a new attestation + manifest list every time). Suppressing it
-    # in the build env (not a compose `build.provenance` key — the GitHub-hosted
-    # runner's docker compose rejects that as an unknown schema property, #221)
-    # lets a true no-op build resolve to the already-published image so
-    # `up -d` leaves the container running.
-    build:
-      context: ./openclaw-gateway
-    image: lifekit-openclaw:local
-    # Platform contract (scripts/platform-contract.py, docs/platform-contract.md).
-    # /readyz answers only loopback or an attributed proxy, so it is probed
-    # through the edge once that lands (captain Q7) and SKIPs until then.
-    # Metrics come from the diagnostics-prometheus plugin behind gateway auth:
-    # the up `openclaw` Prometheus target is the proof. JSON stdout comes from
-    # the host openclaw.json (logging.consoleStyle + diagnostics.otel stdout
-    # logs) - see docs/platform-contract.md.
-    labels:
-      lifekit.contract: "v1"
-      lifekit.contract.port: "18789"
-      lifekit.contract.health: /healthz
-      lifekit.contract.ready: /readyz
-      lifekit.contract.ready.via: edge
-      lifekit.contract.metrics: /api/diagnostics/prometheus
-      lifekit.contract.metrics.auth: token
-      lifekit.contract.ingress: edge
-      lifekit.contract.service: openclaw-gateway
-    # Cross-project seam (devclaw spec 005): join the external lifekit-shared
-    # network so the waiter can reach devclaw-mcp (in devclaw's own project) by
-    # service name. `default` keeps in-project DNS to the other OpenClaw services.
-    networks:
-      - default
-      - lifekit-shared
-    deploy:
-      resources:
-        limits:
-          memory: 6g
-    environment:
-      HOME: /home/node
-      OPENCLAW_HOME: /home/node
-      TERM: xterm-256color
-      # Pin container-side paths so host paths from .env can't leak in (#77436).
-      OPENCLAW_STATE_DIR: /home/node/.openclaw
-      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
-      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
-      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      # Inbound hooks (openclaw-gateway/platform.patch.json): openclaw.json
-      # holds these as literal ${VAR} references and resolves them from this
-      # environment, so neither the hook token, the non-guessable hook path
-      # nor the owner's chat id is ever written to the config file or to git.
-      # The hook token is its own secret, never the gateway token. Hooks ride
-      # the existing 18789 listener: no new port, still loopback + tailnet.
-      OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
-      OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
-      OPENCLAW_FINANCE_CHAT: ${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
-      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
-      # openclaw.json holds these as env SecretRefs / ${VAR} interpolation
-      # (docs/secrets.md: DEVCLAW_BOT_TOKEN, DEVCLAW_MCP_TOKEN,
-      # FINANCE_SENTRY_MCP_TOKEN), so they must be in this container's own
-      # environment - the gateway's global dotenv is legacy plaintext and is
-      # being retired, not a source these should ever fall back to.
-      DEVCLAW_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-}
-      DEVCLAW_MCP_TOKEN: ${DEVCLAW_MCP_TOKEN:-}
-      FINANCE_SENTRY_MCP_TOKEN: ${FINANCE_SENTRY_MCP_TOKEN:-}
-      OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
-      PATH: /home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      - ${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
-      - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
-      # Gateway secret boundary (docs/secrets.md): the SOPS-encrypted gateway
-      # file from this checkout and the gateway's age key, both read-only and
-      # OUTSIDE the state mount (never in `openclaw backup`, never the global
-      # dotenv). The exec provider in openclaw-gateway/platform.patch.json
-      # reads them at /run/lifekit. Only the key's own directory is mounted:
-      # /srv/lifekit-secrets itself also holds the rendered master env and
-      # must not be visible in any container.
-      - ../secrets:/run/lifekit/secrets:ro
-      - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/gateway:/run/lifekit/gateway:ro
-      # Vault (~/memory): bind-mounted at two paths.
-      # ~/memory — canonical alias used by cron jobs, skills, and agents; also the
-      # path openclaw-gateway/platform.patch.json indexes via memory.search.extraPaths.
-      # ~/.openclaw/wiki/main — direct real bind mount (replaces symlink) so
-      # OpenClaw wiki tools can traverse it without hitting the symlink guard.
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/.openclaw/wiki/main
-      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
-      # Claude CLI session creds so the agent harness can authenticate to Anthropic.
-      # Both the dir (.claude/) and the sibling .claude.json file are required —
-      # .claude.json holds oauthAccount which tells the SDK this is a Pro
-      # subscription session, not a raw API key. Without it, requests get billed
-      # against API credits.
-      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
-      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
-      # gh CLI auth for the Phase 5.5 code-task skill — set up once on the
-      # host via `gh auth login` as lifekit user; container inherits the creds.
-      - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
-      # Host gitconfig (user.name/email) so commits land with the right author.
-      - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
-      # workout-claw CLI: prebuilt host checkout, installed -g at container
-      # start (entrypoint). Sourced from the host clone rather than npm/GitHub
-      # because the package was never published to npm and the GitHub repo is
-      # archived (read-only). Keep /srv/workout-claw built (`npm run build`).
-      - ${LIFEKIT_WORKOUT_CLAW_DIR:-/srv/workout-claw}:/opt/workout-claw:ro
-      # workout-claw data store. The CLI hardcodes $HOME/.workout-claw
-      # (src/lib/storage.ts); map it to the same logs dir under ~/.life so
-      # sessions persist and match the host/PC layout.
-      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state/workout-claw:/home/node/.workout-claw
-      # nutrition-claw data store. Same $HOME hardcode pattern as workout-claw.
-      # This mount was missing when the CLI was linked into the persisted npm
-      # prefix (2026-06-20), so the in-container store was ephemeral and meal
-      # logs vanished on every recreate. Host dir is the canonical claw store.
-      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state/nutrition-claw:/home/node/.nutrition-claw
-      # life-state data store. The CLI hardcodes $HOME/.life/state
-      # (src/lib/storage.ts) with no env override; same persistence pattern as
-      # the other two claws. Without this mount, daily state written in the
-      # container vanished on every recreate (broken since 2026-05-27).
-      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state/life-state:/home/node/.life/state
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
-    # Loopback-only bind, per upstream Hetzner guidance.
-    # Admin access goes through Tailscale + SSH tunnel.
-    ports:
-      - "127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        export NPM_CONFIG_PREFIX=/home/node/.npm-global
-        export PATH="/home/node/.npm-global/bin:$$PATH"
-        # Platform contract: stdout is JSON lines. npm's install chatter is
-        # wrapped in the same shape as the gateway's JSON console lines.
-        jlog() {
-          node -e '
-            require("readline").createInterface({ input: process.stdin }).on("line", (l) => {
-              if (l.trim()) console.log(JSON.stringify({
-                time: new Date().toISOString(), level: "info", subsystem: "entrypoint", message: l,
-              }));
-            });'
-        }
-        # claude/clawhub/summarize are baked into the image now
-        # (compose/openclaw-gateway/Dockerfile, pinned via package.json —
-        # lifekit-stack#146): a fresh recreate no longer depends on the npm
-        # registry or floats an unpinned version for these three. The guards
-        # below are fallback-only from this release (image built before the
-        # bake, or a CLI missing for some other reason) and are dropped in a
-        # follow-up release. Do not add new CLIs here — that resurrects the
-        # bug this issue fixed.
-        if ! command -v claude >/dev/null 2>&1; then
-          mkdir -p /home/node/.npm-global
-          npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code 2>&1 | tail -3 | jlog
-        fi
-        if ! command -v clawhub >/dev/null 2>&1; then
-          npm install -g clawhub 2>&1 | tail -3 | jlog
-        fi
-        if ! command -v summarize >/dev/null 2>&1; then
-          npm install -g @steipete/summarize 2>&1 | tail -3 | jlog
-        fi
-        if ! command -v workout-claw >/dev/null 2>&1; then
-          npm install -g /opt/workout-claw 2>&1 | tail -3 | jlog
-        fi
-        if ! command -v nutrition-claw >/dev/null 2>&1; then
-          npm install -g /home/node/.openclaw/agents/health/workspace/skills/nutrition-claw 2>&1 | tail -3 | jlog
-        fi
-        if ! command -v life-state >/dev/null 2>&1; then
-          npm install -g /home/node/.openclaw/agents/health/workspace/skills/life-state 2>&1 | tail -3 | jlog
-        fi
-        exec "$$@"
-      - --
-    command:
-      - node
-      - dist/index.js
-      - gateway
-      - --bind
-      - ${OPENCLAW_GATEWAY_BIND:-lan}
-      - --port
-      - "18789"
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  openclaw-cli:
-    <<: *policy
-    # On-demand only — not started by `docker compose up -d`. Invoke via:
-    #   docker compose --profile cli run --rm openclaw-cli <command>   (preferred)
-    #   docker compose --profile cli up -d openclaw-cli                (persistent session)
-    profiles:
-      - cli
-    image: lifekit-openclaw:local
-    labels:
-      lifekit.contract: "none"  # on-demand CLI, serves no traffic
-    network_mode: "service:openclaw-gateway"
-    depends_on:
-      - openclaw-gateway
-    deploy:
-      resources:
-        limits:
-          # 2026-09-13: doctor on 2026.9.4 was OOM-killed at 512m on both
-          # deploys (dmesg: openclaw-doctor, CONSTRAINT_MEMCG); the post-deploy
-          # checks then ran against a dead process.
-          memory: 2g
-    stdin_open: true
-    tty: true
-    environment:
-      HOME: /home/node
-      OPENCLAW_HOME: /home/node
-      OPENCLAW_STATE_DIR: /home/node/.openclaw
-      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
-      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
-      # Must mirror the gateway's env for the CLI to talk to the gateway on
-      # privileged surfaces like `cron list`/`cron add`. Without
-      # OPENCLAW_ALLOW_INSECURE_PRIVATE_WS the cli refuses plaintext WS for
-      # those routes and the connection drops with a 1006 abnormal close
-      # (observed on OpenClaw 2026.5.7 — non-cron commands like `sessions`
-      # weren't affected, which is what made the bug confusing). Both env
-      # vars need to match the gateway's settings.
-      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
-      OPENCLAW_DISABLE_BONJOUR: "1"
-      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      # Mirror of the gateway's hook references: the CLI loads the same
-      # openclaw.json and warns on every run about a ${VAR} it cannot resolve.
-      OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
-      OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
-      OPENCLAW_FINANCE_CHAT: ${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
-      BROWSER: echo
-      TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      - ${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
-      - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/.openclaw/wiki/main
-      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
-    entrypoint:
-      - node
-      - dist/index.js
+  # openclaw-gateway, openclaw-cli and google-workspace-mcp moved to their own
+  # compose project on 2026-09-30: compose/openclaw/docker-compose.yml, run as
+  # `-p openclaw` (lifekit-vps initiative 1.2 step 4). scripts/deploy.sh brings
+  # that project up after this one; Prometheus still scrapes the gateway over
+  # the external lifekit-shared network.
 
   lifekit-orchestrator:
     <<: *policy
@@ -343,8 +82,9 @@ services:
       resources:
         limits:
           memory: 2g
-    depends_on:
-      - openclaw-gateway
+    # No depends_on: openclaw-gateway moved to the `openclaw` compose project
+    # (compose/openclaw/), and compose cannot depend across projects. This
+    # retired service goes away entirely in a later cleanup.
     environment:
       HOME: /home/node
       OPENCLAW_HOME: /home/node
@@ -677,7 +417,7 @@ services:
     # exports DOCKER_GID from the socket's owner group (override in .env).
     #
     # BUILDX_NO_DEFAULT_ATTESTATIONS=1 (scripts/deploy.sh) — see
-    # openclaw-gateway's build block above: without it, Buildx's default
+    # openclaw-gateway's build block (compose/openclaw/): without it, Buildx's default
     # provenance attestation gives every build a new manifest-list digest
     # even with 100% layer cache hit, forcing a needless recreate on every
     # deploy.
@@ -725,7 +465,7 @@ services:
     # at http://notify-relay:8090.
     #
     # BUILDX_NO_DEFAULT_ATTESTATIONS=1 (scripts/deploy.sh) — see
-    # openclaw-gateway's build block above: without it, Buildx's default
+    # openclaw-gateway's build block (compose/openclaw/): without it, Buildx's default
     # provenance attestation gives every build a new manifest-list digest
     # even with 100% layer cache hit, forcing a needless recreate on every
     # deploy.
@@ -783,62 +523,13 @@ services:
   # as bash by the single Kit agent), not an MCP-wrapped sibling container.
   # See architecture-openclaw-modular-monolith memory + docs/openclaw-agent-design.md.
 
-  google-workspace-mcp:
-    <<: *policy
-    # taylorwilsdon/google_workspace_mcp — single-user, streamable-http on :8000.
-    # OpenClaw gateway reaches it via service DNS at http://google-workspace-mcp:8000/mcp/.
-    # Pin to a release tag; bump intentionally. See docs/google-mcp-setup.md.
-    image: ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0
-    labels:
-      lifekit.contract: "none"  # upstream image we do not change, not a product
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-    environment:
-      # OAuth client (Desktop type) from the user's Google Cloud project.
-      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
-      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
-      # Single-user mode: identity of the Google account that owns the refresh token.
-      USER_GOOGLE_EMAIL: ${USER_GOOGLE_EMAIL:-}
-      # Service selection. Default mirrors the README, space- or comma-separated both work.
-      # Upstream Dockerfile reads `TOOLS`; we expose the same value under the documented
-      # `WORKSPACE_MCP_TOOLS` name (per upstream env reference) for forward-compat.
-      WORKSPACE_MCP_TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
-      TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
-      TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      # Refresh-token store. Upstream image runs as non-root user `app`, so the
-      # default credentials dir is /home/app/.google_workspace_mcp/credentials —
-      # NOT /root/... Document the divergence in docs/google-mcp-setup.md.
-      # Host dir is created by scripts/google-mcp-bootstrap.sh.
-      - /srv/google-workspace-mcp/credentials:/home/app/.google_workspace_mcp/credentials
-    # Internal-only — gateway reaches us via the compose network DNS name.
-    # No `ports:` mapping: do not publish to the host.
-    expose:
-      - "8000"
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test:
-        - CMD
-        - curl
-        - -fsS
-        - http://localhost:8000/health
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
 # ── Networks ────────────────────────────────────────────────────────────────
 # `lifekit-shared` is an EXTERNAL network created and owned by devclaw's own
-# compose project (devclaw spec 005). It's the cross-project seam: the waiter in
-# openclaw-gateway reaches devclaw-mcp by service name, and devclaw reaches
-# notify-relay by service name, across the project boundary. Only the two
-# services that talk across it are attached (each also keeps `default` for
-# in-project DNS). The devclaw-state named volume moved to devclaw's project too
+# compose project (devclaw spec 005). It's the cross-project seam: openclaw-gateway
+# (in the `openclaw` project) reaches devclaw-mcp and notify-relay by service
+# name, devclaw reaches notify-relay, and prometheus scrapes openclaw-gateway,
+# across the project boundaries. Only the services that talk across it are
+# attached (each also keeps `default` for in-project DNS). The devclaw-state named volume moved to devclaw's project too
 # (mounted there as an external volume) — no service in THIS project uses it now.
 networks:
   lifekit-shared:

@@ -9,6 +9,8 @@
 #   modules    defaults/modules.yaml -> the vault's system/modules.yaml
 #   build      build the gateway image; on a version change, tag :prev, stop
 #              the gateway and migrate its state with the new image
+#   up         move the services out of the platform project (once), then
+#              `up -d` the openclaw project
 #   configure  apply compose/openclaw-gateway/platform.patch.json, then reload
 #              and audit the gateway's SOPS-backed secrets
 #   post-up    reattach openclaw-cli, reset stuck sessions, skill native deps,
@@ -25,6 +27,53 @@
 
 # shellcheck source=scripts/lib/deploy-common.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/lib/deploy-common.sh"
+
+# ─── The platform project's copies of the OpenClaw services ─────────────────
+#
+# Until 2026-09-30 openclaw-gateway, openclaw-cli and google-workspace-mcp ran
+# in the platform compose project (COMPOSE_FILE's, `compose` on the box).
+# They run in their own project now (OPENCLAW_PROJECT, compose/openclaw/),
+# and the deploy that first brings that project up has to take the old
+# containers down first: the old gateway holds 127.0.0.1:18789 and the same
+# state dir, so the two must never run together. Found by compose project +
+# service label, never by container name, so nothing else can match; the
+# platform project is never `up --remove-orphans`ed for this, since that
+# would also take any other orphan it finds. The cli (one-off `run`
+# containers included) goes first, since it lives in the gateway's network
+# namespace. On every later deploy the lookup finds nothing and this does
+# nothing.
+OPENCLAW_SERVICES=(openclaw-cli openclaw-gateway google-workspace-mcp)
+# Sets OPENCLAW_PLATFORM_PROJECT once; call it outside a $(...) subshell so
+# the value sticks.
+openclaw_resolve_platform_project() {
+  if [[ -z "${OPENCLAW_PLATFORM_PROJECT:-}" ]]; then
+    OPENCLAW_PLATFORM_PROJECT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format json \
+      | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')"
+  fi
+}
+# Container ids of one OpenClaw service still held by the platform project.
+openclaw_legacy_ids() {
+  openclaw_resolve_platform_project
+  # A platform project that is itself named `openclaw` would match this
+  # project's own containers; nothing is legacy then.
+  [[ "${OPENCLAW_PLATFORM_PROJECT}" != "${OPENCLAW_PROJECT}" ]] || return 0
+  docker ps -a -q \
+    --filter "label=com.docker.compose.project=${OPENCLAW_PLATFORM_PROJECT}" \
+    --filter "label=com.docker.compose.service=$1"
+}
+openclaw_cutover() {
+  local svc ids
+  openclaw_resolve_platform_project
+  for svc in "${OPENCLAW_SERVICES[@]}"; do
+    ids="$(openclaw_legacy_ids "${svc}")"
+    [[ -n "${ids}" ]] || continue
+    say "cutover: removing ${svc} from compose project ${OPENCLAW_PLATFORM_PROJECT} (it runs in project ${OPENCLAW_PROJECT} now)"
+    # shellcheck disable=SC2086  # one container id per word
+    docker stop ${ids} >/dev/null
+    # shellcheck disable=SC2086
+    docker rm ${ids} >/dev/null
+  done
+}
 
 # ═══ prepare ═════════════════════════════════════════════════════════════════
 openclaw_phase_prepare() {
@@ -77,7 +126,7 @@ rsync -a --delete --exclude tests/ "${REPO_DIR}/scripts/memory-audit/" "${AUDIT_
 # only writes the config file and exits.
 if [[ ! -f "${OPENCLAW_CONFIG_DIR}/openclaw.json" ]]; then
   say "openclaw onboard (generating ${OPENCLAW_CONFIG_DIR}/openclaw.json)"
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  openclaw_compose \
     run --rm --no-deps --entrypoint openclaw openclaw-gateway \
       onboard \
         --non-interactive \
@@ -96,19 +145,19 @@ fi
 # in gateway.trustedProxies. That address is Docker-assigned at network
 # creation, so it can't be pinned in compose/openclaw-gateway/platform.patch.json
 # (host-derived, not a static platform key) — it's derived here instead, off
-# the project's default network that the onboard step above (or an earlier
-# deploy) created as a side effect.
+# the OpenClaw project's default network (the script creates it on the first
+# deploy of the project, before the gateway starts there).
 #
 # Runs on every deploy, not just the one that just onboarded: the script
-# itself reads the live value first and no-ops once the key already holds
-# one, so a deploy that dies between onboard writing openclaw.json and this
-# step running still retries it on the next deploy instead of leaving the
-# gateway rejecting proxied requests until someone sets the key by hand.
-# Logic lives in scripts/deploy-trusted-proxies.sh so it can be exercised
-# directly in tests.
+# reads the live value first and writes only when the derived address is
+# missing from it, so a deploy that dies between onboard writing
+# openclaw.json and this step running still retries it on the next deploy
+# instead of leaving the gateway rejecting proxied requests until someone
+# sets the key by hand. Logic lives in scripts/deploy-trusted-proxies.sh so
+# it can be exercised directly in tests.
 say "openclaw trustedProxies"
-ENV_FILE="${ENV_FILE}" COMPOSE_FILE="${COMPOSE_FILE}" OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" \
-  "${REPO_DIR}/scripts/deploy-trusted-proxies.sh"
+ENV_FILE="${ENV_FILE}" COMPOSE_FILE="${OPENCLAW_COMPOSE_FILE}" COMPOSE_PROJECT_NAME="${OPENCLAW_PROJECT}" \
+  OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/deploy-trusted-proxies.sh"
 
 }
 
@@ -140,10 +189,21 @@ openclaw_phase_build() {
 # is the manual step before a multi-month jump (docs/runbook.md).
 
 say "docker compose build"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build openclaw-gateway
+openclaw_compose build openclaw-gateway
 
-RUNNING_VER="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+RUNNING_VER="$(openclaw_compose \
   exec -T openclaw-gateway openclaw --version 2>/dev/null | awk '{print $2}' || true)"
+# On the deploy that moves OpenClaw into its own project the running gateway
+# is still the platform project's; read its version there, so a version bump
+# landing on that same deploy still migrates state.
+LEGACY_GATEWAY=""
+if [[ -z "${RUNNING_VER}" ]]; then
+  openclaw_resolve_platform_project
+  LEGACY_GATEWAY="$(openclaw_legacy_ids openclaw-gateway | head -1)"
+  if [[ -n "${LEGACY_GATEWAY}" ]]; then
+    RUNNING_VER="$(docker exec "${LEGACY_GATEWAY}" openclaw --version 2>/dev/null | awk '{print $2}' || true)"
+  fi
+fi
 BUILT_VER="$(docker run --rm --entrypoint openclaw lifekit-openclaw:local --version 2>/dev/null | awk '{print $2}' || true)"
 if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_VER}" ]]; then
   # Keep the image that ran the OLD version reachable as :prev, and only
@@ -153,8 +213,13 @@ if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_V
   # pointed to, once nothing else tags or runs it. Retag itself is gated on
   # a version change: 2026-09-13 the unconditional retag ran on three queued
   # deploys in a row and :prev ended up pointing at the new version.
-  PREV_IMAGE="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  PREV_IMAGE="$(openclaw_compose \
     images -q openclaw-gateway 2>/dev/null | head -1 || true)"
+  if [[ -z "${PREV_IMAGE}" && -n "${LEGACY_GATEWAY}" ]]; then
+    PREV_IMAGE="$(docker inspect --format '{{.Image}}' "${LEGACY_GATEWAY}" 2>/dev/null || true)"
+    PREV_IMAGE="${PREV_IMAGE#sha256:}"
+    PREV_IMAGE="${PREV_IMAGE:0:12}"
+  fi
   OLD_PREV_IMAGE="$(docker images -q lifekit-openclaw:prev 2>/dev/null || true)"
   if [[ -n "${PREV_IMAGE}" ]]; then
     say "tagging running image ${PREV_IMAGE:0:12} as :prev"
@@ -184,16 +249,17 @@ if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_V
   fi
 
   say "OpenClaw ${RUNNING_VER} -> ${BUILT_VER}: stopping gateway, migrating state"
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli \
+  openclaw_cutover
+  openclaw_compose --profile cli \
     stop openclaw-cli openclaw-gateway
   # openclaw backup create --output takes an archive FILE path, not a directory;
   # a fixed path here would collide with an earlier deploy's archive and refuse
   # to overwrite it. One unique path per run instead.
   UPGRADE_BACKUP="/home/node/.openclaw/openclaw-config-${RUNNING_VER}-to-${BUILT_VER}-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  openclaw_compose \
     run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
       backup create --only-config --verify --output "${UPGRADE_BACKUP}"
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  openclaw_compose \
     run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
       doctor --fix --non-interactive
 
@@ -204,7 +270,7 @@ if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_V
   # it did, try one explicit update if not, and flag the deploy otherwise.
   say "asserting official plugins match core ${BUILT_VER}"
   plugin_mismatches() {
-    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    openclaw_compose \
       run --rm --no-deps -T --entrypoint openclaw openclaw-gateway plugins list --json 2>/dev/null \
     | python3 -c '
 import json, re, sys
@@ -223,7 +289,7 @@ for p in items:
     while read -r pid pver; do
       [[ -z "${pid}" ]] && continue
       warn "plugin ${pid} is ${pver}, core is ${BUILT_VER}; updating"
-      docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+      openclaw_compose \
         run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
           plugins update "@openclaw/${pid}@latest" || true
     done <<< "${MISMATCH}"
@@ -237,6 +303,36 @@ for p in items:
 else
   say "OpenClaw version unchanged (${BUILT_VER:-unknown}); no state migration"
 fi
+
+}
+
+# ═══ up ══════════════════════════════════════════════════════════════════════
+openclaw_phase_up() {
+
+# ─── Start the openclaw project ─────────────────────────────────────────────
+#
+# After the platform `up`, like the single `up` both used to share. The
+# cutover (top of this file) runs first, so on the deploy that moves the
+# services here the old gateway is gone before the new one starts: one
+# gateway recreate, as a normal image change would cause. No --build: the
+# build phase already built the image. Same one-shot retry as the platform
+# `up` for docker's stale temp-name reservation (#94).
+openclaw_cutover
+say "docker compose -p ${OPENCLAW_PROJECT} up -d"
+local up_log conflict_svc
+up_log="$(mktemp)"
+if ! openclaw_compose up -d 2>&1 | tee "${up_log}"; then
+  conflict_svc="$(grep -oE "[0-9a-f]{12}_${OPENCLAW_PROJECT}-[a-z0-9-]+-[0-9]+" "${up_log}" \
+    | head -1 | sed -E "s/^[0-9a-f]{12}_${OPENCLAW_PROJECT}-//; s/-[0-9]+\$//" || true)"
+  if [[ -z "${conflict_svc}" ]]; then
+    rm -f "${up_log}"
+    exit 1
+  fi
+  say "recreate conflict on '${conflict_svc}' — force-recreating once, retrying up"
+  openclaw_compose up -d --force-recreate "${conflict_svc}"
+  openclaw_compose up -d
+fi
+rm -f "${up_log}"
 
 }
 
@@ -323,19 +419,19 @@ else
   # rejects --allow-exec on the actual apply ("--allow-exec requires
   # --dry-run", OpenClaw 2026.9.5) - the apply below resolves the same refs
   # without the flag.
-  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  if ! openclaw_compose \
       run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
         config patch --stdin --dry-run --allow-exec < "${PLATFORM_PATCH}"; then
     fail_later "openclaw platform config: dry run rejected ${PLATFORM_PATCH#"${REPO_DIR}/"}; not applied"
   else
     say "openclaw platform config: applying"
     PATCH_LOG="$(mktemp)"
-    if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    if openclaw_compose \
         run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
           config patch --stdin < "${PLATFORM_PATCH}" 2>&1 | tee "${PATCH_LOG}"; then
       if grep -q 'Restart the gateway to apply' "${PATCH_LOG}"; then
         say "openclaw platform config: applied keys need a restart; recreating openclaw-gateway"
-        docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+        openclaw_compose \
           up -d --no-deps --force-recreate openclaw-gateway
       else
         echo "  applied; the running gateway hot-reloads these keys, no recreate"
@@ -377,7 +473,7 @@ fi
 say "waiting for the gateway to accept connections (up to 120s)"
 GATEWAY_READY=0
 for _ in $(seq 1 60); do
-  if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  if openclaw_compose \
       exec -T openclaw-gateway node -e \
       "fetch('http://127.0.0.1:18789/healthz',{signal:AbortSignal.timeout(3000)}).then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
       >/dev/null 2>&1; then
@@ -390,12 +486,12 @@ if [[ "${GATEWAY_READY}" -ne 1 ]]; then
   fail_later "openclaw-gateway did not answer /healthz within 120s; secrets reload skipped"
 else
   say "reloading gateway secrets"
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  openclaw_compose \
     exec -T openclaw-gateway openclaw \
       secrets reload || fail_later "openclaw secrets reload failed"
 fi
 say "auditing gateway secrets (report only, no values printed)"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+openclaw_compose \
   run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
     secrets audit --allow-exec || fail_later "openclaw secrets audit reported a problem"
 
@@ -421,10 +517,19 @@ openclaw_phase_post_up() {
 # deploy resurrected a container that died five times and tripped the
 # container-exited-abnormally alert (2026-09-13). One-shot `run --rm` calls
 # below never needed the persistent container.
-CLI_STATE="$(docker inspect compose-openclaw-cli-1 --format '{{.State.Status}}' 2>/dev/null || echo absent)"
+# Looked up by compose labels, not container name; `run --rm` one-offs carry
+# oneoff=True and are not the persistent container.
+CLI_ID="$(docker ps -a -q \
+  --filter "label=com.docker.compose.project=${OPENCLAW_PROJECT}" \
+  --filter "label=com.docker.compose.service=openclaw-cli" \
+  --filter "label=com.docker.compose.oneoff=False" 2>/dev/null | head -1 || true)"
+CLI_STATE="absent"
+if [[ -n "${CLI_ID}" ]]; then
+  CLI_STATE="$(docker inspect "${CLI_ID}" --format '{{.State.Status}}' 2>/dev/null || echo absent)"
+fi
 if [[ "${CLI_STATE}" == "running" ]]; then
   say "reattaching openclaw-cli to new gateway network namespace"
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  openclaw_compose \
     --profile cli up -d --force-recreate openclaw-cli
 else
   say "openclaw-cli persistent container is ${CLI_STATE}; not started (on-demand only)"
@@ -439,7 +544,7 @@ fi
 # immediately after the gateway starts so the first post-deploy message always
 # gets a clean session.
 say "resetting stuck agent sessions (running → aborted)"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T openclaw-gateway \
+openclaw_compose exec -T openclaw-gateway \
   python3 -c "
 import json, glob, os, sys
 stores = glob.glob('/home/node/.openclaw/agents/*/sessions/sessions.json')
@@ -482,7 +587,8 @@ else:
 SKILLS_DIR="${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}/skills"
 if [[ -d "${SKILLS_DIR}" ]]; then
   say "Installing skill native deps inside openclaw-gateway"
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T openclaw-gateway \
+  # shellcheck disable=SC2016  # expanded by bash inside the container
+  openclaw_compose exec -T openclaw-gateway \
     bash -c '
       set -e
       shopt -s nullglob
@@ -525,15 +631,15 @@ say "Waiting 30s for services and Telegram channels to settle"
 sleep 30
 
 say "openclaw doctor"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
+openclaw_compose --profile cli run --rm -T openclaw-cli \
   doctor || echo "(doctor reported issues — review above)"
 
 say "openclaw health"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
+openclaw_compose --profile cli run --rm -T openclaw-cli \
   health || echo "(health reported issues — review above)"
 
 say "openclaw channels status"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
+openclaw_compose --profile cli run --rm -T openclaw-cli \
   channels status || echo "(channels status reported issues — review above)"
 
 }
@@ -568,7 +674,7 @@ SMOKE_AGENTS="${SMOKE_AGENTS:-kit}"
 SMOKE_RUN="$(date -u +%Y%m%dT%H%M%SZ)"
 say "smoke turns (${SMOKE_AGENTS})"
 for agent in ${SMOKE_AGENTS}; do
-  OUT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T openclaw-gateway \
+  OUT="$(openclaw_compose exec -T openclaw-gateway \
     openclaw agent --agent "${agent}" --session-id "deploy-smoke-${agent}-${SMOKE_RUN}" --timeout 150 --json \
       -m "Deploy smoke test: reply with exactly the word pong and nothing else." 2>&1 || true)"
   VERDICT="$(printf '%s' "${OUT}" | python3 -c '

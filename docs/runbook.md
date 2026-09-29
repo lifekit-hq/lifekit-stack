@@ -114,9 +114,9 @@ bash scripts/deploy.sh
 state dir, at the core's own version, once per host:
 
 ```bash
-V="$(docker exec compose-openclaw-gateway-1 openclaw --version | awk '{print $2}')"
-docker exec compose-openclaw-gateway-1 openclaw plugins install "@openclaw/diagnostics-prometheus@${V}"
-docker exec compose-openclaw-gateway-1 openclaw plugins inspect diagnostics-prometheus | grep Trust
+V="$(docker exec openclaw-openclaw-gateway-1 openclaw --version | awk '{print $2}')"
+docker exec openclaw-openclaw-gateway-1 openclaw plugins install "@openclaw/diagnostics-prometheus@${V}"
+docker exec openclaw-openclaw-gateway-1 openclaw plugins inspect diagnostics-prometheus | grep Trust
 ```
 
 `Trust` must read `reason=trusted-official`. Do not bake it into the image or
@@ -157,7 +157,7 @@ Retiring the memory-wiki plugin also retired the only search the agents had
 over the vault. `memory.search.extraPaths` is memory-core's own knob for
 indexing directories or files outside an agent's workspace, and the platform
 file points it at the vault's existing gateway mount
-(`compose/docker-compose.yml`'s `/home/node/memory` bind for
+(`compose/openclaw/docker-compose.yml`'s `/home/node/memory` bind for
 `openclaw-gateway`), so every agent's `memory_search` covers vault pages
 without a second indexer. The same block sets `memory.search.enabled: true`:
 the deploy switches memory search on for every agent. The live config had
@@ -235,7 +235,7 @@ that differs from the file untouched (its convergence rule). After the change
 that adds the `record_event_verdict` step to `scripts/finance-pulse.md` lands,
 the operator overwrites the live scratch once on the host with the replace
 form, after checking what the live scratch holds
-(`docker exec compose-openclaw-gateway-1 openclaw cron scratch <id>`) in case
+(`docker exec openclaw-openclaw-gateway-1 openclaw cron scratch <id>`) in case
 the agent rewrote it:
 
 ```bash
@@ -273,7 +273,7 @@ yet with the gateway CLI, using the env var (never a literal chat id) that
 already backs the retired heartbeat:
 
 ```bash
-docker exec compose-openclaw-gateway-1 sh -c '
+docker exec openclaw-openclaw-gateway-1 sh -c '
 openclaw cron create --json <<JSON
 {
   "name": "ledger-pulse",
@@ -343,7 +343,7 @@ rebuilt one.
    filtered on `name == "ledger-scan"`):
 
    ```bash
-   docker exec compose-openclaw-gateway-1 openclaw cron rm <ledger-scan job id>
+   docker exec openclaw-openclaw-gateway-1 openclaw cron rm <ledger-scan job id>
    ```
 
    The scan prompt (`state/ledger-scan.prompt.txt`), its backup and the
@@ -438,8 +438,8 @@ Apply it (dry run first). These keys hot-reload: the CLI prints
 needed (applied this way on 2026-09-17).
 
 ```bash
-docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin --dry-run < openclaw.patch.json5
-docker exec -i compose-openclaw-gateway-1 openclaw config patch --stdin < openclaw.patch.json5
+docker exec -i openclaw-openclaw-gateway-1 openclaw config patch --stdin --dry-run < openclaw.patch.json5
+docker exec -i openclaw-openclaw-gateway-1 openclaw config patch --stdin < openclaw.patch.json5
 ```
 
 Exec policy per agent:
@@ -477,7 +477,7 @@ still reports its own failures. `OWNER_CHAT` is `LIFEKIT_TELEGRAM_CHAT` from
 the host env file. Never write the value into git.
 
 ```bash
-GW=compose-openclaw-gateway-1
+GW=openclaw-openclaw-gateway-1
 docker exec "$GW" openclaw cron add --name career-weekly \
   --display-name "Career weekly pulse" --agent career \
   --cron "0 9 * * 1" --tz Europe/Dublin --session isolated \
@@ -513,7 +513,7 @@ skipping). No chat id or other secret is needed by this script or job.
 
 No skill install, no agent workspace change, and no gateway restart: the prompt
 reads the skill straight off the vault's existing mount (`/home/node/memory` in
-every agent, `compose/docker-compose.yml`) and follows it directly. Vault edits are
+every agent, `compose/openclaw/docker-compose.yml`) and follows it directly. Vault edits are
 left uncommitted for the host's `memory-sync.timer` to commit and push, same as
 every other vault edit.
 
@@ -534,10 +534,10 @@ unchanged list, including an unchanged empty one, sends nothing. This keeps ever
 owner-facing message on the stack's one grammar/one renderer instead of adding a
 second, unformatted, every-run Telegram path.
 
-**Verify** after creating: `docker exec compose-openclaw-gateway-1 openclaw cron show
+**Verify** after creating: `docker exec openclaw-openclaw-gateway-1 openclaw cron show
 <id>` reports `delivery.mode: "none"` (id from the create output or `cron list --all
 --json` filtered on `name == "memory-vault-cleanup"`). Then `docker exec
-compose-openclaw-gateway-1 openclaw cron run <id> --expect-final --json` and check
+openclaw-openclaw-gateway-1 openclaw cron run <id> --expect-final --json` and check
 `cron show <id>` again reports `enabled` with `sessionTarget: "isolated"`. A run
 against a same-day
 `audits/latest.md` should append one `## [date] audit | ...` line to the vault's
@@ -572,9 +572,9 @@ If the new version misbehaves after the deploy checks passed:
 
 ```bash
 ssh <your-vps-tailscale-name>
-cd /srv/lifekit-stack/compose
+cd /srv/lifekit-stack/compose/openclaw
 docker tag lifekit-openclaw:prev  lifekit-openclaw:local
-docker compose --env-file /srv/openclaw/config/.env -f docker-compose.yml \
+docker compose -p openclaw --env-file /srv/openclaw/config/.env -f docker-compose.yml \
   up -d --no-build --force-recreate openclaw-gateway
 ```
 
@@ -600,11 +600,13 @@ always on `workflow_dispatch` or a manual `bash scripts/deploy.sh`
   only when a deploy completes, so a failed or superseded run cannot hide an
   OpenClaw change. No ref, a non-ancestor ref (force push) or a failed diff runs
   the phases. Force one by hand: `git update-ref -d refs/lifekit/last-deployed`.
-- Any change to `compose/docker-compose.yml` counts as OpenClaw-relevant.
-- On a platform-only deploy the gateway, cli and orchestrator are not named in
-  `compose up`: not built, not recreated, keep running as they are. A gateway
-  that is down stays down until an OpenClaw deploy (dispatch CI or run
-  `scripts/deploy.sh`).
+- `compose/openclaw/docker-compose.yml` counts as OpenClaw-relevant; the
+  platform's `compose/docker-compose.yml` does not, since it defines no
+  OpenClaw service.
+- On a platform-only deploy the `openclaw` compose project is not brought up:
+  the gateway, cli and google-workspace-mcp are not built, not recreated, and
+  keep running as they are. A gateway that is down stays down until an OpenClaw
+  deploy (dispatch CI or run `scripts/deploy.sh`).
 
 ## Rolling back the stack
 
@@ -627,6 +629,58 @@ git log --oneline -n 5             # find the last-known-good commit
 git checkout <good-commit>
 bash scripts/deploy.sh
 ```
+
+## The OpenClaw compose project: cutover and rollback
+
+`openclaw-gateway`, `openclaw-cli` and `google-workspace-mcp` run as their own
+compose project, `openclaw` (`compose/openclaw/docker-compose.yml`), apart from
+the platform project `compose`. The gateway container is
+`openclaw-openclaw-gateway-1`; scripts find it by its compose labels
+(`com.docker.compose.project=openclaw`, `com.docker.compose.service=openclaw-gateway`).
+
+**Cutover.** The first deploy after the move does it by itself, once:
+`openclaw_phase_up` in `scripts/deploy-openclaw.sh` stops and removes the three
+services' containers still labelled with the platform project, then brings up
+the `openclaw` project. That recreates the gateway once. Old and new never run
+together. Later deploys find no old containers and skip the step. Before the new
+gateway starts, the deploy appends the `openclaw_default` network's gateway
+address to `gateway.trustedProxies`. It keeps the old `compose_default` address
+there, so a rollback needs no config change.
+
+**Verify** after the cutover, as `lifekit` on the box:
+
+```bash
+GW=openclaw-openclaw-gateway-1
+docker inspect --format '{{.State.Health.Status}}' "$GW"     # healthy
+curl -fsS http://127.0.0.1:18789/healthz                    # gateway health through the host port
+docker exec "$GW" openclaw channels status                  # all 6 Telegram accounts connected
+docker exec "$GW" openclaw mcp probe                        # every MCP server answers
+curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=up{job="openclaw"}'   # value "1"
+docker ps -a --filter label=com.docker.compose.project=compose \
+  --filter label=com.docker.compose.service=openclaw-gateway -q          # empty
+```
+
+**Rollback** if any check fails. Rollback means redeploying the commit before
+the move. Stop the `openclaw` project first: the old layout publishes the same
+host port and polls the same Telegram bots, so the two gateways must never run
+together.
+
+```bash
+ssh <your-vps-tailscale-name>
+sudo -u lifekit -H bash
+cd /srv/lifekit-stack
+ids="$(docker ps -a -q --filter label=com.docker.compose.project=openclaw)"
+[ -z "$ids" ] || { docker stop $ids && docker rm $ids; }
+# deploy.sh hard-resets the checkout to DEPLOY_REF (default: origin/main), so
+# pin it to the commit before the move rather than checking that commit out.
+DEPLOY_REF="$(git rev-parse '<merge-commit>^')" bash scripts/deploy.sh
+```
+
+That brings the three services back in project `compose`.
+
+Then revert the move on `main`, or the next CI deploy moves them again. Verify the
+same way, with `GW=compose-openclaw-gateway-1`, and check that
+`docker ps -a -q --filter label=com.docker.compose.project=openclaw` prints nothing.
 
 ## Applying the Docker builder cache cap (daemon.json)
 
@@ -888,7 +942,7 @@ Symptom: your bot stops responding, no errors visible.
 
 ```bash
 ssh <your-vps-tailscale-name>
-cd /srv/lifekit-stack
+cd /srv/lifekit-stack/compose/openclaw    # compose project `openclaw`
 docker compose logs -f openclaw-gateway --tail 100
 docker compose --profile cli run --rm -T openclaw-cli openclaw doctor
 docker compose --profile cli run --rm -T openclaw-cli openclaw channels list
@@ -897,9 +951,9 @@ docker compose --profile cli run --rm -T openclaw-cli openclaw channels list
 Common causes:
 
 1. **Telegram token rotated** — check `/srv/openclaw/config/.env` against your BotFather token. Update + restart.
-2. **Polling stalled** — `docker compose restart openclaw-gateway`.
+2. **Polling stalled** — `docker compose -p openclaw restart openclaw-gateway`.
 3. **OpenClaw OOM** — `dmesg | grep -i oom`. If yes, scale up the VPS.
-4. **Anthropic auth expired** — `docker compose --profile cli run --rm openclaw-cli claude auth status`. Re-login if needed.
+4. **Anthropic auth expired** — from `compose/openclaw/`, `docker compose --profile cli run --rm openclaw-cli claude auth status`. Re-login if needed.
 
 ## When a skill says "command not found" or "sharp: missing native binary"
 
@@ -925,7 +979,7 @@ automatically — they have to be installed once on the VPS after the first
 rsync. Inside the gateway container:
 
 ```bash
-docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env \
+docker compose -p openclaw -f compose/openclaw/docker-compose.yml --env-file /srv/openclaw/config/.env \
   exec openclaw-gateway npm install -g /home/node/.openclaw/workspace/external/life-state
 ```
 
@@ -958,7 +1012,7 @@ ssh <your-vps-tailscale-name>
 sudo -u lifekit -H bash            # owns /var/lib/lifekit and the docker group
 cd /srv/lifekit-stack
 ls -l /var/lib/lifekit/queue.jsonl                 # is it still growing?
-docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env \
+docker compose -p openclaw -f compose/openclaw/docker-compose.yml --env-file /srv/openclaw/config/.env \
   exec openclaw-gateway ls -la /home/node/.life-state/queue.jsonl /home/node/memory/domains/
 ```
 
@@ -1020,6 +1074,7 @@ Total recovery time: ~30 minutes if your backups are current.
 After every deploy, the wizard runs:
 
 ```bash
+cd /srv/lifekit-stack/compose/openclaw    # compose project `openclaw`
 docker compose --profile cli run --rm -T openclaw-cli openclaw doctor
 docker compose --profile cli run --rm -T openclaw-cli openclaw health
 # Plus a synthetic Telegram self-message round-trip

@@ -14,7 +14,7 @@
 #
 # After a fresh skill install/update, restart the gateway so it re-reads the
 # skill manifest (plain `restart` is NOT sufficient):
-#   cd /srv/lifekit-stack/compose && docker compose \
+#   cd /srv/lifekit-stack/compose/openclaw && docker compose -p openclaw \
 #     --env-file /srv/lifekit-secrets/stack.env -f docker-compose.yml \
 #     up -d --force-recreate openclaw-gateway
 #
@@ -25,7 +25,11 @@
 #                          existing jobs; same wall clock as Europe/London)
 set -euo pipefail
 
-GATEWAY=compose-openclaw-gateway-1
+# The gateway container of the `openclaw` compose project, found by its
+# compose labels rather than a fixed container name.
+GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 JOB_NAME=morning-brief
 AGENT=devclaw
 CHAT_ID="${MORNING_BRIEF_CHAT_ID:-422369750}"

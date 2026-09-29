@@ -64,7 +64,7 @@ yearly review above, first 2027-09-19).
    a dry run that resolves them, `secrets reload` follows.
 5. Verify: `openclaw channels status` shows every account connected;
    `openclaw secrets audit --allow-exec` lists no gateway finding;
-   `docker exec compose-openclaw-gateway-1 env | cut -d= -f1 | grep -c BOT_TOKEN`
+   `docker exec openclaw-openclaw-gateway-1 env | cut -d= -f1 | grep -c BOT_TOKEN`
    prints 1 (`DEVCLAW_BOT_TOKEN`, the master-file one).
 6. Purge (below); see "Rotation on migration" (above) for the accepted-debt
    record on this cutover's telegram-bot and mcp-bearer values.

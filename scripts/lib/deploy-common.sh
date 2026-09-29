@@ -14,6 +14,15 @@ ENV_FILE="${ENV_FILE:-/srv/lifekit-secrets/stack.env}"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
 # shellcheck disable=SC2034  # used by the scripts that source this file
 COMPOSE_FILE="${REPO_DIR}/compose/docker-compose.yml"
+# OpenClaw (gateway, cli, google-workspace-mcp) is its own compose project,
+# apart from the platform project in COMPOSE_FILE. Every OpenClaw compose call
+# goes through openclaw_compose, so the project name, file and env file are
+# decided in one place.
+OPENCLAW_PROJECT="openclaw"
+OPENCLAW_COMPOSE_FILE="${REPO_DIR}/compose/openclaw/docker-compose.yml"
+openclaw_compose() {
+  docker compose -p "${OPENCLAW_PROJECT}" --env-file "${ENV_FILE}" -f "${OPENCLAW_COMPOSE_FILE}" "$@"
+}
 
 # CURRENT_STEP is read by the callers' EXIT traps.
 # shellcheck disable=SC2034

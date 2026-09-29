@@ -105,8 +105,8 @@ fi
 #
 # scripts/lib/openclaw-paths.sh. CI sets LIFEKIT_DEPLOY_OPENCLAW=auto on a push
 # to main, so a platform-only merge skips every openclaw_phase_* call below
-# (no doctor, no smoke turns, no gateway build) and `compose up` leaves the
-# OpenClaw services out. Decided here, after the re-exec, so the path list is
+# (no doctor, no smoke turns, no gateway build, no `up` of the openclaw
+# project). Decided here, after the re-exec, so the path list is
 # the one in the revision being deployed.
 openclaw_gate_decide
 if [[ "${OPENCLAW_GATE_RUN}" == "1" ]]; then
@@ -227,6 +227,8 @@ fi
 say "platform contract: declarations"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
+openclaw_compose --profile '*' config --format json \
+  | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -239,38 +241,33 @@ deploy_private_docker_config
 openclaw_phase build
 
 say "docker compose up -d --build"
-# Platform-only deploy: name the services, minus OpenClaw's, so the gateway
-# image is not built and its container not recreated (a build with unchanged
-# inputs is a cache hit, but naming them is what guarantees it). Any change to
-# compose/docker-compose.yml runs the OpenClaw phases, so the definition the
-# gateway is running from cannot have changed in this case.
-UP_SERVICES=()
-if [[ "${OPENCLAW_GATE_RUN}" != "1" ]]; then
-  while IFS= read -r svc; do
-    [[ -n "${svc}" ]] || continue
-    for oc in "${OPENCLAW_SERVICES[@]}"; do [[ "${svc}" == "${oc}" ]] && continue 2; done
-    UP_SERVICES+=("${svc}")
-  done < <(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --services)
-  say "docker compose up -d --build (platform services only: ${UP_SERVICES[*]})"
-fi
+# The platform project defines no OpenClaw service (they are compose project
+# `openclaw`, brought up by the `up` phase below), so this `up` never builds
+# the gateway image or recreates its container, whatever the gate decided.
 # docker's recreate path can trip on a stale temp-name reservation
 # ("Conflict. The container name \"/<hash>_compose-<svc>-1\" is already in
 # use..."). One force-recreate of the conflicting service picks a fresh temp
 # name and clears it; anything else stays a hard failure. #94
 UP_LOG="$(mktemp)"
-if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build "${UP_SERVICES[@]}" 2>&1 | tee "${UP_LOG}"; then
+if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build 2>&1 | tee "${UP_LOG}"; then
   CONFLICT_SVC="$(grep -oE '[0-9a-f]{12}_compose-[a-z0-9-]+-[0-9]+' "${UP_LOG}" \
     | head -1 | sed -E 's/^[0-9a-f]{12}_compose-//; s/-[0-9]+$//' || true)"
   if [[ -n "${CONFLICT_SVC}" ]]; then
     say "recreate conflict on '${CONFLICT_SVC}' — force-recreating once, retrying up"
     docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
       up -d --force-recreate "${CONFLICT_SVC}"
-    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build "${UP_SERVICES[@]}"
+    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
   else
     exit 1
   fi
 fi
 rm -f "${UP_LOG}"
+
+# ─── OpenClaw: move out of the platform project (once), up -d ───────────────
+#
+# scripts/deploy-openclaw.sh, phase `up`. OpenClaw is its own compose project
+# (compose/openclaw/); the platform `up` above no longer defines or starts it.
+openclaw_phase up
 
 # ─── OpenClaw: platform config patch + gateway secrets reload/audit ──────────
 #
@@ -338,9 +335,10 @@ fi
 # scripts/deploy-openclaw.sh, phase `post-up`.
 openclaw_phase post_up
 
-# The whole stack's containers, after the OpenClaw health checks above.
+# Both projects' containers, after the OpenClaw health checks above.
 say "container status"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
+openclaw_compose ps
 
 # ─── OpenClaw: smoke turns ───────────────────────────────────────────────────
 #
@@ -350,16 +348,16 @@ openclaw_phase smoke
 # ─── Platform contract: running containers ──────────────────────────────────
 #
 # After the smoke turns on purpose: they are real traffic, so the gateway has
-# logged traced work, and Prometheus has scraped since the reload above. This
-# project's containers gate the deploy (a failure goes red like any other
+# logged traced work, and Prometheus has scraped since the reload above. The
+# platform and openclaw projects' containers gate the deploy (a failure goes red like any other
 # post-deploy assertion - the containers are already up). The rest of the box
 # prints as a report-only census: finance-sentry, devclaw and the dashboard
 # deploy from their own repos and run this same script on their own project.
 say "platform contract: running containers"
 STACK_PROJECT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format json \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')"
-python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" \
-  || fail_later "platform contract: ${STACK_PROJECT} containers fail it (table above)"
+python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" --enforce "${OPENCLAW_PROJECT}" \
+  || fail_later "platform contract: ${STACK_PROJECT} or ${OPENCLAW_PROJECT} containers fail it (table above)"
 
 # ─── Docker builder cache cap: host fact the repo owns, report-only ──────────
 #
