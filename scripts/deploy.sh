@@ -572,10 +572,29 @@ fi
 # as part of its normal operation and does not take --allow-exec (OpenClaw
 # 2026.9.5: "does not recognize option --allow-exec"); `secrets audit` does,
 # for the same reason the config patch dry run above does.
-say "reloading gateway secrets"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-  exec -T openclaw-gateway openclaw \
-    secrets reload || fail_later "openclaw secrets reload failed"
+# A compose recreate returns before the gateway listens (the PR 231 deploy hit
+# ECONNREFUSED 4s after one), so probe the same /healthz its healthcheck uses,
+# from inside the container, for up to 120s before reloading.
+say "waiting for the gateway to accept connections (up to 120s)"
+GATEWAY_READY=0
+for _ in $(seq 1 60); do
+  if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+      exec -T openclaw-gateway node -e \
+      "fetch('http://127.0.0.1:18789/healthz',{signal:AbortSignal.timeout(3000)}).then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
+      >/dev/null 2>&1; then
+    GATEWAY_READY=1
+    break
+  fi
+  sleep 2
+done
+if [[ "${GATEWAY_READY}" -ne 1 ]]; then
+  fail_later "openclaw-gateway did not answer /healthz within 120s; secrets reload skipped"
+else
+  say "reloading gateway secrets"
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    exec -T openclaw-gateway openclaw \
+      secrets reload || fail_later "openclaw secrets reload failed"
+fi
 say "auditing gateway secrets (report only, no values printed)"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
   run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
