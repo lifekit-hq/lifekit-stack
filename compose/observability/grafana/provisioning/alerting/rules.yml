@@ -367,6 +367,60 @@ groups:
             been below 15% for 10 minutes. `df -h /` on the box, then
             `docker system df` to find reclaimable image and build cache.
 
+      - uid: tmp-filesystem-nearly-full
+        title: /tmp is nearly full
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Free space as a fraction of size for /tmp, a 7.8GB tmpfs
+              # (RAM-backed). node-exporter's own filesystem collector
+              # excludes tmpfs, so these two gauges come from
+              # scripts/tmp-gauge/tmp-usage-gauge.sh through the textfile
+              # collector instead - the 2026-09-29 incident (/tmp hit 100%,
+              # every Claude session on the box lost its tool output) had no
+              # metric to catch it.
+              expr: tmp_filesystem_avail_bytes / tmp_filesystem_size_bytes
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [0.20]}
+        # A vanished node-exporter target is target-down's job; a stale or
+        # missing gauge file is textfile-collector-stale's job.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "/tmp has less than 20% free space"
+          description: >-
+            tmp_filesystem_avail_bytes / tmp_filesystem_size_bytes has been below 20% for 5
+            minutes: /tmp is a RAM-backed tmpfs, and filling it starves every process that
+            writes there, including Claude Code tool output. The response is the host cleanup
+            job (user crontab, outside this repo) that removes stale scratch hourly - it
+            reports root-owned leftovers it cannot remove rather than deleting them. `df -h
+            /tmp` and `du -sh /tmp/* 2>/dev/null | sort -rh | head` on the box show what is
+            filling it.
+
       - uid: host-ram-nearly-exhausted
         title: host RAM available is critically low
         condition: C
@@ -478,7 +532,9 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              # Age of each textfile-collector file; the quota gauge rewrites its file every 5 minutes, so 15 minutes is three missed runs.
+              # Age of each textfile-collector file; every gauge that writes one (the quota
+              # gauge, the /tmp usage gauge) rewrites it every 5 minutes, so 15 minutes is
+              # three missed runs.
               expr: time() - node_textfile_mtime_seconds
               instant: true
               intervalMs: 1000
@@ -508,9 +564,11 @@ groups:
         annotations:
           summary: "textfile metric file {{ $labels.file }} has not been updated for over 15 minutes"
           description: >-
-            node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. The quota gauge
-            timer refreshes it every 5 minutes, so its timer or script has stopped and the quota rules are reading stale
-            values. `systemctl --failed` and the gauge unit's journal on the box.
+            node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. Every gauge
+            that writes into the textfile directory (the quota gauge's systemd timer, the /tmp usage gauge's user
+            crontab) refreshes its file every 5 minutes, so its timer, cron job or script has stopped and rules
+            reading that file are seeing stale values. `systemctl --failed`, the gauge unit's journal, and
+            `crontab -l` for the cron-run gauges on the box.
 
       - uid: textfile-collector-scrape-error
         title: textfile collector cannot read a file

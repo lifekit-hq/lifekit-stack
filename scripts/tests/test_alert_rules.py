@@ -118,6 +118,15 @@ def test_host_ram_alert_uses_available_not_bare_free():
     assert threshold(rule) == ("lt", 0.10)
 
 
+def test_tmp_filesystem_alert_uses_avail_over_size():
+    rule = RULES["tmp-filesystem-nearly-full"]
+    (expr,) = queries(rule)
+    assert "tmp_filesystem_avail_bytes" in expr
+    assert "tmp_filesystem_size_bytes" in expr
+    assert rule["labels"]["severity"] == "warning"
+    assert threshold(rule) == ("lt", 0.20)
+
+
 def test_host_swap_alert_requires_ram_pressure_too():
     # Swap used alone sits near 100% permanently on this box (no swap-back-in),
     # so the rule must gate on available RAM as well, not swap in isolation.
