@@ -45,8 +45,8 @@ sops updatekeys secrets/lifekit-gateway.env.sops   # or lifekit.env.sops
 
 Rotation on migration (all telegram-bot and mcp-bearer rows marked "at
 migration" in the inventory): those values sat readable by every
-exec-capable agent until 2026-09-19, when the SOPS cutover and the
-plaintext purge finished. Not rotated - accepted as debt by the captain
+exec-capable agent until 2026-09-19. The SOPS cutover and the plaintext
+purge finished 2026-09-29. Not rotated - accepted as debt by the captain
 2026-09-29; owner the captain, resume condition: rotate on any sign of box
 compromise or at the first scheduled key rotation (the gateway age key
 yearly review above, first 2027-09-19).
