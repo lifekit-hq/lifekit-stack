@@ -31,6 +31,8 @@ SCRIPT_DIR="$(dirname "${SELF}")"
 source "${SCRIPT_DIR}/lib/deploy-common.sh"
 # shellcheck source=scripts/deploy-openclaw.sh
 source "${SCRIPT_DIR}/deploy-openclaw.sh"
+# shellcheck source=scripts/lib/openclaw-paths.sh
+source "${SCRIPT_DIR}/lib/openclaw-paths.sh"
 
 DEPLOY_COMPLETE=0
 
@@ -99,12 +101,31 @@ if [[ -z "${LIFEKIT_DEPLOY_REEXEC:-}" ]]; then
   exec bash "${SELF}" "$@"
 fi
 
+# ─── OpenClaw gate: run the OpenClaw phases, or leave the gateway alone ──────
+#
+# scripts/lib/openclaw-paths.sh. CI sets LIFEKIT_DEPLOY_OPENCLAW=auto on a push
+# to main, so a platform-only merge skips every openclaw_phase_* call below
+# (no doctor, no smoke turns, no gateway build) and `compose up` leaves the
+# OpenClaw services out. Decided here, after the re-exec, so the path list is
+# the one in the revision being deployed.
+openclaw_gate_decide
+if [[ "${OPENCLAW_GATE_RUN}" == "1" ]]; then
+  say "OpenClaw phases: RUN (${OPENCLAW_GATE_REASON})"
+else
+  say "OpenClaw phases: SKIPPED (${OPENCLAW_GATE_REASON}); the gateway is left untouched"
+fi
+
+# One call per phase at its point in the sequence; a skipped phase is a no-op.
+openclaw_phase() {
+  if [[ "${OPENCLAW_GATE_RUN}" == "1" ]]; then "openclaw_phase_$1"; fi
+}
+
 # ─── OpenClaw: claw state, memory-audit sync, onboard, trustedProxies ────────
 #
 # scripts/deploy-openclaw.sh, phase `prepare`. Placed BEFORE the compose step
 # on purpose so memory-audit script drift heals even on a deploy that fails
 # later.
-openclaw_phase_prepare
+openclaw_phase prepare
 
 # Grafana's frame-ancestors origin: an explicit GRAFANA_EMBED_ORIGIN wins,
 # otherwise derived from the host's tailnet name + the dashboard's served
@@ -128,7 +149,7 @@ fi
 # ─── OpenClaw: modules.yaml → /srv/memory/system/ ────────────────────────────
 #
 # scripts/deploy-openclaw.sh, phase `modules`.
-openclaw_phase_modules
+openclaw_phase modules
 
 # Runtime-state dir — split from /srv/memory per proposal
 # 2026-05-27-runtime-knowledge-split. Idempotent guard so an in-place upgrade
@@ -215,22 +236,36 @@ deploy_private_docker_config
 #
 # scripts/deploy-openclaw.sh, phase `build`. Migrates state BEFORE the new
 # gateway boots, so it runs ahead of `up`.
-openclaw_phase_build
+openclaw_phase build
 
 say "docker compose up -d --build"
+# Platform-only deploy: name the services, minus OpenClaw's, so the gateway
+# image is not built and its container not recreated (a build with unchanged
+# inputs is a cache hit, but naming them is what guarantees it). Any change to
+# compose/docker-compose.yml runs the OpenClaw phases, so the definition the
+# gateway is running from cannot have changed in this case.
+UP_SERVICES=()
+if [[ "${OPENCLAW_GATE_RUN}" != "1" ]]; then
+  while IFS= read -r svc; do
+    [[ -n "${svc}" ]] || continue
+    for oc in "${OPENCLAW_SERVICES[@]}"; do [[ "${svc}" == "${oc}" ]] && continue 2; done
+    UP_SERVICES+=("${svc}")
+  done < <(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --services)
+  say "docker compose up -d --build (platform services only: ${UP_SERVICES[*]})"
+fi
 # docker's recreate path can trip on a stale temp-name reservation
 # ("Conflict. The container name \"/<hash>_compose-<svc>-1\" is already in
 # use..."). One force-recreate of the conflicting service picks a fresh temp
 # name and clears it; anything else stays a hard failure. #94
 UP_LOG="$(mktemp)"
-if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build 2>&1 | tee "${UP_LOG}"; then
+if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build "${UP_SERVICES[@]}" 2>&1 | tee "${UP_LOG}"; then
   CONFLICT_SVC="$(grep -oE '[0-9a-f]{12}_compose-[a-z0-9-]+-[0-9]+' "${UP_LOG}" \
     | head -1 | sed -E 's/^[0-9a-f]{12}_compose-//; s/-[0-9]+$//' || true)"
   if [[ -n "${CONFLICT_SVC}" ]]; then
     say "recreate conflict on '${CONFLICT_SVC}' — force-recreating once, retrying up"
     docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
       up -d --force-recreate "${CONFLICT_SVC}"
-    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
+    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build "${UP_SERVICES[@]}"
   else
     exit 1
   fi
@@ -240,7 +275,7 @@ rm -f "${UP_LOG}"
 # ─── OpenClaw: platform config patch + gateway secrets reload/audit ──────────
 #
 # scripts/deploy-openclaw.sh, phase `configure`.
-openclaw_phase_configure
+openclaw_phase configure
 
 # ─── Reload Prometheus' scrape config ────────────────────────────────────────
 #
@@ -301,7 +336,7 @@ fi
 # ─── OpenClaw: cli reattach, stuck sessions, skill deps, health checks ───────
 #
 # scripts/deploy-openclaw.sh, phase `post-up`.
-openclaw_phase_post_up
+openclaw_phase post_up
 
 # The whole stack's containers, after the OpenClaw health checks above.
 say "container status"
@@ -310,7 +345,7 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 # ─── OpenClaw: smoke turns ───────────────────────────────────────────────────
 #
 # scripts/deploy-openclaw.sh, phase `smoke`.
-openclaw_phase_smoke
+openclaw_phase smoke
 
 # ─── Platform contract: running containers ──────────────────────────────────
 #
@@ -368,6 +403,10 @@ if (( ${#DEPLOY_FAILURES[@]} )); then
 fi
 
 DEPLOY_COMPLETE=1
+# The next auto-mode gate diffs from here. Recorded only on a complete deploy,
+# so a failed or superseded run never hides its OpenClaw change.
+git update-ref "${OPENCLAW_LAST_DEPLOYED_REF}" HEAD \
+  || warn "could not record ${OPENCLAW_LAST_DEPLOYED_REF}; the next deploy runs the OpenClaw phases"
 say "✓ deploy complete."
 
 }
