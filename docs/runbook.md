@@ -584,6 +584,27 @@ cannot read the migrated state dir: restore the full pre-upgrade backup
 (`openclaw backup restore`, or untar the archive over `/srv/openclaw/config`
 with the gateway stopped) before starting the `:prev` image.
 
+## Path-gated OpenClaw deploys
+
+A push to `main` always deploys the platform (observability, notify-relay, the
+Grafana reloads, the contract check). The OpenClaw phases in
+`scripts/deploy-openclaw.sh` (doctor, health checks, smoke turns, gateway build
+and state migration) run only when a path listed in
+`scripts/lib/openclaw-paths.sh` changed since the last successful deploy, and
+always on `workflow_dispatch` or a manual `bash scripts/deploy.sh`
+(`LIFEKIT_DEPLOY_OPENCLAW=always`, the default; CI sets `auto` on push).
+
+- The deploy log says which: `OpenClaw phases: RUN (<why>)` or `SKIPPED (<why>)`.
+- The range is `refs/lifekit/last-deployed..HEAD` in the VPS clone; the ref moves
+  only when a deploy completes, so a failed or superseded run cannot hide an
+  OpenClaw change. No ref, a non-ancestor ref (force push) or a failed diff runs
+  the phases. Force one by hand: `git update-ref -d refs/lifekit/last-deployed`.
+- Any change to `compose/docker-compose.yml` counts as OpenClaw-relevant.
+- On a platform-only deploy the gateway, cli and orchestrator are not named in
+  `compose up`: not built, not recreated, keep running as they are. A gateway
+  that is down stays down until an OpenClaw deploy (dispatch CI or run
+  `scripts/deploy.sh`).
+
 ## Rolling back the stack
 
 If a deploy of anything else breaks something, revert on `main` and let CI

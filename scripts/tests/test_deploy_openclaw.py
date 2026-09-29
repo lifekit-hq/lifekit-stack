@@ -129,6 +129,7 @@ def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
     (fake / "scripts/lib").mkdir(parents=True)
     shutil.copy(REPO / "scripts/deploy.sh", fake / "scripts/deploy.sh")
     shutil.copy(LIB, fake / "scripts/lib/deploy-common.sh")
+    shutil.copy(PATHS_LIB, fake / "scripts/lib/openclaw-paths.sh")
     stub(
         fake / "scripts/deploy-openclaw.sh",
         "".join(
@@ -248,3 +249,268 @@ echo "failures=${{#DEPLOY_FAILURES[@]}}"
     assert sorted(defined) == sorted(f"openclaw_phase_{p}" for p in PHASES)
     assert failures == "failures=1"
     assert Path(env["DOCKER_CALL_LOG"]).read_text() == ""
+
+
+# ─── the OpenClaw gate: scripts/lib/openclaw-paths.sh ────────────────────────
+
+PATHS_LIB = REPO / "scripts/lib/openclaw-paths.sh"
+GATE_REF = "refs/lifekit/last-deployed"
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("compose/openclaw-gateway/Dockerfile", True),
+        ("compose/openclaw-gateway/platform.patch.json", True),
+        ("compose/openclaw/docker-compose.yml", True),
+        ("defaults/modules.yaml", True),
+        ("skills/notes/SKILL.md", True),
+        ("platform.patch.json", True),
+        ("elsewhere/platform.patch.json", True),
+        ("scripts/deploy-openclaw.sh", True),
+        ("scripts/memory-audit/run.sh", True),
+        ("compose/docker-compose.yml", True),
+        ("compose/observability/prometheus/prometheus.yml", False),
+        ("compose/notify-relay/server.js", False),
+        ("scripts/deploy.sh", False),
+        ("scripts/memory-audit-cron.sh", False),
+        ("docs/runbook.md", False),
+        ("README.md", False),
+        (".github/workflows/ci.yml", False),
+    ],
+)
+def test_openclaw_path_matches(path, expected):
+    r = subprocess.run(
+        ["bash", "-c", f"source {PATHS_LIB}; openclaw_path_matches '{path}'"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (r.returncode == 0) is expected
+
+
+def git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    ).stdout.strip()
+
+
+def commit(repo: Path, rel: str) -> str:
+    f = repo / rel
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(f.read_text() + "x\n" if f.exists() else "x\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", rel)
+    return git(repo, "rev-parse", "HEAD")
+
+
+def decide(repo: Path, mode: str | None) -> tuple[str, str]:
+    env = {k: v for k, v in os.environ.items() if k != "LIFEKIT_DEPLOY_OPENCLAW"}
+    if mode is not None:
+        env["LIFEKIT_DEPLOY_OPENCLAW"] = mode
+    r = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'set -euo pipefail; source {PATHS_LIB}; openclaw_gate_decide; echo "$OPENCLAW_GATE_RUN|$OPENCLAW_GATE_REASON"',
+        ],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    run, reason = r.stdout.strip().split("|", 1)
+    return run, reason
+
+
+@pytest.fixture
+def gate_repo(tmp_path):
+    repo = tmp_path / "gate-repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    base = commit(repo, "README.md")
+    git(repo, "update-ref", GATE_REF, base)
+    return repo
+
+
+def test_gate_default_mode_runs_everything(gate_repo):
+    commit(gate_repo, "docs/runbook.md")
+    assert decide(gate_repo, None)[0] == "1"
+    assert decide(gate_repo, "always")[0] == "1"
+
+
+def test_gate_auto_skips_when_only_platform_paths_changed(gate_repo):
+    commit(gate_repo, "compose/observability/prometheus/prometheus.yml")
+    commit(gate_repo, "docs/runbook.md")
+    run, reason = decide(gate_repo, "auto")
+    assert run == "0"
+    assert "no OpenClaw path changed" in reason
+
+
+def test_gate_auto_runs_when_any_commit_in_the_range_touched_openclaw(gate_repo):
+    # A superseded run never advanced the ref: its OpenClaw change is still in
+    # the range even though the newest commit is platform-only.
+    commit(gate_repo, "skills/notes/SKILL.md")
+    commit(gate_repo, "docs/runbook.md")
+    run, reason = decide(gate_repo, "auto")
+    assert run == "1"
+    assert "skills/notes/SKILL.md" in reason
+
+
+def test_gate_auto_runs_when_nothing_is_recorded(gate_repo):
+    git(gate_repo, "update-ref", "-d", GATE_REF)
+    run, reason = decide(gate_repo, "auto")
+    assert run == "1"
+    assert "no record" in reason
+
+
+def test_gate_auto_runs_when_last_deployed_is_not_an_ancestor(gate_repo):
+    git(gate_repo, "checkout", "-q", "-b", "other")
+    git(gate_repo, "update-ref", GATE_REF, commit(gate_repo, "docs/other.md"))
+    git(gate_repo, "checkout", "-q", "main")
+    commit(gate_repo, "docs/runbook.md")
+    run, reason = decide(gate_repo, "auto")
+    assert run == "1"
+    assert "not an ancestor" in reason
+
+
+def test_gate_auto_runs_when_the_recorded_commit_is_missing(gate_repo):
+    ref = gate_repo / ".git" / GATE_REF
+    ref.write_text("0" * 39 + "1\n")
+    assert decide(gate_repo, "auto")[0] == "1"
+
+
+def test_gate_unknown_mode_runs_everything(gate_repo):
+    run, reason = decide(gate_repo, "bogus")
+    assert run == "1"
+    assert "unknown" in reason
+
+
+# ─── deploy.sh with the gate on / off ────────────────────────────────────────
+
+PLATFORM_ORDER = [m for m in DEPLOY_ORDER if not m.startswith("openclaw:")]
+
+
+def run_gated_deploy(env, tmp_path, mode, touched):
+    """deploy.sh against a scratch git repo whose last commit touched `touched`."""
+    fake = tmp_path / "repo"
+    (fake / "scripts/lib").mkdir(parents=True)
+    shutil.copy(REPO / "scripts/deploy.sh", fake / "scripts/deploy.sh")
+    shutil.copy(LIB, fake / "scripts/lib/deploy-common.sh")
+    shutil.copy(PATHS_LIB, fake / "scripts/lib/openclaw-paths.sh")
+    stub(
+        fake / "scripts/deploy-openclaw.sh",
+        "".join(
+            f'openclaw_phase_{p}() {{ echo "openclaw:{p}" >> "$DOCKER_CALL_LOG"; }}\n'
+            for p in PHASES
+        ),
+    )
+    stub(fake / "scripts/deploy-embed-origin.sh", LOGGING_SH % "embed-origin")
+    stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
+    stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
+    stub(fake / "scripts/tmp-scratch-policy.sh", LOGGING_SH % "tmp-scratch")
+    stub(
+        fake / "scripts/platform-contract.py",
+        "import os, sys\n"
+        'open(os.environ["DOCKER_CALL_LOG"], "a").write("contract-" + sys.argv[1].lstrip("-") + "\\n")\n',
+    )
+    alert_dir = fake / "compose/observability/grafana/provisioning/alerting"
+    alert_dir.mkdir(parents=True)
+    (alert_dir / "contact-points.yml.tmpl").write_text("chat: __TELEGRAM_CHAT_ID__\n")
+    (fake / "compose/docker-compose.yml").write_text("")
+    (fake / ".gitignore").write_text("contact-points.yml\n")
+    git(fake, "init", "-q", "-b", "main")
+    base = commit(fake, "README.md")
+    git(fake, "update-ref", GATE_REF, base)
+    commit(fake, touched)
+    head = git(fake, "rev-parse", "HEAD")
+    bin_dir = tmp_path / "bin"
+    real_git = shutil.which("git")
+    # fetch/reset/remote would need a real origin; everything else is real git.
+    stub(
+        bin_dir / "git",
+        f"""#!/bin/sh
+case "$1" in
+  remote) echo "  HEAD branch: main" ;;
+  fetch|reset) ;;
+  *) exec {real_git} "$@" ;;
+esac
+""",
+    )
+    stub(bin_dir / "curl", '#!/bin/sh\necho "curl $*" >> "$DOCKER_CALL_LOG"\n')
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    Path(env["ENV_FILE"]).write_text("LIFEKIT_TELEGRAM_CHAT=123\n")
+    r = subprocess.run(
+        ["bash", str(fake / "scripts/deploy.sh")],
+        env={
+            **env,
+            "REPO_DIR": str(fake),
+            "LIFEKIT_DEPLOY_REEXEC": "1",
+            "LIFEKIT_DEPLOY_OPENCLAW": mode,
+            "LIFEKIT_STATE_DIR_HOST": str(state_dir),
+            "DOCKER_GID": "999",
+        },
+        cwd=fake,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return r, fake, head
+
+
+def test_gate_off_skips_every_openclaw_phase_and_leaves_the_gateway_out_of_up(
+    env, tmp_path
+):
+    # `config --services` is what the platform `up` names its services from.
+    docker = tmp_path / "bin/docker"
+    docker.write_text(
+        docker.read_text().replace(
+            '  *" config --format json "*)',
+            '  *" config --services "*) printf "%s\\n" openclaw-gateway openclaw-cli lifekit-orchestrator prometheus grafana ;;\n  *" config --format json "*)',
+        )
+    )
+    r, fake, head = run_gated_deploy(
+        env, tmp_path, "auto", "compose/observability/prometheus/prometheus.yml"
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "OpenClaw phases: SKIPPED" in r.stdout
+    trace = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    assert [m for m in map(marker, trace) if m] == PLATFORM_ORDER
+    assert not [line for line in trace if line.startswith("openclaw:")]
+    up = [line for line in trace if "up -d --build" in line]
+    assert len(up) == 1 and up[0].endswith("up -d --build prometheus grafana")
+    assert git(fake, "rev-parse", GATE_REF) == head
+
+
+def test_gate_on_runs_every_openclaw_phase_in_order(env, tmp_path):
+    r, fake, head = run_gated_deploy(env, tmp_path, "auto", "defaults/modules.yaml")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "OpenClaw phases: RUN (defaults/modules.yaml changed" in r.stdout
+    trace = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    assert [m for m in map(marker, trace) if m] == DEPLOY_ORDER
+    # Every service is named implicitly: no service list on the up.
+    assert [line for line in trace if "up -d --build" in line][0].endswith(
+        "up -d --build"
+    )
+    assert git(fake, "rev-parse", GATE_REF) == head
+
+
+def test_gate_always_runs_every_phase_even_for_a_platform_only_change(env, tmp_path):
+    r, _, _ = run_gated_deploy(env, tmp_path, "always", "docs/runbook.md")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "OpenClaw phases: RUN (mode 'always'" in r.stdout
+    trace = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    assert [m for m in map(marker, trace) if m] == DEPLOY_ORDER
