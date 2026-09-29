@@ -18,6 +18,46 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.4](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.3...v0.1.4) (2026-09-29)
+
+
+### Features
+
+* **alert-inbox:** pull firing Grafana alerts into an agent inbox ([#220](https://github.com/lifekit-hq/lifekit-stack/issues/220)) ([aff343f](https://github.com/lifekit-hq/lifekit-stack/commit/aff343fb7e1eb4cbc37f75812a0d9ecd6e501498))
+* **container-exporter:** swap and image per container ([#237](https://github.com/lifekit-hq/lifekit-stack/issues/237)) ([38cdade](https://github.com/lifekit-hq/lifekit-stack/commit/38cdade14bc5a7f8bf56e9b8de501e47baa60a27))
+* **memory-audit:** the weekly memory-vault dreaming pass ([#223](https://github.com/lifekit-hq/lifekit-stack/issues/223)) ([7b2fd27](https://github.com/lifekit-hq/lifekit-stack/commit/7b2fd270fea43dfa9ff57bcf6fa07c490e0d7573))
+* **notify-relay:** add build-info gauge to /metrics ([#215](https://github.com/lifekit-hq/lifekit-stack/issues/215)) ([a0c9c1c](https://github.com/lifekit-hq/lifekit-stack/commit/a0c9c1c27cc607359cc62e86ded2f1b3bf8b9123))
+* **observability:** add /tmp usage alert and textfile gauge ([#222](https://github.com/lifekit-hq/lifekit-stack/issues/222)) ([242dbe7](https://github.com/lifekit-hq/lifekit-stack/commit/242dbe7f1206691cc5e774c9fa878798851624da))
+* **observability:** add host RAM and swap pressure alerts ([#219](https://github.com/lifekit-hq/lifekit-stack/issues/219)) ([7736c5b](https://github.com/lifekit-hq/lifekit-stack/commit/7736c5b71f8b80f3bf16f3739e7a7adf92d8f72c))
+* **observability:** per-project memory budgets and breach alerts ([#236](https://github.com/lifekit-hq/lifekit-stack/issues/236)) ([d24653c](https://github.com/lifekit-hq/lifekit-stack/commit/d24653cdc40279282f06fd9b13ab14fb00e4e94f))
+* **scripts:** add weekly VPS ops report script ([#238](https://github.com/lifekit-hq/lifekit-stack/issues/238)) ([c941690](https://github.com/lifekit-hq/lifekit-stack/commit/c9416904e26d4b2733b00bd61905e81a4cb108c4))
+* **scripts:** host cgroup memory gauge and tmp-gauge timer ([#240](https://github.com/lifekit-hq/lifekit-stack/issues/240)) ([e653ec5](https://github.com/lifekit-hq/lifekit-stack/commit/e653ec57e630427f53bef2622da9836c3ee17110))
+* **secrets:** add SOPS+age tooling and the two encrypted files ([#224](https://github.com/lifekit-hq/lifekit-stack/issues/224)) ([27af202](https://github.com/lifekit-hq/lifekit-stack/commit/27af2024e7f1b1f7309b93a307005aab001e9c93))
+* **secrets:** render the master boundary into the compose env file ([#228](https://github.com/lifekit-hq/lifekit-stack/issues/228)) ([310d40d](https://github.com/lifekit-hq/lifekit-stack/commit/310d40d21148e4cfc216e56495b4c93ef896033a))
+* **secrets:** resolve gateway Telegram tokens via SOPS exec SecretRef ([#227](https://github.com/lifekit-hq/lifekit-stack/issues/227)) ([db03d0f](https://github.com/lifekit-hq/lifekit-stack/commit/db03d0f9caf0bf0e9d362f8cab145af75f6361c2))
+
+
+### Bug Fixes
+
+* **compose:** raise the tempo memory cap to 1g ([#239](https://github.com/lifekit-hq/lifekit-stack/issues/239)) ([840d2b2](https://github.com/lifekit-hq/lifekit-stack/commit/840d2b2de395c4d4c76ec5714503f2db4901eb2a))
+* **deploy:** disable build provenance to stop no-op container recreates ([#221](https://github.com/lifekit-hq/lifekit-stack/issues/221)) ([13eb6d2](https://github.com/lifekit-hq/lifekit-stack/commit/13eb6d27faf641d7649a207281ff3d2ff166f51d))
+* **deploy:** drop --allow-exec where OpenClaw 2026.9.5 rejects it ([#230](https://github.com/lifekit-hq/lifekit-stack/issues/230)) ([d10fdcb](https://github.com/lifekit-hq/lifekit-stack/commit/d10fdcb7891db0532f47c618e28535a09e42dc13))
+* **deploy:** wait for gateway readiness before secrets reload ([#233](https://github.com/lifekit-hq/lifekit-stack/issues/233)) ([caf56e9](https://github.com/lifekit-hq/lifekit-stack/commit/caf56e9cc631b679f1e233ada34349a0e0d8252a))
+* **memory-audit:** pass --no-deliver on the memory-vault-cleanup cron ([#225](https://github.com/lifekit-hq/lifekit-stack/issues/225)) ([333dddd](https://github.com/lifekit-hq/lifekit-stack/commit/333dddd234d3815fc579033de72d6edd0924eac1))
+* **scripts:** classify rehearsal lint by checkId and pass compose env keys ([#234](https://github.com/lifekit-hq/lifekit-stack/issues/234)) ([be6e09a](https://github.com/lifekit-hq/lifekit-stack/commit/be6e09abe02f35841cd21696a31f2dd37ffa8ca4))
+* **scripts:** keep a green OpenClaw rehearsal from failing on cleanup ([#235](https://github.com/lifekit-hq/lifekit-stack/issues/235)) ([5219e99](https://github.com/lifekit-hq/lifekit-stack/commit/5219e99996245ff4cc64d1d3db7856a84c78abae))
+* **secrets:** repoint the gateway off the legacy plaintext env file ([#231](https://github.com/lifekit-hq/lifekit-stack/issues/231)) ([92f96b2](https://github.com/lifekit-hq/lifekit-stack/commit/92f96b20d39a2c3a6d0976bd540d7977d4008cce))
+
+
+### Refactoring
+
+* **deploy:** move OpenClaw phases into scripts/deploy-openclaw.sh ([#241](https://github.com/lifekit-hq/lifekit-stack/issues/241)) ([ce45883](https://github.com/lifekit-hq/lifekit-stack/commit/ce45883c6f556f86cb719ee593610146b8edb03d))
+
+
+### Documentation
+
+* **secrets:** record post-migration rotation as accepted debt ([#232](https://github.com/lifekit-hq/lifekit-stack/issues/232)) ([4700b32](https://github.com/lifekit-hq/lifekit-stack/commit/4700b32b868b346caeaeb1ec4ca534315cce2e15))
+
 ## [0.1.3](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.2...v0.1.3) (2026-09-28)
 
 
