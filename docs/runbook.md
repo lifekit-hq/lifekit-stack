@@ -492,8 +492,9 @@ tier itself (frontmatter/link/size fixes, stale restatements, log compaction,
 stale-status refresh-or-conclude, the archive pass) and only ever escalates what the
 skill's own text sends to "Needs Denys". Declared by
 `scripts/ensure-memory-vault-cleanup.sh` - re-run it on a rebuilt host to recreate
-the row; it converges (skips creation when a `memory-vault-cleanup` row already
-exists). No chat id or other secret is needed by this script or job.
+the row; it converges (when a `memory-vault-cleanup` row already exists it leaves
+everything but delivery untouched and re-applies `--no-deliver`, rather than
+skipping). No chat id or other secret is needed by this script or job.
 
 No skill install, no agent workspace change, and no gateway restart: the prompt
 reads the skill straight off the vault's existing mount (`/home/node/memory` in
@@ -502,10 +503,15 @@ left uncommitted for the host's `memory-sync.timer` to commit and push, same as
 every other vault edit.
 
 **Delivery is transition-only, through notify-relay, not an OpenClaw `--announce`.**
-The job carries no `--announce`/`--channel`/`--to`/`--failure-alert` - the agent's
-own prompt builds the skill's "Needs Denys" list, diffs it (as a set) against the
-previous run's list kept in `audits/needs-denys-state.json` (vault-side state, not a
-knowledge page), and only when that set changed does it `POST` one envelope itself to
+The job is created (and, on every re-run of the ensure script, converged) with
+`--no-deliver`, so OpenClaw's own runner fallback delivery is off - without it,
+the job's own default (`mode: "announce", channel: "last"`) fail-closes every run,
+since an isolated-session job has no prior chat for "last" to resolve against
+(confirmed live 2026-09-29: `cron show` reported exactly that fail-closed
+`deliveryPreview`). Instead, the agent's own prompt builds the skill's "Needs Denys"
+list, diffs it (as a set) against the previous run's list kept in
+`audits/needs-denys-state.json` (vault-side state, not a knowledge page), and only
+when that set changed does it `POST` one envelope itself to
 `http://notify-relay:8090/notify` (reachable from the gateway container on the
 compose network, confirmed live) in the shape `docs/message-format.md` defines -
 `level: wait` while the list is non-empty, `level: good` the run it clears. An
@@ -513,10 +519,12 @@ unchanged list, including an unchanged empty one, sends nothing. This keeps ever
 owner-facing message on the stack's one grammar/one renderer instead of adding a
 second, unformatted, every-run Telegram path.
 
-**Verify** after creating: `docker exec compose-openclaw-gateway-1 openclaw cron run
-<id> --expect-final --json` (id from the create output or `cron list --all --json`
-filtered on `name == "memory-vault-cleanup"`), and check `openclaw cron show <id>`
-reports `enabled` with `sessionTarget: "isolated"`. A run against a same-day
+**Verify** after creating: `docker exec compose-openclaw-gateway-1 openclaw cron show
+<id>` reports `delivery.mode: "none"` (id from the create output or `cron list --all
+--json` filtered on `name == "memory-vault-cleanup"`). Then `docker exec
+compose-openclaw-gateway-1 openclaw cron run <id> --expect-final --json` and check
+`cron show <id>` again reports `enabled` with `sessionTarget: "isolated"`. A run
+against a same-day
 `audits/latest.md` should append one `## [date] audit | ...` line to the vault's
 `log.md` every time (`nothing to apply` when the skill found nothing to fix or
 archive); a run against a stale report appends a `skipped: audits/latest.md is
