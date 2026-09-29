@@ -597,7 +597,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          memory: 1g
     cap_drop:
       - NET_RAW
       - NET_ADMIN
