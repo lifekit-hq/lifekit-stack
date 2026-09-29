@@ -732,9 +732,9 @@ groups:
   # recovered. Each value is a percent of the group's budget, so the threshold
   # is 100 whatever the group. Membership is by compose project/service label,
   # never by container name, except finance-sentry (project `docker` is a
-  # generic name) and closeloop (a bare `docker run`, no compose labels). The
-  # burst pool is everything the named groups do not claim; the same selectors
-  # appear in both rules - keep them in step with the doc's member lists.
+  # generic name). The burst pool is everything the named groups do not claim;
+  # the same selectors appear in both rules - keep them in step with the
+  # doc's member lists.
   - orgId: 1
     name: memory-budget
     folder: lifekit
@@ -752,7 +752,7 @@ groups:
               # 30-minute average of the group's summed usage, as a percent of
               # its budget in GiB (1073741824 bytes each): openclaw 3.5,
               # platform 1.5, finance-sentry 1.25, devclaw-mcp 0.25,
-              # dashboard 0.25, xui 0.25, closeloop 0.25.
+              # dashboard 0.25, xui 0.25.
               expr: >-
                 label_replace(100 * avg_over_time((sum(
                   docker_container_memory_usage_bytes{project="compose",
@@ -776,9 +776,6 @@ groups:
                 or label_replace(100 * avg_over_time((sum(
                   docker_container_memory_usage_bytes{project="xui"}
                   ) or vector(0))[30m:1m]) / (0.25 * 1073741824), "name", "xui", "", "")
-                or label_replace(100 * avg_over_time((sum(
-                  docker_container_memory_usage_bytes{name="closeloop"}
-                  ) or vector(0))[30m:1m]) / (0.25 * 1073741824), "name", "closeloop", "", "")
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -841,7 +838,6 @@ groups:
                   or docker_container_memory_usage_bytes{project="devclaw",service="devclaw-mcp"}
                   or docker_container_memory_usage_bytes{project="dashboard"}
                   or docker_container_memory_usage_bytes{project="xui"}
-                  or docker_container_memory_usage_bytes{name="closeloop"}
                 )) or vector(0))[30m:1m]) / (3 * 1073741824)
               instant: true
               intervalMs: 1000

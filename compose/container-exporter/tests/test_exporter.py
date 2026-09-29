@@ -28,6 +28,7 @@ def inspect_doc(
     restart_count=0,
     health=None,
     oom=False,
+    image="ghcr.io/example/app:1",
     started="2026-09-13T09:23:03.800309061Z",
     project="docker",
     service=None,
@@ -53,7 +54,7 @@ def inspect_doc(
         "Name": "/" + name,
         "RestartCount": restart_count,
         "State": state,
-        "Config": {"Labels": labels},
+        "Config": {"Labels": labels, "Image": image},
     }
 
 
@@ -71,6 +72,32 @@ def sample(samples, metric, name):
     hits = [v for m, labels, v in samples if m == metric and labels.get("name") == name]
     assert len(hits) <= 1, (metric, name, hits)
     return hits[0] if hits else None
+
+
+class ReadSwapTests(unittest.TestCase):
+    def _tree(self, rel, content):
+        import tempfile
+
+        root = tempfile.mkdtemp(dir=os.environ.get("TMPDIR") or None)
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        path = os.path.join(root, rel)
+        os.makedirs(path)
+        with open(os.path.join(path, "memory.swap.current"), "w") as handle:
+            handle.write(content)
+        return root
+
+    def test_reads_systemd_scope(self):
+        root = self._tree("system.slice/docker-abc.scope", "4096\n")
+        self.assertEqual(exporter.read_swap_bytes("abc", root), 4096.0)
+
+    def test_reads_cgroupfs_layout(self):
+        root = self._tree("docker/abc", "0\n")
+        self.assertEqual(exporter.read_swap_bytes("abc", root), 0.0)
+
+    def test_missing_or_garbled_is_none_not_zero(self):
+        root = self._tree("system.slice/docker-abc.scope", "max-ish\n")
+        self.assertIsNone(exporter.read_swap_bytes("abc", root))
+        self.assertIsNone(exporter.read_swap_bytes("other", root))
 
 
 class ContainerSamplesTests(unittest.TestCase):
@@ -111,7 +138,12 @@ class ContainerSamplesTests(unittest.TestCase):
         )
         self.assertEqual(
             labels,
-            {"name": "finance-sentry-api", "project": "docker", "service": "api"},
+            {
+                "name": "finance-sentry-api",
+                "project": "docker",
+                "service": "api",
+                "image": "ghcr.io/example/app:1",
+            },
         )
 
     def test_container_outside_compose_has_empty_project_labels(self):
@@ -122,7 +154,13 @@ class ContainerSamplesTests(unittest.TestCase):
             labels for m, labels, _ in samples if m == "docker_container_running"
         )
         self.assertEqual(
-            labels, {"name": "sweet_varahamihira", "project": "", "service": ""}
+            labels,
+            {
+                "name": "sweet_varahamihira",
+                "project": "",
+                "service": "",
+                "image": "ghcr.io/example/app:1",
+            },
         )
 
     def test_health_maps_healthy_to_one_and_anything_else_to_zero(self):
@@ -163,6 +201,24 @@ class ContainerSamplesTests(unittest.TestCase):
             sample(samples, "docker_container_memory_limit_bytes", "gw"),
             6_442_450_944.0,
         )
+
+    def test_swap_is_a_per_container_series_only_when_read(self):
+        swapped = exporter.container_samples(
+            inspect_doc("gw", "running"), None, 52_428_800.0
+        )
+        self.assertEqual(
+            sample(swapped, "docker_container_memory_swap_bytes", "gw"), 52_428_800.0
+        )
+        unread = exporter.container_samples(inspect_doc("gw", "running"))
+        self.assertIsNone(sample(unread, "docker_container_memory_swap_bytes", "gw"))
+
+    def test_image_label_names_the_container_image(self):
+        samples = exporter.container_samples(
+            inspect_doc("job", "running", project="", image="node:22-slim")
+        )
+        self.assertTrue(samples)
+        for _metric, labels, _value in samples:
+            self.assertEqual(labels["image"], "node:22-slim")
 
     def test_no_stats_means_no_memory_series(self):
         samples = exporter.container_samples(
