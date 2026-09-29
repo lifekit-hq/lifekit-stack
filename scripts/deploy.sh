@@ -519,16 +519,19 @@ if [[ -z "${PLATFORM_PENDING}" ]]; then
 else
   printf '  pending: %s\n' "${PLATFORM_PENDING//$'\n'/, }"
   say "openclaw platform config: dry run against the installed schema (writes nothing)"
+  # --allow-exec: the patch's channels.telegram.accounts.*.botToken values are
+  # SOPS exec SecretRefs (docs/secrets.md); the CLI otherwise refuses to
+  # validate or apply an exec-sourced reference.
   if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
       run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-        config patch --stdin --dry-run < "${PLATFORM_PATCH}"; then
+        config patch --stdin --dry-run --allow-exec < "${PLATFORM_PATCH}"; then
     fail_later "openclaw platform config: dry run rejected ${PLATFORM_PATCH#"${REPO_DIR}/"}; not applied"
   else
     say "openclaw platform config: applying"
     PATCH_LOG="$(mktemp)"
     if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
         run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-          config patch --stdin < "${PLATFORM_PATCH}" 2>&1 | tee "${PATCH_LOG}"; then
+          config patch --stdin --allow-exec < "${PLATFORM_PATCH}" 2>&1 | tee "${PATCH_LOG}"; then
       if grep -q 'Restart the gateway to apply' "${PATCH_LOG}"; then
         say "openclaw platform config: applied keys need a restart; recreating openclaw-gateway"
         docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
@@ -542,6 +545,26 @@ else
     rm -f "${PATCH_LOG}"
   fi
 fi
+
+# ─── Reload and audit the gateway's SOPS-backed secrets ─────────────────────
+#
+# `secrets reload` re-resolves every exec SecretRef
+# (channels.telegram.accounts.*.botToken, docs/secrets.md) against
+# secrets/lifekit-gateway.env.sops, so a bot-token rotation in that file takes
+# effect without a gateway recreate - unconditional, like the Prometheus/
+# Grafana reloads below, since the file can change independently of
+# platform.patch.json. `secrets audit` is report-only: it proves every
+# configured SecretRef still resolves (a trip-wire for a bad re-key or a
+# missing id) and never prints a value. Both need --allow-exec for the same
+# reason the config patch above does.
+say "reloading gateway secrets"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+    secrets reload --allow-exec || fail_later "openclaw secrets reload failed"
+say "auditing gateway secrets (report only, no values printed)"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
+    secrets audit --allow-exec || fail_later "openclaw secrets audit reported a problem"
 
 # ─── Reload Prometheus' scrape config ────────────────────────────────────────
 #

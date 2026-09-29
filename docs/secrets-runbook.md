@@ -31,7 +31,7 @@ sops updatekeys secrets/lifekit-gateway.env.sops   # or lifekit.env.sops
 
 | Class | Names | Sequence |
 | --- | --- | --- |
-| **telegram-bot, gateway file** | `KIT_BOT_TOKEN`, `FABLE_BOT_TOKEN`, `FINANCE_BOT_TOKEN`, `LEARNING_BOT_TOKEN`, `SOCIAL_BOT_TOKEN` | BotFather `/revoke` for the bot, paste the new token with `edit.sh gateway`, merge. The deploy pulls the file and runs `openclaw secrets reload`; no recreate. Verify: `openclaw channels status`. |
+| **telegram-bot, gateway file** | `KIT_BOT_TOKEN`, `CAREER_BOT_TOKEN`, `FINANCE_BOT_TOKEN`, `LEARNING_BOT_TOKEN`, `SOCIAL_BOT_TOKEN` | BotFather `/revoke` for the bot, paste the new token with `edit.sh gateway`, merge. The deploy pulls the file and runs `openclaw secrets reload`; no recreate. Verify: `openclaw channels status`. |
 | **telegram-bot, master file** | `DEVCLAW_BOT_TOKEN` | BotFather `/revoke`, `edit.sh master`, merge, render, redeploy (recreates gateway, grafana, notify-relay). Verify: `openclaw channels status`, then a Grafana test notification. |
 | **api-token** | `OPENCLAW_GATEWAY_TOKEN` | `openssl rand -hex 32` into `edit.sh master`, merge, render, redeploy. Then the pairs: finance-sentry `docker/secrets-edit.sh` (`OPENCLAW_GATEWAY_TOKEN`) and its deploy; lifekit-dashboard `/srv/dashboard/.env` and its deploy. Verify: the prometheus `openclaw` target is up, the dashboard loads. |
 | **api-token** | `OPENCLAW_HOOK_TOKEN`, `OPENCLAW_HOOK_PATH` | `edit.sh master` (token: `openssl rand -hex 32`; path: `/hooks-$(openssl rand -hex 8)`), merge, render, redeploy. Then finance-sentry's copy and its deploy. Never remove the token while hooks are enabled (the gateway refuses to start). |

@@ -139,6 +139,15 @@ services:
       - ${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
+      # Gateway secret boundary (docs/secrets.md): the SOPS-encrypted gateway
+      # file from this checkout and the gateway's age key, both read-only and
+      # OUTSIDE the state mount (never in `openclaw backup`, never the global
+      # dotenv). The exec provider in openclaw-gateway/platform.patch.json
+      # reads them at /run/lifekit. Only the key's own directory is mounted:
+      # /srv/lifekit-secrets itself also holds the rendered master env and
+      # must not be visible in any container.
+      - ../secrets:/run/lifekit/secrets:ro
+      - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/gateway:/run/lifekit/gateway:ro
       # Vault (~/memory): bind-mounted at two paths.
       # ~/memory — canonical alias used by cron jobs, skills, and agents; also the
       # path openclaw-gateway/platform.patch.json indexes via memory.search.extraPaths.
