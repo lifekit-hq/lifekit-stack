@@ -33,6 +33,17 @@
 # this job never touches Telegram directly and needs no chat-id input at
 # all; delivery is a step in the agent's own prompt, not a cron flag.
 #
+# --no-deliver is required, not optional: without it, OpenClaw's own default
+# delivery still applies to the job (channel "last", which resolves to
+# nothing for an isolated-session job with no prior chat — confirmed live,
+# 2026-09-29: cron show reported delivery mode "announce"/channel "last" and
+# a deliveryPreview that fail-closes every run: "last -> no route, ...
+# requires target <chatId>"). skill-collection-review-kit, the other silent
+# agent-turn job on this agent, carries delivery mode "none" for the same
+# reason. This script both creates new jobs with --no-deliver and converges
+# an existing job onto it via `cron edit`, so re-running it also fixes a job
+# that was created before this flag was added.
+#
 # Why "only when the Needs Denys list changes": the skill's own judgment
 # already separates what it applies alone from what it escalates (SKILL.md,
 # "Needs Denys" list) — sending that list every week even when it hasn't
@@ -69,11 +80,17 @@ CRON_TZ="${MEMORY_VAULT_CLEANUP_TZ:-Europe/Dublin}"
 
 MESSAGE="Weekly memory-vault dreaming pass: run the vault's own memory-audit skill unattended and apply its judgment tiers exactly as it defines them. The vault is mounted at /home/node/memory; read /home/node/memory/.claude/skills/memory-audit/SKILL.md in full first and follow it exactly -- it is the authority on procedure, this message only scopes the run and adds the delivery step it does not cover. Precondition: read /home/node/memory/audits/latest.md's frontmatter updatedAt (or its '# Vault audit - <date>' heading); if it is not today's UTC date, the audit that should have produced it did not run this week. In that case do nothing else -- run 'sh bin/log.sh -k audit \"skipped: audits/latest.md is stale (<that date>)\"' from ~/memory and stop; do not call notify-relay, do not touch any other vault file. Otherwise skip the skill's own step 0 (the audit already ran minutes ago) and go straight through its mechanical-findings, contradiction, rotation-judgment and archive-pass sections. Apply directly everything the skill's own text says to fix/rewrite/archive yourself; anything it says to list under 'Needs Denys' or propose to Denys stays unapplied -- collect those items instead, each as one self-contained line with its quotes/dates/page names (a reader with no other context must be able to act on the line alone). Do not run the memory-defrag skill or any other vault skill; this run is memory-audit only. Hard rules, no exceptions: never edit sources/ content, never edit PLAN.md, never edit a generated block between openclaw markers, bump a page's updatedAt only when you changed its content, never rewrite git history, never commit or push (the host's memory-sync.timer does that on its own schedule). Finish the skill's own way: re-run 'sh bin/audit.sh' to confirm 0 high / 0 medium, then append exactly one log.md line via bin/log.sh in the skill's format ('audit | ...') saying what you changed and archived, or 'nothing to apply' if nothing needed changing -- this line is written every run with a fresh audit, no exceptions. Then the delivery step: build your final Needs Denys list as a JSON array of those one-line strings (an empty array if there is nothing to escalate). Read the previous list from ~/memory/audits/needs-denys-state.json (treat a missing file as an empty array, and never create the file outside this exact path). Compare the two lists as sets, ignoring order. If they are the same set, do not call notify-relay at all. If they differ: when the new list is non-empty, POST one envelope to http://notify-relay:8090/notify (content-type application/json, built with jq so nothing is hand-escaped) with level 'wait', source 'kit', subject 'memory-vault', a headline naming the count (e.g. '3 item(s) need a decision'), body as the joined list (newline-separated, truncate to the shortest form that stays readable if very long), and action 'review ~/memory/audits/latest.md and the memory-vault-cleanup log.md line'; when the new list is empty and the previous one was not, POST instead with level 'good' and a headline like 'needs-Denys list cleared', no body, no action. A curl that fails or a notify-relay response that is not 200 is not fatal -- note it in your final reply, do not retry more than once, and still proceed to the next step. Whether or not you notified, overwrite ~/memory/audits/needs-denys-state.json with the new list (pretty JSON array, trailing newline) so next week's comparison is against what you just computed -- this file is vault state, not a page, so it does not carry frontmatter/updatedAt/log-line rules the way a knowledge page would. End your turn with a short plain-text summary of what you did (applied/archived, the log.md line, whether you notified and at which level) -- this reply is not delivered anywhere itself, it only helps whoever reads this run's transcript."
 
-# Create the cron job iff absent (matched by name).
-if docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null \
-   | jq -e --arg n "$JOB_NAME" 'if type == "array" then . else (.jobs // []) end | any(.name == $n)' >/dev/null; then
-  echo "cron '$JOB_NAME' already exists — leaving it untouched"
+# Converge, don't just skip, when the job already exists: force delivery
+# back to "none" in case an older run of this script (or a manual edit)
+# left it on OpenClaw's default instead.
+existing_id="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null \
+  | jq -r --arg n "$JOB_NAME" '(if type == "array" then . else (.jobs // []) end) | map(select(.name == $n)) | first | .id // empty')"
+
+if [ -n "$existing_id" ]; then
+  docker exec "$GATEWAY" openclaw cron edit "$existing_id" --no-deliver >/dev/null
+  echo "cron '$JOB_NAME' already existed (id $existing_id) — converged delivery to --no-deliver, left everything else untouched"
   echo "(to change schedule/message: openclaw cron edit, or delete + re-run)"
+  echo "verify: docker exec $GATEWAY openclaw cron show $existing_id   # delivery.mode should read \"none\""
   exit 0
 fi
 
@@ -85,14 +102,15 @@ add_out="$(docker exec "$GATEWAY" openclaw cron add \
   --agent "$AGENT" --session isolated \
   --message "$MESSAGE" \
   --timeout-seconds 1200 \
+  --no-deliver \
   --json)"
 echo "$add_out"
 job_id="$(printf '%s' "$add_out" | jq -r 'first(.. | objects | .id? // empty)' 2>/dev/null || true)"
 
-echo "created cron '$JOB_NAME' ($CRON_EXPR @ $CRON_TZ, agent:$AGENT) — no OpenClaw-level delivery; the agent posts to notify-relay itself, only on a Needs-Denys transition"
+echo "created cron '$JOB_NAME' ($CRON_EXPR @ $CRON_TZ, agent:$AGENT) — delivery mode none; the agent posts to notify-relay itself, only on a Needs-Denys transition"
 if [ -n "$job_id" ]; then
-  echo "verify: docker exec $GATEWAY openclaw cron run $job_id --expect-final --json"
-  echo "        docker exec $GATEWAY openclaw cron show $job_id"
+  echo "verify: docker exec $GATEWAY openclaw cron show $job_id   # delivery.mode should read \"none\""
+  echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json"
 else
   echo "could not parse job id from cron add output — find it with:" >&2
   echo "  docker exec $GATEWAY openclaw cron list --all --json | jq '.jobs[] | select(.name==\"$JOB_NAME\")'" >&2
