@@ -105,7 +105,9 @@ cleanup() {
   fi
   if ((DEST_MADE && !KEEP)); then
     # Only a red verdict keeps the copy; green runs and aborts remove it.
-    ((${#RED[@]})) || rm -rf "${DEST}"
+    if ((${#RED[@]} == 0)) && ! rm -rf "${DEST}"; then
+      say "warning: could not fully remove ${DEST}; the verdict stands"
+    fi
   fi
   exit "${rc}"
 }
@@ -145,6 +147,10 @@ copy_state() {
   rm -rf "${DEST}/config" "${DEST}/workspace" "${DEST}/secret-key"
   rsync -a "${ex[@]}" "${STATE}/" "${DEST}/config/"
   rsync -a "${WORKSPACE}/" "${DEST}/workspace/"
+  # oc() bind-mounts into the copy at these excluded paths; a mount target
+  # dockerd has to create is root-owned, and a green run's cleanup then
+  # cannot remove it.
+  mkdir -p "${DEST}/config/workspace" "${DEST}/config/wiki/main"
   if [[ -d "${SECRET_DIR}" ]]; then
     rsync -a "${SECRET_DIR}/" "${DEST}/secret-key/"
   else

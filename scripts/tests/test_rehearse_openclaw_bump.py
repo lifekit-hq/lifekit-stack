@@ -33,6 +33,19 @@ case "$1" in
   build) exit "${STUB_BUILD_RC:-0}" ;;
   compose) [ -z "${STUB_COMPOSE_JSON:-}" ] || cat "$STUB_COMPOSE_JSON"; exit 0 ;;
   rmi) exit 0 ;;
+  run)
+    # Like dockerd: a bind-mount target missing under the writable config
+    # mount is created by root, so the runner account cannot delete entries
+    # in it (modelled here as mode 0555).
+    cfg=$(printf '%s' "$*" | grep -o '[^ ]*:/home/node/.openclaw ' | head -n1 | cut -d: -f1)
+    if [ -n "$cfg" ]; then
+      for rel in $(printf '%s' "$*" | grep -o ':/home/node/.openclaw/[^ :]*' | cut -c23-) ${STUB_EXTRA_MOUNT:-}; do
+        top="$cfg/${rel%%/*}"
+        if [ ! -e "$top" ]; then
+          mkdir -p "$cfg/$rel" && chmod -R 0555 "$top"
+        fi
+      done
+    fi ;;
 esac
 args=" $* "
 case "$args" in
@@ -211,6 +224,16 @@ def test_green_run_builds_rehearse_tag_and_cleans_up(rig):
     assert not any(":local" in c or ":prev" in c for c in calls)
     assert not rig["dest"].exists()
     assert "GREEN" in out.stdout
+
+
+def test_unremovable_leftover_warns_but_keeps_green_verdict(rig):
+    out = run(rig, extra_env={"STUB_EXTRA_MOUNT": "stray/mount"})
+    assert out.returncode == 0, out.stderr
+    assert "GREEN" in out.stdout
+    assert "could not fully remove" in out.stderr
+    assert not (rig["dest"] / "summary.md").exists()
+    (rig["dest"] / "config" / "stray").chmod(0o755)
+    (rig["dest"] / "config" / "stray" / "mount").chmod(0o755)
 
 
 def test_exclude_list_reaches_rsync(rig):
