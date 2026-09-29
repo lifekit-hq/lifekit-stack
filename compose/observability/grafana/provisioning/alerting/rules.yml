@@ -367,6 +367,108 @@ groups:
             been below 15% for 10 minutes. `df -h /` on the box, then
             `docker system df` to find reclaimable image and build cache.
 
+      - uid: host-ram-nearly-exhausted
+        title: host RAM available is critically low
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Available RAM as a fraction of total. Swap sitting at ~100%
+              # used is this box's normal steady state (Linux does not swap
+              # back in on its own), so that alone is not a signal - real
+              # pressure shows here instead.
+              expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [0.10]}
+        # A vanished node-exporter target is target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "host RAM available has been under 10% for 5 minutes"
+          description: >-
+            node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes has
+            been below 10% for 5 minutes: the box is under real memory
+            pressure, not just its normal full-swap steady state. `free -h`
+            and `ps --sort=-%mem` on the box; stop a runaway host process
+            (never a compose-managed container, the Docker daemon, or a
+            Claude session) if one is the cause.
+
+      - uid: host-swap-and-ram-pressure
+        title: host swap and RAM are both under pressure
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Swap used alone is always >90% here (steady state - see
+              # host-ram-nearly-exhausted), so this pairs it with available
+              # RAM dropping too: that combination is what makes it real
+              # pressure rather than the box's normal resting state.
+              expr: >-
+                (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+                  and ((node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / node_memory_SwapTotal_bytes > 0.90)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [0.20]}
+        # A vanished node-exporter target is target-down's job. An empty
+        # result here is also the normal state: swap over 90% used with RAM
+        # available at or above 20% is this box resting, not paging.
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "swap is over 90% used and host RAM available is under 20%"
+          description: >-
+            Swap used has been above 90% and
+            node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes below
+            20% together for 10 minutes. `free -h` and `ps --sort=-%mem` on
+            the box; stop a runaway host process (never a compose-managed
+            container, the Docker daemon, or a Claude session) if one is the
+            cause.
+
       - uid: textfile-collector-stale
         title: textfile metrics are stale
         condition: C
