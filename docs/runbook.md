@@ -483,14 +483,17 @@ agent's entry and bindings.
 
 ### The memory-vault-cleanup cron
 
-Follow-up to the command-kind `memory_vault_audit` cron (`scripts/memory-audit/`):
-an agent-turn job, `memory-vault-cleanup`, that runs the vault's own
-`.claude/skills/memory-audit` skill 20 minutes later on the same `kit` agent, so
-Rule 3's judgment items in `audits/latest.md` get worked instead of only proposed.
-Declared by `scripts/ensure-memory-vault-cleanup.sh` - re-run it on a rebuilt host
-to recreate the row; it converges (skips creation when a `memory-vault-cleanup` row
-already exists). Needs `MEMORY_VAULT_CLEANUP_CHAT_ID` or `LIFEKIT_TELEGRAM_CHAT` set
-in the shell environment - never write the chat id into git.
+The vault's "dreaming" pass: a follow-up to the command-kind `memory_vault_audit`
+cron (`scripts/memory-audit/`), an agent-turn job named `memory-vault-cleanup` that
+runs the vault's own `.claude/skills/memory-audit` skill **unattended** 20 minutes
+later on the same `kit` agent, so Rule 3's judgment items in `audits/latest.md` get
+worked instead of only proposed. It applies the skill's whole "safe to apply alone"
+tier itself (frontmatter/link/size fixes, stale restatements, log compaction,
+stale-status refresh-or-conclude, the archive pass) and only ever escalates what the
+skill's own text sends to "Needs Denys". Declared by
+`scripts/ensure-memory-vault-cleanup.sh` - re-run it on a rebuilt host to recreate
+the row; it converges (skips creation when a `memory-vault-cleanup` row already
+exists). No chat id or other secret is needed by this script or job.
 
 No skill install, no agent workspace change, and no gateway restart: the prompt
 reads the skill straight off the vault's existing mount (`/home/node/memory` in
@@ -498,13 +501,29 @@ every agent, `compose/docker-compose.yml`) and follows it directly. Vault edits 
 left uncommitted for the host's `memory-sync.timer` to commit and push, same as
 every other vault edit.
 
+**Delivery is transition-only, through notify-relay, not an OpenClaw `--announce`.**
+The job carries no `--announce`/`--channel`/`--to`/`--failure-alert` - the agent's
+own prompt builds the skill's "Needs Denys" list, diffs it (as a set) against the
+previous run's list kept in `audits/needs-denys-state.json` (vault-side state, not a
+knowledge page), and only when that set changed does it `POST` one envelope itself to
+`http://notify-relay:8090/notify` (reachable from the gateway container on the
+compose network, confirmed live) in the shape `docs/message-format.md` defines -
+`level: wait` while the list is non-empty, `level: good` the run it clears. An
+unchanged list, including an unchanged empty one, sends nothing. This keeps every
+owner-facing message on the stack's one grammar/one renderer instead of adding a
+second, unformatted, every-run Telegram path.
+
 **Verify** after creating: `docker exec compose-openclaw-gateway-1 openclaw cron run
 <id> --expect-final --json` (id from the create output or `cron list --all --json`
 filtered on `name == "memory-vault-cleanup"`), and check `openclaw cron show <id>`
 reports `enabled` with `sessionTarget: "isolated"`. A run against a same-day
-`audits/latest.md` should either append one `## [date] audit | ...` line to the
-vault's `log.md` or reply `NO_REPLY` if the skill found nothing to do; a run against
-a stale report should reply `NO_REPLY` without touching the vault at all.
+`audits/latest.md` should append one `## [date] audit | ...` line to the vault's
+`log.md` every time (`nothing to apply` when the skill found nothing to fix or
+archive); a run against a stale report appends a `skipped: audits/latest.md is
+stale (<date>)` line instead and touches nothing else in the vault. Either way,
+check `audits/needs-denys-state.json` reflects the run's Needs-Denys list, and that
+a notify-relay call only happened when that list's content actually changed from the
+file's previous contents.
 
 **Rollback:** `openclaw cron rm <id>` (or `cron edit <id> --disable`). Nothing else
 depends on this row - `memory_vault_audit` keeps running unchanged either way.

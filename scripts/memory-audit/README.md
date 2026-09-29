@@ -22,7 +22,7 @@ Retired with this change: `vault-lint.py`, `vault-autofix.py`, `vault-rotate.py`
 (git history keeps them). `openclaw wiki compile` is no longer part of the audit: the
 typed layer it compiled (`claims[]`, entities/syntheses/reports) was retired from the vault.
 
-## The cleanup follow-up (`memory-vault-cleanup`)
+## The dreaming pass (`memory-vault-cleanup`)
 
 This cron only does the mechanical half. The vault README's Rule 3 says judgment
 deletions are proposed in `audits/latest.md`, not applied, and its own
@@ -31,6 +31,9 @@ deletions are proposed in `audits/latest.md`, not applied, and its own
 later on the same `kit` agent that already owns this one: it reads and follows the
 vault's memory-audit skill directly off the mounted path
 (`/home/node/memory/.claude/skills/memory-audit/SKILL.md`) against the report this
-cron just wrote, applies only what the skill applies, and leaves its own one-line
-`log.md` entry. No new agent, skill install, or container restart - see the script's
-header comment for the reasoning.
+cron just wrote, applying its whole "safe to apply alone" tier unattended and
+leaving its own one-line `log.md` entry every run. It escalates only what the skill
+itself sends to "Needs Denys", and only delivers that list through notify-relay's
+envelope (`docs/message-format.md`) when it changes from the previous run - no
+`--announce`, no chat id, no per-run Telegram noise. No new agent, skill install, or
+container restart - see the script's header comment for the reasoning.
