@@ -31,11 +31,11 @@
 #   cd /srv/lifekit-stack && ./scripts/deploy.sh
 #
 # Or directly:
-#   docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env up -d --build
+#   docker compose -f compose/docker-compose.yml --env-file /srv/lifekit-secrets/stack.env up -d --build
 #
 # AD-HOC COMMANDS (recreate one service, rebuild one image, etc.) MUST also
-# pass --env-file /srv/openclaw/config/.env, OR pre-source it:
-#   set -a; source /srv/openclaw/config/.env; set +a
+# pass --env-file /srv/lifekit-secrets/stack.env, OR pre-source it:
+#   set -a; source /srv/lifekit-secrets/stack.env; set +a
 #   docker compose up -d <service>
 # Without one of these, ${OPENCLAW_GATEWAY_TOKEN}, ${TELEGRAM_BOT_TOKEN}, and
 # friends substitute to empty strings; the gateway boots and crash-loops.

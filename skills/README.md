@@ -39,7 +39,7 @@ rsync -av --delete \
 Then on the VPS, restart the gateway so it picks up the new skill manifest:
 
 ```bash
-docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env \
+docker compose -f compose/docker-compose.yml --env-file /srv/lifekit-secrets/stack.env \
   restart openclaw-gateway
 ```
 
