@@ -3,19 +3,12 @@
 No secret value is read, printed or compared here. The two SOPS files are
 parsed as text (key names and sops metadata are plaintext by design).
 
-PR-1 scope only: this file holds the tests that the two placeholder SOPS
-files, .sops.yaml and docs/secrets.md can already satisfy on their own -
-structure, recipients, naming, and the inventory cross-check. The gateway
-boundary's platform-patch wiring, the exec resolver and its protocol, and
-the on-box decrypt-with-the-real-gateway-key test all need files that PR 1
-does not add (compose/openclaw-gateway/sops-resolver.py, the
-platform.patch.json secrets.providers.sops block, the docker-compose.yml
-mounts) - those tests land in the PR that adds them, per
-docs/secrets-runbook.md's CI section and the PR sequence in the sops-plan
-report. Until then, test_sops_yaml_boundaries below checks the transitional
-single-key state that .sops.yaml documents (the gateway recipient is a
-pending placeholder reusing the captain key, because the real gateway key
-is a captain-only, on-box mint that hasn't happened yet).
+This file holds the tests that the two SOPS files, .sops.yaml and
+docs/secrets.md can satisfy on their own - structure, recipients, naming,
+and the inventory cross-check. The gateway boundary's platform-patch
+wiring, the exec resolver and its protocol, and the on-box
+decrypt-with-the-real-gateway-key test (ci.yml, self-hosted runner only)
+live outside this file, per docs/secrets-runbook.md's CI section.
 """
 
 from __future__ import annotations
@@ -125,14 +118,11 @@ def test_file_recipients_match_sops_yaml(boundary):
 
 
 def test_sops_yaml_boundaries():
-    """Transitional PR-1 state (see module docstring): the gateway key has
-    not been minted yet, so .sops.yaml's gateway rule is a placeholder that
-    reuses the captain recipient rather than a real, separate identity. This
-    only checks what is already true - one recipient set per boundary, valid
-    age keys, and the captain able to open the gateway file. The stricter
-    "master ⊊ gateway, exactly one gateway-only identity" invariant comes
-    back once the real gateway key lands (docs/secrets-runbook.md, "One-time
-    cutover" step 1) and this test tightens with it in that PR.
+    """Strict two-key invariant (docs/secrets.md, "Two files, two keys"):
+    the master file has the captain recipient alone, and the gateway file
+    has the captain plus exactly one gateway-only identity, so the captain
+    can always edit either file and a compromised gateway never reaches the
+    master boundary.
     """
     rules = sops_rules()
     assert set(rules) == {
@@ -143,9 +133,10 @@ def test_sops_yaml_boundaries():
         AGE_RE.match(a) for ages in rules.values() for a in ages
     ), "recipients must be age public keys"
     assert len(rules["master"]) == 1, "the master file is the captain's alone"
+    assert len(rules["gateway"]) == 2, "gateway: captain + gateway, nothing else"
     assert (
-        rules["master"] <= rules["gateway"]
-    ), "the captain must be able to edit the gateway file"
+        rules["master"] < rules["gateway"]
+    ), "the captain must be able to edit the gateway file, with one gateway-only identity beside it"
 
 
 @pytest.mark.parametrize("boundary", list(FILES))

@@ -64,9 +64,33 @@ jobs:
       mode: git
       runner: '"ubuntu-latest"'
 
+  secrets-gateway-decrypt:
+    name: Secrets (gateway file decrypts with the on-box gateway key)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      # Proves the real, on-box gateway age key (docs/secrets-runbook.md,
+      # "One-time cutover" step 1) can open secrets/lifekit-gateway.env.sops -
+      # the box fact scripts/tests/test_secrets.py cannot check, since that
+      # key never leaves the self-hosted runner's box. Only the pinned sops
+      # binary and this workflow step touch it; values are never printed,
+      # only the exit status. The master file is never decrypted in CI, by
+      # design (docs/secrets.md): no service account can open it.
+      - name: Install pinned sops
+        run: bash compose/openclaw-gateway/install-sops.sh "$RUNNER_TEMP/bin"
+
+      - name: Decrypt the gateway file with the on-box gateway key
+        env:
+          PATH: ${{ runner.temp }}/bin:/usr/bin:/bin
+          SOPS_AGE_KEY_FILE: /srv/lifekit-secrets/gateway/lifekit-gateway.agekey
+        run: |
+          sops --input-type dotenv --output-type dotenv --decrypt \
+            secrets/lifekit-gateway.env.sops > /dev/null
+
   deploy:
     name: Deploy to VPS
-    needs: [lint, pytest, notify-relay-tests, gitleaks-full]
+    needs: [lint, pytest, notify-relay-tests, gitleaks-full, secrets-gateway-decrypt]
     # main only: Weekly Release dispatches this workflow on the release-please branch to
     # get the required checks onto the release PR (#176), and that must never deploy.
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
