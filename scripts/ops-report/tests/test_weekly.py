@@ -79,6 +79,7 @@ class ParseTests(unittest.TestCase):
     def test_docker_size(self):
         self.assertEqual(weekly.parse_docker_size("1.5GB (12%)"), 1.5e9)
         self.assertEqual(weekly.parse_docker_size("0B"), 0)
+        self.assertEqual(weekly.parse_docker_size("512kB"), 512e3)
         self.assertIsNone(weekly.parse_docker_size(""))
 
     def test_system_df_skips_junk(self):
@@ -105,9 +106,15 @@ class ParseTests(unittest.TestCase):
         self.assertTrue(
             weekly.cron_repo_installed("0 3 * * * cd /srv/lifekit-stack && ./y", files)
         )
+        self.assertTrue(
+            weekly.cron_repo_installed(
+                "@daily /usr/local/bin/docker-builder-gc.sh", files
+            )
+        )
         self.assertFalse(
             weekly.cron_repo_installed("0 3 * * * /opt/other/job.sh", files)
         )
+        self.assertFalse(weekly.cron_repo_installed("@reboot /opt/other/job.sh", files))
 
 
 class InspectTests(unittest.TestCase):
@@ -130,21 +137,6 @@ class InspectTests(unittest.TestCase):
         self.assertNotIn("hunter2", json.dumps(reduced))
         self.assertEqual(reduced["project"], "compose")
         self.assertEqual(reduced["mem_limit"], 0)
-
-    def test_budget_membership(self):
-        mk = lambda **k: {"name": "n", "project": "", "service": "", **k}
-        self.assertTrue(
-            weekly.in_budget_group(mk(project="compose", service="grafana"))
-        )
-        self.assertFalse(
-            weekly.in_budget_group(mk(project="compose", service="openclaw-cli"))
-        )
-        self.assertTrue(
-            weekly.in_budget_group(mk(project="docker", name="finance-sentry-api"))
-        )
-        self.assertFalse(weekly.in_budget_group(mk(project="docker", name="other")))
-        self.assertTrue(weekly.in_budget_group(mk(name="closeloop")))
-        self.assertFalse(weekly.in_budget_group(mk(project="sandbox")))
 
 
 class ReportTests(unittest.TestCase):
@@ -268,6 +260,30 @@ class ReportTests(unittest.TestCase):
         self.assertIn("openclaw breached", decision)
         self.assertIn("OOM kill", decision)
         self.assertIn("root filesystem 90% used", decision)
+
+    def test_no_crontab_is_none_not_unavailable(self):
+        orig = weekly.run_cmd
+
+        def no_crontab(argv, timeout=60.0):
+            if argv[0] == "crontab":
+                raise weekly.Unavailable("crontab: no crontab for lifekit")
+            return orig(argv, timeout)
+
+        weekly.run_cmd = no_crontab
+        report = weekly.build_report(self.args)
+        self.assertIn("Cron jobs no repo script installs: none", report)
+
+    def test_oom_and_red_queries_are_bounded_to_the_week(self):
+        seen = []
+        inner = weekly.prom_query
+        weekly.prom_query = lambda base, q, timeout=60.0: (
+            seen.append(q) or inner(base, q, timeout)
+        )
+        weekly.build_report(self.args)
+        oom = next(q for q in seen if "oom_killed" in q)
+        red = next(q for q in seen if "exit_code" in q)
+        self.assertIn("[7d]", oom)
+        self.assertIn("changes(docker_container_running[7d])", red)
 
     def test_no_secret_leaks(self):
         report = weekly.build_report(self.args)

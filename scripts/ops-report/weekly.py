@@ -238,9 +238,6 @@ def memory_section(base: str, budgets: dict[str, float]) -> tuple[str, list[str]
                 decisions.append(
                     f"{name} breached its {fmt_gib_budget(budget)} memory budget"
                 )
-            elif peak is not None and peak > budget * GIB:
-                # Peak over budget but the sustained average stayed under: quiet by design.
-                pass
             rows.append(
                 f"| {name} | {fmt_gib_budget(budget)} | {fmt_bytes(peak)} | {fmt_bytes(avg)} | "
                 + (f"yes ({breach * 100:.0f}% of budget sustained)" if fired else "no")
@@ -255,7 +252,7 @@ def reliability_section(base: str) -> tuple[str, list[str]]:
     decisions: list[str] = []
     try:
         oom = names(
-            prom_query(base, "max_over_time(docker_container_oom_killed[7d]) == 1")
+            prom_query(base, "increase(docker_container_oom_killed[7d]) > 0")
         )
         restarts = prom_query(base, "increase(docker_container_restart_count[7d]) > 0")
         unhealthy = names(
@@ -329,12 +326,12 @@ def parse_df(text: str) -> dict[str, float] | None:
     }
 
 
-_SIZE_UNITS = {"B": 1, "KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12}
+_SIZE_UNITS = {"B": 1, "kB": 1e3, "KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12}
 
 
 def parse_docker_size(text: str) -> float | None:
     """'1.2GB' / '340MB' / '0B' -> bytes; a trailing '(12%)' is ignored."""
-    m = re.match(r"\s*([\d.]+)\s*([KMGT]?B)", text or "")
+    m = re.match(r"\s*([\d.]+)\s*([kKMGT]?B)", text or "")
     if not m:
         return None
     return float(m.group(1)) * _SIZE_UNITS[m.group(2)]
@@ -413,7 +410,8 @@ def deploys_section(base: str) -> tuple[str, list[str]]:
         )
         red = prom_query(
             base,
-            "docker_container_exit_code != 0 and on(name) docker_container_running == 0",
+            "docker_container_exit_code != 0 and on(name) docker_container_running == 0"
+            " and on(name) changes(docker_container_running[7d]) > 0",
         )
     except Unavailable as exc:
         return section("Deploys", unavailable(exc)), []
@@ -455,22 +453,18 @@ def reduce_inspect(doc: dict) -> dict:
     }
 
 
-def in_budget_group(c: dict) -> bool:
-    """Whether a container is claimed by a named memory-budget group."""
-    p, s, n = c["project"], c["service"], c["name"]
-    if p == "compose":
-        return s not in ("openclaw-cli", "lifekit-orchestrator", "lifekit-dashboard")
-    if p == "docker":
-        return n.startswith("finance-sentry-")
-    if p == "devclaw":
-        return s == "devclaw-mcp"
-    return p in ("dashboard", "xui") or n == "closeloop"
+def cron_command(line: str) -> tuple[str, list[str]]:
+    """Split a schedule line into (schedule, command tokens); handles `@daily` forms."""
+    parts = line.split()
+    if line.startswith("@"):
+        return parts[0], parts[1:]
+    return " ".join(parts[:5]), parts[5:]
 
 
 def cron_repo_installed(line: str, repo_files: set[str]) -> bool:
     return "lifekit-stack" in line or any(
         os.path.basename(tok) in repo_files
-        for tok in line.split()[5:]
+        for tok in cron_command(line)[1]
         if "/" in tok or "." in tok
     )
 
@@ -492,11 +486,7 @@ def parse_crontab(text: str) -> list[str]:
 
 def cron_label(line: str) -> str:
     """Schedule plus the command's program only - arguments may hold secrets."""
-    parts = line.split()
-    if line.startswith("@"):
-        sched, cmd = parts[0], parts[1:]
-    else:
-        sched, cmd = " ".join(parts[:5]), parts[5:]
+    sched, cmd = cron_command(line)
     return f"`{sched}` {os.path.basename(cmd[0]) if cmd else '?'}"
 
 
@@ -522,18 +512,12 @@ def drift_section(repo_root: Path) -> tuple[str, list[str]]:
             for c in containers
             if not c["project"] and c["name"] != "closeloop"
         )
-        burst = sorted(
-            c["name"] for c in containers if c["running"] and not in_budget_group(c)
-        )
         lines.append(
             f"- Running with no memory cap: {len(uncapped)}"
             + (f" ({', '.join(uncapped)})" if uncapped else "")
         )
         lines.append(
             f"- Stray containers (no compose project, not a named group): {', '.join(stray) or 'none'}"
-        )
-        lines.append(
-            f"- Running in the burst pool right now: {', '.join(burst) or 'none'}"
         )
         # Cross-project networks: one network reaching containers of >1 project.
         by_net: dict[str, set[str]] = {}
@@ -550,7 +534,12 @@ def drift_section(repo_root: Path) -> tuple[str, list[str]]:
             )
         )
     try:
-        cron = parse_crontab(run_cmd(["crontab", "-l"]))
+        try:
+            cron = parse_crontab(run_cmd(["crontab", "-l"]))
+        except Unavailable as exc:
+            if "no crontab" not in str(exc):
+                raise
+            cron = []
         repo_files = {p.name for p in (repo_root / "scripts").rglob("*") if p.is_file()}
         foreign = [
             cron_label(ln) for ln in cron if not cron_repo_installed(ln, repo_files)
