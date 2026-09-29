@@ -738,12 +738,13 @@ that job's hourly pace, not only its absence. `df -h /tmp` and `du -sh
 The gauge is a bootstrap-installed systemd timer (`tmp-usage-gauge.timer`,
 every 5 minutes, running as the admin account that owns the textfile
 directory), installed next to the quota and host-group gauges by
-`scripts/bootstrap-vps.sh`. To install or update it on the box, re-run the
-bootstrap install section with sudo, then remove the old operator crontab
-line so two writers do not share the file:
+`scripts/bootstrap-vps.sh` (which runs `scripts/host-gauge/install-host-gauges.sh`).
+To install or update it on the box, run that install script with sudo (it needs
+no Tailscale variables and touches nothing else), then remove the old operator
+crontab line so two writers do not share the file:
 
 ```bash
-sudo bash /srv/lifekit-stack/scripts/bootstrap-vps.sh   # installs the timers
+sudo bash /srv/lifekit-stack/scripts/host-gauge/install-host-gauges.sh
 systemctl list-timers 'tmp-usage-gauge*' 'host-group-gauge*'
 crontab -e   # delete: */5 * * * * bash .../scripts/tmp-gauge/tmp-usage-gauge.sh ...
 ```
@@ -756,7 +757,7 @@ need nothing.
 
 `scripts/host-gauge/host-group-gauge.sh` writes `host_group_memory_bytes` and
 `host_group_memory_swap_bytes` per `group` (`operator`, `runners`, `os`) every 5
-minutes from `host-group-gauge.timer`, installed by the same bootstrap section
+minutes from `host-group-gauge.timer`, installed by the same install script
 as above. Groups and their budgets are in `docs/resource-budget.md`; the
 *a host group is over its memory budget* alert fires on the 30-minute average.
 `cat /var/lib/node_exporter/textfile/host_group.prom` shows the current values;

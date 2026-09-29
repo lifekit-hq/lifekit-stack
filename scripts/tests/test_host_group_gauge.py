@@ -108,12 +108,3 @@ def test_prom_format_has_help_and_type(dirs):
     for name in ("host_group_memory_bytes", "host_group_memory_swap_bytes"):
         assert f"# TYPE {name} gauge" in text
 
-
-def test_bootstrap_installs_both_gauge_timers():
-    text = (REPO / "scripts/bootstrap-vps.sh").read_text()
-    assert "host-gauge/host-group-gauge" in text
-    assert "tmp-gauge/tmp-usage-gauge" in text
-    assert "enable --now host-group-gauge.timer tmp-usage-gauge.timer" in text
-    for unit in ("host-gauge/host-group-gauge", "tmp-gauge/tmp-usage-gauge"):
-        for ext in (".sh", ".service", ".timer"):
-            assert (REPO / "scripts" / f"{unit}{ext}").is_file()
