@@ -31,6 +31,7 @@ DOCKER_STUB = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$DOCKER_CALL_LOG"
 case "$1" in
   build) exit "${STUB_BUILD_RC:-0}" ;;
+  compose) [ -z "${STUB_COMPOSE_JSON:-}" ] || cat "$STUB_COMPOSE_JSON"; exit 0 ;;
   rmi) exit 0 ;;
 esac
 args=" $* "
@@ -72,7 +73,39 @@ DF_STUB = """#!/bin/sh
 printf 'Avail\\n%s\\n' "${STUB_DF_KB:-999999999}"
 """
 
-CLEAN_LINT = {"findings": [{"id": "mcp.server.unreachable", "severity": "warn"}]}
+# The shape `openclaw doctor --json` emits (2026.9.x): the id is `checkId`.
+MCP_UNRESOLVED = {
+    "checkId": "core/doctor/runtime-tool-schemas",
+    "severity": "error",
+    "message": 'Configured MCP server "devclaw" could not expose runtime tools.',
+    "path": "mcp.servers.devclaw",
+    "requirement": "getaddrinfo ENOTFOUND devclaw-mcp",
+}
+CLAUDE_LOGGED_OUT = {
+    "checkId": "core/doctor/claude-cli",
+    "severity": "warning",
+    "message": "Claude auth: not logged in.",
+}
+LAN_BIND = {
+    "checkId": "core/doctor/security",
+    "severity": "warning",
+    "message": 'WARNING: Gateway bound to "lan" (0.0.0.0) (network-accessible).',
+}
+CLEAN_LINT = {"findings": [MCP_UNRESOLVED, CLAUDE_LOGGED_OUT, LAN_BIND]}
+# `docker compose config --no-interpolate` for the gateway: raw ${...} refs.
+COMPOSE = {
+    "services": {
+        "openclaw-gateway": {
+            "environment": {
+                "OPENCLAW_FINANCE_CHAT": "${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}",
+                "OPENCLAW_GATEWAY_TOKEN": "${OPENCLAW_GATEWAY_TOKEN}",
+                "TZ": "${TZ:-UTC}",
+                "HOME": "/home/node",
+                "OPENCLAW_STATE_DIR": "/home/node/.openclaw",
+            }
+        }
+    }
+}
 
 
 @pytest.fixture
@@ -93,6 +126,7 @@ def rig(tmp_path):
         ("before.json", BEFORE),
         ("after.json", AFTER),
         ("lint.json", CLEAN_LINT),
+        ("compose.json", COMPOSE),
     ):
         (state / name).write_text(json.dumps(data))
     env_file = tmp_path / "live.env"
@@ -125,6 +159,7 @@ def run(rig, *args, extra_env=None):
         "STUB_BEFORE": str(rig["state"] / "before.json"),
         "STUB_AFTER": str(rig["state"] / "after.json"),
         "STUB_LINT_JSON": str(rig["state"] / "lint.json"),
+        "STUB_COMPOSE_JSON": str(rig["state"] / "compose.json"),
         "STUB_PLUGINS": plugins,
         "STUB_PLUGINS_AFTER": plugins,
         "ENV_FILE": str(rig["env_file"]),
@@ -263,6 +298,24 @@ def test_env_file_carries_keys_with_placeholders_only(rig):
     assert (rig["dest"] / "env.rehearsal").stat().st_mode & 0o777 == 0o600
 
 
+def test_env_carries_compose_derived_refs_not_literals(rig):
+    assert run(rig, "--keep").returncode == 0
+    lines = (rig["dest"] / "env.rehearsal").read_text().splitlines()
+    assert "OPENCLAW_FINANCE_CHAT=rehearsal-placeholder" in lines
+    assert sum(ln.startswith("OPENCLAW_GATEWAY_TOKEN=") for ln in lines) == 1
+    assert not any(ln.startswith(("HOME=", "TZ=")) for ln in lines)
+    assert "OPENCLAW_STATE_DIR=/home/node/.openclaw" in lines
+    assert "LIFEKIT_TELEGRAM_CHAT" not in "\n".join(lines)
+
+
+def test_unreadable_compose_warns_and_keeps_env_file_keys(rig):
+    out = run(rig, "--keep", extra_env={"STUB_COMPOSE_JSON": ""})
+    assert out.returncode == 0, out.stderr
+    assert "environment keys" in out.stderr and "Traceback" not in out.stderr
+    env_text = (rig["dest"] / "env.rehearsal").read_text()
+    assert "OTHER_KEY=rehearsal-placeholder" in env_text
+
+
 def test_untolerated_finding_is_red_by_id(rig):
     lint = {"findings": [{"id": "config.schema.rejected", "severity": "error"}]}
     (rig["state"] / "lint.json").write_text(json.dumps(lint))
@@ -270,6 +323,40 @@ def test_untolerated_finding_is_red_by_id(rig):
     assert out.returncode != 0
     assert "config.schema.rejected" in out.stdout
     assert rig["dest"].is_dir()
+
+
+def test_rehearsal_only_classes_are_tolerated_by_check_id(rig):
+    out = run(rig)
+    assert out.returncode == 0, out.stderr
+    assert "mcp_resolution=1 claude_auth=1 gateway_bind=1" in out.stdout
+    assert "untolerated finding ids: -" in out.stdout
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        # Same check, other security finding: not the by-design bind.
+        {
+            "checkId": "core/doctor/security",
+            "severity": "warning",
+            "message": 'Heartbeat agent "x": directPolicy is unset.',
+        },
+        # Prefix is anchored: the bind text elsewhere in a message is not enough.
+        {
+            "checkId": "core/doctor/security",
+            "severity": "warning",
+            "message": 'Also: WARNING: Gateway bound to "lan" (0.0.0.0).',
+        },
+        # Runtime tool schemas failing for a reason other than resolution.
+        {**MCP_UNRESOLVED, "requirement": "tool schema invalid"},
+        {**MCP_UNRESOLVED, "path": "tools.allow"},
+    ],
+)
+def test_near_misses_of_tolerated_classes_stay_red(rig, finding):
+    (rig["state"] / "lint.json").write_text(json.dumps({"findings": [finding]}))
+    out = run(rig)
+    assert out.returncode != 0
+    assert f"untolerated finding ids: {finding['checkId']}" in out.stdout
 
 
 def test_plugin_off_core_after_update_is_red(rig):

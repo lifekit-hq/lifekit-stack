@@ -93,7 +93,7 @@ START="$(date +%s)"
 COPIED_KB=0
 P_REPINNED=0 P_FALLBACK=0 P_OFFCORE=0
 FIX_RC="-" SECOND_RC="-" SQLITE_RC="-" LINT_RC="-"
-CLASS_MCP=0 CLASS_ALLOW=0
+TOLERATED_COUNTS="-"
 UNTOLERATED=""
 CORE_VER="unknown"
 
@@ -156,19 +156,42 @@ copy_state() {
 }
 
 # Keys only, every value a placeholder: ${VAR} refs resolve to something
-# non-empty and no live token reaches the container.
+# non-empty and no live token reaches the container. Two key sources: the env
+# file, and the gateway service's own compose `environment:` entries whose raw
+# value is a ${...} reference - compose derives some of those from other
+# variables (OPENCLAW_FINANCE_CHAT falls back to LIFEKIT_TELEGRAM_CHAT), so the
+# env file alone misses them. --no-interpolate keeps compose from reading any
+# value; literal entries (HOME, PATH, the dirs below) and TZ, which no
+# placeholder would be a valid zone for, are left to the image defaults.
+compose_env_keys() {
+  # shellcheck disable=SC2016 # "${" is Python source, not a shell expansion
+  docker compose -f "${REPO}/compose/docker-compose.yml" config --no-interpolate --format json 2>/dev/null |
+    python3 -c '
+import json, sys
+try:
+    env = json.load(sys.stdin)["services"]["openclaw-gateway"].get("environment") or {}
+except Exception:
+    sys.exit(1)
+for k, v in sorted(env.items()):
+    if k != "TZ" and "${" in str(v or ""):
+        print(k)
+' || say "warning: could not read openclaw-gateway environment keys from compose; rehearsal env has env-file keys only"
+}
+
 write_env() {
   local out="${DEST}/env.rehearsal"
   (umask 077
     {
-      if [[ -r "${ENV_FILE}" ]]; then
-        grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${ENV_FILE}" | cut -d= -f1 | sort -u |
-          sed 's/$/=rehearsal-placeholder/'
-      fi
       echo "OPENCLAW_STATE_DIR=/home/node/.openclaw"
       echo "OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json"
       echo "OPENCLAW_CONFIG_DIR=/home/node/.openclaw"
       echo "OPENCLAW_WORKSPACE_DIR=/home/node/.openclaw/workspace"
+      {
+        if [[ -r "${ENV_FILE}" ]]; then
+          grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${ENV_FILE}" | cut -d= -f1
+        fi
+        compose_env_keys
+      } | sort -u | sed 's/$/=rehearsal-placeholder/'
     } | awk -F= '!seen[$1]++' >"${out}")
 }
 
@@ -186,19 +209,27 @@ oc() {
 }
 oc_copy() { oc "${DEST}/config" "${DEST}/workspace" "${DEST}/secret-key" "" -- "$@"; }
 
-# Structured classification of `doctor --json`: matches on the finding id and
-# severity fields only, never on free text. An unrecognised id is red.
+# Structured classification of `doctor --json`: matches on the finding's
+# `checkId` plus a structured field (`path`, `requirement`), never on free
+# text - with one anchored message prefix, below, for a finding that carries
+# nothing else. An unrecognised finding is red.
 classify() {
   python3 - "$1" <<'PY'
 import json, re, sys
-# Tolerated classes, each with its reason. The rehearsal container is not on the
-# compose network, so:
+# Tolerated classes, each with its reason: (checkId, {field: anchored regex}).
 TOLERATED = {
-    # MCP servers cannot be resolved by service name from here.
-    "mcp_resolution": re.compile(r"^mcp[._-](server[._-])?(unreachable|resolve|resolution|dns|enotfound)"),
-    # Tool-allowlist entries whose providers are those MCP servers resolve once
-    # the servers are up.
-    "allowlist_mcp": re.compile(r"^tools?[._-]allowlist[._-](mcp|unresolved|unknown)"),
+    # The rehearsal container is not on the compose network, so MCP servers
+    # cannot be resolved by service name and expose no tools to validate.
+    "mcp_resolution": ("core/doctor/runtime-tool-schemas",
+                       {"path": r"mcp\.servers\.", "requirement": r"getaddrinfo ENOTFOUND "}),
+    # The rehearsal mounts no Claude CLI credentials (the gateway gets them
+    # from the lifekit account's ~/.claude bind, which is not copied).
+    "claude_auth": ("core/doctor/claude-cli", {}),
+    # By design: compose starts the gateway with `--bind lan` because a
+    # container must listen on 0.0.0.0 for a published port, and publishes it
+    # on the host's loopback only. The finding has no path or requirement,
+    # hence the anchored message prefix.
+    "gateway_bind": ("core/doctor/security", {"message": r'WARNING: Gateway bound to "lan" \(0\.0\.0\.0\)'}),
 }
 OK = {"info", "ok", "pass", "passed", "debug"}
 try:
@@ -216,15 +247,14 @@ for f in items:
     sev = str(f.get("severity") or f.get("level") or "").lower()
     if sev in OK:
         continue
-    fid = str(f.get("id") or f.get("check") or f.get("code") or "unknown")
-    fid = re.sub(r"[^A-Za-z0-9_.:-]", "?", fid)[:64]
-    for name, rx in TOLERATED.items():
-        if rx.match(fid):
+    fid = str(f.get("checkId") or f.get("id") or f.get("check") or f.get("code") or "unknown")
+    for name, (check, fields) in TOLERATED.items():
+        if fid == check and all(re.match(rx, str(f.get(k) or "")) for k, rx in fields.items()):
             counts[name] += 1
             break
     else:
-        bad.append(fid)
-print(counts["mcp_resolution"], counts["allowlist_mcp"], ",".join(sorted(set(bad))) or "-")
+        bad.append(re.sub(r"[^A-Za-z0-9_.:/-]", "?", fid)[:64])
+print(" ".join(f"{k}={v}" for k, v in counts.items()), ",".join(sorted(set(bad))) or "-")
 PY
 }
 
@@ -283,7 +313,7 @@ write_summary() {
     echo
     echo "- image core version: ${CORE_VER}"
     echo "- exit codes: fix=${FIX_RC} second-fix=${SECOND_RC} session-sqlite=${SQLITE_RC} lint=${LINT_RC}"
-    echo "- tolerated findings: mcp_resolution=${CLASS_MCP} allowlist_mcp=${CLASS_ALLOW}"
+    echo "- tolerated findings: ${TOLERATED_COUNTS}"
     echo "- untolerated finding ids: ${UNTOLERATED:--}"
     echo "- plugins: re-pinned by doctor=${P_REPINNED} needed update fallback=${P_FALLBACK} still off core=${P_OFFCORE}"
     echo "- copied: $((COPIED_KB / 1024)) MiB; elapsed: $(($(date +%s) - START)) s"
@@ -311,7 +341,9 @@ run_lint() {
     RED+=("lint-unparseable")
     return
   fi
-  read -r CLASS_MCP CLASS_ALLOW UNTOLERATED <<<"${out}"
+  # "<class>=<n> ... <untolerated ids or ->": the last word is the id list.
+  TOLERATED_COUNTS="${out% *}"
+  UNTOLERATED="${out##* }"
   [[ "${UNTOLERATED}" == "-" ]] || RED+=("lint-findings")
 }
 
