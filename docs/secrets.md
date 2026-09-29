@@ -64,20 +64,22 @@ given a consumer or deleted at its next review.
 ## Inventory: secrets
 
 Owner is who can mint a replacement. Rotation is the cadence plus the
-trigger; "at migration" means once, because the value sat agent-readable
-before 2026-09-19 (report `guard-6-gaps-secrets`, section 3.1). Last rotated
-is the date of the last known new value; "not recorded" is exactly that, and
-the first rotation after this inventory sets it.
+trigger; the rows below that sat agent-readable before 2026-09-19 (report
+`guard-6-gaps-secrets`, section 3.1) point to the runbook's "Rotation on
+migration" paragraph, which records that debt as accepted rather than
+carrying a pending trigger here. Last rotated is the date of the last known
+new value; "not recorded" is exactly that, and the first rotation after
+this inventory sets it.
 
 ### gateway - `secrets/lifekit-gateway.env.sops`
 
 | Name | Boundary | Class | Consumers | Owner | Rotation | Last rotated | File |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `KIT_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `default` (Kit). Was `TELEGRAM_BOT_TOKEN`. | captain (BotFather) | on exposure; at migration | not recorded | `secrets/lifekit-gateway.env.sops` |
-| `CAREER_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `career`. Was `FABLE_BOT_TOKEN`: the `fable` account is gone, `career` replaced it on the live roster (re-derived at PR time, not carried over from the original design). | captain (BotFather) | on exposure; at migration | not recorded | `secrets/lifekit-gateway.env.sops` |
-| `FINANCE_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `finance`. A copy sits in the admin account's uptime probe env (`~/.fs-uptime/probe.env`, finance-sentry side): give the probe its own bot at the next rotation so the copy goes. | captain (BotFather) | on exposure; at migration | not recorded | `secrets/lifekit-gateway.env.sops` |
-| `LEARNING_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `reading` | captain (BotFather) | on exposure; at migration | not recorded | `secrets/lifekit-gateway.env.sops` |
-| `SOCIAL_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `social`. Literal copies in two `openclaw.json` backups from 2026-07 - purged by the runbook. | captain (BotFather) | on exposure; at migration | not recorded | `secrets/lifekit-gateway.env.sops` |
+| `KIT_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `default` (Kit). Was `TELEGRAM_BOT_TOKEN`. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
+| `CAREER_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `career`. Was `FABLE_BOT_TOKEN`: the `fable` account is gone, `career` replaced it on the live roster (re-derived at PR time, not carried over from the original design). | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
+| `FINANCE_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `finance`. A copy sits in the admin account's uptime probe env (`~/.fs-uptime/probe.env`, finance-sentry side): give the probe its own bot at the next rotation so the copy goes. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
+| `LEARNING_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `reading` | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
+| `SOCIAL_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `social`. Literal copies in two `openclaw.json` backups from 2026-07 - purged by the runbook. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
 
 ### master - `secrets/lifekit.env.sops`
 
@@ -86,15 +88,15 @@ the first rotation after this inventory sets it.
 | `OPENCLAW_GATEWAY_TOKEN` | master | api-token | openclaw-gateway (`gateway.auth.token`, env ref), openclaw-cli, `scripts/deploy.sh`, prometheus (compose secret `openclaw_gateway_token`). Pairs: lifekit-dashboard `/srv/dashboard/.env`, finance-sentry `docker/.env.sops` (`OPENCLAW_GATEWAY_TOKEN`). | captain (`openssl rand -hex 32`) | on exposure; yearly review | not recorded | `secrets/lifekit.env.sops` |
 | `OPENCLAW_HOOK_TOKEN` | master | api-token | openclaw-gateway (`hooks.token`, env ref); finance-sentry presents it as the hook caller. | captain (`openssl rand -hex 32`) | on exposure; yearly review | 2026-09-18 (created) | `secrets/lifekit.env.sops` |
 | `OPENCLAW_HOOK_PATH` | master | api-token | openclaw-gateway (`hooks.path`, env ref); finance-sentry calls it. A non-guessable path is a credential. | captain | with `OPENCLAW_HOOK_TOKEN` | 2026-09-18 (created) | `secrets/lifekit.env.sops` |
-| `DEVCLAW_BOT_TOKEN` | master | telegram-bot | openclaw-gateway (Telegram account `devclaw`, env ref via compose), grafana (alert contact point), notify-relay. Three consumers, so master, not gateway. | captain (BotFather) | on exposure; at migration | not recorded | `secrets/lifekit.env.sops` |
-| `FINANCE_SENTRY_MCP_TOKEN` | master | mcp-bearer | openclaw-gateway (`mcp.servers.finance-sentry.headers`, env template). Pair: finance-sentry `docker/.env.sops` `MCP_TOKEN`. | captain | on exposure; at migration (literal in two config backups) | not recorded | `secrets/lifekit.env.sops` |
+| `DEVCLAW_BOT_TOKEN` | master | telegram-bot | openclaw-gateway (Telegram account `devclaw`, env ref via compose), grafana (alert contact point), notify-relay. Three consumers, so master, not gateway. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit.env.sops` |
+| `FINANCE_SENTRY_MCP_TOKEN` | master | mcp-bearer | openclaw-gateway (`mcp.servers.finance-sentry.headers`, env template). Pair: finance-sentry `docker/.env.sops` `MCP_TOKEN`. | captain | on exposure; migration debt accepted (runbook: Rotation on migration; literal in two config backups) | not recorded | `secrets/lifekit.env.sops` |
 | `DEVCLAW_MCP_TOKEN` | master | mcp-bearer | openclaw-gateway (`mcp.servers.devclaw.headers`, env template). Pair: `/srv/devclaw/.env` `DEVCLAW_TOKEN`. | captain | on exposure | 2026-09-16 (created) | `secrets/lifekit.env.sops` |
 | `GOOGLE_OAUTH_CLIENT_ID` | master | oauth-client | google-workspace-mcp | captain (Google Cloud console) | on exposure | not recorded | `secrets/lifekit.env.sops` |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | master | oauth-client | google-workspace-mcp (re-issue the refresh token with `scripts/google-mcp-bootstrap.sh` if the client changes) | captain (Google Cloud console) | on exposure | not recorded | `secrets/lifekit.env.sops` |
 | `GRAFANA_ADMIN_PASSWORD` | master | admin-password | grafana (first boot only - later changes need `grafana cli admin reset-admin-password`), `scripts/deploy.sh` provisioning reloads | captain | on exposure | not recorded | `secrets/lifekit.env.sops` |
 | `PARKED_BINANCE_API_KEY` | master | parked | none since 2026-07-11 (the Binance MCP was dropped). Was `BINANCE_API_KEY` in the gateway env. Not revoked: the captain rotates it at Binance later. | captain (Binance) | captain's call | not recorded | `secrets/lifekit.env.sops` |
 | `PARKED_BINANCE_API_SECRET` | master | parked | none; pair of the key above | captain (Binance) | captain's call | not recorded | `secrets/lifekit.env.sops` |
-| `LIFEKIT_EXTERNAL_HEARTBEAT_URL` | master | heartbeat-url | grafana (compose env `HEARTBEAT_URL`; external dead-man heartbeat ping, provisions/deletes the watchdog rule, `docs/runbook.md` "External heartbeat"), `scripts/deploy.sh` (reads it to log enabled/disabled). The URL itself is the credential: anyone who has it can ping (and so silence) the watchdog. | captain | on exposure; at migration | not recorded | `secrets/lifekit.env.sops` |
+| `LIFEKIT_EXTERNAL_HEARTBEAT_URL` | master | heartbeat-url | grafana (compose env `HEARTBEAT_URL`; external dead-man heartbeat ping, provisions/deletes the watchdog rule, `docs/runbook.md` "External heartbeat"), `scripts/deploy.sh` (reads it to log enabled/disabled). The URL itself is the credential: anyone who has it can ping (and so silence) the watchdog. | captain | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit.env.sops` |
 
 ## Inventory: settings carried in the master file
 

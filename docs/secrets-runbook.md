@@ -45,9 +45,11 @@ sops updatekeys secrets/lifekit-gateway.env.sops   # or lifekit.env.sops
 
 Rotation on migration (all telegram-bot and mcp-bearer rows marked "at
 migration" in the inventory): those values sat readable by every
-exec-capable agent until 2026-09-19. Rotate each once after the cutover,
-with the sequence above, and set the "Last rotated" date in the inventory
-in the same PR.
+exec-capable agent until 2026-09-19, when the SOPS cutover and the
+plaintext purge finished. Not rotated - accepted as debt by the captain
+2026-09-29; owner the captain, resume condition: rotate on any sign of box
+compromise or at the first scheduled key rotation (the gateway age key
+yearly review above, first 2027-09-19).
 
 ## One-time cutover on lifekit-vps (in this order)
 
@@ -64,7 +66,8 @@ in the same PR.
    `openclaw secrets audit --allow-exec` lists no gateway finding;
    `docker exec compose-openclaw-gateway-1 env | cut -d= -f1 | grep -c BOT_TOKEN`
    prints 1 (`DEVCLAW_BOT_TOKEN`, the master-file one).
-6. Purge (below), then rotate on migration (above).
+6. Purge (below); see "Rotation on migration" (above) for the accepted-debt
+   record on this cutover's telegram-bot and mcp-bearer values.
 7. Captain: offline copies of both private keys in KeePassXC; Tailscale
    admin console -> Machines -> `lifekit-vps` -> Disable key expiry.
 
