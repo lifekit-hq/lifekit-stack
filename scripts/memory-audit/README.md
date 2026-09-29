@@ -21,3 +21,16 @@ Retired with this change: `vault-lint.py`, `vault-autofix.py`, `vault-rotate.py`
 `gen-report.py`, their pytest suite, and `skills/memory-vault/scripts/vault_scan.py`
 (git history keeps them). `openclaw wiki compile` is no longer part of the audit: the
 typed layer it compiled (`claims[]`, entities/syntheses/reports) was retired from the vault.
+
+## The cleanup follow-up (`memory-vault-cleanup`)
+
+This cron only does the mechanical half. The vault README's Rule 3 says judgment
+deletions are proposed in `audits/latest.md`, not applied, and its own
+`.claude/skills/memory-audit` skill works through them. `memory-vault-cleanup`
+(`../ensure-memory-vault-cleanup.sh`) declares a second, agent-turn cron 20 minutes
+later on the same `kit` agent that already owns this one: it reads and follows the
+vault's memory-audit skill directly off the mounted path
+(`/home/node/memory/.claude/skills/memory-audit/SKILL.md`) against the report this
+cron just wrote, applies only what the skill applies, and leaves its own one-line
+`log.md` entry. No new agent, skill install, or container restart - see the script's
+header comment for the reasoning.
