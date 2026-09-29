@@ -56,7 +56,7 @@
 # requires `systemctl restart docker`. Without live-restore that restart stops
 # EVERY container on the host — this stack's services run with
 # restart: on-failure and do not come back on their own, and the other
-# projects on the box (finance-sentry, devclaw, dashboard, xui, closeloop) go
+# projects on the box (finance-sentry, devclaw, dashboard, xui) go
 # down with them. live-restore IS on the reload list, so the order that avoids
 # the outage is: write this file, `systemctl reload docker` (SIGHUP) and
 # confirm `docker info` shows live restore enabled, THEN `systemctl restart

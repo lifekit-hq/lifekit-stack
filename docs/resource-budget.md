@@ -17,6 +17,9 @@ group is averaged over the full 30 minutes, not just the minutes it was alive.
 - Container groups read `docker_container_memory_usage_bytes` from
   `compose/container-exporter`, which is usage minus `inactive_file` - the number
   `docker stats` shows, without reclaimable cache.
+- Every container series carries an `image` label (the container's configured image),
+  and `docker_container_memory_swap_bytes` gives each running container's swapped-out
+  bytes, so an uncapped transient container in the burst pool traces to an owner.
 - **Swap is margin, not budget.** Nothing is allotted swap. It is what absorbs a
   breach, so a full swap means the margin is gone; it has its own alert (below).
 - A budget is not a cap. Caps are a separate, per-service decision (compose
