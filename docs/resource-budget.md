@@ -45,8 +45,11 @@ host groups have no history yet, so their figure is a one-off snapshot.
 | **Total** | **15.5** | of 15.6 GiB RAM | |
 
 Membership is by compose project and service label, so a new container is in the burst
-pool until it is added to a group. The one non-label exception is closeloop, which has
-no labels to match.
+pool until it is added to a group; platform is every service of compose project
+`compose` that is not openclaw, `openclaw-cli` or `lifekit-orchestrator`, so the
+orchestrator counts in the burst pool. The non-label exceptions are closeloop, which
+has no labels to match, and finance-sentry, whose compose project name (`docker`) is
+too generic to match on.
 
 ## Alerts
 

@@ -20,7 +20,9 @@ deleteRules:
   - orgId: 1
     uid: devclaw-down  # folded into box/target-down, 2026-09-13
   - orgId: 1
-    uid: container-memory-near-limit  # unfireable without a memory cap; container-oom-killed covers it
+    # Unfireable without a memory cap; container-oom-killed covers it, and
+    # container-near-memory-cap is the capped-only successor.
+    uid: container-memory-near-limit
   - orgId: 1
     # Retired 2026-09-28: permanent false positive, not a narrowable one.
     # node-exporter's own host bind (docker-compose.yml node-exporter
