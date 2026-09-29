@@ -521,7 +521,10 @@ else
   say "openclaw platform config: dry run against the installed schema (writes nothing)"
   # --allow-exec: the patch's channels.telegram.accounts.*.botToken values are
   # SOPS exec SecretRefs (docs/secrets.md); the CLI otherwise refuses to
-  # validate or apply an exec-sourced reference.
+  # validate an exec-sourced reference. Dry-run only: `config patch --help`
+  # rejects --allow-exec on the actual apply ("--allow-exec requires
+  # --dry-run", OpenClaw 2026.9.5) - the apply below resolves the same refs
+  # without the flag.
   if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
       run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
         config patch --stdin --dry-run --allow-exec < "${PLATFORM_PATCH}"; then
@@ -531,7 +534,7 @@ else
     PATCH_LOG="$(mktemp)"
     if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
         run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-          config patch --stdin --allow-exec < "${PLATFORM_PATCH}" 2>&1 | tee "${PATCH_LOG}"; then
+          config patch --stdin < "${PLATFORM_PATCH}" 2>&1 | tee "${PATCH_LOG}"; then
       if grep -q 'Restart the gateway to apply' "${PATCH_LOG}"; then
         say "openclaw platform config: applied keys need a restart; recreating openclaw-gateway"
         docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
@@ -555,12 +558,14 @@ fi
 # Grafana reloads below, since the file can change independently of
 # platform.patch.json. `secrets audit` is report-only: it proves every
 # configured SecretRef still resolves (a trip-wire for a bad re-key or a
-# missing id) and never prints a value. Both need --allow-exec for the same
-# reason the config patch above does.
+# missing id) and never prints a value. `secrets reload` resolves refs as
+# part of its normal operation and does not take --allow-exec (OpenClaw
+# 2026.9.5: "does not recognize option --allow-exec"); `secrets audit`
+# does, for the same reason the config patch dry run above does.
 say "reloading gateway secrets"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
   run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-    secrets reload --allow-exec || fail_later "openclaw secrets reload failed"
+    secrets reload || fail_later "openclaw secrets reload failed"
 say "auditing gateway secrets (report only, no values printed)"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
   run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
