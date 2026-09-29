@@ -430,10 +430,10 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              # Available RAM as a fraction of total. Swap sitting at ~100%
-              # used is this box's normal steady state (Linux does not swap
-              # back in on its own), so that alone is not a signal - real
-              # pressure shows here instead.
+              # Available RAM as a fraction of total. Swap sitting near full
+              # does not say RAM is short (Linux does not swap back in on its
+              # own), so real pressure is read here; swap has its own rule,
+              # host-swap-high.
               expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes
               instant: true
               intervalMs: 1000
@@ -479,10 +479,9 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              # Swap used alone is always >90% here (steady state - see
-              # host-ram-nearly-exhausted), so this pairs it with available
-              # RAM dropping too: that combination is what makes it real
-              # pressure rather than the box's normal resting state.
+              # This pairs swap with available RAM dropping too, so it is the
+              # paging-under-pressure signal. Swap filling on its own is the
+              # separate host-swap-high rule (memory-budget group).
               expr: >-
                 (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
                   and ((node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / node_memory_SwapTotal_bytes > 0.90)
@@ -719,6 +718,265 @@ groups:
             is "You've hit your weekly limit" on every agent. Disable
             non-essential OpenClaw crons (`openclaw cron disable <id>`), pause
             devclaw and firstmate launches, and spend the rest by hand.
+
+  # Memory budgets: docs/resource-budget.md is the table these thresholds
+  # come from. Only container groups can be evaluated today (they read
+  # docker_container_memory_usage_bytes, which already excludes reclaimable
+  # page cache); the host groups - operator sessions, runners, OS - wait for
+  # the cgroup gauge and have no rule yet.
+  #
+  # Every group is one series named by a `name` label, so the resolved
+  # message (subject = `name`, contact-points.yml.tmpl) says which group
+  # recovered. Each value is a percent of the group's budget, so the threshold
+  # is 100 whatever the group. Membership is by compose project/service label,
+  # never by container name, except finance-sentry (project `docker` is a
+  # generic name) and closeloop (a bare `docker run`, no compose labels). The
+  # burst pool is everything the named groups do not claim; the same selectors
+  # appear in both rules - keep them in step with the doc's member lists.
+  - orgId: 1
+    name: memory-budget
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: project-memory-over-budget
+        title: a project is over its memory budget
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 30-minute average of the group's summed usage, as a percent of
+              # its budget in GiB (1073741824 bytes each): openclaw 3.5,
+              # platform 1.5, finance-sentry 1.25, devclaw-mcp 0.25,
+              # dashboard 0.25, xui 0.25, closeloop 0.25.
+              expr: >-
+                label_replace(100 * avg_over_time(sum(
+                  docker_container_memory_usage_bytes{project="compose",
+                  service=~"openclaw-gateway|google-workspace-mcp"}
+                  )[30m:1m]) / (3.5 * 1073741824), "name", "openclaw", "", "")
+                or label_replace(100 * avg_over_time(sum(
+                  docker_container_memory_usage_bytes{project="compose",
+                  service!~"openclaw-gateway|google-workspace-mcp|openclaw-cli|lifekit-orchestrator|lifekit-dashboard"}
+                  )[30m:1m]) / (1.5 * 1073741824), "name", "platform", "", "")
+                or label_replace(100 * avg_over_time(sum(
+                  docker_container_memory_usage_bytes{project="docker",
+                  name=~"finance-sentry-.*"}
+                  )[30m:1m]) / (1.25 * 1073741824), "name", "finance-sentry", "", "")
+                or label_replace(100 * avg_over_time(sum(
+                  docker_container_memory_usage_bytes{project="devclaw",
+                  service="devclaw-mcp"}
+                  )[30m:1m]) / (0.25 * 1073741824), "name", "devclaw-mcp", "", "")
+                or label_replace(100 * avg_over_time(sum(
+                  docker_container_memory_usage_bytes{project="dashboard"}
+                  )[30m:1m]) / (0.25 * 1073741824), "name", "dashboard", "", "")
+                or label_replace(100 * avg_over_time(sum(
+                  docker_container_memory_usage_bytes{project="xui"}
+                  )[30m:1m]) / (0.25 * 1073741824), "name", "xui", "", "")
+                or label_replace(100 * avg_over_time(sum(
+                  docker_container_memory_usage_bytes{name="closeloop"}
+                  )[30m:1m]) / (0.25 * 1073741824), "name", "closeloop", "", "")
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [100]}
+        # A group with no running container has no series; that is not an
+        # alarm, and the exporter's own absence is target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.name }} is over its memory budget"
+          description: >-
+            The 30-minute average of {{ $labels.name }}'s resident container
+            memory (page cache excluded) has been at
+            {{ printf "%.0f" $values.B.Value }}% of its budget for 15
+            minutes - see docs/resource-budget.md for the budget and the
+            member containers. `docker stats --no-stream` shows which one is
+            growing; a short spike would not have fired this, so it is a
+            leak or a real step up in use. Fix the cause, or raise the
+            budget in the doc and this rule together.
+
+      - uid: burst-pool-over-budget
+        title: the burst pool is over its memory budget
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Every container the named groups of
+              # project-memory-over-budget do not claim: sandboxes, transient
+              # CI and worker containers, cli runs, rehearsals. Budget 3 GiB.
+              expr: >-
+                100 * avg_over_time(sum(docker_container_memory_usage_bytes unless (
+                  docker_container_memory_usage_bytes{project="compose",service=~"openclaw-gateway|google-workspace-mcp"}
+                  or docker_container_memory_usage_bytes{
+                    project="compose",
+                    service!~"openclaw-gateway|google-workspace-mcp|openclaw-cli|lifekit-orchestrator|lifekit-dashboard"
+                    }
+                  or docker_container_memory_usage_bytes{project="docker",name=~"finance-sentry-.*"}
+                  or docker_container_memory_usage_bytes{project="devclaw",service="devclaw-mcp"}
+                  or docker_container_memory_usage_bytes{project="dashboard"}
+                  or docker_container_memory_usage_bytes{project="xui"}
+                  or docker_container_memory_usage_bytes{name="closeloop"}
+                ))[30m:1m]) / (3 * 1073741824)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [100]}
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "the burst pool is over its 3 GiB memory budget"
+          description: >-
+            Transient containers (sandboxes, CI and worker containers,
+            openclaw-cli runs, rehearsals) have averaged
+            {{ printf "%.0f" $values.B.Value }}% of the 3 GiB burst pool over
+            30 minutes, for 15 minutes. `docker stats --no-stream` lists what
+            is running; the ones with no compose project or with a
+            long-lived age are the candidates. docs/resource-budget.md
+            defines the pool.
+
+      - uid: container-near-memory-cap
+        title: a container is near its memory cap
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Usage as a percent of the cap. The limit series reads as the
+              # whole box (MemTotal) for a container with no cap, so those
+              # are filtered out: only a real cap, below 99% of RAM, counts.
+              # This is what the retired container-memory-near-limit could
+              # not do; the filter is the difference.
+              expr: >-
+                100 * docker_container_memory_usage_bytes
+                / (docker_container_memory_limit_bytes < 0.99 * scalar(node_memory_MemTotal_bytes))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [90]}
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.name }} is above 90% of its memory cap"
+          description: >-
+            {{ $labels.name }} (compose {{ $labels.project }}/{{ $labels.service }})
+            has used {{ printf "%.0f" $values.B.Value }}% of its memory cap
+            for 10 minutes (page cache excluded). The next step is the OOM
+            killer. `docker stats --no-stream {{ $labels.name }}` shows
+            the number; raise its `mem_limit` (or its `docker run --memory`)
+            before it is killed, or find what grew.
+
+      - uid: host-swap-high
+        title: host swap is over 75% used
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Swap is margin, not budget (docs/resource-budget.md): it is
+              # what absorbs a breach, so a swap that stays this full has no
+              # room left for one. Alone - no pairing with available RAM.
+              expr: >-
+                100 * (node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes)
+                / node_memory_SwapTotal_bytes
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [75]}
+        # A vanished node-exporter target is target-down's job; a box with no
+        # swap divides by zero and yields nothing.
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "swap has been over 75% used for 15 minutes"
+          description: >-
+            Swap is {{ printf "%.0f" $values.B.Value }}% used, with or without
+            RAM pressure: the safety margin behind the memory budgets is
+            nearly gone. `free -h`, then `smem -rk` or `ps --sort=-%mem` for
+            who holds it, and `docker stats --no-stream`. Tmpfs `/tmp` pages
+            out to swap too (docs/runbook.md "Moving /tmp off RAM"). Never
+            stop a compose-managed container, the Docker daemon, or a Claude
+            session to free it.
 
   - orgId: 1
     name: devclaw-deadman
