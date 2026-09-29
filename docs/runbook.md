@@ -85,6 +85,18 @@ counts with no config values. `--lint-only` is the quick read-only pass against
 live state. The full doctor logs stay in the copy, which a red run keeps (pruned
 after 7 days) and a green run removes.
 
+The lint verdict keys on each finding's `checkId`. Any warning or error is red
+except three rehearsal-only classes, which the script tolerates: MCP servers
+that can't be resolved (the container is off the compose network), Claude CLI
+"not logged in" (no Claude credentials are mounted), and the gateway's "lan"
+bind (by design: `--bind lan` inside the container, loopback-only publish on
+the host). `doctor --fix` writes TOOLS.md migration backups under
+`/srv/openclaw/config/backups/`, so that path must be a directory: a stray
+file there fails the migration with ENOTDIR (the 2026-09-29 cleanup). On
+2026.9.5 the SQLite dry-run exits 1 on every copy ("archived registry identity
+changed"), because a copy can't keep the archived registry's inode. The live
+record is intact, and 2026.9.6 reports this as an advisory warning.
+
 Skill/vault/compose changes without an OpenClaw bump deploy the same way:
 merge to `main`, CI deploys. Direct on the VPS only when CI is down:
 
