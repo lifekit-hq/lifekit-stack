@@ -155,6 +155,13 @@ those files, `render-stack-env.sh` into a scratch `LIFEKIT_SECRETS_DIR`
 (`PARKED_*` absent from the output), and the resolver answering the exact
 five ids the platform patch carries with the scratch gateway key.
 
+## Accepted debt
+
+- The gateway age key has no offline copy - accepted by the captain
+  2026-09-29; owner: captain; if it is lost, re-mint it with
+  `init-gateway-key.sh` and re-encrypt the gateway file with the captain
+  key; revisit at the first key rotation.
+
 ## Follow-ups (not in this ship)
 
 - Move the `claude-cli:setup-token` auth profile onto a `tokenRef` in the
