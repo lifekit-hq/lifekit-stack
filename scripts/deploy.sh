@@ -580,7 +580,7 @@ GATEWAY_READY=0
 for _ in $(seq 1 60); do
   if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
       exec -T openclaw-gateway node -e \
-      "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
+      "fetch('http://127.0.0.1:18789/healthz',{signal:AbortSignal.timeout(3000)}).then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
       >/dev/null 2>&1; then
     GATEWAY_READY=1
     break
