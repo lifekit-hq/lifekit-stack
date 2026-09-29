@@ -5,7 +5,9 @@
 #
 # Prerequisites on the VPS:
 #   /srv/lifekit-stack/                  ← cloned by bootstrap-vps.sh
-#   /srv/openclaw/config/.env            ← scp'd from your laptop (see .env.example)
+#   /srv/lifekit-secrets/stack.env       ← rendered by scripts/secrets/render-stack-env.sh
+#                                          from secrets/lifekit.env.sops (see .env.example
+#                                          for what belongs in the master boundary)
 #   /srv/openclaw/workspace/skills/      ← rsync'd from your laptop's ~/.openclaw/workspace/skills/
 #   /srv/memory/                           ← rsync'd from your laptop's ~/memory/
 #   /home/lifekit/.claude/               ← either logged in on the VPS via `claude auth login`,
@@ -20,7 +22,7 @@ set -euo pipefail
 SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 REPO_DIR="${REPO_DIR:-/srv/lifekit-stack}"
-ENV_FILE="${ENV_FILE:-/srv/openclaw/config/.env}"
+ENV_FILE="${ENV_FILE:-/srv/lifekit-secrets/stack.env}"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
 COMPOSE_FILE="${REPO_DIR}/compose/docker-compose.yml"
 
@@ -64,8 +66,8 @@ cd "${REPO_DIR}"
 # ─── Sanity ──────────────────────────────────────────────────────────────────
 
 if [[ ! -f "${ENV_FILE}" ]]; then
-  echo "Missing ${ENV_FILE}. Copy .env.example and fill it in:" >&2
-  echo "  scp .env.example user@vps:${ENV_FILE}" >&2
+  echo "Missing ${ENV_FILE}. Render it from the master secrets boundary:" >&2
+  echo "  sudo bash scripts/secrets/render-stack-env.sh" >&2
   exit 1
 fi
 
