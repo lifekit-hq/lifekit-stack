@@ -16,7 +16,8 @@ sample. prometheus-net/docker_exporter has no arm64 image. So: ~150 lines of
 stdlib, read-only GETs on the socket, tested in tests/.
 
 Metrics (labels: name, project, service - the compose project/service labels,
-empty for containers compose did not start):
+empty for containers compose did not start - and image, the container's
+Config.Image, so an uncapped transient container traces to an owner):
   docker_container_running              1 when State.Status == "running"
   docker_container_restarting           1 while the daemon is between restarts
   docker_container_restart_count        the daemon's RestartCount (counter)
@@ -26,6 +27,8 @@ empty for containers compose did not start):
   docker_container_healthy              1 healthy / 0 otherwise; only with a healthcheck
   docker_container_memory_usage_bytes   running containers; usage minus inactive_file,
   docker_container_memory_limit_bytes   the same numbers `docker stats` shows
+  docker_container_memory_swap_bytes    swapped-out bytes, from the container's cgroup v2
+                                        memory.swap.current (read-only); absent if unreadable
   docker_exporter_scrape_errors         containers this scrape could not read
   docker_exporter_scrape_duration_seconds
 """
@@ -43,6 +46,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DOCKER_SOCKET = os.environ.get("DOCKER_SOCKET", "/var/run/docker.sock")
 PORT = int(os.environ.get("EXPORTER_PORT", "9417"))
+# The host's cgroup v2 tree, mounted read-only; the docker API has no swap figure.
+CGROUP_ROOT = os.environ.get("CGROUP_ROOT", "/sys/fs/cgroup")
 
 # Exposition order and metadata. Every metric emitted by container_samples()
 # and collect() must be listed here; render() refuses unknown names.
@@ -79,6 +84,10 @@ METRICS = {
     "docker_container_memory_limit_bytes": (
         "gauge",
         "Memory limit the container runs under.",
+    ),
+    "docker_container_memory_swap_bytes": (
+        "gauge",
+        "Bytes the container has swapped out (cgroup v2 memory.swap.current), running containers only.",
     ),
     "docker_exporter_scrape_errors": (
         "gauge",
@@ -127,15 +136,33 @@ def parse_docker_time(value: str | None) -> float:
     return stamp.timestamp() + (float("0." + frac) if frac else 0.0)
 
 
+def read_swap_bytes(container_id: str, root: str = CGROUP_ROOT) -> float | None:
+    """memory.swap.current of a container's cgroup, or None when unreadable.
+
+    The systemd cgroup driver puts a container at system.slice/docker-<id>.scope,
+    the cgroupfs driver at docker/<id>. A missing file (cgroup v1, no mount, a
+    container that just exited) drops the series rather than reporting a false 0.
+    """
+    for rel in (f"system.slice/docker-{container_id}.scope", f"docker/{container_id}"):
+        try:
+            with open(os.path.join(root, rel, "memory.swap.current")) as handle:
+                return float(handle.read().strip())
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def container_samples(
-    inspect: dict, stats: dict | None = None
+    inspect: dict, stats: dict | None = None, swap: float | None = None
 ) -> list[tuple[str, dict, float]]:
-    """Pure: one container's inspect document (+ optional one-shot stats) -> samples."""
+    """Pure: one container's inspect document (+ optional one-shot stats and
+    cgroup swap reading) -> samples."""
     compose = (inspect.get("Config") or {}).get("Labels") or {}
     labels = {
         "name": inspect.get("Name", "").lstrip("/"),
         "project": compose.get("com.docker.compose.project", ""),
         "service": compose.get("com.docker.compose.service", ""),
+        "image": (inspect.get("Config") or {}).get("Image", ""),
     }
     state = inspect.get("State") or {}
     # State.Running stays true while the daemon is between restarts, so a crash
@@ -191,6 +218,8 @@ def container_samples(
             samples.append(
                 ("docker_container_memory_limit_bytes", labels, float(memory["limit"]))
             )
+    if swap is not None:
+        samples.append(("docker_container_memory_swap_bytes", labels, swap))
     return samples
 
 
@@ -219,7 +248,8 @@ def collect(get=docker_get) -> list[tuple[str, dict, float]]:
             errors += 1
             print(f"container {entry.get('Names')}: {exc}", file=sys.stderr)
             continue
-        samples.extend(container_samples(inspect, stats))
+        swap = read_swap_bytes(cid) if running else None
+        samples.extend(container_samples(inspect, stats, swap))
     samples.append(("docker_exporter_scrape_errors", {}, float(errors)))
     samples.append(
         ("docker_exporter_scrape_duration_seconds", {}, time.monotonic() - started)

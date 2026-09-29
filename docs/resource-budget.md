@@ -2,8 +2,8 @@
 
 The box has 15.6 GiB of RAM and 8 GiB of swap. Every project and host group gets a
 memory budget so a breach names an owner instead of "the box is slow". The budgets sum
-to **12.5 GiB**; a **3 GiB burst pool** for short-lived work brings the total to
-**15.5 GiB** of the 15.6 GiB.
+to **12.25 GiB**; a **3 GiB burst pool** for short-lived work brings the total to
+**15.25 GiB** of the 15.6 GiB.
 
 ## What a budget is
 
@@ -37,20 +37,18 @@ host groups have no history yet, so their figure is a one-off snapshot.
 | devclaw-mcp | 0.25 | `devclaw-mcp` (compose project `devclaw`; its sandboxes count in the burst pool) | 130 MiB |
 | dashboard | 0.25 | the dashboard service (compose project `dashboard`) | 114 MiB |
 | xui | 0.25 | web, db (compose project `xui`) | 188 MiB |
-| closeloop | 0.25 | the `closeloop` container (a bare `docker run`, no compose project) | 175 MiB |
 | operator sessions | 3.5 | the operator's login slice (`user-1001.slice`): agent sessions, their browser helpers, tools | about 2.2 GiB resident + 1.2 GiB swapped (snapshot) |
 | runners | 0.75 | the CI runner services and their jobs | about 0.3 GiB idle, 0.7 GiB during a deploy job (snapshot) |
 | OS | 1.0 | dockerd, containerd, shims, tailscaled, journald | about 0.75 GiB (snapshot) |
-| **Sum** | **12.5** | | |
+| **Sum** | **12.25** | | |
 | burst pool | 3.0 | everything else that runs as a container: devclaw sandboxes, `openclaw-cli` runs, rehearsals, CI and worker validation containers, test compose projects, any orphan | 2.8 GiB unlabelled sum; one worker container reached 3164 MiB |
-| **Total** | **15.5** | of 15.6 GiB RAM | |
+| **Total** | **15.25** | of 15.6 GiB RAM | |
 
 Membership is by compose project and service label, so a new container is in the burst
 pool until it is added to a group; platform is every service of compose project
 `compose` that is not openclaw, `openclaw-cli`, `lifekit-orchestrator` or the retired
-`lifekit-dashboard`, so the orchestrator counts in the burst pool. The non-label exceptions are closeloop, which
-has no labels to match, and finance-sentry, whose compose project name (`docker`) is
-too generic to match on.
+`lifekit-dashboard`, so the orchestrator counts in the burst pool. The one non-label exception is
+finance-sentry, whose compose project name (`docker`) is too generic to match on.
 
 ## Alerts
 
