@@ -238,6 +238,23 @@ install -m 644 "$REPO_DIR/scripts/quota-gauge/claude-quota-gauge.timer" \
 systemctl daemon-reload
 systemctl enable --now claude-quota-gauge.timer
 
+# ─── Host gauge timers (host-group memory, /tmp usage) ────────────────────────
+# Same shape as the quota gauge, every 5 minutes into the same textfile
+# directory. host-group-gauge reports RAM and swap for the operator sessions,
+# CI runners and OS groups of docs/resource-budget.md; tmp-usage-gauge reports
+# /tmp size and free bytes (it used to be an operator crontab line).
+
+say "Installing host gauge scripts + systemd units"
+for gauge in host-gauge/host-group-gauge tmp-gauge/tmp-usage-gauge; do
+  name="$(basename "$gauge")"
+  install -m 755 "$REPO_DIR/scripts/$gauge.sh" "/usr/local/bin/$name.sh"
+  sed "s/__ADMIN_USER__/${ADMIN_USER}/" "$REPO_DIR/scripts/$gauge.service" \
+    > "/etc/systemd/system/$name.service"
+  install -m 644 "$REPO_DIR/scripts/$gauge.timer" "/etc/systemd/system/$name.timer"
+done
+systemctl daemon-reload
+systemctl enable --now host-group-gauge.timer tmp-usage-gauge.timer
+
 # ─── GitHub Actions self-hosted runner ────────────────────────────────────────
 
 if [[ -n "$RUNNER_REG_TOKEN" ]]; then

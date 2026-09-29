@@ -6,8 +6,8 @@
 # let /tmp fill to 100% unnoticed on 2026-09-29 and cost every Claude
 # session its tool output. Atomic write into the textfile collector
 # directory (arg 1), same shape as
-# scripts/quota-gauge/claude-quota-gauge.sh. Run from a user crontab, never
-# a systemd unit - see docs/runbook.md.
+# scripts/quota-gauge/claude-quota-gauge.sh. Run from tmp-usage-gauge.timer
+# (installed by bootstrap-vps.sh) - see docs/runbook.md.
 set -euo pipefail
 OUT_DIR="${1:-/var/lib/node_exporter/textfile}"
 read -r size avail < <(df -B1 --output=size,avail /tmp | tail -n1)

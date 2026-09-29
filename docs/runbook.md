@@ -735,14 +735,32 @@ rather than deleting them, so a firing alert can mean genuine growth outdoing
 that job's hourly pace, not only its absence. `df -h /tmp` and `du -sh
 /tmp/* 2>/dev/null | sort -rh | head` on the box show what is filling it.
 
-Install the gauge as a user crontab under `/var/lib/node_exporter/textfile`'s
-owner (`denys`), every 5 minutes - never a systemd unit, nothing under `/etc`:
+The gauge is a bootstrap-installed systemd timer (`tmp-usage-gauge.timer`,
+every 5 minutes, running as the admin account that owns the textfile
+directory), installed next to the quota and host-group gauges by
+`scripts/bootstrap-vps.sh`. To install or update it on the box, re-run the
+bootstrap install section with sudo, then remove the old operator crontab
+line so two writers do not share the file:
 
 ```bash
-crontab -e
-# add:
-*/5 * * * * bash /srv/lifekit-stack/scripts/tmp-gauge/tmp-usage-gauge.sh /var/lib/node_exporter/textfile
+sudo bash /srv/lifekit-stack/scripts/bootstrap-vps.sh   # installs the timers
+systemctl list-timers 'tmp-usage-gauge*' 'host-group-gauge*'
+crontab -e   # delete: */5 * * * * bash .../scripts/tmp-gauge/tmp-usage-gauge.sh ...
 ```
+
+The metric names (`tmp_filesystem_size_bytes`, `tmp_filesystem_avail_bytes`)
+and the 5-minute cadence are unchanged, so the alert and the staleness rule
+need nothing.
+
+## Host group memory gauge
+
+`scripts/host-gauge/host-group-gauge.sh` writes `host_group_memory_bytes` and
+`host_group_memory_swap_bytes` per `group` (`operator`, `runners`, `os`) every 5
+minutes from `host-group-gauge.timer`, installed by the same bootstrap section
+as above. Groups and their budgets are in `docs/resource-budget.md`; the
+*a host group is over its memory budget* alert fires on the 30-minute average.
+`cat /var/lib/node_exporter/textfile/host_group.prom` shows the current values;
+`systemd-cgtop -m` and `ps --sort=-rss` show who inside a group is growing.
 
 ## Backups
 
