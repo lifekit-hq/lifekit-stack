@@ -11,7 +11,8 @@ A budget is a **sustained** ceiling: the **30-minute average of resident memory,
 excluding reclaimable page cache**. An alert fires after that average has been over
 budget for **15 minutes**, so a short spike stays quiet (the OpenClaw gateway's
 3.6 GiB peak is inside its 3.5 GiB budget as an average) while a leak or a step up in
-use is heard.
+use is heard. A minute in which a group has no container counts as 0, so a short-lived
+group is averaged over the full 30 minutes, not just the minutes it was alive.
 
 - Container groups read `docker_container_memory_usage_bytes` from
   `compose/container-exporter`, which is usage minus `inactive_file` - the number
@@ -33,7 +34,7 @@ host groups have no history yet, so their figure is a one-off snapshot.
 | openclaw | 3.5 | `openclaw-gateway`, `google-workspace-mcp` (compose project `compose`) | 3723 + 153 MiB |
 | platform | 1.5 | prometheus, loki, grafana, tempo, otel-collector, node-exporter, container-exporter, notify-relay (compose project `compose`) | 1.3 GiB (sum of peaks) |
 | finance-sentry | 1.25 | api, postgres, mcp, gateway, frontend (`finance-sentry-*`, compose project `docker`) | 1.05 GiB (average 0.81) |
-| devclaw-mcp | 0.25 | `devclaw-mcp` (its sandboxes count in the burst pool) | 130 MiB |
+| devclaw-mcp | 0.25 | `devclaw-mcp` (compose project `devclaw`; its sandboxes count in the burst pool) | 130 MiB |
 | dashboard | 0.25 | the dashboard service (compose project `dashboard`) | 114 MiB |
 | xui | 0.25 | web, db (compose project `xui`) | 188 MiB |
 | closeloop | 0.25 | the `closeloop` container (a bare `docker run`, no compose project) | 175 MiB |
@@ -46,8 +47,8 @@ host groups have no history yet, so their figure is a one-off snapshot.
 
 Membership is by compose project and service label, so a new container is in the burst
 pool until it is added to a group; platform is every service of compose project
-`compose` that is not openclaw, `openclaw-cli` or `lifekit-orchestrator`, so the
-orchestrator counts in the burst pool. The non-label exceptions are closeloop, which
+`compose` that is not openclaw, `openclaw-cli`, `lifekit-orchestrator` or the retired
+`lifekit-dashboard`, so the orchestrator counts in the burst pool. The non-label exceptions are closeloop, which
 has no labels to match, and finance-sentry, whose compose project name (`docker`) is
 too generic to match on.
 

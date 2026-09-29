@@ -798,8 +798,9 @@ groups:
               expression: B
               conditions:
                 - evaluator: {type: gt, params: [100]}
-        # A group with no running container has no series; that is not an
-        # alarm, and the exporter's own absence is target-down's job.
+        # A group with no running container averages 0 (the `or vector(0)`
+        # zero-fill), which is not an alarm; the exporter's own absence is
+        # target-down's job.
         noDataState: OK
         execErrState: Error
         for: 15m
