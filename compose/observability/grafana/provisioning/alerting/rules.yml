@@ -1352,9 +1352,9 @@ groups:
             CLAUDE_OAUTH_TOKEN (every OpenClaw agent's anthropic:setup-token
             profile) expires in {{ printf "%.0f" $values.B.Value }} days; after
             that every agent turn fails. Rotate it: `claude setup-token`, then
-            `scripts/secrets/edit.sh gateway CLAUDE_OAUTH_TOKEN`, and move the
-            expiry date in this rule and in docs/secrets.md in the same PR
-            (docs/secrets-runbook.md, "Claude service token").
+            `scripts/secrets/edit.sh gateway` (replace CLAUDE_OAUTH_TOKEN),
+            and move the expiry date in this rule and in docs/secrets.md in
+            the same PR (docs/secrets-runbook.md, "Claude service token").
 
   # ls-177 S1: the alerting system watching itself. Grafana and Prometheus
   # both now feed their own /metrics into Prometheus (prometheus.yml); these
