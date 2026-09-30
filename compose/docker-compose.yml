@@ -22,9 +22,6 @@
 #    /notify (docs/message-format.md), or devclaw's legacy /devclaw + /text POSTs,
 #    becomes Telegram HTML sent via the Bot API. Internal-only on :8090.
 #
-# Retired in the 2026-05-27 v2 cutover:
-#   lifekit-orchestrator — v1 LangGraph scheduler; replaced by devclaw-mcp's in-process queue.
-#
 # Run from the repo root after `scripts/bootstrap-vps.sh` has set up the host:
 #   cd /srv/lifekit-stack && ./scripts/deploy.sh
 #
@@ -36,7 +33,8 @@
 #   set -a; source /srv/lifekit-secrets/stack.env; set +a
 #   docker compose up -d <service>
 # Without one of these, ${OPENCLAW_GATEWAY_TOKEN}, ${TELEGRAM_BOT_TOKEN}, and
-# friends substitute to empty strings; the gateway boots and crash-loops.
+# friends substitute to empty strings, and the services that read them (notify-relay,
+# prometheus, grafana) start without their credentials.
 # scripts/deploy.sh handles this for you. Bypassing the script = remember the
 # flag.
 #
@@ -68,103 +66,6 @@ services:
   # `-p openclaw` (lifekit-vps initiative 1.2 step 4). scripts/deploy.sh brings
   # that project up after this one; Prometheus still scrapes the gateway over
   # the external lifekit-shared network.
-
-  lifekit-orchestrator:
-    <<: *policy
-    # RETIRED 2026-05-25 (v1 LangGraph scheduler). Replaced by devclaw-mcp's in-process queue.
-    # Profile-gated so `docker compose up -d` never starts it.
-    profiles:
-      - orchestrator-v1
-    image: lifekit-openclaw:local
-    labels:
-      lifekit.contract: "none"  # retired, profile-gated
-    deploy:
-      resources:
-        limits:
-          memory: 2g
-    # No depends_on: openclaw-gateway moved to the `openclaw` compose project
-    # (compose/openclaw/), and compose cannot depend across projects. This
-    # retired service goes away entirely in a later cleanup.
-    environment:
-      HOME: /home/node
-      OPENCLAW_HOME: /home/node
-      TZ: ${OPENCLAW_TZ:-UTC}
-      LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-default}
-      # Resolves to /home/node/.life-state inside the container — orchestrator.sqlite,
-      # flat-bucket tasks/, intake_index.json. See proposal 2026-05-27-runtime-knowledge-split.
-      LIFEKIT_STATE_DIR: /home/node/.life-state
-      # Wire git credential helper via env, not gitconfig — the .gitconfig
-      # bind-mount is read-only and `gh auth setup-git` would fail to write
-      # to it ("Device or resource busy" because of how bind-mounted files
-      # interact with git's atomic-rewrite). These vars make every git op
-      # use gh for credentials without touching any file.
-      GIT_CONFIG_COUNT: "1"
-      GIT_CONFIG_KEY_0: credential.helper
-      GIT_CONFIG_VALUE_0: "!gh auth git-credential"
-    volumes:
-      # Orchestrator source — installed editable at container start.
-      - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
-      # ~/.life is the knowledge layer the daemon reads project specs from.
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
-      # /.life-state is the runtime state the daemon owns — orchestrator.sqlite,
-      # flat-bucket tasks/, intake_index.json. Split from the knowledge layer per
-      # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
-      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
-      # Claude CLI session creds — same mounts as openclaw-gateway. Both the
-      # dir and the sibling .claude.json are required for the SDK to recognize
-      # the Pro subscription session.
-      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
-      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
-      # gh CLI auth for the code_task runner.
-      - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
-      - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        export NPM_CONFIG_PREFIX=/home/node/.npm-global
-        export PATH="/home/node/.npm-global/bin:/home/node/.orchestrator-venv/bin:$$PATH"
-        if ! command -v claude >/dev/null 2>&1; then
-          mkdir -p /home/node/.npm-global
-          npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code 2>&1 | tail -3
-        fi
-        if [ ! -x /home/node/.orchestrator-venv/bin/pip ]; then
-          python3 -m venv /home/node/.orchestrator-venv
-          /home/node/.orchestrator-venv/bin/pip install --upgrade pip --quiet
-        fi
-        # Re-run the editable install on EVERY container start. This re-pins the
-        # devclaw-orchestrator entry point at the bind-mounted canonical source
-        # under /home/node/.openclaw/workspace/devclaw/orchestrator. A code-task
-        # runner inside the container can run `pip install -e .` from a /tmp
-        # clone, and because this venv's pip is first on PATH it hijacks the
-        # editable target — on next daemon restart the orchestrator would load
-        # code from /tmp instead of the canonical source (observed 2026-05-18).
-        # Re-installing every start is idempotent and fast, and undoes any such
-        # hijack. Do NOT re-add the [ ! -x ... ] guard around this install.
-        /home/node/.orchestrator-venv/bin/pip install -e /home/node/.openclaw/workspace/devclaw/orchestrator --quiet
-        exec "$$@"
-      - --
-    command:
-      - devclaw-orchestrator
-      - daemon
-      - --life
-      - /home/node/memory
-      - --telegram-chat
-      - ${LIFEKIT_TELEGRAM_CHAT:-default}
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - pgrep -f "devclaw-orchestrator daemon" >/dev/null
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 60s
 
   # lifekit-dashboard was removed here on 2026-08-16: the dashboard deploys
   # from its own repo now (lifekit-hq/lifekit-dashboard deploy/ — ecosystem

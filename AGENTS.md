@@ -2,12 +2,12 @@
 
 Reference deployment for a personal-AI stack: bash bootstrap + Docker Compose that put
 [OpenClaw](https://openclaw.ai/) + [lifekit](https://github.com/lifekit-hq/lifekit) + parameterized
-workspace skills on a fresh VPS (reference: Hetzner CX22, Ubuntu 24.04, Tailscale-only, loopback
+workspace skills on a fresh VPS (reference: arm64 VPS with 15.6 GiB RAM, Debian 13, Tailscale-only, loopback
 binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 
 | Piece | What | Where it runs |
 | --- | --- | --- |
-| `compose/` | `docker-compose.yml` (compose project `compose`) + Dockerfiles: lifekit-orchestrator, notify-relay, plus the box observability stack (prometheus, loki, grafana, node-exporter, otel-collector, tempo) and its `observability/` config — datasources, dashboard providers, and the **provisioned alert rules**. New observability services join both `default` and the external `lifekit-shared` network only if a cross-project caller needs them (otherwise `default` alone); Grafana provisioning (alerting, datasources) needs a `deploy.sh` reload after merge since Grafana reads it at startup only. `openclaw/docker-compose.yml` is compose project `openclaw`: openclaw-gateway, openclaw-cli (profile `cli`), google-workspace-mcp; the gateway container is `openclaw-openclaw-gateway-1`, found in scripts by compose labels. | The VPS, as compose projects `compose` and `openclaw` |
+| `compose/` | `docker-compose.yml` (compose project `compose`) + Dockerfiles: notify-relay, plus the box observability stack (prometheus, loki, grafana, node-exporter, otel-collector, tempo) and its `observability/` config — datasources, dashboard providers, and the **provisioned alert rules**. New observability services join both `default` and the external `lifekit-shared` network only if a cross-project caller needs them (otherwise `default` alone); Grafana provisioning (alerting, datasources) needs a `deploy.sh` reload after merge since Grafana reads it at startup only. `openclaw/docker-compose.yml` is compose project `openclaw`: openclaw-gateway, openclaw-cli (profile `cli`), google-workspace-mcp; the gateway container is `openclaw-openclaw-gateway-1`, found in scripts by compose labels. | The VPS, as compose projects `compose` and `openclaw` |
 | `scripts/` | `bootstrap-vps.sh` (host setup), `deploy.sh` (idempotent redeploy; the platform phases, sourcing `deploy-openclaw.sh` for the OpenClaw phases and `lib/deploy-common.sh` for shared helpers), `check-doc-drift.sh`, `docker-builder-gc.sh` (Docker BuildKit cache cap — writes `/etc/docker/daemon.json`, needs an operator restart to apply, see `docs/runbook.md` "Applying the Docker builder cache cap"), `tmp-scratch-policy.sh` (masks the tmpfs `/tmp` mount unit so build/session scratch lives on disk + a daily sweep that retires only scratch nothing holds — operator live-cutover in `docs/runbook.md` "Moving /tmp off RAM"), memory-audit cron wrapper (audit logic lives in the vault `bin/`), `quota-share/` (read-only report: shares quota-axi's account % across consumers by logged Claude Code session usage — see `scripts/quota-share/README.md`), `ops-report/weekly.py` (read-only weekly VPS ops report to stdout — usage in its docstring), sync tooling | The VPS |
 | `skills/` | Jinja2-templated workspace skills (`{{ user.* }}` substitutions — never baked personal data) | OpenClaw workspace |
 | `defaults/` | Agent workspace defaults (AGENTS.md contract, modules.yaml, openclaw config) | OpenClaw workspace |
@@ -94,7 +94,7 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
   cadence — not as the deploy trigger. The release workflows act as the `lifekit-release-bot`
   GitHub App (`RELEASE_APP_ID` variable + `RELEASE_APP_PRIVATE_KEY` secret), never
   `GITHUB_TOKEN`, so the release PR gets its CI and its merge deploys like any other main push.
-- **No build gate in CI.** Docker images are not built per-PR (the runner is the 4 GB production
+- **No build gate in CI.** Docker images are not built per-PR (the runner is the 15.6 GiB production
   VPS); hadolint lints every Dockerfile on every PR, and the images build at deploy. The one
   exception is `.github/workflows/openclaw-rehearsal.yml`: path-gated to same-repo PRs touching
   `compose/openclaw-gateway/Dockerfile`, non-required, and it builds and rehearses that image

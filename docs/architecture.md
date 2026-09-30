@@ -108,7 +108,7 @@ Every config that contains user-specific values is a Jinja2 template. The wizard
 
 - The wizard's local prompt during interactive use, OR
 - GitHub Actions encrypted secrets (for the maintainer's own deploy workflow), OR
-- The `.env` file inside `/srv/openclaw/config/` on the VPS.
+- The SOPS-encrypted master and gateway files, rendered on the VPS into `/srv/lifekit-secrets/stack.env` ([`secrets.md`](./secrets.md)).
 
 They never appear in this repo. The `gitleaks` pre-commit hook enforces this.
 

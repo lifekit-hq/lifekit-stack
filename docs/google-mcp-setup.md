@@ -73,7 +73,7 @@ refresh tokens that work for the test users you added.
 - **Name:** `lifekit-workspace-mcp` (anything).
 
 After creation, click **Download JSON** and note the **Client ID** and
-**Client secret** shown in the modal — you'll paste them into `.env` shortly.
+**Client secret** shown in the modal — you'll add them to the master secrets file shortly.
 
 ## 5. Stash the client credentials
 
@@ -85,11 +85,17 @@ export GOOGLE_OAUTH_CLIENT_SECRET="<paste client secret>"
 export USER_GOOGLE_EMAIL="you@example.com"
 ```
 
-And put the same values into the VPS-side `.env` so the container can refresh
-the token after expiry:
+And put the same values into the master secrets file so the container can
+refresh the token after expiry (see [`secrets.md`](./secrets.md)). On the VPS:
 
 ```bash
-# /srv/openclaw/config/.env (on the VPS)
+scripts/secrets/edit.sh master
+sudo bash scripts/secrets/render-stack-env.sh   # -> /srv/lifekit-secrets/stack.env
+```
+
+The entries to add:
+
+```bash
 GOOGLE_OAUTH_CLIENT_ID=<paste>
 GOOGLE_OAUTH_CLIENT_SECRET=<paste>
 USER_GOOGLE_EMAIL=you@example.com
@@ -147,7 +153,7 @@ On the VPS:
 
 ```bash
 docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \
-    --env-file /srv/openclaw/config/.env \
+    --env-file /srv/lifekit-secrets/stack.env \
     up -d google-workspace-mcp
 ```
 
@@ -178,7 +184,7 @@ Then restart the gateway so it picks up the new MCP block:
 
 ```bash
 docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \
-    --env-file /srv/openclaw/config/.env \
+    --env-file /srv/lifekit-secrets/stack.env \
     restart openclaw-gateway
 ```
 
