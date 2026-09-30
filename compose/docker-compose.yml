@@ -48,8 +48,6 @@
 # (deploy.resources.limits.pids, next to its memory cap) and a read-only root
 # (read_only, plus a /tmp tmpfs as scratch space for loki, tempo and grafana):
 # every service here but prometheus (see its block).
-# Rationale: see ~/memory/incidents/2026-05-20-vps-freeze.md — the full postmortem
-# for the VPS freeze that motivated this hardening pass.
 ---
 x-policy:
   policy: &policy
