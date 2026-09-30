@@ -395,6 +395,18 @@ case "${TMP_SCRATCH_STATUS}" in
   *) printf '\033[1;31m✗ /tmp scratch policy: the box has not converged on the repository policy (/tmp off tmpfs, masked tmp.mount, liveness-gated scratch sweep); apply it with the operator sequence in docs/runbook.md "Moving /tmp off RAM (agent scratch)"\033[0m\n' >&2 ;;
 esac
 
+# ─── Docker prune timer: host fact the repo owns, report-only ───────────────
+#
+# scripts/docker-prune-policy.sh carries the nightly image + build-cache prune
+# (14-day age floor). The deploy has no sudo, so it cannot install the timer;
+# it only reports whether the box has it. Same shape as the two above.
+say "docker prune timer (host fact, report-only)"
+DOCKER_PRUNE_STATUS=0
+bash "${REPO_DIR}/scripts/docker-prune-policy.sh" --check || DOCKER_PRUNE_STATUS=$?
+if [[ "${DOCKER_PRUNE_STATUS}" != 0 ]]; then
+  printf '\033[1;31m✗ docker prune timer: the box has not converged on the repository policy (installed copy, units, enabled timer); apply it with the root step in docs/runbook.md "Scheduled Docker image and build-cache prune"\033[0m\n' >&2
+fi
+
 if (( ${#DEPLOY_FAILURES[@]} )); then
   say "post-deploy assertions failed"
   printf '  - %s\n' "${DEPLOY_FAILURES[@]}" >&2

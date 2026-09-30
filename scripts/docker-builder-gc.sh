@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # docker-builder-gc.sh — the repository's half of /etc/docker/daemon.json:
-# cap BuildKit's on-box build cache via dockerd's own builder.gc policy,
-# instead of running a periodic prune job, and keep containers running across
-# the daemon restart that applies it (live-restore). Evidence: 179 GB of
+# cap BuildKit's on-box build cache via dockerd's own builder.gc policy (a size
+# ceiling; the age-based nightly prune in scripts/docker-prune-policy.sh is the
+# complement, not a substitute), and keep containers running across the daemon
+# restart that applies it (live-restore). Evidence: 179 GB of
 # BuildKit cache accumulated on lifekit-vps from on-box builds by five GitHub
 # Actions runners; /etc/docker/daemon.json didn't exist.
 #

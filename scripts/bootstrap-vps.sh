@@ -190,6 +190,15 @@ bash "$REPO_DIR/scripts/docker-builder-gc.sh"
 say "Configuring /tmp scratch policy"
 bash "$REPO_DIR/scripts/tmp-scratch-policy.sh"
 
+# ─── Docker image + build-cache prune ──────────────────────────────────────────
+# Installs a nightly timer that prunes images and build cache unused for 14
+# days (scripts/docker-prune-policy.sh). It only writes units and enables the
+# timer; it never prunes at bootstrap and never touches dockerd. deploy.sh runs
+# the same script with --check and only reports whether the box has converged.
+
+say "Configuring Docker image + build-cache prune timer"
+bash "$REPO_DIR/scripts/docker-prune-policy.sh"
+
 # ─── openclaw-config sync timer ───────────────────────────────────────────────
 
 say "Installing openclaw-config sync script + systemd units"

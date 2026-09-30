@@ -738,6 +738,49 @@ A `defaultKeepStorage`-only setting would have reported `Reserved Space:
 50GiB` next to `Max Used Space: 375.3GiB` - a record that looks applied while
 capping nothing, which is exactly what `--check` compares the ceiling for.
 
+## Scheduled Docker image and build-cache prune
+
+`scripts/docker-prune-policy.sh` installs `lifekit-docker-prune.timer`, which
+runs nightly (03:30 with up to 30 minutes of random delay; `Persistent=true`
+catches up a missed run) as root:
+
+```bash
+docker image prune -af --filter "until=336h"
+docker builder prune -af --filter "until=336h"
+```
+
+Each prune prints its own `Total reclaimed space` line, tagged `[image]` or
+`[builder]`; read them with `journalctl -u lifekit-docker-prune.service`. The
+unit fails if either prune fails, after attempting both.
+
+How it fits with the cache cap above: the cap is a size ceiling, this is an age
+floor. `until=336h` only touches build-cache records idle for two weeks
+(BuildKit refreshes the last-used time on every cache hit), so it cannot evict
+the working set the cap's rationale protects; it reclaims the long tail the cap
+would otherwise hold until the ceiling is reached. Two consequences to expect:
+`until` on images is the image's creation time, so an image older than 14 days
+that no container (running or stopped) references is removed and pulled or
+rebuilt on next use - for instance the image of a profile-gated service
+while its container does not exist; and a build stage nobody has run in two
+weeks re-runs.
+
+`bootstrap-vps.sh` installs it (root): the script writes a root-owned copy to
+`/usr/local/bin/lifekit-docker-prune.sh`, two units, and enables the timer. It
+never prunes while installing and never touches `daemon.json` or dockerd.
+`deploy.sh` runs `--check` after every `up` and prints a red, report-only line
+until the box has converged; the deploy account has no sudo, so a change to the
+script or units reaches the timer only on the next root apply:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/docker-prune-policy.sh           # install/refresh units, enable timer
+bash /srv/lifekit-stack/scripts/docker-prune-policy.sh --check         # read-only; exit 0 once converged
+sudo bash /srv/lifekit-stack/scripts/docker-prune-policy.sh --prune    # run both prunes now
+```
+
+To undo: `sudo systemctl disable --now lifekit-docker-prune.timer`, remove the
+copy and the two unit files (paths printed by `--check`), then `sudo systemctl
+daemon-reload`.
+
 ## Moving /tmp off RAM (agent scratch)
 
 `scripts/tmp-scratch-policy.sh` owns the repository's half of getting
