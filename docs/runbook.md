@@ -870,6 +870,9 @@ not labels. The log line does not carry a name; map id to name with
 `docker ps -a --no-trunc --format '{{.ID}} {{.Names}}'` (live containers) or the
 dockerd journal for containers already gone.
 
+The collector's own Loki export errors are not shipped (they would feed back
+into the pipeline while Loki is down); they stay visible via `docker logs`.
+
 ## Backups
 
 `/srv/memory/` (the memory vault, mounted on your laptop as `~/memory/`) is your

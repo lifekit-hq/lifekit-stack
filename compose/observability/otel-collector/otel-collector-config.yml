@@ -36,6 +36,8 @@ receivers:
       - type: move
         from: attributes.log
         to: body
+      - type: filter  # the collector's own Loki export errors would feed back into this pipeline
+        expr: 'body contains "otlphttp/loki"'
       - type: move
         from: attributes.container_id
         to: resource["container.id"]
@@ -49,6 +51,10 @@ receivers:
         value: docker
 
 processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 192
+    spike_limit_mib: 48
   batch:
 
 exporters:
@@ -71,5 +77,5 @@ service:
       exporters: [otlp]
     logs:
       receivers: [filelog/docker]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [otlphttp/loki]

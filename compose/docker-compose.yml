@@ -201,8 +201,8 @@ services:
       - --config=/etc/otel/otel-collector-config.yml
     # Also tails every container's json-file log into Loki (filelog/docker in
     # the config). Those files are root:root 0640 in 0710 dirs, hence root, but
-    # with every capability dropped except DAC_READ_SEARCH and a read-only
-    # rootfs; the log dir is mounted read-only and offsets live in a named volume.
+    # with every capability dropped and a read-only rootfs; the log dir is
+    # mounted read-only and offsets live in a named volume.
     user: "0:0"
     volumes:
       - ./observability/otel-collector:/etc/otel:ro
@@ -215,8 +215,6 @@ services:
           memory: 256m
     cap_drop:
       - ALL
-    cap_add:
-      - DAC_READ_SEARCH
     security_opt:
       - no-new-privileges:true
     expose:
