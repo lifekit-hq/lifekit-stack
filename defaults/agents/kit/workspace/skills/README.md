@@ -15,7 +15,7 @@ openclaw skills install life-state
 # Restart gateway:
 systemctl --user restart openclaw-gateway.service        # on host
 # OR
-docker compose -f compose/docker-compose.yml --env-file ... \
+docker compose -p openclaw -f compose/openclaw/docker-compose.yml --env-file ... \
   up -d --force-recreate openclaw-gateway                # in compose
 ```
 

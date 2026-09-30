@@ -74,7 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Skill CLIs (nutrition-claw, life-state, workout-claw) stay entrypoint-installed
-# on every container start (compose/docker-compose.yml): they are bind-mounted
+# on every container start (compose/openclaw/docker-compose.yml): they are bind-mounted
 # host checkouts (nutrition-claw/life-state rsync'd under the workspace,
 # workout-claw's source repo is archived read-only upstream so /srv/workout-claw
 # is the only copy), not present in the build context, so there is nothing for

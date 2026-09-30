@@ -36,7 +36,7 @@
 //   4. Merge the bindings / mcp / tools blocks below into the openclaw.json
 //      that `agents add` produced. Preserve gateway / channels / auth / plugins.
 //   5. Restart the gateway:
-//        docker compose -f compose/docker-compose.yml --env-file ... \
+//        docker compose -p openclaw -f compose/openclaw/docker-compose.yml --env-file ... \
 //          up -d --force-recreate openclaw-gateway
 
 {
