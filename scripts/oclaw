@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # oclaw — run an OpenClaw CLI command on the VPS as if it were local.
 #
-# Wraps `ssh <vps> docker compose --profile cli run --rm openclaw-cli <args>`.
+# Wraps `ssh <vps> docker compose -p openclaw --profile cli run --rm openclaw-cli <args>`.
 # Lets you run `oclaw status`, `oclaw channels list`, etc. from your dev machine
 # without memorizing the docker compose incantation.
 #
@@ -11,13 +11,13 @@
 # Env:
 #   VPS                 SSH target (default: denys@100.87.201.43)
 #   OCLAW_ENV_FILE      Compose env file on VPS (default: /srv/lifekit-secrets/stack.env)
-#   OCLAW_COMPOSE_DIR   Compose dir on VPS (default: /srv/lifekit-stack/compose)
+#   OCLAW_COMPOSE_DIR   OpenClaw compose dir on VPS (default: /srv/lifekit-stack/compose/openclaw)
 
 set -euo pipefail
 
 VPS="${VPS:-denys@100.87.201.43}"
 ENV_FILE="${OCLAW_ENV_FILE:-/srv/lifekit-secrets/stack.env}"
-COMPOSE_DIR="${OCLAW_COMPOSE_DIR:-/srv/lifekit-stack/compose}"
+COMPOSE_DIR="${OCLAW_COMPOSE_DIR:-/srv/lifekit-stack/compose/openclaw}"
 
 # Decide whether to allocate a TTY. Many openclaw subcommands (login, configure)
 # need one; others (status, channels list) don't. Default to -t when stdin is
@@ -34,4 +34,4 @@ fi
 # don't need to relax permissions on those for the admin user.
 # The openclaw-cli service's entrypoint is `node dist/index.js`, so we pass
 # subcommand args directly (no leading `openclaw`).
-exec ssh $TTY_FLAG "$VPS" "sudo -u lifekit bash -c 'cd $COMPOSE_DIR && docker compose --env-file $ENV_FILE --profile cli run --rm --no-deps openclaw-cli $(printf '%q ' "$@")'"
+exec ssh $TTY_FLAG "$VPS" "sudo -u lifekit bash -c 'cd $COMPOSE_DIR && docker compose -p openclaw --env-file $ENV_FILE --profile cli run --rm --no-deps openclaw-cli $(printf '%q ' "$@")'"

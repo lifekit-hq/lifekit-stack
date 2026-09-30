@@ -15,22 +15,14 @@
 # Refs under refs/lifekit/ live in the VPS clone's .git: no new host path.
 OPENCLAW_LAST_DEPLOYED_REF="refs/lifekit/last-deployed"
 
-# Compose services that are OpenClaw's: on a platform-only deploy `compose up`
-# leaves them out, so the gateway image is neither built nor recreated.
-# shellcheck disable=SC2034  # used by deploy.sh
-OPENCLAW_SERVICES=(openclaw-gateway openclaw-cli lifekit-orchestrator)
-
-# Exit 0 when the repo-relative path is OpenClaw's (or, for compose/
-# docker-compose.yml, might be: the gateway's service definition lives in it
-# and a change cannot be attributed to one service precisely, so any change to
-# the file counts).
+# Exit 0 when the repo-relative path is OpenClaw's. OpenClaw's services live in
+# compose/openclaw/docker-compose.yml (compose project `openclaw`), so the
+# platform's compose/docker-compose.yml is not an OpenClaw path.
 openclaw_path_matches() {
   case "$1" in
     compose/openclaw-gateway/* | compose/openclaw/* | defaults/* | skills/*) return 0 ;;
     platform.patch.json | */platform.patch.json) return 0 ;;
     scripts/deploy-openclaw.sh | scripts/deploy-trusted-proxies.sh | scripts/memory-audit/*) return 0 ;;
-    # Temporary: over-triggers while this file still defines the OpenClaw services; the compose-project split drops it.
-    compose/docker-compose.yml) return 0 ;;
   esac
   return 1
 }

@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 PATCH = json.loads((REPO / "compose/openclaw-gateway/platform.patch.json").read_text())
-COMPOSE = (REPO / "compose/docker-compose.yml").read_text()
+COMPOSE = (REPO / "compose/openclaw/docker-compose.yml").read_text()
 HOOKS = PATCH["hooks"]
 ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 

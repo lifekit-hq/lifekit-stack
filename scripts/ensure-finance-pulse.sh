@@ -29,7 +29,11 @@
 #                                FINANCE_PULSE_REPLACE=1 to overwrite it
 set -euo pipefail
 
-GATEWAY=compose-openclaw-gateway-1
+# The gateway container of the `openclaw` compose project, found by its
+# compose labels rather than a fixed container name.
+GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 JOB_NAME="ledger-pulse"
 REPLACE="${FINANCE_PULSE_REPLACE:-0}"
 

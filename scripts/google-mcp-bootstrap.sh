@@ -11,7 +11,7 @@
 # Idempotent: re-running it is safe; each step is a no-op when state is already
 # correct.
 #
-# Run as root on the VPS, before `docker compose up -d google-workspace-mcp`:
+# Run as root on the VPS, before `docker compose -p openclaw up -d google-workspace-mcp`:
 #
 #     sudo ./scripts/google-mcp-bootstrap.sh
 #
@@ -43,5 +43,5 @@ echo "Next steps:"
 echo "  1. On your PC, generate the refresh token (see docs/google-mcp-setup.md)."
 echo "  2. scp ~/.google_workspace_mcp/credentials/* \\"
 echo "         ${LIFEKIT_USER}@<vps>:${CREDS_DIR}/"
-echo "  3. docker compose -f /srv/lifekit-stack/compose/docker-compose.yml \\"
+echo "  3. docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \\"
 echo "         --env-file /srv/lifekit-secrets/stack.env up -d google-workspace-mcp"

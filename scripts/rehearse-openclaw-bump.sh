@@ -171,7 +171,7 @@ copy_state() {
 # placeholder would be a valid zone for, are left to the image defaults.
 compose_env_keys() {
   # shellcheck disable=SC2016 # "${" is Python source, not a shell expansion
-  docker compose -f "${REPO}/compose/docker-compose.yml" config --no-interpolate --format json 2>/dev/null |
+  docker compose -f "${REPO}/compose/openclaw/docker-compose.yml" config --no-interpolate --format json 2>/dev/null |
     python3 -c '
 import json, sys
 try:

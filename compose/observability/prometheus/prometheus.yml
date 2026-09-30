@@ -81,6 +81,8 @@ scrape_configs:
   # secret (docker-compose.yml `secrets:`), never as a value in this file.
   # The `openclaw` rule group alerts on the openclaw_run_completed_total
   # series from here; `up{job="openclaw"}` rides the generic target-down rule.
+  # The gateway runs in compose project `openclaw` and is reached by its
+  # service alias over the external `lifekit-shared` network.
   - job_name: openclaw
     scrape_interval: 30s
     metrics_path: /api/diagnostics/prometheus

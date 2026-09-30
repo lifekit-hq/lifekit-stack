@@ -137,7 +137,7 @@ This template's parameterization layer sits on top of OpenClaw's own skill model
 Important from OpenClaw: **workspace skills are cached at gateway startup**. After installing or editing a skill, restart the gateway:
 
 ```bash
-docker compose restart openclaw-gateway
+docker compose -p openclaw restart openclaw-gateway
 ```
 
 The `lifekit init-stack` wizard handles this automatically.

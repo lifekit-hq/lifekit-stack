@@ -6,7 +6,10 @@ scratch copy of the repo (phase bodies and platform helper scripts replaced by
 trace-logging stubs) to pin the call order, and source deploy-openclaw.sh
 under `set -euo pipefail` to pin the build phase's return status (a phase
 whose last command is a false `[[ ]] && ...` would return 1 and trip
-deploy.sh's set -e). `docker` is a stub on PATH throughout.
+deploy.sh's set -e), which compose project and file each phase drives, and
+the one-time cutover of the OpenClaw services out of the platform project.
+`docker` is a stub on PATH throughout; no test runs a real docker command,
+and every host path the phases touch points into the test's tmp dir.
 """
 
 from __future__ import annotations
@@ -21,11 +24,20 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 OPENCLAW = REPO / "scripts/deploy-openclaw.sh"
 LIB = REPO / "scripts/lib/deploy-common.sh"
+OPENCLAW_SERVICES = ("openclaw-cli", "openclaw-gateway", "google-workspace-mcp")
 
+# LEGACY_CONTAINERS: "<service>=<id> ..." - the containers `docker ps` finds
+# for that service in the platform project ("proj", the name `config` gives),
+# and only there.
 DOCKER_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_CALL_LOG"
 case " $* " in
   *" config --format json "*) echo '{"name":"proj"}' ;;
+  " ps -a -q "*"label=com.docker.compose.project=proj "*)
+    for pair in $LEGACY_CONTAINERS; do
+      case " $* " in *" label=com.docker.compose.service=${pair%%=*} "*) echo "${pair#*=}" ;; esac
+    done ;;
+  *" network inspect "*) echo 172.30.0.1 ;;
   *" exec -T openclaw-gateway openclaw --version "*) echo "OpenClaw $RUNNING_VER (abc)" ;;
   *" lifekit-openclaw:local --version "*) echo "OpenClaw $BUILT_VER (def)" ;;
   *" plugins list --json "*)
@@ -40,7 +52,7 @@ LOGGING_SH = """#!/bin/sh
 echo "%s" >> "$DOCKER_CALL_LOG"
 """
 
-PHASES = ["prepare", "modules", "build", "configure", "post_up", "smoke"]
+PHASES = ["prepare", "modules", "build", "up", "configure", "post_up", "smoke"]
 
 # Platform steps and OpenClaw phases in the order deploy.sh ran them before the
 # split; `openclaw:<phase>` marks a phase call, the rest are platform steps.
@@ -50,13 +62,16 @@ DEPLOY_ORDER = [
     "openclaw:modules",
     "render-heartbeat",
     "contract-static",
+    "contract-static",
     "openclaw:build",
     "compose-up",
+    "openclaw:up",
     "openclaw:configure",
     "prometheus-reload",
     "grafana-alerting-reload",
     "grafana-datasources-reload",
     "openclaw:post_up",
+    "compose-ps",
     "compose-ps",
     "openclaw:smoke",
     "contract-enforce",
@@ -87,7 +102,10 @@ def env(tmp_path):
         "ENV_FILE": str(env_file),
         # Absent: the uid-1000 ownership check then finds nothing to refuse.
         "OPENCLAW_CONFIG_DIR": str(tmp_path / "no-config"),
+        "OPENCLAW_WORKSPACE_DIR": str(tmp_path / "workspace"),
         "LIFEKIT_LIFE_DIR": str(tmp_path / "memory"),
+        "LIFEKIT_STATE_DIR_HOST": str(tmp_path / "state"),
+        "LEGACY_CONTAINERS": "",
         "RUNNING_VER": "2026.9.4",
         "BUILT_VER": "2026.9.5",
         "PLUGINS_FIXED": str(tmp_path / "plugins-fixed"),
@@ -175,6 +193,24 @@ def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
     assert "✓ deploy complete." in r.stdout
     trace = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
     assert [m for m in map(marker, trace) if m] == DEPLOY_ORDER
+    # The platform project no longer names, starts or manages OpenClaw's
+    # services, and is never told to remove orphans.
+    platform = [
+        line for line in trace if f"-f {fake}/compose/docker-compose.yml" in line
+    ]
+    assert platform
+    assert not [
+        line
+        for line in platform
+        if any(svc in line.split() for svc in OPENCLAW_SERVICES)
+        or "--remove-orphans" in line
+    ]
+    openclaw = [line for line in trace if " -p openclaw " in f" {line} "]
+    assert openclaw == [
+        f"compose -p openclaw --env-file {env['ENV_FILE']} "
+        f"-f {fake}/compose/openclaw/docker-compose.yml {args}"
+        for args in ("--profile * config --format json", "ps")
+    ]
 
 
 def build_phase(env, extra_env=None):
@@ -251,6 +287,146 @@ echo "failures=${{#DEPLOY_FAILURES[@]}}"
     assert Path(env["DOCKER_CALL_LOG"]).read_text() == ""
 
 
+def run_phases(env, phases, extra_env=None, tmp_path=None):
+    script = f"""
+set -euo pipefail
+source {LIB}
+source {OPENCLAW}
+""" + "".join(f"openclaw_phase_{p}\n" for p in phases)
+    return subprocess.run(
+        ["bash", "-c", script],
+        env={**env, **(extra_env or {})},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_every_openclaw_phase_drives_the_openclaw_project_and_file(env, tmp_path):
+    # post_up waits 30s for Telegram; the stub makes it instant.
+    stub(Path(env["PATH"].split(":")[0]) / "sleep", "#!/bin/sh\nexit 0\n")
+    r = run_phases(env, [p for p in PHASES if p != "modules"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    compose = [
+        line
+        for line in Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+        if line.startswith("compose ")
+    ]
+    prefix = (
+        f"compose -p openclaw --env-file {env['ENV_FILE']} "
+        f"-f {REPO}/compose/openclaw/docker-compose.yml "
+    )
+    # The one platform call reads the platform project's name for the cutover
+    # lookup (the build phase's version bump runs the cutover too).
+    platform_name = (
+        f"compose --env-file {env['ENV_FILE']} "
+        f"-f {REPO}/compose/docker-compose.yml config --format json"
+    )
+    assert [line for line in compose if not line.startswith(prefix)] == [platform_name]
+    ran = {line[len(prefix) :] for line in compose if line.startswith(prefix)}
+    for args in (
+        "build openclaw-gateway",
+        "up -d",
+        "exec -T openclaw-gateway openclaw secrets reload",
+        "--profile cli run --rm -T openclaw-cli channels status",
+        "--profile cli stop openclaw-cli openclaw-gateway",
+    ):
+        assert args in ran, args
+    # onboard + the trustedProxies write go to the openclaw project too.
+    assert any(
+        a.endswith(
+            "onboard --non-interactive --accept-risk --flow quickstart "
+            "--mode local --auth-choice skip --gateway-auth token "
+            "--gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN "
+            "--gateway-bind loopback --gateway-port 18789"
+        )
+        for a in ran
+    )
+    assert any("config set gateway.trustedProxies" in a for a in ran)
+    assert (
+        "network inspect openclaw_default --format {{(index .IPAM.Config 0).Gateway}}"
+        in Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    )
+    # Every path the phases wrote to is inside the test's tmp dir.
+    assert (tmp_path / "workspace/memory-audit").is_dir()
+
+
+def cutover_calls(env):
+    return [
+        line
+        for line in Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+        if line.split()[0] in {"stop", "rm", "ps"}
+        or line.startswith("compose -p openclaw ")
+        and " up " in f" {line} "
+    ]
+
+
+def test_cutover_removes_only_the_old_openclaw_containers_before_the_new_up(env):
+    legacy = (
+        "openclaw-cli=c1 openclaw-cli=c2 openclaw-gateway=g1 google-workspace-mcp=m1"
+    )
+    r = run_phases(env, ["up"], {"LEGACY_CONTAINERS": legacy})
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = cutover_calls(env)
+    lookups = [c for c in calls if c.startswith("ps ")]
+    assert lookups == [
+        "ps -a -q --filter label=com.docker.compose.project=proj "
+        f"--filter label=com.docker.compose.service={svc}"
+        for svc in OPENCLAW_SERVICES
+    ]
+    assert [c for c in calls if not c.startswith("ps ")] == [
+        "stop c1 c2",
+        "rm c1 c2",
+        "stop g1",
+        "rm g1",
+        "stop m1",
+        "rm m1",
+        f"compose -p openclaw --env-file {env['ENV_FILE']} "
+        f"-f {REPO}/compose/openclaw/docker-compose.yml up -d",
+    ]
+
+
+def test_cutover_is_a_no_op_once_the_old_containers_are_gone(env):
+    r = run_phases(env, ["up"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = cutover_calls(env)
+    assert not [c for c in calls if c.split()[0] in {"stop", "rm"}]
+    assert calls[-1].endswith("compose/openclaw/docker-compose.yml up -d")
+    assert "cutover" not in r.stdout
+
+
+def test_cutover_never_touches_the_openclaw_projects_own_containers(env, tmp_path):
+    # A platform project that is itself named `openclaw` has no legacy copies.
+    bin_dir = Path(env["PATH"].split(":")[0])
+    (bin_dir / "docker").write_text(
+        DOCKER_STUB.replace('{"name":"proj"}', '{"name":"openclaw"}')
+    )
+    r = run_phases(env, ["up"], {"LEGACY_CONTAINERS": "openclaw-gateway=g1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = cutover_calls(env)
+    assert not [c for c in calls if c.split()[0] in {"stop", "rm", "ps"}]
+
+
+def test_version_bump_on_the_cutover_deploy_reads_and_stops_the_old_gateway(env):
+    # The deploy that moves OpenClaw also bumps it: the running version comes
+    # from the platform project's gateway, which is stopped before migrating.
+    stub_path = Path(env["PATH"].split(":")[0]) / "docker"
+    stub_path.write_text(
+        DOCKER_STUB.replace(
+            '  *" exec -T openclaw-gateway openclaw --version "*) echo "OpenClaw $RUNNING_VER (abc)" ;;\n',
+            '  " exec g1 openclaw --version ") echo "OpenClaw $RUNNING_VER (abc)" ;;\n'
+            '  *" inspect --format {{.Image}} g1 "*) echo "sha256:0123456789abcdef" ;;\n',
+        )
+    )
+    r = build_phase(env, {"LEGACY_CONTAINERS": "openclaw-gateway=g1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    assert "tag 0123456789ab lifekit-openclaw:prev" in calls
+    assert calls.index("stop g1") < next(
+        i for i, c in enumerate(calls) if "doctor --fix" in c
+    )
+
+
 # ─── the OpenClaw gate: scripts/lib/openclaw-paths.sh ────────────────────────
 
 PATHS_LIB = REPO / "scripts/lib/openclaw-paths.sh"
@@ -270,7 +446,7 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/deploy-openclaw.sh", True),
         ("scripts/deploy-trusted-proxies.sh", True),
         ("scripts/memory-audit/run.sh", True),
-        ("compose/docker-compose.yml", True),
+        ("compose/docker-compose.yml", False),
         ("compose/observability/prometheus/prometheus.yml", False),
         ("compose/notify-relay/server.js", False),
         ("scripts/deploy.sh", False),
@@ -475,14 +651,6 @@ esac
 def test_gate_off_skips_every_openclaw_phase_and_leaves_the_gateway_out_of_up(
     env, tmp_path
 ):
-    # `config --services` is what the platform `up` names its services from.
-    docker = tmp_path / "bin/docker"
-    docker.write_text(
-        docker.read_text().replace(
-            '  *" config --format json "*)',
-            '  *" config --services "*) printf "%s\\n" openclaw-gateway openclaw-cli lifekit-orchestrator prometheus grafana ;;\n  *" config --format json "*)',
-        )
-    )
     r, fake, head = run_gated_deploy(
         env, tmp_path, "auto", "compose/observability/prometheus/prometheus.yml"
     )
@@ -491,8 +659,12 @@ def test_gate_off_skips_every_openclaw_phase_and_leaves_the_gateway_out_of_up(
     trace = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
     assert [m for m in map(marker, trace) if m] == PLATFORM_ORDER
     assert not [line for line in trace if line.startswith("openclaw:")]
-    up = [line for line in trace if "up -d --build" in line]
-    assert len(up) == 1 and up[0].endswith("up -d --build prometheus grafana")
+    # The platform project defines no OpenClaw service, so its plain `up` cannot
+    # touch the gateway, and nothing brings the openclaw project up.
+    up = [line for line in trace if " up " in line]
+    assert len(up) == 1 and up[0].endswith(
+        f"-f {fake}/compose/docker-compose.yml up -d --build"
+    )
     assert git(fake, "rev-parse", GATE_REF) == head
 
 

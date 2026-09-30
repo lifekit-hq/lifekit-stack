@@ -9,7 +9,8 @@ read-only). Its docstring is the label reference.
 
 ## Who runs it
 
-- **This repo's `deploy.sh`** runs it twice on its own compose project:
+- **This repo's `deploy.sh`** runs it twice on each of its own two compose
+  projects, `compose` (the platform) and `openclaw`:
   - Before `up`, `--static` checks the `docker compose config` declaration. A
     service with a missing or inconsistent declaration stops the deploy before
     anything changes.
@@ -130,4 +131,4 @@ that ships that piece. SKIP is never set per product.
        non-JSON lines left are ones OpenClaw writes itself.
 
   3. Before the gate merges, check the result with
-     `python3 scripts/platform-contract.py --project compose`.
+     `python3 scripts/platform-contract.py --project openclaw`.

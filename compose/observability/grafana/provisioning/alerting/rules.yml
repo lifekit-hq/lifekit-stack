@@ -755,12 +755,12 @@ groups:
               # dashboard 0.25, xui 0.25.
               expr: >-
                 label_replace(100 * avg_over_time((sum(
-                  docker_container_memory_usage_bytes{project="compose",
+                  docker_container_memory_usage_bytes{project="openclaw",
                   service=~"openclaw-gateway|google-workspace-mcp"}
                   ) or vector(0))[30m:1m]) / (3.5 * 1073741824), "name", "openclaw", "", "")
                 or label_replace(100 * avg_over_time((sum(
                   docker_container_memory_usage_bytes{project="compose",
-                  service!~"openclaw-gateway|google-workspace-mcp|openclaw-cli|lifekit-orchestrator|lifekit-dashboard"}
+                  service!~"lifekit-orchestrator|lifekit-dashboard"}
                   ) or vector(0))[30m:1m]) / (1.5 * 1073741824), "name", "platform", "", "")
                 or label_replace(100 * avg_over_time((sum(
                   docker_container_memory_usage_bytes{project="docker",
@@ -890,10 +890,10 @@ groups:
               # CI and worker containers, cli runs, rehearsals. Budget 3 GiB.
               expr: >-
                 100 * avg_over_time((sum(docker_container_memory_usage_bytes unless (
-                  docker_container_memory_usage_bytes{project="compose",service=~"openclaw-gateway|google-workspace-mcp"}
+                  docker_container_memory_usage_bytes{project="openclaw",service=~"openclaw-gateway|google-workspace-mcp"}
                   or docker_container_memory_usage_bytes{
                     project="compose",
-                    service!~"openclaw-gateway|google-workspace-mcp|openclaw-cli|lifekit-orchestrator|lifekit-dashboard"
+                    service!~"lifekit-orchestrator|lifekit-dashboard"
                     }
                   or docker_container_memory_usage_bytes{project="docker",name=~"finance-sentry-.*"}
                   or docker_container_memory_usage_bytes{project="devclaw",service="devclaw-mcp"}
@@ -1296,7 +1296,7 @@ groups:
             {{ printf "%.0f" $values.B.Value }} OpenClaw agent run(s) with
             trigger {{ $labels.trigger }} ended {{ $labels.outcome }} in the
             last 15 minutes. On the box: `docker exec
-            compose-openclaw-gateway-1 openclaw cron list --all`, then `openclaw
+            openclaw-openclaw-gateway-1 openclaw cron list --all`, then `openclaw
             cron runs <job-id>` for the error; `openclaw tasks list --status
             failed` (also timed_out, lost) and `openclaw tasks audit` for
             background tasks. An expired Claude or OpenAI login fails every run

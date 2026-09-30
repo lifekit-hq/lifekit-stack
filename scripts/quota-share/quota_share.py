@@ -52,7 +52,12 @@ from pathlib import Path
 DEFAULT_CONFIG = Path(__file__).with_name("quota-shares.json")
 LOCAL_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 GATEWAY_PROJECTS_DIR = Path("/home/lifekit/.claude/projects")
-GATEWAY_CONTAINER = "compose-openclaw-gateway-1"
+# The gateway runs in the `openclaw` compose project; its container is found by
+# compose labels rather than a fixed container name.
+GATEWAY_CONTAINER_FILTERS = (
+    "label=com.docker.compose.project=openclaw",
+    "label=com.docker.compose.service=openclaw-gateway",
+)
 GATEWAY_PROJECTS_IN_CONTAINER = "/home/node/.claude/projects"
 PROMETHEUS_URL = "http://127.0.0.1:9090"
 WINDOW_DAYS = 7
@@ -166,6 +171,21 @@ def gateway_sessions(since: datetime) -> tuple[list[Session], str | None]:
             sessions.extend(parse_sessions(iter_jsonl_lines(jsonl), since, seen))
         return sessions, None
 
+    try:
+        ps = subprocess.run(
+            ["docker", "ps", "-q"]
+            + [arg for f in GATEWAY_CONTAINER_FILTERS for arg in ("--filter", f)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [], f"could not reach the gateway container: {exc}"
+    container = next(iter(ps.stdout.split()), "") if ps.returncode == 0 else ""
+    if not container:
+        return [], "no running openclaw-gateway container in compose project openclaw"
+
     # One docker exec for every file (there can be 1000+) is too slow; batch
     # the reads into a single `find -exec cat +` inside the container. Each
     # JSONL line is self-contained (cwd, message.id, requestId, timestamp),
@@ -175,7 +195,7 @@ def gateway_sessions(since: datetime) -> tuple[list[Session], str | None]:
             [
                 "docker",
                 "exec",
-                GATEWAY_CONTAINER,
+                container,
                 "find",
                 GATEWAY_PROJECTS_IN_CONTAINER,
                 "-name",

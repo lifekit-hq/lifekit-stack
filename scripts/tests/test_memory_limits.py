@@ -15,17 +15,19 @@ from pathlib import Path
 
 import pytest
 
-COMPOSE_DIR = Path(__file__).resolve().parents[2] / "compose"
+COMPOSE = Path(__file__).resolve().parents[2] / "compose"
+# The platform project and the openclaw project, each from its own directory.
+COMPOSE_DIRS = [COMPOSE, COMPOSE / "openclaw"]
 
 pytestmark = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker compose unavailable"
 )
 
 
-def resolved_services() -> dict[str, dict]:
+def resolved_services(compose_dir: Path) -> dict[str, dict]:
     proc = subprocess.run(
         ["docker", "compose", "--profile", "*", "config", "--format", "json"],
-        cwd=COMPOSE_DIR,
+        cwd=compose_dir,
         capture_output=True,
         text=True,
         check=False,
@@ -35,8 +37,9 @@ def resolved_services() -> dict[str, dict]:
     return json.loads(proc.stdout)["services"]
 
 
-def test_every_service_has_a_memory_limit() -> None:
-    services = resolved_services()
+@pytest.mark.parametrize("compose_dir", COMPOSE_DIRS, ids=lambda d: d.name)
+def test_every_service_has_a_memory_limit(compose_dir: Path) -> None:
+    services = resolved_services(compose_dir)
     assert services, "compose rendered no services"
     missing = []
     for name, svc in sorted(services.items()):

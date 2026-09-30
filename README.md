@@ -20,12 +20,10 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ## Services
 
-[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines twelve services — two of which are gated behind compose profiles, so `docker compose up -d` does not start them: `openclaw-cli` (profile `cli`, on-demand) and `lifekit-orchestrator` (profile `orchestrator-v1`, retired). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo (devclaw spec 005), so they no longer appear below; the `ops-agent` watchdog that used to be built here was retired on 2026-09-06 in favour of the observability stack's alert rules. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
+[`compose/docker-compose.yml`](./compose/docker-compose.yml), compose project `compose`, defines nine services — one of which, `lifekit-orchestrator` (profile `orchestrator-v1`, retired), is gated behind a compose profile, so `docker compose up -d` does not start it. OpenClaw's three services run as their own compose project, `openclaw` (see [OpenClaw services](#openclaw-services)). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo (devclaw spec 005), so they no longer appear below; the `ops-agent` watchdog that used to be built here was retired on 2026-09-06 in favour of the observability stack's alert rules. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
 
 | Service | Image | Role |
 | --- | --- | --- |
-| `openclaw-gateway` | `lifekit-openclaw:local` (built from `compose/openclaw-gateway/`) | Runtime gateway — channels, cron, skills, agent. Loopback bind on `127.0.0.1:18789`. |
-| `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. **On-demand only** — gated behind the `cli` compose profile so `docker compose up -d` does not start it. Invoke via `docker compose --profile cli run --rm openclaw-cli <command>` (preferred) or `docker compose --profile cli up -d openclaw-cli` for a persistent session. |
 | `lifekit-orchestrator` | `lifekit-openclaw:local` | **Retired** (2026-05-25) — the v1 LangGraph scheduler, replaced by devclaw-mcp's in-process queue. Gated behind the `orchestrator-v1` compose profile; `docker compose up -d` does not start it. |
 | `notify-relay` | `notify-relay:local` (built from `compose/notify-relay/`) | The one renderer of owner notifications: producers `POST /notify` a JSON envelope ([`docs/message-format.md`](./docs/message-format.md)) and it sends Telegram HTML via direct Bot API call; DevClaw's legacy `notify_url` POSTs (`/devclaw`, `/text`) map onto the same renderer. Internal-only on `:8090`. |
 | `prometheus` | `prom/prometheus:v2.54.1` | Box-level metrics: scrapes finance-sentry's API, devclaw-mcp's `/metrics` (the dead-man signal), the gateway's `/api/diagnostics/prometheus` (bearer token from the `openclaw_gateway_token` compose secret), and the observability stack's own `/metrics` - Grafana, Prometheus itself, Loki, Tempo, otel-collector. 30d / 5GB retention. Loopback `:9090`. |
@@ -35,18 +33,27 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `tempo` | `grafana/tempo:2.6.1` | Trace storage, local backend on a project volume. Retention bounded at `compactor.block_retention: 168h` (7d) — the disk was 83% full at grounding time. Internal-only, no host ports; Grafana reaches it at `tempo:3200`. |
 | `container-exporter` | `container-exporter:local` (built from `compose/container-exporter/`) | The Docker daemon's own facts about **every** container on the box - running, restart count, health, exit code, memory, swap - as Prometheus metrics, each labelled with its image. The one signal the `box` alert rules read, whichever repo owns the container. Read-only socket access as `nobody` + the docker group; internal-only on `:9417`. |
 | `node-exporter` | `prom/node-exporter:v1.8.2` | Host metrics - root filesystem free space, memory and load average (meminfo/loadavg collectors; the rest stay disabled), the signal that was missing when the box hit 85% used unnoticed, plus the textfile collector for host timers (`scripts/quota-gauge/` writes the shared Claude account's remaining quota per window every 5 minutes; `scripts/tmp-gauge/` writes `/tmp` size and available bytes every 5 minutes, since `/tmp` is tmpfs and node-exporter's own filesystem collector excludes tmpfs; `scripts/host-gauge/` writes RAM and swap for the operator sessions, CI runners and OS groups every 5 minutes - all three are systemd timers installed by `bootstrap-vps.sh`). Read-only root mount. Loopback `:9100`. |
-| `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
 
 ### Uniform service policy
 
-Every service merges the `x-policy` anchor at the top of `compose/docker-compose.yml`:
+Every service merges the `x-policy` anchor at the top of `compose/docker-compose.yml` (`compose/openclaw/docker-compose.yml` carries the same anchor):
 
 - `init: true`
 - `restart: on-failure:5` — restart loop circuit-breaker; gives up after 5 consecutive failures instead of pinning a CPU forever.
 - `logging.driver: json-file` with `max-size: 50m` and `max-file: 3` — caps each service's on-disk log footprint at ~150MB.
-- `deploy.resources.limits.memory: 1g` — per-service ceiling. Most services override it with their own limit; `compose/docker-compose.yml` is the source for each value. Every service, profile-gated ones included, must resolve to a limit (a container without one reports the host's total RAM as its limit, which breaks any memory-share signal); `scripts/tests/test_memory_limits.py` fails when one does not.
+- `deploy.resources.limits.memory: 1g` — per-service ceiling. Most services override it with their own limit; the two compose files are the source for each value. Every service, profile-gated ones included, must resolve to a limit (a container without one reports the host's total RAM as its limit, which breaks any memory-share signal); `scripts/tests/test_memory_limits.py` fails when one does not.
 
 Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded log + no memory cap on a runaway agent loop ate the disk and pinned RAM until the host froze. The host also gained a **2 GB `/swapfile`** as a second line of defense; `scripts/bootstrap-vps.sh` provisions it.
+
+## OpenClaw services
+
+[`compose/openclaw/docker-compose.yml`](./compose/openclaw/docker-compose.yml) runs as its own compose project, `openclaw`, so OpenClaw deploys and recreates apart from the platform. The gateway joins the external `lifekit-shared` network next to its project's own `default`, so Prometheus still scrapes it at `openclaw-gateway:18789` and it still reaches notify-relay, otel-collector and the product MCP servers. Scripts find the gateway container (`openclaw-openclaw-gateway-1`) by its compose labels. `docs/runbook.md` "The OpenClaw compose project: cutover and rollback" covers the move.
+
+| Service | Image | Role |
+| --- | --- | --- |
+| `openclaw-gateway` | `lifekit-openclaw:local` (built from `compose/openclaw-gateway/`) | Runtime gateway — channels, cron, skills, agent. Loopback bind on `127.0.0.1:18789`. |
+| `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. **On-demand only** — gated behind the `cli` compose profile so `docker compose up -d` does not start it. Invoke from `compose/openclaw/` via `docker compose --profile cli run --rm openclaw-cli <command>` (preferred) or `docker compose --profile cli up -d openclaw-cli` for a persistent session. |
+| `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
 
 ## Monitoring
 
@@ -134,7 +141,8 @@ Full walkthrough: [`docs/quickstart.md`](./docs/quickstart.md).
 
 ```
 lifekit-stack/
-├── compose/              # docker-compose.yml, Dockerfiles, OpenClaw sources
+├── compose/              # docker-compose.yml (platform project), Dockerfiles, OpenClaw sources
+│   ├── openclaw/         # docker-compose.yml for compose project `openclaw` (gateway, cli, google-workspace-mcp)
 │   └── observability/    # prometheus + loki config, Grafana provisioning (datasources, dashboard providers, ALERT RULES)
 ├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw
 ├── skills/               # parameterized workspace skills (opt-in via wizard)
