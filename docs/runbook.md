@@ -1115,17 +1115,6 @@ docker compose --profile cli run --rm -T openclaw-cli openclaw health
 
 If any of these fail, the wizard surfaces the error and does NOT mark the deploy as green. Manual `git revert` + re-deploy is the v0.x rollback path; auto-revert is on the v1 roadmap.
 
-## Accepted exceptions
-
-Deliberate departures from a hardening benchmark, each with its reason and when to revisit it.
-
-- **Agent automation runs as the operator account, which has Docker access and sudo.**
-  Accepted exception to CIS Debian 5.2 and CIS Docker 1.1.2: the agents manage Docker
-  (builds, compose deploys, container checks), so they need the account that controls the
-  daemon. Revisit when a second person gets a shell on the host, when agent work no longer
-  needs Docker, when a rootless or proxied Docker socket becomes practical, or at the next
-  security baseline check.
-
 ## When to scale up
 
 Symptoms of an undersized VPS:
