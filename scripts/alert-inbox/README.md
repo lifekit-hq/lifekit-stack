@@ -65,21 +65,20 @@ install step below is where an operator supplies both.
 Flags: `--rules-file` (default: this repo's `rules.yml`), `--prometheus-url`
 (default: `http://127.0.0.1:9090`), `--state-file`.
 
-## Install (user crontab, not `/etc`)
+## Install (systemd timer)
 
-Run as whichever account should own the polling (the `lifekit` account, or
-the target agent's own account) — no root, no systemd unit:
+`bootstrap-vps.sh` installs it; on a live box run the installer alone as root:
 
 ```bash
-crontab -e
-# add:
-*/5 * * * * FM_INBOX_BIN=/path/to/fm-inbox.sh FM_INBOX_HOME=/path/to/target/home \
-  python3 /path/to/lifekit-stack/scripts/alert-inbox/poll_alerts.py >> \
-  "$HOME/.local/state/lifekit-alert-inbox/poll.log" 2>&1
+sudo FM_INBOX_BIN=/path/to/fm-inbox.sh FM_INBOX_HOME=/path/to/target/home \
+  bash scripts/alert-inbox/install-alert-inbox.sh
 ```
 
-Substitute the real `fm-inbox.sh` path and target home for the two
-`/path/to/...` placeholders — this file intentionally does not.
+It writes the two variables to `/etc/lifekit/alert-inbox.env`, installs
+`alert-inbox.service` + `alert-inbox.timer` (every 5 minutes) running as
+`ALERT_INBOX_USER` (default `ADMIN_USER`, then `denys`), and skips with a
+message if neither the variables nor an existing env file are present. Logs
+are in the journal (`journalctl -u alert-inbox`).
 
 ## Tests
 

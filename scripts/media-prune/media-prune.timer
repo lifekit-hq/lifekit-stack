@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily inbound-media prune
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target
