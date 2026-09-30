@@ -80,6 +80,7 @@ this inventory sets it.
 | `FINANCE_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `finance`. A copy sits in the admin account's uptime probe env (`~/.fs-uptime/probe.env`, finance-sentry side): give the probe its own bot at the next rotation so the copy goes. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
 | `LEARNING_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `reading` | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
 | `SOCIAL_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `social`. Literal copies in two `openclaw.json` backups from 2026-07 - purged by the runbook. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
+| `CLAUDE_OAUTH_TOKEN` | gateway | api-token | openclaw-gateway, through SecretRef id `claude-oauth-token` (exec/sops `tokenRef` on the `anthropic:setup-token` profile); devclaw reads it too once it resumes. A one-year setup-token from `claude setup-token`. | captain (`claude setup-token`) | yearly, by the captain via `scripts/secrets/edit.sh gateway` | not recorded | `secrets/lifekit-gateway.env.sops` |
 
 ### master - `secrets/lifekit.env.sops`
 
