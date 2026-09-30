@@ -129,6 +129,11 @@ jobs:
           # Deploy the SHA that triggered this run, not "origin/main right
           # now" — see the comment above and DEPLOY_REF in deploy.sh.
           DEPLOY_REF: ${{ github.sha }}
+          # A push deploys the platform always and the OpenClaw phases only when
+          # an OpenClaw path changed since the last successful deploy (the path
+          # list and the gate: scripts/lib/openclaw-paths.sh, decided inside
+          # deploy.sh). workflow_dispatch deploys everything.
+          LIFEKIT_DEPLOY_OPENCLAW: ${{ github.event_name == 'push' && 'auto' || 'always' }}
         run: |
           cd /srv/lifekit-stack
           bash scripts/deploy.sh

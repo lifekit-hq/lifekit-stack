@@ -24,8 +24,10 @@ bash scripts/check-doc-drift.sh            # README <-> compose service-count pa
 
 Deploying is **not** a laptop command: every merge to `main` deploys via the CI `deploy` job on the
 VPS self-hosted runner (`git reset --hard origin/main && bash scripts/deploy.sh` in
-`/srv/lifekit-stack`, as the `lifekit` account). Manual path: `workflow_dispatch` on CI, or run
-`scripts/deploy.sh` on the VPS directly — it is idempotent. Host-level changes use the `denys`
+`/srv/lifekit-stack`, as the `lifekit` account). The platform part always runs; the OpenClaw
+phases run on a push only when an OpenClaw path changed (`scripts/lib/openclaw-paths.sh`, see
+`docs/runbook.md` "Path-gated OpenClaw deploys"). Manual path: `workflow_dispatch` on CI, or run
+`scripts/deploy.sh` on the VPS directly — both run everything; it is idempotent. Host-level changes use the `denys`
 account (sudo); see README "VPS users".
 
 The live OpenClaw config (`/srv/openclaw/config/openclaw.json`) has two halves. Platform keys

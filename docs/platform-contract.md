@@ -13,7 +13,8 @@ read-only). Its docstring is the label reference.
   - Before `up`, `--static` checks the `docker compose config` declaration. A
     service with a missing or inconsistent declaration stops the deploy before
     anything changes.
-  - After the smoke turns, the runtime check probes the running containers. A
+  - After the OpenClaw smoke turns (or where they would be, on a platform-only
+    deploy), the runtime check probes the running containers. A
     failure turns the deploy red; the containers are already up, like every
     other post-deploy assertion. The rest of the box prints as a census that
     never fails this deploy. Undeclared containers of other projects are
