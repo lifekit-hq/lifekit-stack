@@ -61,7 +61,7 @@ ssh <your-vps-tailscale-name>
 sudo docker run -d --name openclaw-backup --entrypoint openclaw \
   -e HOME=/home/node -e OPENCLAW_STATE_DIR=/home/node/.openclaw \
   -e OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json \
-  --env-file /srv/openclaw/config/.env \
+  --env-file /srv/lifekit-secrets/stack.env \
   -v /srv/openclaw/config:/home/node/.openclaw \
   -v /srv/openclaw/workspace:/home/node/.openclaw/workspace \
   -v /srv/openclaw/backups:/backups \
@@ -199,7 +199,7 @@ agent, and gives the finance agent a heartbeat:
 - **No value is in git or in `openclaw.json`.** The file holds the literal
   references `${OPENCLAW_HOOK_TOKEN}`, `${OPENCLAW_HOOK_PATH}` and
   `${OPENCLAW_FINANCE_CHAT}`; OpenClaw resolves them from the container
-  environment, which compose fills from `/srv/openclaw/config/.env` (see
+  environment, which compose fills from `/srv/lifekit-secrets/stack.env` (see
   `.env.example`). `config patch` writes the reference back verbatim, so the
   deploy's compare sees equal strings and stays idempotent. The hook token is
   its own secret, never the gateway token (the gateway warns at startup if
@@ -574,7 +574,7 @@ If the new version misbehaves after the deploy checks passed:
 ssh <your-vps-tailscale-name>
 cd /srv/lifekit-stack/compose/openclaw
 docker tag lifekit-openclaw:prev  lifekit-openclaw:local
-docker compose -p openclaw --env-file /srv/openclaw/config/.env -f docker-compose.yml \
+docker compose -p openclaw --env-file /srv/lifekit-secrets/stack.env -f docker-compose.yml \
   up -d --no-build --force-recreate openclaw-gateway
 ```
 
@@ -950,7 +950,7 @@ docker compose --profile cli run --rm -T openclaw-cli openclaw channels list
 
 Common causes:
 
-1. **Telegram token rotated** — check `/srv/openclaw/config/.env` against your BotFather token. Update + restart.
+1. **Telegram token rotated** — compare the account's bot token (a SOPS secret, see `docs/secrets.md`) against your BotFather token. Rotate it there, then `openclaw secrets reload`.
 2. **Polling stalled** — `docker compose -p openclaw restart openclaw-gateway`.
 3. **OpenClaw OOM** — `dmesg | grep -i oom`. If yes, scale up the VPS.
 4. **Anthropic auth expired** — from `compose/openclaw/`, `docker compose --profile cli run --rm openclaw-cli claude auth status`. Re-login if needed.
@@ -979,7 +979,7 @@ automatically — they have to be installed once on the VPS after the first
 rsync. Inside the gateway container:
 
 ```bash
-docker compose -p openclaw -f compose/openclaw/docker-compose.yml --env-file /srv/openclaw/config/.env \
+docker compose -p openclaw -f compose/openclaw/docker-compose.yml --env-file /srv/lifekit-secrets/stack.env \
   exec openclaw-gateway npm install -g /home/node/.openclaw/workspace/external/life-state
 ```
 
@@ -1011,7 +1011,7 @@ ssh <your-vps-tailscale-name>
 sudo -u lifekit -H bash            # owns /var/lib/lifekit and the docker group
 cd /srv/lifekit-stack
 ls -l /var/lib/lifekit/queue.jsonl                 # is it still growing?
-docker compose -p openclaw -f compose/openclaw/docker-compose.yml --env-file /srv/openclaw/config/.env \
+docker compose -p openclaw -f compose/openclaw/docker-compose.yml --env-file /srv/lifekit-secrets/stack.env \
   exec openclaw-gateway ls -la /home/node/.life-state/queue.jsonl /home/node/memory/domains/
 ```
 
