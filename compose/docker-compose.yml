@@ -199,15 +199,22 @@ services:
       lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
     command:
       - --config=/etc/otel/otel-collector-config.yml
+    # Also tails every container's json-file log into Loki (filelog/docker in
+    # the config). Those files are root:root 0640 in 0710 dirs, hence root, but
+    # with every capability dropped and a read-only rootfs; the log dir is
+    # mounted read-only and offsets live in a named volume.
+    user: "0:0"
     volumes:
       - ./observability/otel-collector:/etc/otel:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - otel_filelog_state:/var/lib/otelcol/file_storage
+    read_only: true
     deploy:
       resources:
         limits:
           memory: 256m
     cap_drop:
-      - NET_RAW
-      - NET_ADMIN
+      - ALL
     security_opt:
       - no-new-privileges:true
     expose:
@@ -216,6 +223,7 @@ services:
       - "8888"
     depends_on:
       - tempo
+      - loki
     networks:
       - default
       - lifekit-shared
@@ -462,3 +470,5 @@ volumes:
     name: ${LIFEKIT_GRAFANA_VOLUME:-docker_grafana_data}
   tempo_data:
     name: ${LIFEKIT_TEMPO_VOLUME:-compose_tempo_data}
+  otel_filelog_state:
+    name: ${LIFEKIT_OTEL_FILELOG_VOLUME:-compose_otel_filelog_state}

@@ -2,6 +2,16 @@
 # instead of each picking its own backend; the collector batches and forwards
 # to Tempo. Mounted as a directory (no hot reload — same reasoning as the
 # prometheus dir mount): a config change means a recreate.
+#
+# Console-log capture: the filelog/docker receiver tails every container's
+# json-file log (mounted read-only) and ships it to Loki's native OTLP endpoint,
+# so a container's last stdout/stderr lines outlive the container (crash
+# forensics, docs/runbook.md "Container console logs in Loki"). start_at: end
+# means no backfill; offsets persist in the file_storage volume.
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+
 receivers:
   otlp:
     protocols:
@@ -9,8 +19,42 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
+  filelog/docker:
+    include: [/var/lib/docker/containers/*/*-json.log]
+    start_at: end
+    include_file_path: true
+    storage: file_storage
+    operators:
+      - type: json_parser  # {"log":..,"stream":..,"time":..}
+        timestamp:
+          parse_from: attributes.time
+          layout_type: gotime
+          layout: '2006-01-02T15:04:05.999999999Z07:00'
+      - type: regex_parser
+        parse_from: attributes["log.file.path"]
+        regex: '^/var/lib/docker/containers/(?P<container_id>[0-9a-f]{64})/'
+      - type: move
+        from: attributes.log
+        to: body
+      - type: filter  # the collector's own Loki export errors would feed back into this pipeline
+        expr: 'body contains "otlphttp/loki"'
+      - type: move
+        from: attributes.container_id
+        to: resource["container.id"]
+      - type: move
+        from: attributes.stream
+        to: attributes["log.iostream"]
+      - type: remove
+        field: attributes.time
+      - type: add
+        field: resource["service.name"]
+        value: docker
 
 processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 192
+    spike_limit_mib: 48
   batch:
 
 exporters:
@@ -18,8 +62,11 @@ exporters:
     endpoint: tempo:4317
     tls:
       insecure: true
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp  # Loki 3.x native OTLP ingest
 
 service:
+  extensions: [file_storage]
   telemetry:
     metrics:
       address: 0.0.0.0:8888
@@ -28,3 +75,7 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlp]
+    logs:
+      receivers: [filelog/docker]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/loki]

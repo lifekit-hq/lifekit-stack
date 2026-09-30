@@ -137,6 +137,7 @@ file appears in one of the two inventory tables.
 | `LIFEKIT_PROMETHEUS_VOLUME` | master | setting | external volume name |
 | `LIFEKIT_LOKI_VOLUME` | master | setting | external volume name |
 | `LIFEKIT_TEMPO_VOLUME` | master | setting | volume name |
+| `LIFEKIT_OTEL_FILELOG_VOLUME` | master | setting | volume name |
 | `LIFEKIT_FINANCE_SENTRY_DASHBOARDS` | master | setting | host path finance-sentry drops dashboards in |
 | `DOCKER_GID` | master | setting | docker socket group id |
 | `LIFEKIT_DASHBOARD_PORT` | master | setting | dashboard loopback port |
