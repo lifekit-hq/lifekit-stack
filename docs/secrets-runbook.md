@@ -38,6 +38,7 @@ sops updatekeys secrets/lifekit-gateway.env.sops   # or lifekit.env.sops
 | **mcp-bearer** | `FINANCE_SENTRY_MCP_TOKEN` | generate, `edit.sh master`, merge, render, redeploy; finance-sentry `secrets-edit.sh` (`MCP_TOKEN`) and its deploy. Verify: a finance-agent turn that calls an MCP tool. |
 | **mcp-bearer** | `DEVCLAW_MCP_TOKEN` | generate, `edit.sh master`, merge, render, redeploy; `/srv/devclaw/.env` (`DEVCLAW_TOKEN`) and recreate devclaw-mcp; the dashboard's devclaw bearer. |
 | **oauth-client** | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | rotate the secret in the Google Cloud console, `edit.sh master`, merge, render, redeploy (recreates google-workspace-mcp). A new client id also needs a new refresh token: `scripts/google-mcp-bootstrap.sh`. |
+| **api-token, gateway file** | `CLAUDE_OAUTH_TOKEN` | yearly, before it expires: "Claude service token" below. |
 | **admin-password** | `GRAFANA_ADMIN_PASSWORD` | `docker exec compose-grafana-1 grafana cli admin reset-admin-password '<new>'` (the env value is read at first boot only), then the same value with `edit.sh master`, merge, render, redeploy. Verify: `deploy.sh`'s provisioning reload succeeds. |
 | **parked** | `PARKED_BINANCE_API_KEY`, `PARKED_BINANCE_API_SECRET` | captain's call: rotate at Binance, `edit.sh master`. When a consumer appears, drop the prefix and move the row; if none by 2026-12-31, delete both. |
 | **gateway age key** | `/srv/lifekit-secrets/gateway/lifekit-gateway.agekey` | `sudo mv` the old key aside, `sudo bash scripts/secrets/init-gateway-key.sh` (prints the new recipient), replace the recipient in `.sops.yaml`, `sops updatekeys secrets/lifekit-gateway.env.sops`, merge (the deploy's dry run proves the new key opens the file), copy the new private key to KeePassXC, delete the old one. Yearly review: first 2027-09-19. |
@@ -105,17 +106,19 @@ gh secret delete TS_AUTHKEY -R lifekit-hq/lifekit-stack
 ```
 
 Then `openclaw secrets audit --allow-exec` again: the `LEGACY_RESIDUE`
-line for archived auth files must be gone. The `PLAINTEXT_FOUND` rows for
-`anthropic:manual` / `anthropic:default` are the firstmate item
-`openclaw-auth-dedupe-retry`, not this runbook.
+line for archived auth files must be gone. The duplicate `anthropic:manual`,
+`anthropic:default` and `anthropic:models-json` profiles were removed on
+2026-09-30 (the firstmate item `openclaw-auth-dedupe-retry`, done).
 
 ## Gate
 
 The `configure` phase of `scripts/deploy-openclaw.sh` (run by
 `scripts/deploy.sh`) runs `openclaw secrets audit --allow-exec` after every
 OpenClaw deploy as a report. It becomes `--check` with `fail_later` (a red deploy on
-any finding) once the audit is clean on the box, which needs the auth-profile
-dedupe above; owner firstmate, review 2026-10-15.
+any finding) once the audit is clean on the box. The auth-profile dedupe is
+done; what remains is the shared-store `anthropic:setup-token` profile (the
+known limitation under "Claude service token") and the Codex OAuth profile's
+legacy row. Owner firstmate, review 2026-10-15.
 
 CI, on every PR (`scripts/tests/test_secrets.py`): both files are SOPS
 dotenv with every value encrypted; their recipients equal `.sops.yaml`;
@@ -126,6 +129,83 @@ decrypts with the gateway key (values checked for presence, never printed).
 The master file is never decrypted in CI, by design: nothing on a service
 account can open it. gitleaks (pre-commit and the full-history job) stays
 the plaintext backstop.
+
+## Claude service token
+
+Every OpenClaw agent authenticates to Anthropic with one credential,
+`CLAUDE_OAUTH_TOKEN` in the gateway file: a one-year token from
+`claude setup-token`. The pieces on the box are host state, not the platform
+patch:
+
+- each agent's own auth store holds an `anthropic:setup-token` profile (type
+  `token`) with `tokenRef {source: exec, provider: sops, id: claude-oauth-token}`;
+- `auth.order.anthropic` is `["anthropic:setup-token"]` in `openclaw.json`.
+
+**Current token:** created 2026-09-30, expires **2027-09-30**. The Grafana
+rule `claude-oauth-token-expiring` fires 30 days before the expiry. That date
+is the rotation date: it is written in two places, the rule's epoch and the
+`CLAUDE_OAUTH_TOKEN` row in `docs/secrets.md`, and
+`scripts/tests/test_alert_rules.py` fails when they differ.
+
+**Yearly rotation (captain):**
+
+1. `claude setup-token` (browser login; prints a one-year token).
+2. `scripts/secrets/edit.sh gateway`: replace the `CLAUDE_OAUTH_TOKEN` value.
+3. On the same branch, move the rotation date to the new expiry (today plus
+   one year): the date and epoch in the `claude-oauth-token-expiring` rule
+   (`compose/observability/grafana/provisioning/alerting/rules.yml`,
+   `date -u -d <YYYY-MM-DD> +%s`), then "Expires" and "Last rotated" in the
+   inventory row.
+4. `pytest scripts/tests/test_secrets.py scripts/tests/test_alert_rules.py`,
+   PR, CI green, merge. The gateway file is an OpenClaw deploy path, so the
+   deploy runs `openclaw secrets reload`; no recreate. The Grafana reload in
+   the same deploy picks up the new date.
+5. Check it as below.
+
+**Check:**
+
+```bash
+docker exec openclaw-openclaw-gateway-1 openclaw models status --agent <id>
+#   anthropic ... effective=profiles:.../agents/<id>/agent/openclaw-agent.sqlite
+#   ... anthropic:setup-token=token:ref(exec:claude-oauth-token)
+docker exec openclaw-openclaw-gateway-1 openclaw secrets audit --allow-exec
+#   no unresolved ref
+# live proof: one minimal turn in a throwaway session, not delivered anywhere
+docker exec openclaw-openclaw-gateway-1 openclaw agent --agent <id> \
+  --session-key agent:<id>:auth-check --message "Reply OK" --thinking off --json
+#   status ok, cliSessionBinding.authProfileId anthropic:setup-token
+```
+
+`models status --probe` refuses to run while the gateway is up.
+
+**A newly added agent must get the ref.** The ref is per agent: a new agent
+has no `anthropic:setup-token` of its own and reads the shared-store profile,
+which does not follow a rotation. Give it the ref before its first turn, with
+one plan target per new agent:
+
+```bash
+cat > plan.json <<'JSON'
+{"version": 1, "protocolVersion": 1,
+ "options": {"scrubEnv": false, "scrubAuthProfilesForProviderTargets": false},
+ "targets": [{"type": "auth-profiles.token.token",
+   "path": "profiles.anthropic:setup-token.token",
+   "pathSegments": ["profiles", "anthropic:setup-token", "token"],
+   "agentId": "<id>", "authProfileProvider": "anthropic",
+   "ref": {"source": "exec", "provider": "sops", "id": "claude-oauth-token"}}]}
+JSON
+docker exec -i openclaw-openclaw-gateway-1 sh -c 'cat > /tmp/plan.json' < plan.json
+docker exec openclaw-openclaw-gateway-1 openclaw secrets apply --from /tmp/plan.json --allow-exec --dry-run
+docker exec openclaw-openclaw-gateway-1 openclaw secrets apply --from /tmp/plan.json --allow-exec
+docker exec openclaw-openclaw-gateway-1 openclaw secrets reload
+docker exec openclaw-openclaw-gateway-1 rm /tmp/plan.json
+```
+
+Then run the check above for that agent.
+
+**Known limitation:** OpenClaw 2026.9.6's `secrets apply` and `secrets configure`
+write agent stores only; it has no SecretRef migration for the shared auth
+store yet. The shared store therefore keeps `anthropic:setup-token` as it
+was before the move, and each agent's own profile takes precedence over it.
 
 ## Rebuild: a fresh box from the repo plus the master key
 
@@ -168,10 +248,6 @@ five ids the platform patch carries with the scratch gateway key.
 
 ## Follow-ups (not in this ship)
 
-- Move the `claude-cli:setup-token` auth profile onto a `tokenRef` in the
-  gateway file: an `openclaw secrets configure --plan-out` plan for
-  `profiles.claude-cli:setup-token.token` (agent `main`), applied on the box.
-  SQLite auth rows cannot ride the platform patch.
 - `secrets.providers.default = {source: env, allowlist: [...]}` so no env
   name outside the three master-file refs can be pulled into a credential
   path. Add it to the platform patch once the env list is final.

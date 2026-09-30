@@ -17,12 +17,15 @@ OPENCLAW_LAST_DEPLOYED_REF="refs/lifekit/last-deployed"
 
 # Exit 0 when the repo-relative path is OpenClaw's. OpenClaw's services live in
 # compose/openclaw/docker-compose.yml (compose project `openclaw`), so the
-# platform's compose/docker-compose.yml is not an OpenClaw path.
+# platform's compose/docker-compose.yml is not an OpenClaw path. The gateway
+# SOPS file is: only an OpenClaw deploy runs `openclaw secrets reload`, so a
+# rotation merged on its own would otherwise leave the old value resolved.
 openclaw_path_matches() {
   case "$1" in
     compose/openclaw-gateway/* | compose/openclaw/* | defaults/* | skills/*) return 0 ;;
     platform.patch.json | */platform.patch.json) return 0 ;;
     scripts/deploy-openclaw.sh | scripts/deploy-trusted-proxies.sh | scripts/memory-audit/*) return 0 ;;
+    secrets/lifekit-gateway.env.sops) return 0 ;;
   esac
   return 1
 }

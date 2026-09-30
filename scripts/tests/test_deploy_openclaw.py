@@ -446,6 +446,8 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/deploy-openclaw.sh", True),
         ("scripts/deploy-trusted-proxies.sh", True),
         ("scripts/memory-audit/run.sh", True),
+        ("secrets/lifekit-gateway.env.sops", True),
+        ("secrets/lifekit.env.sops", False),
         ("compose/docker-compose.yml", False),
         ("compose/observability/prometheus/prometheus.yml", False),
         ("compose/notify-relay/server.js", False),

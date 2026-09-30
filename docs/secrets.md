@@ -47,7 +47,10 @@ git history is the change log (one rotation, one commit). Recipients are in
   protocol (ids in on stdin, JSON values out on stdout), runs the image's
   pinned `sops` once per request against the file mounted read-only from this
   checkout, with the gateway key mounted read-only from
-  `/srv/lifekit-secrets/gateway/`. The deploy's platform-patch dry run
+  `/srv/lifekit-secrets/gateway/`. Every agent's `anthropic:setup-token`
+  auth profile points at it too (`claude-oauth-token`); that ref lives in
+  each agent's auth store on the box, not in the patch (secrets runbook,
+  "Claude service token"). The deploy's platform-patch dry run
   resolves those refs (`--allow-exec`) before writing anything, and
   `openclaw secrets reload` after every deploy picks up rotated values.
 
@@ -80,7 +83,7 @@ this inventory sets it.
 | `FINANCE_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `finance`. A copy sits in the admin account's uptime probe env (`~/.fs-uptime/probe.env`, finance-sentry side): give the probe its own bot at the next rotation so the copy goes. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
 | `LEARNING_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `reading` | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
 | `SOCIAL_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `social`. Literal copies in two `openclaw.json` backups from 2026-07 - purged by the runbook. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
-| `CLAUDE_OAUTH_TOKEN` | gateway | api-token | openclaw-gateway, through SecretRef id `claude-oauth-token` (exec/sops `tokenRef` on the `anthropic:setup-token` profile); devclaw reads it too once it resumes. A one-year setup-token from `claude setup-token`. | captain (`claude setup-token`) | yearly, by the captain via `scripts/secrets/edit.sh gateway` | not recorded | `secrets/lifekit-gateway.env.sops` |
+| `CLAUDE_OAUTH_TOKEN` | gateway | api-token | openclaw-gateway, through SecretRef id `claude-oauth-token`: an exec/sops `tokenRef` on the `anthropic:setup-token` profile in every agent's own auth store (secrets runbook, "Claude service token"); devclaw reads it too once it resumes. A one-year setup-token from `claude setup-token`. | captain (`claude setup-token`) | yearly, before it expires: the `claude-oauth-token-expiring` alert fires 30 days ahead. Expires 2027-09-30. | 2026-09-30 (created) | `secrets/lifekit-gateway.env.sops` |
 
 ### master - `secrets/lifekit.env.sops`
 
@@ -163,7 +166,6 @@ file appears in one of the two inventory tables.
 | --- | --- | --- |
 | The two age private keys | they are the roots; the captain key is on the admin account and in KeePassXC, the gateway key is minted per box (`scripts/secrets/init-gateway-key.sh`) and also copied to KeePassXC | KeePassXC |
 | Claude Code refreshing login (`/home/lifekit/.claude`), the Codex OAuth profile, the Google Workspace MCP refresh token | OAuth refresh material rotates on use; OpenClaw excludes OAuth profiles from SecretRefs | interactive login; `scripts/google-mcp-bootstrap.sh` |
-| The `claude-cli:setup-token` auth profile | lives in OpenClaw's SQLite auth store, which `config patch` cannot carry; moving it to a `tokenRef` is an `openclaw secrets configure` plan applied on the box (runbook, "Follow-ups") | `claude setup-token` |
 | Tailscale node state and auth keys | node identity is per machine; a stored auth key is a standing join credential. Key expiry for `lifekit-vps` is disabled in the admin console instead. | single-use key at rebuild |
 | GitHub Actions runner registrations | re-mintable, per registration | fresh registration token |
 | OpenClaw internal material (`config-journal-fingerprint.key`, device and pairing records, session SQLite) | runtime-minted state | off-box `openclaw backup` |

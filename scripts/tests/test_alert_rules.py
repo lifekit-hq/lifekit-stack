@@ -174,3 +174,23 @@ def test_host_group_rule_is_alert_only_on_the_documented_budgets():
     for group, gib in (("operator", "3.5"), ("runners", "0.75"), ("os", "1")):
         assert f'host_group_memory_bytes{{group="{group}"}}' in expr
         assert f"({gib} * 1073741824)" in expr
+
+
+def test_claude_token_expiry_rule_matches_the_documented_date():
+    # The yearly rotation moves both; a date changed in one place only would
+    # alert a year early or not at all.
+    from datetime import datetime, timezone
+
+    rule = RULES["claude-oauth-token-expiring"]
+    (expr,) = queries(rule)
+    epoch = int(re.fullmatch(r"\(vector\((\d+)\) - time\(\)\) / 86400", expr)[1])
+    (row,) = [
+        line
+        for line in (REPO / "docs/secrets.md").read_text().splitlines()
+        if line.startswith("| `CLAUDE_OAUTH_TOKEN` |")
+    ]
+    (date,) = re.findall(r"Expires (\d{4}-\d{2}-\d{2})", row)
+    documented = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    assert epoch == int(documented.timestamp())
+    assert threshold(rule) == ("lt", 30)
+    assert rule["labels"]["severity"] == "warning"

@@ -1302,6 +1302,60 @@ groups:
             background tasks. An expired Claude or OpenAI login fails every run
             at once.
 
+      - uid: claude-oauth-token-expiring
+        title: Claude service token expires within 30 days
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Days until CLAUDE_OAUTH_TOKEN (the gateway's one-year
+              # `claude setup-token`, SecretRef claude-oauth-token) expires.
+              # Nothing exports the expiry, so the date is written here: the
+              # epoch is the expiry date in the token's docs/secrets.md
+              # inventory row (a test keeps them equal). The yearly rotation
+              # (docs/secrets-runbook.md) updates both.
+              # CLAUDE_OAUTH_TOKEN expires 2027-09-30T00:00:00Z = 1822262400.
+              expr: (vector(1822262400) - time()) / 86400
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [30]}
+        # vector() always returns a sample while Prometheus answers; its
+        # absence is target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: openclaw
+          severity: warning
+        annotations:
+          summary: 'Claude service token expires in {{ printf "%.0f" $values.B.Value }} days'
+          description: >-
+            CLAUDE_OAUTH_TOKEN (every OpenClaw agent's anthropic:setup-token
+            profile) expires in {{ printf "%.0f" $values.B.Value }} days; after
+            that every agent turn fails. Rotate it: `claude setup-token`, then
+            `scripts/secrets/edit.sh gateway CLAUDE_OAUTH_TOKEN`, and move the
+            expiry date in this rule and in docs/secrets.md in the same PR
+            (docs/secrets-runbook.md, "Claude service token").
+
   # ls-177 S1: the alerting system watching itself. Grafana and Prometheus
   # both now feed their own /metrics into Prometheus (prometheus.yml); these
   # rules are the alert path's self-test - without them a broken Telegram

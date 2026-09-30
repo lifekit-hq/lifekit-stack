@@ -602,7 +602,8 @@ always on `workflow_dispatch` or a manual `bash scripts/deploy.sh`
   the phases. Force one by hand: `git update-ref -d refs/lifekit/last-deployed`.
 - `compose/openclaw/docker-compose.yml` counts as OpenClaw-relevant; the
   platform's `compose/docker-compose.yml` does not, since it defines no
-  OpenClaw service.
+  OpenClaw service. `secrets/lifekit-gateway.env.sops` counts too: the
+  `secrets reload` that picks up a rotated gateway value is an OpenClaw phase.
 - On a platform-only deploy the `openclaw` compose project is not brought up:
   the gateway, cli and google-workspace-mcp are not built, not recreated, and
   keep running as they are. A gateway that is down stays down until an OpenClaw
@@ -986,7 +987,7 @@ Common causes:
 1. **Telegram token rotated** — compare the account's bot token (a SOPS secret, see `docs/secrets.md`) against your BotFather token. Rotate it there, then `openclaw secrets reload`.
 2. **Polling stalled** — `docker compose -p openclaw restart openclaw-gateway`.
 3. **OpenClaw OOM** — `dmesg | grep -i oom`. If yes, scale up the VPS.
-4. **Anthropic auth expired** — from `compose/openclaw/`, `docker compose --profile cli run --rm openclaw-cli claude auth status`. Re-login if needed.
+4. **Anthropic auth failing** — every agent authenticates with the `anthropic:setup-token` profile, a `tokenRef` to `CLAUDE_OAUTH_TOKEN`. Run `docker exec openclaw-openclaw-gateway-1 openclaw models status --agent <id>`: the `anthropic` line must read `anthropic:setup-token=token:ref(exec:claude-oauth-token)` with `effective=` the agent's own store. Then run `openclaw secrets audit --allow-exec`, which must show no unresolved ref. The live check, and the yearly rotation if the token has expired, are in `docs/secrets-runbook.md`, "Claude service token".
 
 ## When a skill says "command not found" or "sharp: missing native binary"
 
