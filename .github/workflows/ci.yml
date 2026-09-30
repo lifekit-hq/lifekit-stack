@@ -5,6 +5,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"  # weekly: re-proves the decrypt check even when no PR touches its inputs
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -64,8 +66,39 @@ jobs:
       mode: git
       runner: '"ubuntu-latest"'
 
+  # Decides whether a pull request touches the decrypt check's inputs. Every
+  # other event (push to main, dispatch, weekly schedule) always runs the check.
+  changes:
+    name: Changes (decrypt check inputs)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      decrypt: ${{ steps.filter.outputs.decrypt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # merge-base with the PR base needs history
+
+      - name: Detect decrypt check input changes
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --name-only "${BASE_SHA}...HEAD" | grep -qxE \
+            'secrets/lifekit-gateway\.env\.sops|compose/openclaw-gateway/install-sops\.sh|\.github/workflows/ci\.yml'; then
+            echo "decrypt=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "decrypt=false" >> "$GITHUB_OUTPUT"
+          fi
+
   secrets-gateway-decrypt:
     name: Secrets (gateway file decrypts with the on-box gateway key)
+    needs: [changes]
+    # always() lets push/dispatch/schedule run it although `changes` is skipped
+    # for them; on a pull request it runs only when an input changed.
+    if: ${{ always() && (github.event_name != 'pull_request' || needs.changes.outputs.decrypt == 'true') }}
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
