@@ -102,18 +102,9 @@ See [`docs/runbook.md`](./runbook.md) for common issues — failed mesh-VPN join
 
 The exact provider/tooling combination the maintainer runs and tests against. Each of these is a swap-point via the adapter ports in [`docs/architecture.md`](./architecture.md#2-adapter-pattern-for-every-replaceable-component); the rest of the stack doesn't know or care which provider sits behind the port.
 
-### Host — Hetzner CX22
+### Host — arm64 VPS
 
-[Hetzner](https://www.hetzner.com/cloud) CX22 (2 vCPU / 4GB RAM, ≈€4/mo, EU), Ubuntu 24.04. Provision via the Hetzner Cloud console, or with the `hcloud` CLI:
-
-```bash
-hcloud server create \
-  --type cx22 \
-  --image ubuntu-24.04 \
-  --location nbg1 \
-  --name lifekit-vps \
-  --ssh-key <your-ssh-key>
-```
+An arm64 VPS (10 vCPU / 15.6 GiB RAM), Debian 13. Provision it through your provider's console or CLI, with your SSH key, then run `scripts/bootstrap-vps.sh` on it.
 
 ### Mesh VPN — Tailscale
 

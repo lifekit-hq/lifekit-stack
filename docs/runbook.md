@@ -963,11 +963,11 @@ vault runbook for owner detail.
 **Volumes to back up if you want full disaster recovery:**
 
 - `/srv/memory/` — the vault (most important)
-- `/srv/openclaw/config/` — OpenClaw config + `.env`
+- `/srv/openclaw/config/` — OpenClaw config (the compose env file lives in `/srv/lifekit-secrets/`)
 - `/srv/openclaw/secret-key/` — OpenClaw OAuth encryption key (lose this and you re-pair every channel)
 - `/srv/openclaw/workspace/` — workspace skills (recoverable from this repo, but having a local copy is faster)
 
-Snapshot these via Hetzner Backups (built-in, ~20% extra/mo) or rsync to another box.
+Snapshot these via your provider's backups or rsync to another box.
 
 ## Pull-based alert-to-inbox polling
 
@@ -1115,10 +1115,10 @@ sshfs -o reconnect,ServerAliveInterval=15,ServerAliveCountMax=3 ...
 
 ## Recovering from a complete VPS loss
 
-You provisioned a Hetzner instance, it died, and you want to come back up on a fresh one.
+You provisioned a VPS, it died, and you want to come back up on a fresh one.
 
 ```bash
-# 1. New VPS, fresh Ubuntu 24.04. SSH in (over its temporary public address).
+# 1. New VPS, fresh Debian 13 (Ubuntu 24.04 also works). SSH in (over its temporary public address).
 # 2. From your laptop:
 cd lifekit-stack
 lifekit init-stack --target <new-vps-ip>
@@ -1166,7 +1166,7 @@ Symptoms of an undersized VPS:
 - `docker stats` shows persistent CPU saturation.
 - OpenClaw logs say "polling timeout" frequently.
 
-Hetzner CX22 → CX32 is a live resize (no data loss). For larger jumps, snapshot first.
+Most VPS providers offer a live resize to a larger plan (no data loss). For larger jumps, snapshot first.
 
 ## When to ask for help
 
@@ -1178,4 +1178,4 @@ Open a [GitHub Issue](https://github.com/lifekit-hq/lifekit-stack/issues) with:
 - `docker compose logs --tail 200` (sanitized — never paste tokens)
 - What you tried before opening the issue
 
-Non-Hetzner setups are accepted, but no official SLA in v0.x.
+Other providers are accepted, but no official SLA in v0.x.

@@ -1,6 +1,6 @@
 # Resource budget - memory per project
 
-The box has 15.6 GiB of RAM and 8 GiB of swap. Every project and host group gets a
+The box has 15.6 GiB of RAM and 8 GiB of swap (the live `/swapfile`; `scripts/bootstrap-vps.sh` creates 4 GiB on a fresh host, and the file was grown since). Every project and host group gets a
 memory budget so a breach names an owner instead of "the box is slow". The budgets sum
 to **12.25 GiB**; a **3 GiB burst pool** for short-lived work brings the total to
 **15.25 GiB** of the 15.6 GiB.

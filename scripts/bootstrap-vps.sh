@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bootstrap-vps.sh — one-shot host setup. Run this once on a fresh Hetzner VPS.
+# bootstrap-vps.sh — one-shot host setup. Run this once on a fresh VPS.
 #
 # Idempotent: re-running it is safe. Each step is "install if missing" or
 # "ensure-state" — nothing destructive.

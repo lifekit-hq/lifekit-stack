@@ -6,7 +6,7 @@ A short tour of the design decisions behind `lifekit-stack`. Long-form thinking 
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Your VPS (Hetzner CX22 or equivalent)                          │
+│  Your VPS (Debian-family, arm64 reference)                      │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────┐    │
 │  │  OpenClaw gateway (Docker container)                   │    │
