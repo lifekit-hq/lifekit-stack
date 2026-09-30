@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """ops-report weekly - one short Markdown report on the VPS's last 7 days.
 
-Read-only. Sources: the Prometheus HTTP API (the container-exporter and
-node-exporter series), `docker ps` / `docker inspect` / `docker network
-inspect` / `docker system df`, `df`, `du` and `crontab -l`. It writes nothing,
-restarts nothing, prunes nothing, and never prints an environment variable, a
-token or a cron command's arguments - inspect output is reduced to the few
-fields the report names before anything is rendered.
+Read-only. Sources: the Prometheus HTTP API (the container-exporter,
+node-exporter and host-group gauge series), `docker ps` / `docker inspect` /
+`docker network inspect` / `docker system df`, `df`, `du` and `crontab -l`. It
+writes nothing, restarts nothing, prunes nothing, and never prints an
+environment variable, a token or a cron command's arguments - inspect output is
+reduced to the few fields the report names before anything is rendered.
 
 Usage (on the VPS, any account that can reach docker and 127.0.0.1:9090):
 
@@ -19,7 +19,8 @@ Usage (on the VPS, any account that can reach docker and 127.0.0.1:9090):
     --backup-dir PATH     default /srv/openclaw/backups
 
 A source that cannot be read prints "unavailable (reason)" in its section; the
-report still renders. Fleet (worker) numbers belong to the fleet-ledger weekly
+report still renders. A host group whose gauge has no samples in the window
+prints "no series". Fleet (worker) numbers belong to the fleet-ledger weekly
 metrics and are not repeated here. GitHub deploy verdicts are not queried (the
 script stays off the network beyond Prometheus): "deploys" is container
 recreations seen in Prometheus, and "red" is containers now down or exited
@@ -56,6 +57,11 @@ GROUP_SELECTORS = {
     "dashboard": 'project="dashboard"',
     "xui": 'project="xui"',
 }
+# Host groups: budget-doc name -> `group` label of host_group_memory_bytes
+# (scripts/host-gauge/host-group-gauge.sh), alerted by the
+# `host-group-over-budget` rule.
+HOST_GROUPS = {"operator sessions": "operator", "runners": "runners", "os": "os"}
+HOST_GAUGE = "host_group_memory_bytes"
 BURST_POOL_BUDGET_LABEL = "burst pool"
 USAGE = "docker_container_memory_usage_bytes"
 
@@ -96,6 +102,11 @@ def parse_budgets(text: str) -> dict[str, float]:
 
 def group_sum(selector: str) -> str:
     return f"(sum({USAGE}{{{selector}}}) or vector(0))"
+
+
+def host_group_series(group: str) -> str:
+    """The gauge series as-is: no `or vector(0)`, so a missing series stays missing."""
+    return f'{HOST_GAUGE}{{group="{group}"}}'
 
 
 def burst_sum() -> str:
@@ -209,25 +220,27 @@ def memory_section(base: str, budgets: dict[str, float]) -> tuple[str, list[str]
         "| Group | Budget | Peak | Average | Breached (alert would fire) |",
         "| --- | --- | --- | --- | --- |",
     ]
-    groups: list[tuple[str, str | None, float]] = []
+    groups: list[tuple[str, str, float]] = []
     for name, budget in budgets.items():
         if name == BURST_POOL_BUDGET_LABEL:
             groups.append((name, burst_sum(), budget))
         elif name in GROUP_SELECTORS:
             groups.append((name, group_sum(GROUP_SELECTORS[name]), budget))
-        elif name in ("operator sessions", "runners", "os"):
-            rows.append(
-                f"| {name} | {fmt_gib_budget(budget)} | no metric yet | no metric yet | no rule yet |"
-            )
+        elif name in HOST_GROUPS:
+            groups.append((name, host_group_series(HOST_GROUPS[name]), budget))
         else:
             rows.append(
                 f"| {name} | {fmt_gib_budget(budget)} | no selector | no selector | - |"
             )
     try:
         for name, expr, budget in groups:
-            assert expr is not None
             peak = scalar_of(prom_query(base, peak_query(expr)))
             avg = scalar_of(prom_query(base, avg_query(expr)))
+            if peak is None and avg is None and name in HOST_GROUPS:
+                rows.append(
+                    f"| {name} | {fmt_gib_budget(budget)} | no series | no series | - |"
+                )
+                continue
             breach = scalar_of(prom_query(base, breach_query(expr, budget)))
             fired = breach is not None and breach > 1
             if fired:
