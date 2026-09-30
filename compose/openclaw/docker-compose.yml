@@ -24,7 +24,8 @@
 # name does not re-prefix any data.
 #
 # The x-policy anchor is a copy of the platform file's (YAML anchors do not
-# cross files); keep the two in step.
+# cross files); keep the two in step. It drops every capability and sets
+# no-new-privileges for all three services; none needs a capability back.
 ---
 name: openclaw
 
@@ -41,6 +42,11 @@ x-policy:
       resources:
         limits:
           memory: 1g
+          pids: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 
 services:
@@ -107,6 +113,9 @@ services:
       resources:
         limits:
           memory: 6g
+          # Headroom over ~300 in steady state (agent CLIs, MCP servers,
+          # headless Chromium threads).
+          pids: 2048
     environment:
       HOME: /home/node
       OPENCLAW_HOME: /home/node
@@ -190,11 +199,10 @@ services:
       # the other two claws. Without this mount, daily state written in the
       # container vanished on every recreate (broken since 2026-05-27).
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state/life-state:/home/node/.life/state
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
+    # No read_only: the entrypoint links the skill CLIs into the npm prefix
+    # under /home/node, and agent tools (claude, npm, Playwright) write caches
+    # all over $HOME. Every capability is still dropped (x-policy): the
+    # gateway runs as `node` and needs none.
     # Loopback-only bind, per upstream Hetzner guidance.
     # Admin access goes through Tailscale + SSH tunnel.
     ports:
@@ -283,6 +291,7 @@ services:
           # deploys (dmesg: openclaw-doctor, CONSTRAINT_MEMCG); the post-deploy
           # checks then ran against a dead process.
           memory: 2g
+          pids: 1024
     stdin_open: true
     tty: true
     environment:
@@ -316,11 +325,6 @@ services:
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/.openclaw/wiki/main
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
     entrypoint:
       - node
       - dist/index.js
@@ -338,6 +342,7 @@ services:
       resources:
         limits:
           memory: 512m
+          pids: 256
     environment:
       # OAuth client (Desktop type) from the user's Google Cloud project.
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
@@ -356,14 +361,12 @@ services:
       # NOT /root/... Document the divergence in docs/google-mcp-setup.md.
       # Host dir is created by scripts/google-mcp-bootstrap.sh.
       - /srv/google-workspace-mcp/credentials:/home/app/.google_workspace_mcp/credentials
+    # No read_only: the upstream start command (`uv run`) writes /app/uv.lock
+    # and its cache under /home/app at every start.
     # Internal-only — gateway reaches us via the compose network DNS name.
     # No `ports:` mapping: do not publish to the host.
     expose:
       - "8000"
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
     healthcheck:
       test:
         - CMD

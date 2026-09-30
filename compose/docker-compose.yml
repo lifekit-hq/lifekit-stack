@@ -39,9 +39,15 @@
 # flag.
 #
 # Uniform service policy (log rotation 50MB×3, restart on-failure:5, per-service
-# memory cap) is defined in the x-policy anchor below and merged into every
-# long-lived service via `<<: *policy`. Individual services override the memory
-# cap in their own `deploy.resources.limits.memory` block where needed.
+# memory cap, every capability dropped, no-new-privileges) is defined in the
+# x-policy anchor below and merged into every long-lived service via
+# `<<: *policy`. Individual services override the memory cap in their own
+# `deploy.resources.limits.memory` block where needed. No service here needs a
+# capability back: each runs as its image's non-root user (otel-collector is
+# the one root process, see its block). Each service sets its own process cap
+# (deploy.resources.limits.pids, next to its memory cap) and a read-only root
+# (read_only, plus a /tmp tmpfs as scratch space for loki, tempo and grafana):
+# every service here but prometheus (see its block).
 # Rationale: see ~/memory/incidents/2026-05-20-vps-freeze.md — the full postmortem
 # for the VPS freeze that motivated this hardening pass.
 ---
@@ -58,6 +64,11 @@ x-policy:
       resources:
         limits:
           memory: 1g
+          pids: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 services:
 
@@ -102,10 +113,14 @@ services:
     volumes:
       - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki_data:/loki
+    read_only: true
+    tmpfs:
+      - /tmp
     deploy:
       resources:
         limits:
           memory: 512m
+          pids: 512
     networks:
       - default
       - lifekit-shared
@@ -131,12 +146,15 @@ services:
     # (/api/diagnostics/prometheus needs operator.read). Compose writes it
     # from the env file into /run/secrets at create time: no token file on
     # the host, nothing in git. Rotating the token = recreate prometheus.
+    # No read_only: compose copies this environment-sourced secret into the
+    # container filesystem at create time, which a read-only root refuses.
     secrets:
       - openclaw_gateway_token
     deploy:
       resources:
         limits:
           memory: 512m
+          pids: 512
     networks:
       - default
       - lifekit-shared
@@ -173,15 +191,12 @@ services:
       - /var/lib/node_exporter/textfile:/textfile:ro
     ports:
       - "127.0.0.1:${NODE_EXPORTER_PORT:-9100}:9100"
+    read_only: true
     deploy:
       resources:
         limits:
           memory: 64m
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
+          pids: 128
     networks:
       - default
 
@@ -213,10 +228,7 @@ services:
       resources:
         limits:
           memory: 256m
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+          pids: 256
     expose:
       - "4317"
       - "4318"
@@ -243,15 +255,14 @@ services:
     volumes:
       - ./observability/tempo:/etc/tempo:ro
       - tempo_data:/var/tempo
+    read_only: true
+    tmpfs:
+      - /tmp
     deploy:
       resources:
         limits:
           memory: 1g
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
+          pids: 512
     expose:
       - "3200"
       - "4317"
@@ -307,10 +318,14 @@ services:
       - prometheus
       - loki
       - tempo
+    read_only: true
+    tmpfs:
+      - /tmp
     deploy:
       resources:
         limits:
           memory: 512m
+          pids: 512
     networks:
       - default
 
@@ -342,15 +357,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # Per-container memory.swap.current (the docker API has no swap figure).
       - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    read_only: true
     deploy:
       resources:
         limits:
           memory: 128m
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
+          pids: 128
     expose:
       - "9417"
     healthcheck:
@@ -397,10 +409,12 @@ services:
     networks:
       - default
       - lifekit-shared
+    read_only: true
     deploy:
       resources:
         limits:
           memory: 128m
+          pids: 128
     environment:
       NOTIFY_RELAY_PORT: "8090"
       # notify-relay is devclaw's ONLY outbound voice, so it speaks through the
@@ -411,11 +425,6 @@ services:
       TELEGRAM_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}
       LIFEKIT_TELEGRAM_CHAT: ${DEVCLAW_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
       TZ: ${OPENCLAW_TZ:-UTC}
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
     expose:
       - "8090"
     healthcheck:
