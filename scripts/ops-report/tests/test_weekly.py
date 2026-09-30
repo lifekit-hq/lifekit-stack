@@ -46,7 +46,7 @@ class BudgetDocTests(unittest.TestCase):
         budgets = weekly.parse_budgets(
             (REPO / "docs" / "resource-budget.md").read_text()
         )
-        host = {"operator sessions", "runners", "os", weekly.BURST_POOL_BUDGET_LABEL}
+        host = set(weekly.HOST_GROUPS) | {weekly.BURST_POOL_BUDGET_LABEL}
         self.assertEqual(set(budgets) - host, set(weekly.GROUP_SELECTORS))
 
     def test_only_the_budgets_table_is_read(self):
@@ -154,6 +154,7 @@ class ReportTests(unittest.TestCase):
             repo_root=str(REPO),
         )
         self.prom_down = False
+        self.missing_host_groups = set()
 
     def tearDown(self):
         weekly.prom_query, weekly.run_cmd = self.orig
@@ -161,6 +162,15 @@ class ReportTests(unittest.TestCase):
     def fake_prom(self, base, query, timeout=60.0):
         if self.prom_down:
             raise weekly.Unavailable("prometheus: down")
+        for group in ("operator", "runners", "os"):
+            if f'{weekly.HOST_GAUGE}{{group="{group}"}}' in query:
+                if group in self.missing_host_groups:
+                    return []
+                if query.startswith("max_over_time(min_over_time"):
+                    return vec(({}, 0.4))
+                return vec(
+                    ({}, {"operator": 3 * GIB, "runners": GIB // 2, "os": GIB}[group])
+                )
         if query.startswith("max_over_time(min_over_time"):
             # openclaw is the only group whose 15m-min ratio exceeded 1
             return vec(
@@ -260,6 +270,22 @@ class ReportTests(unittest.TestCase):
         self.assertIn("openclaw breached", decision)
         self.assertIn("OOM kill", decision)
         self.assertIn("root filesystem 90% used", decision)
+
+    def test_host_groups_report_against_their_budgets(self):
+        report = weekly.build_report(self.args)
+        self.assertIn(
+            "| operator sessions | 3.5 GiB | 3.00 GiB | 3.00 GiB | no |", report
+        )
+        self.assertIn("| runners | 0.75 GiB | 512 MiB | 512 MiB | no |", report)
+        self.assertIn("| os | 1 GiB | 1.00 GiB | 1.00 GiB | no |", report)
+        self.assertNotIn("no metric yet", report)
+        self.assertNotIn("no rule yet", report)
+
+    def test_host_group_without_series_says_so(self):
+        self.missing_host_groups = {"runners"}
+        report = weekly.build_report(self.args)
+        self.assertIn("| runners | 0.75 GiB | no series | no series | - |", report)
+        self.assertIn("| os | 1 GiB | 1.00 GiB", report)
 
     def test_no_crontab_is_none_not_unavailable(self):
         orig = weekly.run_cmd
