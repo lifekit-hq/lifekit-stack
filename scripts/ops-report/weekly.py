@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """ops-report weekly - one short Markdown report on the VPS's last 7 days.
 
-Read-only. Sources: the Prometheus HTTP API (the container-exporter and
-node-exporter series), `docker ps` / `docker inspect` / `docker network
-inspect` / `docker system df`, `df`, `du` and `crontab -l`. It writes nothing,
-restarts nothing, prunes nothing, and never prints an environment variable, a
-token or a cron command's arguments - inspect output is reduced to the few
-fields the report names before anything is rendered.
+Read-only. Sources: the Prometheus HTTP API (the container-exporter,
+node-exporter and host-group gauge series), `docker ps` / `docker inspect` /
+`docker network inspect` / `docker system df`, `df`, `du` and `crontab -l`. It
+writes nothing, restarts nothing, prunes nothing, and never prints an
+environment variable, a token or a cron command's arguments - inspect output is
+reduced to the few fields the report names before anything is rendered.
 
 Usage (on the VPS, any account that can reach docker and 127.0.0.1:9090):
 
@@ -19,7 +19,8 @@ Usage (on the VPS, any account that can reach docker and 127.0.0.1:9090):
     --backup-dir PATH     default /srv/openclaw/backups
 
 A source that cannot be read prints "unavailable (reason)" in its section; the
-report still renders. Fleet (worker) numbers belong to the fleet-ledger weekly
+report still renders. A host group whose gauge has no samples in the window
+prints "no series". Fleet (worker) numbers belong to the fleet-ledger weekly
 metrics and are not repeated here. GitHub deploy verdicts are not queried (the
 script stays off the network beyond Prometheus): "deploys" is container
 recreations seen in Prometheus, and "red" is containers now down or exited
