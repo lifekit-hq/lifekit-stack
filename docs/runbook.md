@@ -851,6 +851,25 @@ as above. Groups and their budgets are in `docs/resource-budget.md`; the
 `cat /var/lib/node_exporter/textfile/host_group.prom` shows the current values;
 `systemd-cgtop -m` and `ps --sort=-rss` show who inside a group is growing.
 
+## Container console logs in Loki
+
+The OTel collector tails every container's Docker json-file log (read-only) and
+ships it to Loki's OTLP endpoint, so a container's last stdout/stderr lines
+survive the container being recreated. Retention is Loki's 14 days; only lines
+written after the collector started are captured (`start_at: end`).
+
+Crash forensics: dockerd's exit line (`journalctl -u docker`) gives the container
+id; query it in Grafana Explore (Loki):
+
+```
+{service_name="docker"} | container_id=~"<id prefix>.*"
+```
+
+`container_id` and `log_iostream` (`stdout`/`stderr`) are structured metadata,
+not labels. The log line does not carry a name; map id to name with
+`docker ps -a --no-trunc --format '{{.ID}} {{.Names}}'` (live containers) or the
+dockerd journal for containers already gone.
+
 ## Backups
 
 `/srv/memory/` (the memory vault, mounted on your laptop as `~/memory/`) is your
