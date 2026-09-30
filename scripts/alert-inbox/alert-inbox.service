@@ -1,0 +1,13 @@
+[Unit]
+Description=Pull firing Grafana alert transitions into an agent inbox
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The operator account that owns the target inbox; HOME (and so the state file
+# under ~/.local/state/lifekit-alert-inbox) follows it. install-alert-inbox.sh
+# substitutes both placeholders at install time and writes FM_INBOX_BIN /
+# FM_INBOX_HOME to the environment file below.
+User=__ALERT_INBOX_USER__
+EnvironmentFile=/etc/lifekit/alert-inbox.env
+ExecStart=/usr/bin/python3 __REPO_DIR__/scripts/alert-inbox/poll_alerts.py

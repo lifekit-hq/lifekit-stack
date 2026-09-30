@@ -976,16 +976,19 @@ something pulls. `scripts/alert-inbox/poll_alerts.py` (see
 `scripts/alert-inbox/README.md`) reads the provisioned alert rules' own
 PromQL from `rules.yml` and evaluates them against Prometheus's open,
 loopback-bound query API — no Grafana admin credentials, no new listener.
-Install as a user crontab (every 5 minutes), not a systemd unit or anything
-under `/etc`:
+Installed by `bootstrap-vps.sh` as the `alert-inbox.timer` systemd unit (every
+5 minutes, as the admin account) when `FM_INBOX_BIN` / `FM_INBOX_HOME` are in
+the bootstrap environment; they are kept in `/etc/lifekit/alert-inbox.env`.
+On a live box, adopt or refresh it alone:
 
 ```bash
-crontab -e
-# add:
-*/5 * * * * FM_INBOX_BIN=/path/to/fm-inbox.sh FM_INBOX_HOME=/path/to/target/home \
-  python3 /path/to/lifekit-stack/scripts/alert-inbox/poll_alerts.py >> \
-  "$HOME/.local/state/lifekit-alert-inbox/poll.log" 2>&1
+sudo FM_INBOX_BIN=/path/to/fm-inbox.sh FM_INBOX_HOME=/path/to/target/home \
+  bash /srv/lifekit-stack/scripts/alert-inbox/install-alert-inbox.sh
+# then delete the old crontab line so two pollers do not share the state file:
+crontab -e   # delete: */5 * * * * ... scripts/alert-inbox/poll_alerts.py ...
 ```
+
+Logs go to the journal (`journalctl -u alert-inbox`).
 
 Notifies only on transitions (a rule starting to fire, the same rule
 resolving) via `fm-inbox.sh note`; a Prometheus outage is its own transition

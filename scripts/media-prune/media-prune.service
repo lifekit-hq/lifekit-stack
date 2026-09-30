@@ -1,0 +1,10 @@
+[Unit]
+Description=Prune OpenClaw inbound media older than 7 days (no LLM)
+
+[Service]
+Type=oneshot
+# The account that owns /srv/openclaw/config/media. install-media-prune.sh
+# substitutes the placeholder at install time.
+User=__LIFEKIT_USER__
+Group=__LIFEKIT_USER__
+ExecStart=/usr/local/bin/media-prune.sh

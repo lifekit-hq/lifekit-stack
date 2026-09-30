@@ -202,14 +202,21 @@ bash "$REPO_DIR/scripts/docker-prune-policy.sh"
 # ─── openclaw-config sync timer ───────────────────────────────────────────────
 
 say "Installing openclaw-config sync script + systemd units"
-install -m 755 "$REPO_DIR/scripts/sync/openclaw-config-sync.sh" \
-  /usr/local/bin/openclaw-config-sync.sh
-install -m 644 "$REPO_DIR/scripts/sync/openclaw-config-sync.service" \
-  /etc/systemd/system/openclaw-config-sync.service
-install -m 644 "$REPO_DIR/scripts/sync/openclaw-config-sync.timer" \
-  /etc/systemd/system/openclaw-config-sync.timer
-systemctl daemon-reload
-systemctl enable --now openclaw-config-sync.timer
+bash "$REPO_DIR/scripts/sync/install-config-sync.sh"
+
+# ─── Inbound media prune timer ────────────────────────────────────────────────
+# Daily, deletes OpenClaw inbound media (voice notes, photos) older than 7 days.
+
+say "Installing media-prune script + systemd units"
+LIFEKIT_USER="$LIFEKIT_USER" bash "$REPO_DIR/scripts/media-prune/install-media-prune.sh"
+
+# ─── alert-inbox timer ────────────────────────────────────────────────────────
+# Every 5 minutes, turns firing Grafana rule transitions into agent-inbox notes
+# (scripts/alert-inbox/README.md). Needs FM_INBOX_BIN (and FM_INBOX_HOME) in the
+# bootstrap environment; without them the installer skips and says so.
+
+say "Installing alert-inbox poller + systemd units"
+ADMIN_USER="$ADMIN_USER" bash "$REPO_DIR/scripts/alert-inbox/install-alert-inbox.sh"
 
 # ─── memory-store rotation timer ──────────────────────────────────────────────
 # Monthly rotation of the /srv/memory memory store + OpenClaw agent trajectories
