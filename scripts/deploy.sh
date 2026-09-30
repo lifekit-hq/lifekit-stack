@@ -10,8 +10,9 @@
 #                                          for what belongs in the master boundary)
 #   /srv/openclaw/workspace/skills/      ← rsync'd from your laptop's ~/.openclaw/workspace/skills/
 #   /srv/memory/                           ← rsync'd from your laptop's ~/memory/
-#   /home/lifekit/.claude/               ← either logged in on the VPS via `claude auth login`,
-#                                          or rsync'd from your laptop's ~/.claude/
+#   /home/lifekit/.claude/, .claude.json ← bind-mount sources for the gateway's Claude CLI home
+#                                          (session files only; Anthropic auth is the
+#                                          CLAUDE_OAUTH_TOKEN SecretRef, docs/secrets-runbook.md)
 #
 # Re-runnable. Idempotent. Restarts only the services with changed images/config.
 

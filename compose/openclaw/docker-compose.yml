@@ -159,11 +159,11 @@ services:
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/.openclaw/wiki/main
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
-      # Claude CLI session creds so the agent harness can authenticate to Anthropic.
-      # Both the dir (.claude/) and the sibling .claude.json file are required —
-      # .claude.json holds oauthAccount which tells the SDK this is a Pro
-      # subscription session, not a raw API key. Without it, requests get billed
-      # against API credits.
+      # Claude CLI home for the claude-cli runtime: its session files land in
+      # .claude/projects (scripts/quota-share reads them). Anthropic auth does
+      # not come from a login stored here: every agent's anthropic:setup-token
+      # profile resolves CLAUDE_OAUTH_TOKEN through the sops SecretRef
+      # (docs/secrets-runbook.md, "Claude service token").
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
       # gh CLI auth for the Phase 5.5 code-task skill — set up once on the
