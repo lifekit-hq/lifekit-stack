@@ -44,7 +44,7 @@ Every service merges the `x-policy` anchor at the top of `compose/docker-compose
 - `deploy.resources.limits.pids: 256` — per-service process cap, sized per service in the compose files like the memory limit.
 - `cap_drop: [ALL]` and `security_opt: [no-new-privileges:true]` — no service gets a capability back; each runs as its image's non-root user (otel-collector is the one root process, for the Docker log files it tails). Services also set `read_only: true` where they can; the compose files comment each one that does not.
 
-Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded log + no memory cap on a runaway agent loop ate the disk and pinned RAM until the host froze. The host also gained a **2 GB `/swapfile`** as a second line of defense; `scripts/bootstrap-vps.sh` provisions it.
+Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded log + no memory cap on a runaway agent loop ate the disk and pinned RAM until the host froze. The host also gained a `/swapfile` as a second line of defense: `scripts/bootstrap-vps.sh` creates a 4 GiB one on a fresh host (skipped when `/swapfile` is already active), and the reference host currently runs 8 GiB (see [`docs/resource-budget.md`](docs/resource-budget.md)).
 
 ## OpenClaw services
 
@@ -218,7 +218,7 @@ Setups outside the [Reference deployment](#reference-deployment) are not officia
 
 The exact combination this stack is tested against. Every component below is a swap-point via the adapter ports in [`docs/architecture.md`](./docs/architecture.md#2-adapter-pattern-for-every-replaceable-component), not a hard dependency — these are simply the ones the maintainer runs in production.
 
-- **Host:** [Hetzner](https://www.hetzner.com/cloud) CX22 (2 vCPU / 4GB RAM, ≈€4/mo, EU), Ubuntu 24.04. Any other Debian-family VPS with comparable specs should work; the only setup that gets active issue-tracking is this one.
+- **Host:** an arm64 VPS (10 vCPU / 15.6 GiB RAM), Debian 13. Any other Debian-family VPS with comparable specs should work; the only setup that gets active issue-tracking is this one.
 - **Mesh VPN:** [Tailscale](https://tailscale.com/) with an [unattended-join auth key](https://login.tailscale.com/admin/settings/keys). The host's UFW closes all public ports except ICMP; admin access (SSH, SSHFS) goes through the mesh.
 - **Chat transport:** Telegram long-polling — the gateway dials out to Telegram, no inbound webhook needed. Create a bot via [@BotFather](https://t.me/BotFather) (grab the token), then DM [@userinfobot](https://t.me/userinfobot) to get your own numeric user ID (this becomes the owner allowlist).
 - **Monitoring:** [Netdata](https://www.netdata.cloud/) on the host (not containerized). Tailnet-only dashboard at `http://<tailnet-ip>:19999`; alerts to Telegram chat `123456789`.

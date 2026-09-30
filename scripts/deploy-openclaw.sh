@@ -112,7 +112,7 @@ rsync -a --delete --exclude tests/ "${REPO_DIR}/scripts/memory-audit/" "${AUDIT_
 # ─── OpenClaw onboard (first deploy only) ────────────────────────────────────
 #
 # A fresh host has no /srv/openclaw/config/openclaw.json — without it the
-# gateway can't start. `openclaw onboard` materializes it from the .env using
+# gateway can't start. `openclaw onboard` materializes it from the stack env file using
 # the same non-interactive flags that produced a working config on cax11.
 # Skipped on every subsequent deploy because the file persists in the
 # host-mounted config dir (idempotent).
