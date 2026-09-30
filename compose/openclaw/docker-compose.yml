@@ -97,6 +97,12 @@ services:
       default:
         gw_priority: 1
       lifekit-shared: {}
+    # OpenClaw's stop policy for a non-systemd supervisor
+    # (GATEWAY_SERVICE_STOP_TIMEOUT_MS, 2026.9.6): SIGTERM drains active work,
+    # then releases the gateway owner lease. Docker's 10s default SIGKILLs a
+    # draining gateway and leaves the lease live for 300s, which a new container
+    # (new hostname) cannot reclaim.
+    stop_grace_period: 330s
     deploy:
       resources:
         limits:

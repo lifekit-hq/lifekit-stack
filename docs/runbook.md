@@ -678,6 +678,17 @@ DEPLOY_REF="$(git rev-parse '<merge-commit>^')" bash scripts/deploy.sh
 
 That brings the three services back in project `compose`.
 
+**Gateway stop time.** `openclaw-gateway` has `stop_grace_period: 330s`, OpenClaw's
+own stop policy for a non-systemd supervisor. A recreate, `compose stop` or
+`docker stop` of the gateway can therefore take up to about 5.5 minutes when work
+is in flight: it drains active sessions, then releases its owner lease. With
+Docker's 10s default a draining gateway was killed with the lease still live, and
+the next container (new hostname) could not start for 300s. Idle, the stop is
+still seconds. Compose applies the grace period stored on the *old* container
+when it recreates, so the deploy that first adds it stops the old gateway with
+10s; merge that one when no session is in `processing` state
+(`openclaw_session_queue_depth{state="processing"}` is 0).
+
 Then revert the move on `main`, or the next CI deploy moves them again. Verify the
 same way, with `GW=compose-openclaw-gateway-1`, and check that
 `docker ps -a -q --filter label=com.docker.compose.project=openclaw` prints nothing.

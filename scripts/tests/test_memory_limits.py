@@ -51,3 +51,14 @@ def test_every_service_has_a_memory_limit(compose_dir: Path) -> None:
         f"services without a memory limit: {missing} - merge `<<: *policy` "
         "or set deploy.resources.limits.memory"
     )
+
+
+def test_gateway_stop_grace_covers_openclaw_drain() -> None:
+    """Docker must give the gateway OpenClaw's own 330s stop time.
+
+    The default 10s SIGKILLs a gateway that is still draining work, before it
+    releases its owner lease; the next container (new hostname) then waits out
+    the 300s lease.
+    """
+    gateway = resolved_services(COMPOSE / "openclaw")["openclaw-gateway"]
+    assert gateway["stop_grace_period"] == "5m30s"
