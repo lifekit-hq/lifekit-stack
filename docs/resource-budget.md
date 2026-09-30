@@ -49,9 +49,8 @@ host groups have no history yet, so their figure is a one-off snapshot.
 
 Membership is by compose project and service label, so a new container is in the burst
 pool until it is added to a group; platform is every service of compose project
-`compose` that is not `lifekit-orchestrator` or the retired `lifekit-dashboard`, so the
-orchestrator counts in the burst pool, as do `openclaw-cli` runs (compose project
-`openclaw`, outside the openclaw group). The one non-label exception is
+`compose` that is not the retired `lifekit-dashboard`; `openclaw-cli` runs (compose project
+`openclaw`, outside the openclaw group) count in the burst pool. The one non-label exception is
 finance-sentry, whose compose project name (`docker`) is too generic to match on.
 
 ## Alerts

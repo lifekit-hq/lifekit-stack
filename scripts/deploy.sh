@@ -37,14 +37,14 @@ source "${SCRIPT_DIR}/lib/openclaw-paths.sh"
 DEPLOY_COMPLETE=0
 
 # A deploy that dies mid-script must announce it — `set -e` otherwise skips
-# the post-up steps (cli reattach, session reset, runner verify) with nothing
-# but a log tail to show for it (2026-07-11: a compose name conflict aborted
-# the up step; the stack LOOKED deployed while three steps never ran). #94
+# every later step with nothing but a log tail to show for it (2026-07-11: a
+# compose name conflict aborted the up step; the stack LOOKED deployed while
+# three steps never ran). #94
 on_exit() {
   local code=$?
   if [[ "${DEPLOY_COMPLETE}" != "1" ]]; then
     printf '\n\033[1;31m✗ DEPLOY FAILED (exit %s) during: %s\033[0m\n' "${code}" "${CURRENT_STEP}" >&2
-    printf '\033[1;31m  Later steps (cli reattach, session reset, runner verify) did NOT run.\033[0m\n' >&2
+    printf '\033[1;31m  Every step after that one did NOT run.\033[0m\n' >&2
     printf '\033[1;31m  Fix the failure and re-run deploy.sh — it is idempotent.\033[0m\n' >&2
   fi
   if [[ -n "${DEPLOY_DOCKER_CONFIG:-}" ]]; then rm -rf "${DEPLOY_DOCKER_CONFIG}"; fi

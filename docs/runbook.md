@@ -995,10 +995,9 @@ under `/srv/memory/domains/` don't update.
 Nothing in this stack drains that queue into the domain files. The component
 that did, `lifekit-curator`, was retired 2026-05-25 and is not a compose
 service at all. `lifekit-orchestrator` took over its two cron jobs
-(`task_dispatch_15m` and `curator_30m`); it is retired too and profile-gated
-behind `orchestrator-v1`, so `docker compose up -d` never starts it, and its
-stated replacement — devclaw-mcp's in-process queue — covers the task-dispatch
-half. Nothing here has taken over the curation half.
+(`task_dispatch_15m` and `curator_30m`); it is retired too and no longer
+defined in this stack, and its stated replacement — devclaw-mcp's in-process
+queue — covers the task-dispatch half. Nothing here has taken over the curation half.
 
 So a growing queue and stale domains are the expected state on this stack
 today, not a fault to restart your way out of: domain curation is unowned here
