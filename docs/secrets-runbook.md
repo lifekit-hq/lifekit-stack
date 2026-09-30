@@ -126,6 +126,9 @@ every name is in the inventory and every inventory row is in its file; the
 gateway file holds exactly the names the platform patch references; the
 resolver's protocol; and, on the box's runner, the gateway file really
 decrypts with the gateway key (values checked for presence, never printed).
+That decrypt check runs on a PR only when it changes the gateway file, the
+sops installer or `ci.yml`; it always runs on push to `main` and on a weekly
+schedule.
 The master file is never decrypted in CI, by design: nothing on a service
 account can open it. gitleaks (pre-commit and the full-history job) stays
 the plaintext backstop.
