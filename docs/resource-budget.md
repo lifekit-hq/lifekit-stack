@@ -78,7 +78,7 @@ then retired - see Alerts):
 
 Membership is by compose project and service label, so a new container is in the burst
 pool until it is added to a group; platform is every service of compose project
-`compose` that is not the retired `lifekit-dashboard`; `openclaw-cli` runs (compose project
+`compose`; `openclaw-cli` runs (compose project
 `openclaw`, outside the openclaw group) count in the burst pool. The one non-label exception is
 finance-sentry, whose compose project name (`docker`) is too generic to match on.
 

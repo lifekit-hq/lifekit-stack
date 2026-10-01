@@ -17,7 +17,7 @@ groups:
             project="openclaw", service=~"openclaw-gateway|google-workspace-mcp"}),
             "name", "openclaw", "", ""))
           or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
-            project="compose", service!~"lifekit-orchestrator|lifekit-dashboard"}),
+            project="compose"}),
             "name", "platform", "", ""))
           or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
             project="docker", name=~"finance-sentry-.*"}),
@@ -31,7 +31,7 @@ groups:
             project="xui"}), "name", "xui", "", ""))
           or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes unless (
               docker_container_memory_usage_bytes{project="openclaw", service=~"openclaw-gateway|google-workspace-mcp"}
-              or docker_container_memory_usage_bytes{project="compose", service!~"lifekit-orchestrator|lifekit-dashboard"}
+              or docker_container_memory_usage_bytes{project="compose"}
               or docker_container_memory_usage_bytes{project="docker", name=~"finance-sentry-.*"}
               or docker_container_memory_usage_bytes{project="devclaw", service="devclaw-mcp"}
               or docker_container_memory_usage_bytes{project="dashboard"}
