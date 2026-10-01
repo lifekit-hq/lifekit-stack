@@ -3,9 +3,10 @@
 The box has 15.6 GiB of RAM and 8 GiB of swap (the live `/swapfile`; `scripts/bootstrap-vps.sh` creates 4 GiB on a fresh host, and the file was grown since). Every project and host group has a
 memory budget: the expected sustained footprint, so "the box is slow" has an owner to
 look at. The budgets are **documentation, not alert thresholds** (see Alerts). They sum
-to **14.25 GiB**; a **1.75 GiB burst pool** for short-lived work brings the total to
-**16.0 GiB** against the 15.6 GiB of RAM. That overcommit is intended: the groups do not
-peak together, and swap is the margin.
+to **16.2 GiB**; a **1.75 GiB burst pool** for short-lived work brings the total to
+**17.95 GiB** against the 15.6 GiB of RAM. That overcommit is intended: no budget sits
+below its measured 7-day maximum 30-minute average, the groups do not peak together, and
+swap is the margin.
 
 ## What a budget is
 
@@ -43,14 +44,14 @@ history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 | devclaw-mcp | 0.25 | `devclaw-mcp` (compose project `devclaw`; its sandboxes count in the burst pool) | 130 MiB |
 | dashboard | 0.25 | the dashboard service (compose project `dashboard`) | 114 MiB |
 | xui | 0.25 | web, db (compose project `xui`) | 188 MiB |
-| operator sessions | 5.0 | the operator's login slice (`user-1001.slice`): agent sessions, their browser helpers, tools | 4.3 GiB resident at the 5-worker cap (2026-10-01); 30-minute average 3.5 p50, 5.1 p95, 6.8 max over 7 days |
-| runners | 1.25 | the CI runner services and their jobs | 0.2-0.45 GiB idle; 1.6 GiB raw and 1.0 GiB 30-minute average during the 2026-10-01 image-rebuild deploy |
+| operator sessions | 6.8 | the operator's login slice (`user-1001.slice`): agent sessions, their browser helpers, tools | 4.3 GiB resident at the 5-worker cap (2026-10-01); 30-minute average 3.5 p50, 5.1 p95, 6.8 max over 7 days |
+| runners | 1.4 | the CI runner services and their jobs | 0.2-0.45 GiB idle; 1.6 GiB raw and 1.0 GiB 30-minute average during the 2026-10-01 image-rebuild deploy; 1.37 GiB 30-minute average max over 7 days |
 | OS | 1.0 | dockerd, containerd, shims, tailscaled, journald | about 0.75 GiB (snapshot) |
-| **Sum** | **14.25** | | |
+| **Sum** | **16.2** | | |
 | burst pool | 1.75 | everything else that runs as a container: devclaw sandboxes, `openclaw-cli` runs, rehearsals, CI and worker validation containers, test compose projects, any orphan | 30-minute average 0.14 GiB p50, 0.78 p95, 1.66 max over 7 days; one worker container reached 3164 MiB (a spike, not sustained) |
-| **Total** | **16.0** | of 15.6 GiB RAM | |
+| **Total** | **17.95** | of 15.6 GiB RAM | |
 
-**Operator sessions and runners, recalibrated 2026-10-01** (was 3.5 and 0.75 GiB; the
+**Operator sessions, runners and burst pool, recalibrated 2026-10-01** (was 3.5, 0.75 and 3.0 GiB; the
 per-group alerts that read them fired at 113-116% on the first day, with 4-5 worker
 sessions and a full OpenClaw image rebuild running, no runaway process found, and were
 then retired - see Alerts):
@@ -59,14 +60,14 @@ then retired - see Alerts):
   `claude -p` helper a no-mistakes run spawns about 0.27 GiB, each `npm exec` MCP helper
   0.10-0.15 GiB. At the standing cap of 5 parallel workers plus the supervising sessions
   that is about 6 x 0.4 + 3 x 0.27 + a handful of MCP helpers = 4.3 GiB measured
-  (`user-1001.slice` minus `inactive_file`, 0.9 GiB more swapped); 5.0 GiB leaves 0.7 GiB
-  for a browser or test helper. The 30-minute average exceeded 5 GiB about 5% of the
-  time over 7 days, so a weekly-report breach still means above-cap use.
+  (`user-1001.slice` minus `inactive_file`, 0.9 GiB more swapped), so the cap alone fits
+  in 5.0 GiB. The budget is 6.8 GiB, the measured 7-day maximum 30-minute average (5.1
+  GiB at p95), so a weekly-report breach means use above anything seen that week.
 - Runners: idle they are 0.2-0.45 GiB; a full image-rebuild deploy took the 30-minute
   average to 1.0 GiB (1.6 GiB raw, 18:19-18:44 UTC on 2026-10-01; the worst 7-day average
-  was 1.37 GiB). 1.25 GiB covers the typical rebuild; the rare worst case shows in the weekly report.
+  was 1.37 GiB). 1.4 GiB covers that worst case.
 - The burst pool shrinks from 3.0 to 1.75 GiB, just above its 7-day 30-minute average
-  maximum of 1.66 GiB (under 0.8 GiB 95% of the time). The budgets now total 16.0 GiB
+  maximum of 1.66 GiB (under 0.8 GiB 95% of the time). The budgets now total 17.95 GiB
   against 15.6 GiB of RAM, on purpose: the groups do not peak together and swap is the
   margin. No other group's budget changed. The platform group's budget (1.5 GiB) is below its
   measured 3 GiB 7-day median, which is outside this recalibration.
@@ -91,7 +92,7 @@ is over a number" rather than "the box is struggling". One host-level rule repla
 
 | Rule | Fires when | Severity |
 | --- | --- | --- |
-| host memory is under pressure | available RAM is under 2 GiB, or swap-in is over 1000 pages/s, for 15 minutes; the message lists the top three groups by resident memory | warning |
+| host memory is under pressure | available RAM is under 2 GiB, or swap-in is over 1000 pages/s (10-minute rate), for 15 minutes; the message lists the top three groups by resident memory | warning |
 | a container is near its memory cap | a container with a real cap uses over 90% of it, for 10 minutes; containers with no cap are skipped (their reported limit is the whole box) | warning |
 | host swap is over 75% used | swap used above 75% of swap total, for 15 minutes, with or without RAM pressure | warning |
 
@@ -102,7 +103,8 @@ already fires under 10% (about 1.56 GiB) after 5 minutes, so a 1.5 GiB threshold
 nothing; 2 GiB is its earlier sibling that leaves time to act. The swap-in half
 catches the slowdown without a RAM shortage showing first (the box swapped in about 68
 pages/s at the time of writing, no history yet; 1000 pages/s is about 4 MiB/s held for
-15 minutes). Tune both after a week of `host_vmstat_pswpin_pages_total`.
+15 minutes). The rate window is 10 minutes because the counter is rewritten only every
+5 minutes, so a shorter window can contain no new value and read as zero. Tune both after a week of `host_vmstat_pswpin_pages_total`.
 
 **The top three in the message.** The Prometheus recording rule
 `lifekit:group_memory_bytes` (`compose/observability/prometheus/rules.yml`) holds one

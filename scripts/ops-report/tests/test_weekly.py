@@ -274,9 +274,9 @@ class ReportTests(unittest.TestCase):
     def test_host_groups_report_against_their_budgets(self):
         report = weekly.build_report(self.args)
         self.assertIn(
-            "| operator sessions | 5 GiB | 3.00 GiB | 3.00 GiB | no |", report
+            "| operator sessions | 6.8 GiB | 3.00 GiB | 3.00 GiB | no |", report
         )
-        self.assertIn("| runners | 1.25 GiB | 512 MiB | 512 MiB | no |", report)
+        self.assertIn("| runners | 1.4 GiB | 512 MiB | 512 MiB | no |", report)
         self.assertIn("| os | 1 GiB | 1.00 GiB | 1.00 GiB | no |", report)
         self.assertNotIn("no metric yet", report)
         self.assertNotIn("no rule yet", report)
@@ -284,7 +284,7 @@ class ReportTests(unittest.TestCase):
     def test_host_group_without_series_says_so(self):
         self.missing_host_groups = {"runners"}
         report = weekly.build_report(self.args)
-        self.assertIn("| runners | 1.25 GiB | no series | no series | - |", report)
+        self.assertIn("| runners | 1.4 GiB | no series | no series | - |", report)
         self.assertIn("| os | 1 GiB | 1.00 GiB", report)
 
     def test_no_crontab_is_none_not_unavailable(self):
