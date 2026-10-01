@@ -175,6 +175,9 @@ groups:
               # A deliberate service retirement fires once, for about 30
               # minutes: the vanished leg ends when the 30m offset window
               # passes the removal. A removal is not worth a second page.
+              # The vanished leg only counts while the container-exporter
+              # scrape is up: an exporter outage makes every series vanish at
+              # once, and that is target-down's alarm, not twenty of these.
               expr: >-
                 ((1 - docker_container_running{project=~"compose|openclaw|docker|devclaw|dashboard|xui", service!="openclaw-cli"})
                   * (1 - docker_container_restarting{project=~"compose|openclaw|docker|devclaw|dashboard|xui", service!="openclaw-cli"}))
@@ -186,6 +189,7 @@ groups:
                   group by (project, service) (
                     docker_container_running{project=~"compose|openclaw|docker|devclaw|dashboard|xui", service!="openclaw-cli"}),
                   "name", "$1", "service", "(.*)")
+                and on() (max(up{job="containers"}) == 1)
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200

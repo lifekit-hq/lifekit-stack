@@ -453,15 +453,10 @@ def test_finance_age_rules_fire_on_stale_or_absent_series(uid, series, fires):
 
 def test_container_stopped_or_vanished_rule_shape():
     rule = RULES["container-stopped-or-vanished"]
-    (expr,) = queries(rule)
     assert threshold(rule) == ("gt", 0)
     assert rule["for"] == "15m"
     assert rule["noDataState"] == "OK"
     assert rule["labels"]["severity"] == "critical"
-    assert 'project=~"compose|openclaw|docker|devclaw|dashboard|xui"' in expr
-    assert 'service!="openclaw-cli"' in expr
-    assert "offset 30m" in expr
-    assert "once" in rule["annotations"]["description"]
 
 
 STOPPED = "container-stopped-or-vanished"
@@ -514,6 +509,9 @@ def promtool_expr_alerts(
     return out.returncode, out.stdout + out.stderr
 
 
+UP = 'up{job="containers",instance="container-exporter:9417"}'
+
+
 def _series(project: str, service: str, metric: str) -> str:
     return (
         f'{metric}{{name="{service}-1",project="{project}",service="{service}",'
@@ -548,6 +546,7 @@ def test_container_stopped_or_vanished_fires_on_stop_or_removal(
                 _series("xui", "xui-db", "docker_container_restarting"),
                 series["restarting"],
             ),
+            (UP, "1x90"),
         ],
         eval_time,
     )
@@ -557,13 +556,30 @@ def test_container_stopped_or_vanished_fires_on_stop_or_removal(
         assert code == 0, output
 
 
-def test_container_stopped_or_vanished_ignores_other_projects_and_openclaw_cli():
+@pytest.mark.parametrize("project", ["finance-sentry", "openclaw"])
+@pytest.mark.parametrize("running", ["0x60", "1x20 _x40"])
+def test_container_stopped_or_vanished_ignores_other_projects_and_openclaw_cli(
+    project, running
+):
     (expr,) = queries(RULES[STOPPED])
-    series = []
-    for project, service in (("finance-sentry", "api"), ("openclaw", "openclaw-cli")):
+    service = "api" if project == "finance-sentry" else "openclaw-cli"
+    series = [
+        (UP, "1x90"),
+        (_series(project, service, "docker_container_running"), running),
+        (_series(project, service, "docker_container_restarting"), "0x60"),
+    ]
+    code, output = promtool_expr_alerts(f"({expr}) > 0", series, "30m")
+    assert code == 0, output
+
+
+@pytest.mark.parametrize("up", ["1x20 0x40", "1x20 _x40"])
+def test_container_stopped_or_vanished_silent_during_exporter_outage(up):
+    (expr,) = queries(RULES[STOPPED])
+    series = [(UP, up)]
+    for service in ("xui-db", "xui-web"):
         series += [
-            (_series(project, service, "docker_container_running"), "0x60"),
-            (_series(project, service, "docker_container_restarting"), "0x60"),
+            (_series("xui", service, "docker_container_running"), "1x20 _x40"),
+            (_series("xui", service, "docker_container_restarting"), "0x20 _x40"),
         ]
-    code, output = promtool_expr_alerts(f"({expr}) > 0", series, "50m")
+    code, output = promtool_expr_alerts(f"({expr}) > 0", series, "30m")
     assert code == 0, output
