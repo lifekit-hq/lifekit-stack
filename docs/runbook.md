@@ -1048,7 +1048,7 @@ VPS.
 
 `scripts/deploy.sh` now reinstalls every skill's `package.json` inside the
 gateway container after rsync, and `compose/openclaw-gateway/Dockerfile`
-bakes in `python3 / make / g++ / libvips-dev` so native modules (sharp,
+bakes in `python3 / make / g++` so native modules (sharp ships a vendored libvips;
 better-sqlite3, etc.) can rebuild on-host. That covers the per-skill
 `node_modules` case automatically — re-run `scripts/deploy.sh` and the
 `sharp` error should clear.
