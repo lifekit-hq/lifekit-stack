@@ -171,6 +171,7 @@ def test_memory_rules_ship_and_the_per_group_budget_rules_are_retired():
 
 GIB = 1073741824
 HOST_GAUGE_INTERVAL_S = 300
+SCRAPE_INTERVAL_S = 15
 
 _COMPARE = r"\(\s*(?:(?P<fn>rate)\((?P<metric>\w+)\[(?P<win>\d+)m\]\)|(?P<bare>\w+))\s*(?P<op>[<>])\s*(?P<rhs>[\d\s*()]+?)\s*\)"
 
@@ -227,8 +228,8 @@ def test_host_memory_pressure_rule_semantics():
     assert not fires(expr, {"node_memory_MemAvailable_bytes": 2.5 * GIB})
     assert fires(expr, healthy | {"host_vmstat_pswpin_pages_total": 1500})
     # The swap-in counter is only rewritten every host-gauge interval; a rate
-    # window shorter than two of them can hold one value and read as zero.
-    assert rate_window_seconds(expr) >= 2 * HOST_GAUGE_INTERVAL_S
+    # window must hold two writes even when one drifts by a scrape.
+    assert rate_window_seconds(expr) >= 2 * (HOST_GAUGE_INTERVAL_S + SCRAPE_INTERVAL_S)
 
 
 def test_host_memory_pressure_message_lists_the_top_three_groups():

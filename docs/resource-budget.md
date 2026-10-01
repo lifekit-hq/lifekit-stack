@@ -4,9 +4,12 @@ The box has 15.6 GiB of RAM and 8 GiB of swap (the live `/swapfile`; `scripts/bo
 memory budget: the expected sustained footprint, so "the box is slow" has an owner to
 look at. The budgets are **documentation, not alert thresholds** (see Alerts). They sum
 to **16.2 GiB**; a **1.75 GiB burst pool** for short-lived work brings the total to
-**17.95 GiB** against the 15.6 GiB of RAM. That overcommit is intended: no budget sits
-below its measured 7-day maximum 30-minute average, the groups do not peak together, and
-swap is the margin.
+**17.95 GiB** against the 15.6 GiB of RAM. That overcommit is intended: the groups do not peak together, and
+swap is the margin. The budgets are set against the measured 7-day maximum 30-minute
+average, are documentation only (no alert keys on them), and shorter bursts can exceed
+them. The weekly ops report on 2026-10-02 shows 15-minute-plus breaches for openclaw
+(124%), platform (244%) and the OS (103%); platform is outside this recalibration, and
+the openclaw and OS budgets are left where they are.
 
 ## What a budget is
 
@@ -92,7 +95,7 @@ is over a number" rather than "the box is struggling". One host-level rule repla
 
 | Rule | Fires when | Severity |
 | --- | --- | --- |
-| host memory is under pressure | available RAM is under 2 GiB, or swap-in is over 1000 pages/s (10-minute rate), for 15 minutes; the message lists the top three groups by resident memory | warning |
+| host memory is under pressure | available RAM is under 2 GiB, or swap-in is over 1000 pages/s (15-minute rate), for 15 minutes; the message lists the top three groups by resident memory | warning |
 | a container is near its memory cap | a container with a real cap uses over 90% of it, for 10 minutes; containers with no cap are skipped (their reported limit is the whole box) | warning |
 | host swap is over 75% used | swap used above 75% of swap total, for 15 minutes, with or without RAM pressure | warning |
 
@@ -103,8 +106,9 @@ already fires under 10% (about 1.56 GiB) after 5 minutes, so a 1.5 GiB threshold
 nothing; 2 GiB is its earlier sibling that leaves time to act. The swap-in half
 catches the slowdown without a RAM shortage showing first (the box swapped in about 68
 pages/s at the time of writing, no history yet; 1000 pages/s is about 4 MiB/s held for
-15 minutes). The rate window is 10 minutes because the counter is rewritten only every
-5 minutes, so a shorter window can contain no new value and read as zero. Tune both after a week of `host_vmstat_pswpin_pages_total`.
+15 minutes). The rate window is 15 minutes because the counter is rewritten only every
+5 minutes, so a shorter window can contain no new value and read as zero, and a
+10-minute window holds only one write if a write drifts by a single scrape. Tune both after a week of `host_vmstat_pswpin_pages_total`.
 
 **The top three in the message.** The Prometheus recording rule
 `lifekit:group_memory_bytes` (`compose/observability/prometheus/rules.yml`) holds one

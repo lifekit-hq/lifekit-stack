@@ -759,11 +759,11 @@ groups:
               # host paging memory back in, which is the slowdown itself.
               # host_vmstat_pswpin_pages_total comes from the host-group
               # gauge, rewritten every 5 minutes, so the rate window spans
-              # at least two writes; until it exists the first side alone decides.
+              # at least two writes even if one write drifts by a scrape; until it exists the first side alone decides.
               expr: >-
                 (node_memory_MemAvailable_bytes < (2 * 1073741824))
                 or on()
-                (rate(host_vmstat_pswpin_pages_total[10m]) > 1000)
+                (rate(host_vmstat_pswpin_pages_total[15m]) > 1000)
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
