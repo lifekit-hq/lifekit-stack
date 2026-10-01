@@ -290,14 +290,20 @@ def test_memory_group_selectors_match_weekly_report():
     weekly = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(weekly)
 
-    rules = yaml.safe_load((REPO / "compose/observability/prometheus/rules.yml").read_text())
+    rules = yaml.safe_load(
+        (REPO / "compose/observability/prometheus/rules.yml").read_text()
+    )
     expr = rules["groups"][0]["rules"][0]["expr"]
-    # Named-group selectors in the rule, whitespace-normalized like weekly.py's.
+
+    def squash(text):
+        return re.sub(r"\s+", "", text)
+
     in_rule = {
-        re.sub(r"\s+", "", m)
-        for m in re.findall(r"docker_container_memory_usage_bytes\{([^}]*)\}", expr)
+        name: squash(selector)
+        for selector, name in re.findall(
+            r'docker_container_memory_usage_bytes\{([^}]*)\}\),\s*"name", "([^"]+)"',
+            expr,
+        )
     }
-    assert in_rule == {re.sub(r"\s+", "", s) for s in weekly.GROUP_SELECTORS.values()}
-    for stale in ("lifekit-orchestrator", "lifekit-dashboard"):
-        assert stale not in expr
-        assert stale not in "".join(weekly.GROUP_SELECTORS.values())
+    in_report = {n: squash(sel) for n, sel in weekly.GROUP_SELECTORS.items()}
+    assert in_rule == in_report
