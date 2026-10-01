@@ -2,8 +2,9 @@
 
 The box has 15.6 GiB of RAM and 8 GiB of swap (the live `/swapfile`; `scripts/bootstrap-vps.sh` creates 4 GiB on a fresh host, and the file was grown since). Every project and host group gets a
 memory budget so a breach names an owner instead of "the box is slow". The budgets sum
-to **14.25 GiB**; a **1.25 GiB burst pool** for short-lived work brings the total to
-**15.5 GiB** of the 15.6 GiB.
+to **14.25 GiB**; a **1.75 GiB burst pool** for short-lived work brings the total to
+**16.0 GiB** against the 15.6 GiB of RAM. That overcommit is intended: the groups do not
+peak together, and swap is the margin.
 
 ## What a budget is
 
@@ -45,8 +46,8 @@ history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 | runners | 1.25 | the CI runner services and their jobs | 0.2-0.45 GiB idle; 1.6 GiB raw and 1.0 GiB 30-minute average during the 2026-10-01 image-rebuild deploy |
 | OS | 1.0 | dockerd, containerd, shims, tailscaled, journald | about 0.75 GiB (snapshot) |
 | **Sum** | **14.25** | | |
-| burst pool | 1.25 | everything else that runs as a container: devclaw sandboxes, `openclaw-cli` runs, rehearsals, CI and worker validation containers, test compose projects, any orphan | 30-minute average 0.14 GiB p50, 0.78 p95, 1.66 max over 7 days; one worker container reached 3164 MiB (a spike, not sustained) |
-| **Total** | **15.5** | of 15.6 GiB RAM | |
+| burst pool | 1.75 | everything else that runs as a container: devclaw sandboxes, `openclaw-cli` runs, rehearsals, CI and worker validation containers, test compose projects, any orphan | 30-minute average 0.14 GiB p50, 0.78 p95, 1.66 max over 7 days; one worker container reached 3164 MiB (a spike, not sustained) |
+| **Total** | **16.0** | of 15.6 GiB RAM | |
 
 **Operator sessions and runners, recalibrated 2026-10-01** (was 3.5 and 0.75 GiB; both
 alerted at 113-116% on the first day, with 4-5 worker sessions and a full OpenClaw image
@@ -62,9 +63,10 @@ rebuild running, no runaway process found):
 - Runners: idle they are 0.2-0.45 GiB; a full image-rebuild deploy took the 30-minute
   average to 1.0 GiB (1.6 GiB raw, 18:19-18:44 UTC on 2026-10-01; the worst 7-day average
   was 1.37 GiB). 1.25 GiB covers the typical rebuild; the rare worst case alerts.
-- The burst pool shrinks from 3.0 to 1.25 GiB to keep the total under the 15.6 GiB: its
-  7-day 30-minute average never passed 1.66 GiB and sat under 0.8 GiB 95% of the time.
-  No other group's budget changed. The platform group's budget (1.5 GiB) is below its
+- The burst pool shrinks from 3.0 to 1.75 GiB, just above its 7-day 30-minute average
+  maximum of 1.66 GiB (under 0.8 GiB 95% of the time). The budgets now total 16.0 GiB
+  against 15.6 GiB of RAM, on purpose: the groups do not peak together and swap is the
+  margin. No other group's budget changed. The platform group's budget (1.5 GiB) is below its
   measured 3 GiB 7-day median, which is outside this recalibration.
 
 Membership is by compose project and service label, so a new container is in the burst
@@ -83,7 +85,7 @@ alert-inbox ([`runbook.md`](./runbook.md) "Pull-based alert-to-inbox polling").
 | Rule | Fires when | Severity |
 | --- | --- | --- |
 | a project is over its memory budget | a container group's 30-minute average is over its budget above, for 15 minutes; one alert per group, named in the subject | warning |
-| the burst pool is over its memory budget | the burst pool's 30-minute average is over 1.25 GiB, for 15 minutes | warning |
+| the burst pool is over its memory budget | the burst pool's 30-minute average is over 1.75 GiB, for 15 minutes | warning |
 | a container is near its memory cap | a container with a real cap uses over 90% of it, for 10 minutes; containers with no cap are skipped (their reported limit is the whole box) | warning |
 | host swap is over 75% used | swap used above 75% of swap total, for 15 minutes, with or without RAM pressure | warning |
 

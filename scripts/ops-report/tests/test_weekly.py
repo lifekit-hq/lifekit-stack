@@ -38,7 +38,7 @@ class BudgetDocTests(unittest.TestCase):
             (REPO / "docs" / "resource-budget.md").read_text()
         )
         self.assertEqual(budgets["openclaw"], 3.5)
-        self.assertEqual(budgets["burst pool"], 1.25)
+        self.assertEqual(budgets["burst pool"], 1.75)
         self.assertNotIn("sum", budgets)
         self.assertNotIn("total", budgets)
 
