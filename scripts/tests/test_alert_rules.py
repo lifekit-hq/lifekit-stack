@@ -280,3 +280,30 @@ def test_claude_token_expiry_rule_matches_the_documented_date():
     assert epoch == int(documented.timestamp())
     assert threshold(rule) == ("lt", 30)
     assert rule["labels"]["severity"] == "warning"
+
+
+def test_memory_group_selectors_match_weekly_report():
+    """The recording rule and the weekly report must name the same members."""
+    spec = importlib.util.spec_from_file_location(
+        "weekly", REPO / "scripts/ops-report/weekly.py"
+    )
+    weekly = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(weekly)
+
+    rules = yaml.safe_load(
+        (REPO / "compose/observability/prometheus/rules.yml").read_text()
+    )
+    expr = rules["groups"][0]["rules"][0]["expr"]
+
+    def squash(text):
+        return re.sub(r"\s+", "", text)
+
+    in_rule = {
+        name: squash(selector)
+        for selector, name in re.findall(
+            r'docker_container_memory_usage_bytes\{([^}]*)\}\),\s*"name", "([^"]+)"',
+            expr,
+        )
+    }
+    in_report = {n: squash(sel) for n, sel in weekly.GROUP_SELECTORS.items()}
+    assert in_rule == in_report
