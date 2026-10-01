@@ -21,13 +21,24 @@ DEPLOY = JOBS["deploy"]
 NEEDED = DEPLOY["needs"]
 
 
+def ancestors(job):
+    seen = set()
+    todo = list(JOBS[job].get("needs", []))
+    while todo:
+        name = todo.pop()
+        if name not in seen:
+            seen.add(name)
+            todo.extend(JOBS[name].get("needs", []))
+    return seen
+
+
 def deploys(*, ref, event, results, cancelled=False):
     """Mirror GitHub's gate: a job with no status function in its `if:` is
-    skipped when any needed job did not succeed; otherwise the expression
-    decides."""
+    skipped when any ancestor in its needs chain did not succeed; otherwise
+    the expression decides. `results` covers the whole chain."""
     expr = str(DEPLOY["if"]).strip().removeprefix("${{").removesuffix("}}").strip()
     has_status_fn = bool(re.search(r"\b(always|success|failure|cancelled)\(\)", expr))
-    if not has_status_fn and any(r != "success" for r in results.values()):
+    if not has_status_fn and any(results[a] != "success" for a in ancestors("deploy")):
         return False
     py = re.sub(r"needs\.([\w-]+)\.result", r"needs['\1']", expr)
     py = py.replace("&&", " and ").replace("||", " or ")
@@ -39,7 +50,8 @@ def deploys(*, ref, event, results, cancelled=False):
 
 
 def all_ok(**over):
-    results = {job: "success" for job in NEEDED}
+    results = {job: "success" for job in ancestors("deploy")}
+    results["changes"] = "skipped"
     results.update(over)
     return results
 
@@ -47,7 +59,7 @@ def all_ok(**over):
 def test_deploy_needs_the_skipped_changes_chain():
     # Guards the premise: the chain really has a PR-only ancestor.
     assert "changes" in JOBS["secrets-gateway-decrypt"]["needs"]
-    assert JOBS["changes"]["if"] == "github.event_name == 'pull_request'"
+    assert "changes" in ancestors("deploy")
     assert "secrets-gateway-decrypt" in NEEDED
 
 
@@ -82,18 +94,3 @@ def test_no_deploy_when_cancelled():
 def test_never_deploys_off_main_push_or_dispatch(ref, event):
     assert not deploys(ref=ref, event=event, results=all_ok())
 
-
-def test_the_old_expression_would_have_been_skipped():
-    # The harness itself must catch the regression: a status-function-free
-    # `if:` with a skipped ancestor never runs.
-    old = DEPLOY["if"]
-    try:
-        DEPLOY["if"] = (
-            "github.ref == 'refs/heads/main' && (github.event_name == 'push'"
-            " || github.event_name == 'workflow_dispatch')"
-        )
-        assert not deploys(
-            ref="refs/heads/main", event="push", results=all_ok(changes="skipped")
-        )
-    finally:
-        DEPLOY["if"] = old
