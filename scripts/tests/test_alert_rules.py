@@ -152,28 +152,44 @@ def test_near_cap_rule_threshold():
     assert threshold(RULES["container-near-memory-cap"]) == ("gt", 90)
 
 
-def test_memory_budget_rules_ship_and_use_percent_of_budget():
+def test_memory_rules_ship_and_the_per_group_budget_rules_are_retired():
     assert set(RULES) >= {
-        "project-memory-over-budget",
-        "burst-pool-over-budget",
+        "host-memory-pressure",
         "container-near-memory-cap",
         "host-swap-high",
     }
-    for uid in ("project-memory-over-budget", "burst-pool-over-budget"):
-        assert threshold(RULES[uid]) == ("gt", 100)
-        assert RULES[uid]["for"] == "15m"
     assert threshold(RULES["host-swap-high"]) == ("gt", 75)
+    retired = {
+        "project-memory-over-budget",
+        "host-group-over-budget",
+        "burst-pool-over-budget",
+    }
+    assert not retired & set(RULES)
+    # Provisioning only adds and updates: a retired uid must be named to be deleted.
+    assert retired <= {d["uid"] for d in DOC["deleteRules"]}
 
 
-def test_host_group_rule_is_alert_only_on_the_documented_budgets():
-    rule = RULES["host-group-over-budget"]
-    assert threshold(rule) == ("gt", 100)
+def test_host_memory_pressure_rule_names_the_top_three_groups():
+    rule = RULES["host-memory-pressure"]
+    assert threshold(rule) == ("gt", 0)
     assert rule["for"] == "15m"
     assert rule["labels"]["severity"] == "warning"
-    (expr,) = queries(rule)
-    for group, gib in (("operator", "5"), ("runners", "1.25"), ("os", "1")):
-        assert f'host_group_memory_bytes{{group="{group}"}}' in expr
-        assert f"({gib} * 1073741824)" in expr
+    expr = queries(rule)[0]
+    # Either signal alone fires: RAM below 2 GiB, or sustained swap-in.
+    assert "node_memory_MemAvailable_bytes < (2 * 1073741824)" in expr
+    assert " or on()" in expr and "host_vmstat_pswpin_pages_total" in expr
+    # The message ranks groups from the recording rule, one query per rank,
+    # and prints every rank it queries.
+    prom = yaml.safe_load(
+        (REPO / "compose/observability/prometheus/rules.yml").read_text()
+    )
+    recorded = {r["record"] for g in prom["groups"] for r in g["rules"]}
+    assert recorded == {"lifekit:group_memory_bytes"}
+    by_ref = {d["refId"]: d["model"] for d in rule["data"]}
+    for rank in ("1", "2", "3"):
+        assert "lifekit:group_memory_bytes" in by_ref[f"G{rank}"]["expr"]
+        assert by_ref[f"R{rank}"]["expression"] == f"G{rank}"
+        assert f"$values.R{rank}.Labels.name" in rule["annotations"]["description"]
 
 
 def test_claude_token_expiry_rule_matches_the_documented_date():

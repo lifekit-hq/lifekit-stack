@@ -15,11 +15,15 @@
 #             Never all of system.slice: docker's container scopes live there.
 # RAM is memory.current minus inactive_file - resident memory without
 # reclaimable page cache, the budget's own definition. A group with no cgroup
-# present reports 0. Read-only on the host; a failed run leaves the old file.
+# present reports 0. Also writes host_vmstat_pswpin_pages_total (pages swapped
+# in since boot, from VMSTAT_FILE, default /proc/vmstat) - node-exporter's vmstat
+# collector is disabled, and the host-memory-pressure alert reads its rate as the
+# sustained swap-in signal. Read-only on the host; a failed run leaves the old file.
 set -euo pipefail
 OUT_DIR="${1:-/var/lib/node_exporter/textfile}"
 ROOT="${CGROUP_ROOT:-/sys/fs/cgroup}"
 OPERATOR_SLICE="${HOST_GAUGE_OPERATOR_SLICE:-user.slice/user-1001.slice}"
+VMSTAT_FILE="${VMSTAT_FILE:-/proc/vmstat}"
 OS_UNITS="${HOST_GAUGE_OS_UNITS:-docker containerd tailscaled systemd-journald}"
 
 # Prints "<ram_bytes> <swap_bytes>" summed over the cgroup directories given.
@@ -59,6 +63,9 @@ trap 'rm -f "$tmp"' EXIT
     echo "host_group_memory_bytes{group=\"$g\"} $ram"
     echo "host_group_memory_swap_bytes{group=\"$g\"} $swap"
   done
+  echo "# HELP host_vmstat_pswpin_pages_total Pages swapped in since boot."
+  echo "# TYPE host_vmstat_pswpin_pages_total counter"
+  echo "host_vmstat_pswpin_pages_total $(awk '$1 == "pswpin" {print $2}' "$VMSTAT_FILE" 2>/dev/null | head -n1 | grep . || echo 0)"
 } > "$tmp"
 chmod 644 "$tmp"
 mv -f "$tmp" "$OUT_DIR/host_group.prom"

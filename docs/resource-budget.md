@@ -1,18 +1,19 @@
 # Resource budget - memory per project
 
-The box has 15.6 GiB of RAM and 8 GiB of swap (the live `/swapfile`; `scripts/bootstrap-vps.sh` creates 4 GiB on a fresh host, and the file was grown since). Every project and host group gets a
-memory budget so a breach names an owner instead of "the box is slow". The budgets sum
+The box has 15.6 GiB of RAM and 8 GiB of swap (the live `/swapfile`; `scripts/bootstrap-vps.sh` creates 4 GiB on a fresh host, and the file was grown since). Every project and host group has a
+memory budget: the expected sustained footprint, so "the box is slow" has an owner to
+look at. The budgets are **documentation, not alert thresholds** (see Alerts). They sum
 to **14.25 GiB**; a **1.75 GiB burst pool** for short-lived work brings the total to
 **16.0 GiB** against the 15.6 GiB of RAM. That overcommit is intended: the groups do not
 peak together, and swap is the margin.
 
 ## What a budget is
 
-A budget is a **sustained** ceiling: the **30-minute average of resident memory,
-excluding reclaimable page cache**. An alert fires after that average has been over
-budget for **15 minutes**, so a short spike stays quiet (the OpenClaw gateway's
-3.6 GiB peak is inside its 3.5 GiB budget as an average) while a leak or a step up in
-use is heard. A minute in which a group has no container counts as 0, so a short-lived
+A budget is a **sustained** figure: the **30-minute average of resident memory,
+excluding reclaimable page cache**, so a short spike stays inside it (the OpenClaw
+gateway's 3.6 GiB peak is inside its 3.5 GiB budget as an average). The weekly ops
+report (`scripts/ops-report/weekly.py`) still compares each group's 30-minute average
+with its budget, so a group that drifts over shows up there. A minute in which a group has no container counts as 0, so a short-lived
 group is averaged over the full 30 minutes, not just the minutes it was alive.
 
 - Container groups read `docker_container_memory_usage_bytes` from
@@ -25,7 +26,7 @@ group is averaged over the full 30 minutes, not just the minutes it was alive.
   breach, so a full swap means the margin is gone; it has its own alert (below).
 - A budget is not a cap. Caps are a separate, per-service decision (compose
   `mem_limit`, `docker run --memory`); the groups that run interactive work -
-  operator sessions, runners, the OS - are **alert only, never capped**, because a
+  operator sessions, runners, the OS - are **never capped**, because a
   cap would kill work in progress.
 
 ## The budgets
@@ -49,20 +50,21 @@ history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 | burst pool | 1.75 | everything else that runs as a container: devclaw sandboxes, `openclaw-cli` runs, rehearsals, CI and worker validation containers, test compose projects, any orphan | 30-minute average 0.14 GiB p50, 0.78 p95, 1.66 max over 7 days; one worker container reached 3164 MiB (a spike, not sustained) |
 | **Total** | **16.0** | of 15.6 GiB RAM | |
 
-**Operator sessions and runners, recalibrated 2026-10-01** (was 3.5 and 0.75 GiB; both
-alerted at 113-116% on the first day, with 4-5 worker sessions and a full OpenClaw image
-rebuild running, no runaway process found):
+**Operator sessions and runners, recalibrated 2026-10-01** (was 3.5 and 0.75 GiB; the
+per-group alerts that read them fired at 113-116% on the first day, with 4-5 worker
+sessions and a full OpenClaw image rebuild running, no runaway process found, and were
+then retired - see Alerts):
 
 - Operator sessions: a worker `claude` session is 0.33-0.47 GiB resident (mean 0.39), the
   `claude -p` helper a no-mistakes run spawns about 0.27 GiB, each `npm exec` MCP helper
   0.10-0.15 GiB. At the standing cap of 5 parallel workers plus the supervising sessions
   that is about 6 x 0.4 + 3 x 0.27 + a handful of MCP helpers = 4.3 GiB measured
   (`user-1001.slice` minus `inactive_file`, 0.9 GiB more swapped); 5.0 GiB leaves 0.7 GiB
-  for a browser or test helper without alerting. The 30-minute average exceeded 5 GiB
-  about 5% of the time over 7 days, so a sustained alert still means above-cap use.
+  for a browser or test helper. The 30-minute average exceeded 5 GiB about 5% of the
+  time over 7 days, so a weekly-report breach still means above-cap use.
 - Runners: idle they are 0.2-0.45 GiB; a full image-rebuild deploy took the 30-minute
   average to 1.0 GiB (1.6 GiB raw, 18:19-18:44 UTC on 2026-10-01; the worst 7-day average
-  was 1.37 GiB). 1.25 GiB covers the typical rebuild; the rare worst case alerts.
+  was 1.37 GiB). 1.25 GiB covers the typical rebuild; the rare worst case shows in the weekly report.
 - The burst pool shrinks from 3.0 to 1.75 GiB, just above its 7-day 30-minute average
   maximum of 1.66 GiB (under 0.8 GiB 95% of the time). The budgets now total 16.0 GiB
   against 15.6 GiB of RAM, on purpose: the groups do not peak together and swap is the
@@ -82,25 +84,43 @@ Grafana rules in `compose/observability/grafana/provisioning/alerting/rules.yml`
 ([`message-format.md`](./message-format.md) "The Grafana exemption") and picked up by
 alert-inbox ([`runbook.md`](./runbook.md) "Pull-based alert-to-inbox polling").
 
+Per-group budget alerts were retired on 2026-10-01 (`project-memory-over-budget`,
+`host-group-over-budget`, `burst-pool-over-budget`): they fired three times in one
+evening on legitimate work (parallel agent sessions, an image rebuild) and said "a group
+is over a number" rather than "the box is struggling". One host-level rule replaced them.
+
 | Rule | Fires when | Severity |
 | --- | --- | --- |
-| a project is over its memory budget | a container group's 30-minute average is over its budget above, for 15 minutes; one alert per group, named in the subject | warning |
-| the burst pool is over its memory budget | the burst pool's 30-minute average is over 1.75 GiB, for 15 minutes | warning |
+| host memory is under pressure | available RAM is under 2 GiB, or swap-in is over 1000 pages/s, for 15 minutes; the message lists the top three groups by resident memory | warning |
 | a container is near its memory cap | a container with a real cap uses over 90% of it, for 10 minutes; containers with no cap are skipped (their reported limit is the whole box) | warning |
 | host swap is over 75% used | swap used above 75% of swap total, for 15 minutes, with or without RAM pressure | warning |
 
-The existing *host RAM available is critically low*, *host swap and RAM are both under
-pressure* and *a container was OOM-killed* rules are unchanged; they cover real
-pressure and kills, these cover the slow drift before it.
+**Why 2 GiB.** Over the 7 days to 2026-10-01 available RAM averaged 7.1 GiB (5th
+percentile 5.0 GiB, minimum 0.89 GiB). It was under 1.5 GiB for 35 minutes of that week and
+under 2 GiB for 155 minutes. The critical *host RAM available is critically low* rule
+already fires under 10% (about 1.56 GiB) after 5 minutes, so a 1.5 GiB threshold would add
+nothing; 2 GiB is its earlier sibling that leaves time to act. The swap-in half
+catches the slowdown without a RAM shortage showing first (the box swapped in about 68
+pages/s at the time of writing, no history yet; 1000 pages/s is about 4 MiB/s held for
+15 minutes). Tune both after a week of `host_vmstat_pswpin_pages_total`.
+
+**The top three in the message.** The Prometheus recording rule
+`lifekit:group_memory_bytes` (`compose/observability/prometheus/rules.yml`) holds one
+series per group below - the container groups, the burst pool and the host groups - and
+the alert ranks it, so the diagnosis is in the alert itself. A group missing from it is
+a group with no running member (the burst pool is absent while empty).
+
+The existing *host swap and RAM are both under pressure* and *a container was OOM-killed*
+rules are unchanged.
 
 **Host groups.** Operator sessions, runners and the OS are not containers, so
 `scripts/host-gauge/host-group-gauge.sh` (a systemd timer, every 5 minutes, installed by
 `bootstrap-vps.sh`) reads their cgroup v2 memory and writes
 `host_group_memory_bytes{group}` and `host_group_memory_swap_bytes{group}` for the
 textfile collector. RAM is `memory.current` minus `inactive_file`, the same
-"resident, no reclaimable cache" definition as the container groups. The rule
-*a host group is over its memory budget* (`host-group-over-budget`, warning, same
-30-minute average and 15 minutes) is alert only, never a cap. The groups are:
+"resident, no reclaimable cache" definition as the container groups. The same script
+writes `host_vmstat_pswpin_pages_total` (from `/proc/vmstat`; node-exporter's vmstat
+collector is off), the swap-in signal above. The groups are:
 
 | `group` | cgroups read |
 | --- | --- |
@@ -113,9 +133,9 @@ The swap gauge is margin, not budget: it has no rule of its own, the host-wide
 
 ## Changing a budget
 
-The budget lives in three places that change together: the table above, the
-`project-memory-over-budget` (or `burst-pool-over-budget`) expression in `rules.yml`,
-the `host-group-over-budget` expression for a host group,
-and, when a group's members change, the member selectors in both of those rules. A
-budget moves because measured use moved, not because an alert was annoying: check the
-7-day peak first. A merge to `main` reloads the rules on deploy; nothing is recreated.
+A budget is a table row above, and the weekly report reads it from there. When a group's
+members change, update the member selectors in the `lifekit:group_memory_bytes` recording
+rule (`compose/observability/prometheus/rules.yml`) and in `GROUP_SELECTORS` in
+`scripts/ops-report/weekly.py` together. A budget moves because measured use moved: check
+the 7-day peak first. A merge to `main` reloads the Prometheus and Grafana rules on
+deploy; nothing is recreated.
