@@ -578,7 +578,7 @@ else:
 # Workspace skills are rsync'd from the laptop and may carry a package.json
 # with native deps (e.g. nutrition-claw uses `sharp`, which needs a
 # linux-arm64 build on the VPS). Running `npm install --omit=dev` inside the
-# gateway container — which now bakes python3/make/g++/libvips-dev — produces
+# gateway container — which now bakes python3/make/g++ — produces
 # the correct platform binaries. Source: see proposals/2026-05-19-vps-skill-wrappers.md.
 #
 # Skills without a package.json are skipped. life-state's CLI binary is

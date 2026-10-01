@@ -114,7 +114,7 @@ services:
         limits:
           memory: 6g
           # Headroom over ~300 in steady state (agent CLIs, MCP servers,
-          # headless Chromium threads).
+          # worker threads).
           pids: 2048
     environment:
       HOME: /home/node
@@ -200,7 +200,7 @@ services:
       # container vanished on every recreate (broken since 2026-05-27).
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state/life-state:/home/node/.life/state
     # No read_only: the entrypoint links the skill CLIs into the npm prefix
-    # under /home/node, and agent tools (claude, npm, Playwright) write caches
+    # under /home/node, and agent tools (claude, npm) write caches
     # all over $HOME. Every capability is still dropped (x-policy): the
     # gateway runs as `node` and needs none.
     # Loopback-only bind, per upstream Hetzner guidance.
