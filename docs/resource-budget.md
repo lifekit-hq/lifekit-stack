@@ -78,8 +78,8 @@ then retired - see Alerts):
 
 Membership is by compose project and service label, so a new container is in the burst
 pool until it is added to a group; platform is every service of compose project
-`compose`; `openclaw-cli` runs (compose project
-`openclaw`, outside the openclaw group) count in the burst pool. The one non-label exception is
+`compose`; `openclaw-cli` runs (compose project `openclaw`, outside the openclaw group)
+count in the burst pool. The one non-label exception is
 finance-sentry, whose compose project name (`docker`) is too generic to match on.
 
 ## Alerts
@@ -144,6 +144,7 @@ The swap gauge is margin, not budget: it has no rule of its own, the host-wide
 A budget is a table row above, and the weekly report reads it from there. When a group's
 members change, update the member selectors in the `lifekit:group_memory_bytes` recording
 rule (`compose/observability/prometheus/rules.yml`) and in `GROUP_SELECTORS` in
-`scripts/ops-report/weekly.py` together. A budget moves because measured use moved: check
+`scripts/ops-report/weekly.py` together; `scripts/tests/test_alert_rules.py` fails when
+they differ. A budget moves because measured use moved: check
 the 7-day peak first. A merge to `main` reloads the Prometheus and Grafana rules on
 deploy; nothing is recreated.
