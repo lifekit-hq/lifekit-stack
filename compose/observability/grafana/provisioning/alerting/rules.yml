@@ -1349,8 +1349,12 @@ groups:
               refId: A
               # Seconds since the last backup that provably restored. The restore-verify
               # job (db-restore-verify) runs weekly, so 9 days is one missed run plus
-              # two days of slack.
-              expr: finance_backup_last_verified_age_seconds
+              # two days of slack. The API seeds this gauge from the database at
+              # startup, so an absent series while the API is up means no verified
+              # backup exists: it reads as a 1e12 s sentinel (over any threshold).
+              expr: >-
+                finance_backup_last_verified_age_seconds
+                or on() (vector(1e12) and on() (up{job="finance-sentry-api"} == 1))
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -1370,7 +1374,9 @@ groups:
               expression: B
               conditions:
                 - evaluator: {type: gt, params: [777600]}
-        # A vanished finance-sentry-api target is target-down's job.
+        # target-down only covers the scrape target disappearing; a missing
+        # series while the API is up is the absent branch of the query above.
+        # With the target down there is no data, which stays OK here.
         noDataState: OK
         execErrState: Error
         for: 1h
@@ -1380,9 +1386,11 @@ groups:
         annotations:
           summary: "finance-sentry has no verified backup for over 9 days"
           description: >-
-            finance_backup_last_verified_age_seconds is
+            {{ if gt $values.B.Value 31536000.0 }}finance_backup_last_verified_age_seconds
+            is absent while finance-sentry-api is up: no verified backup is
+            recorded.{{ else }}finance_backup_last_verified_age_seconds is
             {{ printf "%.1f" (div $values.B.Value 86400.0) }} days: no backup has
-            provably restored since then. The weekly db-restore-verify Hangfire job
+            provably restored since then.{{ end }} The weekly db-restore-verify Hangfire job
             has stopped or is failing, or the db-backup job feeding it has. Check
             the finance-sentry-api logs and the Hangfire dashboard for
             db-backup and db-restore-verify.
@@ -1398,8 +1406,14 @@ groups:
               refId: A
               # Seconds since the last successful retention run, per run_type (Purge and
               # Downsample). Both are daily Hangfire jobs, so 2 days is a missed run
-              # plus a day of slack.
-              expr: finance_retention_last_run_age_seconds
+              # plus a day of slack. The startup primer seeds only Purge, so an absent
+              # Purge series while the API is up reads as a 1e12 s sentinel. An absent
+              # Downsample series is deliberately not alerted on: it only exists
+              # after its first run following a restart.
+              expr: >-
+                finance_retention_last_run_age_seconds
+                or on(run_type) (label_replace(vector(1e12), "run_type", "Purge", "", "")
+                and on() (up{job="finance-sentry-api"} == 1))
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -1419,7 +1433,9 @@ groups:
               expression: B
               conditions:
                 - evaluator: {type: gt, params: [172800]}
-        # A vanished finance-sentry-api target is target-down's job.
+        # target-down only covers the scrape target disappearing; a missing
+        # Purge series while the API is up is the absent branch of the query
+        # above. With the target down there is no data, which stays OK here.
         noDataState: OK
         execErrState: Error
         for: 1h
@@ -1429,9 +1445,11 @@ groups:
         annotations:
           summary: "finance-sentry {{ $labels.run_type }} retention has not run for over 2 days"
           description: >-
-            finance_retention_last_run_age_seconds for run_type
-            {{ $labels.run_type }} is
-            {{ printf "%.1f" (div $values.B.Value 86400.0) }} days. The daily
+            {{ if gt $values.B.Value 31536000.0 }}finance_retention_last_run_age_seconds
+            for run_type {{ $labels.run_type }} is absent while finance-sentry-api
+            is up: no successful run is recorded.{{ else }}finance_retention_last_run_age_seconds
+            for run_type {{ $labels.run_type }} is
+            {{ printf "%.1f" (div $values.B.Value 86400.0) }} days.{{ end }} The daily
             retention-purge / retention-downsample Hangfire job has stopped or is
             failing, so expired data is not being removed. Check the
             finance-sentry-api logs and the Hangfire dashboard.
