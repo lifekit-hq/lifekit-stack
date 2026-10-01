@@ -1,0 +1,13 @@
+[Unit]
+Description=Export host systemd unit state to node-exporter's textfile collector
+
+[Service]
+Type=oneshot
+# The textfile directory is owned by the admin account (README "VPS users");
+# systemctl show is readable by any user. install-host-gauges.sh substitutes
+# the placeholder at install time.
+User=__ADMIN_USER__
+ExecStart=/usr/local/bin/unit-gauge.sh /var/lib/node_exporter/textfile
+
+[Install]
+WantedBy=multi-user.target

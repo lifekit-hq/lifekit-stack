@@ -576,7 +576,7 @@ groups:
           summary: "textfile metric file {{ $labels.file }} has not been updated for over 15 minutes"
           description: >-
             node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. Every gauge
-            that writes into the textfile directory (the quota, /tmp usage and host-group gauges' systemd
+            that writes into the textfile directory (the quota, /tmp usage, host-group and unit gauges' systemd
             timers) refreshes its file every 5 minutes, so its timer or script has stopped and rules
             reading that file are seeing stale values. `systemctl --failed`, the gauge unit's journal, and
             `systemctl list-timers` on the box.
@@ -623,6 +623,59 @@ groups:
             node_textfile_scrape_error has been above zero for 5 minutes: node-exporter failed to parse or open a file
             in its textfile directory, so those gauges are missing from Prometheus. Check node-exporter's logs and the
             files in the textfile directory.
+
+      - uid: host-unit-down-or-failed
+        title: host systemd unit is down or failed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 1 for each host unit that is not active or is failed. The
+              # CI runners, tailscaled and the lifekit timers live outside
+              # Docker, so nothing else sees them; scripts/unit-gauge writes
+              # both gauges through the textfile collector every 5 minutes.
+              # For a lifekit timer the unit is its service: active tracks the
+              # .timer and failed is the service's last Result, so a failed
+              # run stays reported until the next successful run.
+              expr: host_unit_failed + (1 - host_unit_active)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # A vanished node-exporter target is target-down's job; a stale or
+        # missing gauge file is textfile-collector-stale's job.
+        noDataState: OK
+        execErrState: Error
+        # Two gauge runs, so a runner restart or a unit mid-redeploy does not page.
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "host unit {{ $labels.unit }} is down or failed"
+          description: >-
+            host_unit_active / host_unit_failed report {{ $labels.unit }} not active or failed
+            for 10 minutes. `systemctl status {{ $labels.unit }}` and `journalctl -u {{ $labels.unit }}
+            -n 50` on the box show why. A failed lifekit timer service stays reported until its next
+            successful run; once the cause is fixed, `sudo systemctl reset-failed {{ $labels.unit }}.service`
+            clears the state.
 
       # The shared Claude account is a box-level resource like disk: one Max
       # subscription serves every consumer on the box (the operator's sessions,

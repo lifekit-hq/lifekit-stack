@@ -951,6 +951,42 @@ alert rates). Groups and their budgets are in `docs/resource-budget.md`; the
 `cat /var/lib/node_exporter/textfile/host_group.prom` shows the current values;
 `systemd-cgtop -m` and `ps --sort=-rss` show who inside a group is growing.
 
+## Host unit gauge
+
+`scripts/unit-gauge/unit-gauge.sh` writes `host_unit_active{unit}` and
+`host_unit_failed{unit}` every 5 minutes from `unit-gauge.timer` into the
+textfile directory (`host_unit.prom`). Units: every `actions.runner.*`
+service, `tailscaled`, `docker`, `containerd`, `cron`, `unattended-upgrades`,
+and the service of every `lifekit-*.timer`. For a timer, `active` tracks the
+`.timer` (its oneshot service is inactive between runs by design) and `failed`
+is the service's last `Result` not being `success`. A unit not installed on
+the host is skipped, and so is one that is not enabled and not running unless it
+has failed. If `systemctl` itself errors the script exits nonzero without
+rewriting `host_unit.prom`, so `unit-gauge.service` goes failed and the
+*textfile metrics are stale* alert fires. node-exporter's systemd collector
+stays off.
+
+The *host systemd unit is down or failed* alert (`host-unit-down-or-failed`,
+`rules.yml`) fires warning when any unit is inactive or failed for 10 minutes.
+`systemctl status <unit>` and `journalctl -u <unit> -n 50` show why. A failed
+timer run stays reported until the next successful run; after fixing the cause,
+`sudo systemctl reset-failed <unit>.service` clears it.
+
+Adding a unit means editing the allowlist at the top of the script. A new
+`lifekit-*.timer` is picked up automatically.
+
+**Operator step (live install):** the installer writes `/etc/systemd/system`,
+so a merge does not install it. Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/host-gauge/install-host-gauges.sh
+systemctl list-timers 'unit-gauge*'
+cat /var/lib/node_exporter/textfile/host_unit.prom
+```
+
+The merge's deploy reloads Grafana provisioning, which loads the alert rule;
+until the timer is installed the rule sees no data and stays quiet.
+
 ## Container console logs in Loki
 
 The OTel collector tails every container's Docker json-file log (read-only) and
