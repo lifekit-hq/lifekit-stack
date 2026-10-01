@@ -960,7 +960,11 @@ service, `tailscaled`, `docker`, `containerd`, `cron`, `unattended-upgrades`,
 and the service of every `lifekit-*.timer`. For a timer, `active` tracks the
 `.timer` (its oneshot service is inactive between runs by design) and `failed`
 is the service's last `Result` not being `success`. A unit not installed on
-the host is skipped. node-exporter's systemd collector stays off.
+the host is skipped, and so is one that is not enabled and not running unless it
+has failed. If `systemctl` itself errors the script exits nonzero without
+rewriting `host_unit.prom`, so `unit-gauge.service` goes failed and the
+*textfile metrics are stale* alert fires. node-exporter's systemd collector
+stays off.
 
 The *host systemd unit is down or failed* alert (`host-unit-down-or-failed`,
 `rules.yml`) fires warning when any unit is inactive or failed for 10 minutes.
