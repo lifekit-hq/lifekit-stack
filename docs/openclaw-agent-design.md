@@ -54,6 +54,10 @@ The platform half is in git and deployed on merge; the per-agent half (entries, 
 
 A binding matches a channel and optionally an account or peer; the most specific match wins, so `telegram:career` beats kit's `telegram:*`. A Telegram bot with no binding of its own falls through to kit, so a domain agent reached by its own bot needs its own binding. Retiring an agent means removing its bindings and disabling or rebinding its bot, not only its entry.
 
+### Decisions waiting on the owner
+
+Decisions go to the OpenClaw app, not Telegram. kit keeps the one ledger of open decisions in its workspace and asks each one with `ask_user` in its main Control UI chat. A decision that comes up anywhere else is recorded and handed to that chat. A daily digest of what is still open posts there too, and stays silent when nothing is. See kit's `AGENTS.md` ("Needs you") and `docs/runbook.md` ("Kit's needs-you decisions and the daily digest").
+
 ### Workspaces and memory
 
 Each agent's workspace holds its bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`), daily notes under `memory/`, and its installed skills. The vault is mounted read-only in spirit for every agent (`~/memory`, searchable through `memory.search`); agents propose vault edits rather than writing there, except through skills and CLIs that own their data.

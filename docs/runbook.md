@@ -551,6 +551,61 @@ file's previous contents.
 **Rollback:** `openclaw cron rm <id>` (or `cron edit <id> --disable`). Nothing else
 depends on this row - `memory_vault_audit` keeps running unchanged either way.
 
+### Kit's needs-you decisions and the daily digest
+
+Decisions waiting on the owner go to the OpenClaw app, not Telegram. Kit keeps one
+ledger in its workspace (`needs-you/open.json`, closed ones in
+`needs-you/closed.jsonl`). It asks each decision with `ask_user` in its main
+Control UI / WebChat session (`agent:kit:main`), which shows as a card with buttons.
+An answer closes the entry. The contract is kit's `AGENTS.md`, section "Needs you"
+(`defaults/agents/kit/workspace/`). `ask_user` exists only in primary sessions, never
+in subagent or ACP runs. So a decision that comes up in a Telegram DM, an A2A ask or a
+subagent is recorded, then handed to the main session with `sessions_send`.
+
+The daily `needs-you-digest` cron posts what is still open into that same chat.
+`scripts/ensure-needs-you-digest.sh` declares it and converges on re-run. It is a
+`current`-session agent turn bound to `agent:kit:main` with announce delivery: the
+reply is committed to the conversation's transcript, and that session has no external
+route, so nothing goes to Telegram. It replies `NO_REPLY` when the ledger is empty, so
+nothing is posted. A run that cannot read the ledger says so in the chat. A run that
+fails outright raises a failure alert after one failure. The alert goes through kit's
+`default` Telegram account to `LIFEKIT_TELEGRAM_CHAT` from the host env file, the same
+route as the career/social weekly alerts, because a failure alert needs an outbound
+channel and the Control UI chat has none.
+
+Operator steps, once per host. None of them restarts the gateway:
+
+1. **Let kit's main session have `ask_user`.** The global `tools.allow` list is host
+   state, and `ask_user` is not on it. `tools.*` hot-reloads. Arrays replace in a
+   config patch, so append to the live list instead of writing a new one:
+
+   ```bash
+   GW=openclaw-openclaw-gateway-1
+   docker exec "$GW" openclaw config get tools.allow --json \
+     | python3 -c 'import json,sys; t=sys.stdin.read(); a=json.loads(t[t.find("["):]); print(json.dumps({"tools": {"allow": a + ([] if "ask_user" in a else ["ask_user"])}}))' \
+     | docker exec -i "$GW" openclaw config patch --stdin
+   docker exec "$GW" openclaw gateway call tools.effective --timeout 90000 \
+     --params '{"sessionKey":"agent:kit:main"}' --json | grep -c '"ask_user"'   # >= 1
+   ```
+
+2. **Merge the "Needs you" section into kit's live `AGENTS.md`**
+   (`/srv/openclaw/config/agents/kit/workspace/AGENTS.md`). Also merge the changed
+   A2A-intake line that records the go in the ledger. The live file has drifted from
+   the template, so paste the section in rather than copying the whole file over it.
+
+3. **Declare the digest:** `/srv/lifekit-stack/scripts/ensure-needs-you-digest.sh`
+   (as lifekit; `NEEDS_YOU_DIGEST_CRON` / `NEEDS_YOU_DIGEST_TZ` override the default
+   `0 9 * * *` Europe/Dublin).
+
+**Verify:** `cron show <id>` previews delivery as `announce -> current session`.
+`cron run <id> --expect-final --json` against an empty ledger records the run as
+intentionally silent, and the main chat stays quiet. With one entry in `open.json`,
+the digest shows up in the Control UI chat without a refresh.
+
+**Rollback:** `openclaw cron rm <id>`. The ledger files are kit workspace state and
+can stay. Push delivery of these cards to a phone comes with the Control UI's
+HTTPS-origin setup, not with this job.
+
 ## Rolling back OpenClaw
 
 ### The one-rollback rule
