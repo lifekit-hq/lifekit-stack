@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # install-host-gauges.sh — install the host-group memory gauge, the /tmp
-# usage gauge and the host unit-state gauge as systemd timers (root). Same shape as the quota gauge: every 5
-# minutes into node-exporter's textfile directory, run as ADMIN_USER.
+# usage gauge and the host unit-state gauge as systemd timers (root). Same
+# shape as the quota gauge: every 5 minutes into node-exporter's textfile
+# directory, run as ADMIN_USER.
 # bootstrap-vps.sh calls it; on a live box run it alone to install or update
 # just these timers without the rest of the bootstrap:
 #
