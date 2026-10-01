@@ -7,7 +7,11 @@ fake daemon, not against its source text.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -100,6 +104,20 @@ def test_rules_only_reference_real_metrics():
             "warning",
             "gt",
             0,
+        ),
+        (
+            "finance-backup-verify-stale",
+            "finance_backup_last_verified_age_seconds",
+            "warning",
+            "gt",
+            9 * 86400,
+        ),
+        (
+            "finance-retention-stale",
+            "finance_retention_last_run_age_seconds",
+            "warning",
+            "gt",
+            2 * 86400,
         ),
     ],
 )
@@ -307,3 +325,127 @@ def test_memory_group_selectors_match_weekly_report():
     }
     in_report = {n: squash(sel) for n, sel in weekly.GROUP_SELECTORS.items()}
     assert in_rule == in_report
+
+
+def test_finance_job_age_rules_wait_an_hour_and_stay_quiet_without_data():
+    for uid in ("finance-backup-verify-stale", "finance-retention-stale"):
+        rule = RULES[uid]
+        assert rule["for"] == "1h"
+        assert rule["noDataState"] == "OK"
+        assert rule["labels"]["service"] == "finance-sentry"
+
+
+PROMTOOL_IMAGE = "prom/prometheus:v2.54.1"
+
+
+def promtool_cmd(workdir: Path) -> list[str] | None:
+    if shutil.which("promtool"):
+        return ["promtool"]
+    if not shutil.which("docker"):
+        return None
+    probe = subprocess.run(
+        ["docker", "image", "inspect", PROMTOOL_IMAGE], capture_output=True, check=False
+    )
+    if probe.returncode:
+        return None
+    return [
+        "docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{workdir}:{workdir}",
+        "--entrypoint", "promtool", PROMTOOL_IMAGE,
+    ]  # fmt: skip
+
+
+def promtool_alerts(uid: str, input_series: list[tuple[str, float]]) -> tuple[int, str]:
+    """Evaluate the rule's own query and threshold in Prometheus (promtool)."""
+    rule = RULES[uid]
+    (expr,) = queries(rule)
+    op, limit = threshold(rule)
+    assert op == "gt"
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp)
+        cmd = promtool_cmd(workdir)
+        if cmd is None:
+            pytest.skip("promtool (or the prom/prometheus image) is not available")
+        (workdir / "rules.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "groups": [
+                        {
+                            "name": "t",
+                            "rules": [{"alert": "A", "expr": f"({expr}) > {limit}"}],
+                        }
+                    ]
+                }
+            )
+        )
+        (workdir / "test.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "rule_files": ["rules.yml"],
+                    "evaluation_interval": "1m",
+                    "tests": [
+                        {
+                            "interval": "1m",
+                            "input_series": [
+                                {"series": s, "values": f"{v}x10"}
+                                for s, v in input_series
+                            ],
+                            "alert_rule_test": [
+                                {"eval_time": "5m", "alertname": "A", "exp_alerts": []}
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+        out = subprocess.run(
+            [*cmd, "test", "rules", str(workdir / "test.yml")],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=workdir,
+        )
+    return out.returncode, out.stdout + out.stderr
+
+
+UP = 'up{job="finance-sentry-api"}'
+BACKUP = "finance_backup_last_verified_age_seconds"
+RETENTION = "finance_retention_last_run_age_seconds"
+
+
+@pytest.mark.parametrize(
+    ("uid", "series", "fires"),
+    [
+        ("finance-backup-verify-stale", [(UP, 1)], True),
+        ("finance-backup-verify-stale", [(UP, 0)], False),
+        ("finance-backup-verify-stale", [], False),
+        ("finance-backup-verify-stale", [(UP, 1), (BACKUP, 9 * 86400 + 1)], True),
+        ("finance-backup-verify-stale", [(UP, 1), (BACKUP, 86400)], False),
+        ("finance-retention-stale", [(UP, 1)], True),
+        ("finance-retention-stale", [(UP, 0)], False),
+        (
+            "finance-retention-stale",
+            [(UP, 1), (RETENTION + '{run_type="Purge"}', 3600)],
+            False,
+        ),
+        (
+            "finance-retention-stale",
+            [(UP, 1), (RETENTION + '{run_type="Downsample"}', 3600)],
+            True,
+        ),
+        (
+            "finance-retention-stale",
+            [
+                (UP, 1),
+                (RETENTION + '{run_type="Purge"}', 3600),
+                (RETENTION + '{run_type="Downsample"}', 2 * 86400 + 1),
+            ],
+            True,
+        ),
+    ],
+)
+def test_finance_age_rules_fire_on_stale_or_absent_series(uid, series, fires):
+    code, output = promtool_alerts(uid, series)
+    if fires:
+        assert code != 0 and "got:" in output, output
+    else:
+        assert code == 0, output
