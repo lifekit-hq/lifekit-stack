@@ -991,7 +991,8 @@ until the timer is installed the rule sees no data and stays quiet.
 
 `svc.sh` installs every `actions.runner.*` unit with `Restart=no`, so a crashed
 runner stays down until someone notices (the *host systemd unit is down or
-failed* alert is the backstop). `scripts/bootstrap-vps.sh` writes
+failed* alert is the backstop). `scripts/runner-restart/install-runner-restart.sh`
+(called by `scripts/bootstrap-vps.sh`) writes
 `/etc/systemd/system/<unit>.d/restart.conf` for each installed runner unit with
 `Restart=on-failure` and `RestartSec=10`, then runs `daemon-reload`. It is
 idempotent and does not restart a running runner; the setting applies from the
@@ -1001,12 +1002,12 @@ next start.
 so a merge does not install it. Run on the box, as the admin account:
 
 ```bash
-sudo bash /srv/lifekit-stack/scripts/bootstrap-vps.sh
+sudo bash /srv/lifekit-stack/scripts/runner-restart/install-runner-restart.sh
 systemctl show 'actions.runner.*' -p Id -p Restart
 ```
 
-Re-running bootstrap repeats the whole host setup (all idempotent). Every
-runner unit should report `Restart=on-failure`.
+Needs no other setup variables. Every runner unit should report
+`Restart=on-failure`.
 
 ## Container console logs in Loki
 

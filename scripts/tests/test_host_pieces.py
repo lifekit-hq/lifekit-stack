@@ -78,9 +78,56 @@ def test_alert_inbox_unit_hardcodes_no_personal_paths():
     assert not re.search(r"/home/\w", unit)
 
 
-def test_bootstrap_installs_runner_restart_dropins():
-    text = (REPO / "scripts/bootstrap-vps.sh").read_text()
-    assert "actions.runner.*.service" in text
-    assert "restart.conf" in text
-    assert "Restart=on-failure" in text
-    assert "RestartSec=" in text
+RUNNER_RESTART = REPO / "scripts/runner-restart/install-runner-restart.sh"
+FAKE_SYSTEMCTL = """#!/usr/bin/env bash
+echo "$*" >> "$STATE_DIR/calls"
+if [[ "$1" == list-unit-files ]]; then
+  cat "$STATE_DIR/files"
+fi
+"""
+
+
+def _run_runner_restart(tmp_path, listed):
+    state, units = tmp_path / "state", tmp_path / "units"
+    state.mkdir(exist_ok=True)
+    units.mkdir(exist_ok=True)
+    fake = tmp_path / "systemctl"
+    fake.write_text(FAKE_SYSTEMCTL)
+    fake.chmod(0o755)
+    (state / "files").write_text("".join(f"{u} enabled\n" for u in listed))
+    subprocess.run(
+        ["bash", str(RUNNER_RESTART)],
+        env={
+            **os.environ,
+            "SYSTEMCTL": str(fake),
+            "STATE_DIR": str(state),
+            "UNIT_DIR": str(units),
+        },
+        check=True,
+        capture_output=True,
+    )
+    return units, state
+
+
+def test_runner_restart_writes_one_dropin_per_runner_unit(tmp_path):
+    runners = ["actions.runner.o-r.host-a.service", "actions.runner.o-r.host-b.service"]
+    units, state = _run_runner_restart(tmp_path, [*runners, "sshd.service"])
+    assert sorted(p.name for p in units.iterdir()) == [f"{r}.d" for r in runners]
+    for r in runners:
+        assert (units / f"{r}.d/restart.conf").read_text() == (
+            "[Service]\nRestart=on-failure\nRestartSec=10\n"
+        )
+    assert "daemon-reload" in (state / "calls").read_text().splitlines()
+
+
+def test_runner_restart_is_idempotent_and_handles_no_runners(tmp_path):
+    runner = "actions.runner.o-r.host.service"
+    units, _ = _run_runner_restart(tmp_path, [runner])
+    first = (units / f"{runner}.d/restart.conf").read_text()
+    units, _ = _run_runner_restart(tmp_path, [runner])
+    assert (units / f"{runner}.d/restart.conf").read_text() == first
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    units, state = _run_runner_restart(empty, [])
+    assert list(units.iterdir()) == []
+    assert "daemon-reload" in (state / "calls").read_text()
