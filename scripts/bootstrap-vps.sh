@@ -298,6 +298,13 @@ else
   say "RUNNER_REG_TOKEN not set; skipping Actions runner install (fetch a token with: gh api -X POST /repos/<owner>/<repo>/actions/runners/registration-token --jq .token, then re-run this script)"
 fi
 
+# ─── Runner restart drop-ins ──────────────────────────────────────────────────
+# svc.sh installs the runner units with Restart=no; give each a
+# Restart=on-failure drop-in so a crashed runner comes back.
+
+say "Installing Restart=on-failure drop-ins for Actions runner units"
+bash "$REPO_DIR/scripts/runner-restart/install-runner-restart.sh"
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
 say "Host bootstrap complete."
