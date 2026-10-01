@@ -298,6 +298,20 @@ else
   say "RUNNER_REG_TOKEN not set; skipping Actions runner install (fetch a token with: gh api -X POST /repos/<owner>/<repo>/actions/runners/registration-token --jq .token, then re-run this script)"
 fi
 
+# ─── Runner restart drop-ins ──────────────────────────────────────────────────
+# svc.sh installs the runner units with Restart=no, so a crashed runner stays
+# down. Give every installed actions.runner.* unit a Restart=on-failure drop-in;
+# rewriting the same content each run is idempotent.
+
+say "Installing Restart=on-failure drop-ins for Actions runner units"
+while read -r unit _; do
+  [[ "$unit" == actions.runner.*.service ]] || continue
+  install -d -m 755 "/etc/systemd/system/${unit}.d"
+  printf '[Service]\nRestart=on-failure\nRestartSec=10\n' \
+    > "/etc/systemd/system/${unit}.d/restart.conf"
+done < <(systemctl list-unit-files 'actions.runner.*.service' --no-legend --no-pager 2>/dev/null || true)
+systemctl daemon-reload
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
 say "Host bootstrap complete."

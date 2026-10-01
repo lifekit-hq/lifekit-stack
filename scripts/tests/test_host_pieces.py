@@ -76,3 +76,11 @@ def test_alert_inbox_unit_hardcodes_no_personal_paths():
     unit = (REPO / "scripts/alert-inbox/alert-inbox.service").read_text()
     assert "__ALERT_INBOX_USER__" in unit and "__REPO_DIR__" in unit
     assert not re.search(r"/home/\w", unit)
+
+
+def test_bootstrap_installs_runner_restart_dropins():
+    text = (REPO / "scripts/bootstrap-vps.sh").read_text()
+    assert "actions.runner.*.service" in text
+    assert "restart.conf" in text
+    assert "Restart=on-failure" in text
+    assert "RestartSec=" in text

@@ -987,6 +987,27 @@ cat /var/lib/node_exporter/textfile/host_unit.prom
 The merge's deploy reloads Grafana provisioning, which loads the alert rule;
 until the timer is installed the rule sees no data and stays quiet.
 
+## Runner restart drop-ins
+
+`svc.sh` installs every `actions.runner.*` unit with `Restart=no`, so a crashed
+runner stays down until someone notices (the *host systemd unit is down or
+failed* alert is the backstop). `scripts/bootstrap-vps.sh` writes
+`/etc/systemd/system/<unit>.d/restart.conf` for each installed runner unit with
+`Restart=on-failure` and `RestartSec=10`, then runs `daemon-reload`. It is
+idempotent and does not restart a running runner; the setting applies from the
+next start.
+
+**Operator step (live install):** the drop-in lives in `/etc/systemd/system`,
+so a merge does not install it. Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/bootstrap-vps.sh
+systemctl show 'actions.runner.*' -p Id -p Restart
+```
+
+Re-running bootstrap repeats the whole host setup (all idempotent). Every
+runner unit should report `Restart=on-failure`.
+
 ## Container console logs in Loki
 
 The OTel collector tails every container's Docker json-file log (read-only) and
