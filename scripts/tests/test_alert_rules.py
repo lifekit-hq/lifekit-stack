@@ -101,6 +101,20 @@ def test_rules_only_reference_real_metrics():
             "gt",
             0,
         ),
+        (
+            "finance-backup-verify-stale",
+            "finance_backup_last_verified_age_seconds",
+            "warning",
+            "gt",
+            9 * 86400,
+        ),
+        (
+            "finance-retention-stale",
+            "finance_retention_last_run_age_seconds",
+            "warning",
+            "gt",
+            2 * 86400,
+        ),
     ],
 )
 def test_new_rules(uid, metric, severity, op, limit):
@@ -307,3 +321,11 @@ def test_memory_group_selectors_match_weekly_report():
     }
     in_report = {n: squash(sel) for n, sel in weekly.GROUP_SELECTORS.items()}
     assert in_rule == in_report
+
+
+def test_finance_job_age_rules_wait_an_hour_and_stay_quiet_without_data():
+    for uid in ("finance-backup-verify-stale", "finance-retention-stale"):
+        rule = RULES[uid]
+        assert rule["for"] == "1h"
+        assert rule["noDataState"] == "OK"
+        assert rule["labels"]["service"] == "finance-sentry"

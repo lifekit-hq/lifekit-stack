@@ -1330,6 +1330,112 @@ groups:
             and move the expiry date in this rule and in docs/secrets.md in
             the same PR (docs/secrets-runbook.md, "Claude service token").
 
+  # finance-sentry's backup and retention jobs export their own age gauges
+  # (JobMetrics.cs); without these rules a silently stopped backup or purge
+  # on the finance app looks the same as "nothing happened".
+  - orgId: 1
+    name: finance-sentry-jobs
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: finance-backup-verify-stale
+        title: finance-sentry backup verification is stale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Seconds since the last backup that provably restored. The restore-verify
+              # job (db-restore-verify) runs weekly, so 9 days is one missed run plus
+              # two days of slack.
+              expr: finance_backup_last_verified_age_seconds
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [777600]}
+        # A vanished finance-sentry-api target is target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 1h
+        labels:
+          service: finance-sentry
+          severity: warning
+        annotations:
+          summary: "finance-sentry has no verified backup for over 9 days"
+          description: >-
+            finance_backup_last_verified_age_seconds is
+            {{ printf "%.1f" (div $values.B.Value 86400.0) }} days: no backup has
+            provably restored since then. The weekly db-restore-verify Hangfire job
+            has stopped or is failing, or the db-backup job feeding it has. Check
+            the finance-sentry-api logs and the Hangfire dashboard for
+            db-backup and db-restore-verify.
+
+      - uid: finance-retention-stale
+        title: finance-sentry retention run is stale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Seconds since the last successful retention run, per run_type (Purge and
+              # Downsample). Both are daily Hangfire jobs, so 2 days is a missed run
+              # plus a day of slack.
+              expr: finance_retention_last_run_age_seconds
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [172800]}
+        # A vanished finance-sentry-api target is target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 1h
+        labels:
+          service: finance-sentry
+          severity: warning
+        annotations:
+          summary: "finance-sentry {{ $labels.run_type }} retention has not run for over 2 days"
+          description: >-
+            finance_retention_last_run_age_seconds for run_type
+            {{ $labels.run_type }} is
+            {{ printf "%.1f" (div $values.B.Value 86400.0) }} days. The daily
+            retention-purge / retention-downsample Hangfire job has stopped or is
+            failing, so expired data is not being removed. Check the
+            finance-sentry-api logs and the Hangfire dashboard.
+
   # ls-177 S1: the alerting system watching itself. Grafana and Prometheus
   # both now feed their own /metrics into Prometheus (prometheus.yml); these
   # rules are the alert path's self-test - without them a broken Telegram
