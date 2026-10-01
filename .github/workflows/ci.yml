@@ -126,7 +126,19 @@ jobs:
     needs: [lint, pytest, notify-relay-tests, gitleaks-full, secrets-gateway-decrypt]
     # main only: Weekly Release dispatches this workflow on the release-please branch to
     # get the required checks onto the release PR (#176), and that must never deploy.
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # `changes` is skipped on every non-PR event, and GitHub skips a job whose
+    # needs chain holds a skipped ancestor unless the `if:` carries a status
+    # function - so !cancelled() plus an explicit success check per needed job
+    # (a bare always() would deploy past a failed check).
+    if: >-
+      ${{ !cancelled()
+      && github.ref == 'refs/heads/main'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && needs.lint.result == 'success'
+      && needs.pytest.result == 'success'
+      && needs.notify-relay-tests.result == 'success'
+      && needs.gitleaks-full.result == 'success'
+      && needs.secrets-gateway-decrypt.result == 'success' }}
     runs-on: self-hosted
     concurrency:
       group: deploy-vps
