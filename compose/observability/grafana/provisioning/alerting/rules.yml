@@ -827,13 +827,13 @@ groups:
               # 30-minute average of the host cgroup gauge
               # (scripts/host-gauge/host-group-gauge.sh, resident memory
               # without page cache) as a percent of the group's budget in
-              # GiB: operator sessions 3.5, runners 0.75, os 1.0.
+              # GiB: operator sessions 5.0, runners 1.25, os 1.0.
               expr: >-
                 label_replace(
-                  100 * avg_over_time(host_group_memory_bytes{group="operator"}[30m]) / (3.5 * 1073741824),
+                  100 * avg_over_time(host_group_memory_bytes{group="operator"}[30m]) / (5 * 1073741824),
                   "name", "operator sessions", "", "")
                 or label_replace(
-                  100 * avg_over_time(host_group_memory_bytes{group="runners"}[30m]) / (0.75 * 1073741824),
+                  100 * avg_over_time(host_group_memory_bytes{group="runners"}[30m]) / (1.25 * 1073741824),
                   "name", "CI runners", "", "")
                 or label_replace(
                   100 * avg_over_time(host_group_memory_bytes{group="os"}[30m]) / (1 * 1073741824),
@@ -887,7 +887,7 @@ groups:
               refId: A
               # Every container the named groups of
               # project-memory-over-budget do not claim: sandboxes, transient
-              # CI and worker containers, cli runs, rehearsals. Budget 3 GiB.
+              # CI and worker containers, cli runs, rehearsals. Budget 1.25 GiB.
               expr: >-
                 100 * avg_over_time((sum(docker_container_memory_usage_bytes unless (
                   docker_container_memory_usage_bytes{project="openclaw",service=~"openclaw-gateway|google-workspace-mcp"}
@@ -899,7 +899,7 @@ groups:
                   or docker_container_memory_usage_bytes{project="devclaw",service="devclaw-mcp"}
                   or docker_container_memory_usage_bytes{project="dashboard"}
                   or docker_container_memory_usage_bytes{project="xui"}
-                )) or vector(0))[30m:1m]) / (3 * 1073741824)
+                )) or vector(0))[30m:1m]) / (1.25 * 1073741824)
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -925,11 +925,11 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "the burst pool is over its 3 GiB memory budget"
+          summary: "the burst pool is over its 1.25 GiB memory budget"
           description: >-
             Transient containers (sandboxes, CI and worker containers,
             openclaw-cli runs, rehearsals) have averaged
-            {{ printf "%.0f" $values.B.Value }}% of the 3 GiB burst pool over
+            {{ printf "%.0f" $values.B.Value }}% of the 1.25 GiB burst pool over
             30 minutes, for 15 minutes. `docker stats --no-stream` lists what
             is running; the ones with no compose project or with a
             long-lived age are the candidates. docs/resource-budget.md

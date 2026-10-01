@@ -171,7 +171,7 @@ def test_host_group_rule_is_alert_only_on_the_documented_budgets():
     assert rule["for"] == "15m"
     assert rule["labels"]["severity"] == "warning"
     (expr,) = queries(rule)
-    for group, gib in (("operator", "3.5"), ("runners", "0.75"), ("os", "1")):
+    for group, gib in (("operator", "5"), ("runners", "1.25"), ("os", "1")):
         assert f'host_group_memory_bytes{{group="{group}"}}' in expr
         assert f"({gib} * 1073741824)" in expr
 
