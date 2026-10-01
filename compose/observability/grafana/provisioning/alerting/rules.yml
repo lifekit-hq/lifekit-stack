@@ -1389,7 +1389,7 @@ groups:
             {{ if gt $values.B.Value 31536000.0 }}finance_backup_last_verified_age_seconds
             is absent while finance-sentry-api is up: no verified backup is
             recorded.{{ else }}finance_backup_last_verified_age_seconds is
-            {{ printf "%.1f" (div $values.B.Value 86400.0) }} days: no backup has
+            {{ humanizeDuration $values.B.Value }}: no backup has
             provably restored since then.{{ end }} The weekly db-restore-verify Hangfire job
             has stopped or is failing, or the db-backup job feeding it has. Check
             the finance-sentry-api logs and the Hangfire dashboard for
@@ -1449,7 +1449,7 @@ groups:
             for run_type {{ $labels.run_type }} is absent while finance-sentry-api
             is up: no successful run is recorded.{{ else }}finance_retention_last_run_age_seconds
             for run_type {{ $labels.run_type }} is
-            {{ printf "%.1f" (div $values.B.Value 86400.0) }} days.{{ end }} The daily
+            {{ humanizeDuration $values.B.Value }}.{{ end }} The daily
             retention-purge / retention-downsample Hangfire job has stopped or is
             failing, so expired data is not being removed. Check the
             finance-sentry-api logs and the Hangfire dashboard.
