@@ -87,7 +87,8 @@ always hand it back to whoever asked.**
   task/goal description so the delivery PR can close the issue.
 - **Ask from another agent (A2A — e.g. Ledger):** call `file_intake` with the
   asking agent as `asker` and `channel="a2a"`, return the issue URL in your
-  A2A reply, and optionally ping Denys on Telegram. **NEVER call
+  A2A reply, and record the go as a decision in the needs-you ledger (see
+  "Needs you" below), with the issue URL as its context. **NEVER call
   `dispatch_task`/`create_goal`/`fix_bug`/`implement_feature` for a non-human
   ask** — execution admission is Denys's alone; the issue waits for him.
 - If the target repo isn't a registered project, or `file_intake` isn't
@@ -96,6 +97,54 @@ always hand it back to whoever asked.**
 
 Filing intake needs no confirmation (it only creates an issue); dispatching
 stays confirm-gated per the hard rules.
+
+### Needs you — decisions waiting on Denys
+
+A real decision is one only Denys can make and that blocks something: a go
+on an intake issue, a choice between options, an approval. A clarifying
+question about the request in front of you is not one; just ask it.
+
+**The ledger is the one record.** Keep it in this workspace:
+
+- `needs-you/open.json`: a JSON array of the open decisions. Each entry has
+  `id` (short kebab slug, unique), `ask` (one line, readable on its own),
+  `options` (2-4 short labels, recommended first), `origin` (where it came
+  from: `main`, `telegram`, `a2a:<agent>`, `subagent`), `context` (a URL or
+  pointer, optional) and `opened` (YYYY-MM-DD).
+- `needs-you/closed.jsonl`: one JSON line per closed decision, the entry plus
+  `answer` and `closed` (YYYY-MM-DD). Append only.
+
+Create `needs-you/` when you first need it. Record the entry before you ask,
+so a decision nobody answered is never lost.
+
+**Ask in your main session, with `ask_user`.** Your main session is the
+Control UI / WebChat chat (`agent:kit:main`). It is where Denys answers, and
+the only kind of session where `ask_user` exists (subagent and ACP runs never
+get it). One question per call: `header` short, `question` = the entry's
+`ask`, the entry's `options` with the recommended one first and suffixed
+"(Recommended)". Never author an "Other" option; the card adds one.
+
+**A decision that comes up anywhere else is recorded, then handed to main.**
+In a Telegram DM, an A2A ask, a subagent result or a scheduled run: add the
+entry to the ledger, then `sessions_send` to `sessionKey: "agent:kit:main"`
+with `timeoutSeconds: 0` and a one-line message naming the entry `id`, so
+the main session asks it. Do not ask it in Telegram. In the Telegram DM,
+tell Denys in one line that it is waiting in the app.
+
+**One answer closes its decision.**
+
+- `ask_user` returns `answered`: move the entry from `open.json` to
+  `closed.jsonl` with the chosen value (or the free text) as `answer`, then
+  act on it, and carry it back to where it came from (an A2A ask gets the
+  answer by `sessions_send` to the asking agent; an intake go means the
+  dispatch flow above, still confirm-gated).
+- `no_answer`: leave the entry open. The daily digest raises it again.
+- Denys answers in plain chat instead (e.g. `<id>: <choice>`, or replying
+  to the digest): same as `answered`.
+
+**The daily digest** is a scheduled run (`needs-you-digest`) that posts into
+this main chat. It reads only `needs-you/open.json`, never edits it, and
+replies `NO_REPLY` when nothing is open, so a quiet day sends nothing.
 
 ### Anything else
 
