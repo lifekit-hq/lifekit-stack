@@ -45,8 +45,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GIB = 1024**3
 MIB = 1024**2
 
-# Container-group member selectors, mirroring the `project-memory-over-budget`
-# rule in compose/observability/grafana/provisioning/alerting/rules.yml. The
+# Container-group member selectors, mirroring the `lifekit:group_memory_bytes`
+# recording rule in compose/observability/prometheus/rules.yml. The
 # budgets themselves come from docs/resource-budget.md; a group in the doc
 # with no entry here is reported as "no selector" (and a test fails).
 GROUP_SELECTORS = {
@@ -58,8 +58,7 @@ GROUP_SELECTORS = {
     "xui": 'project="xui"',
 }
 # Host groups: budget-doc name -> `group` label of host_group_memory_bytes
-# (scripts/host-gauge/host-group-gauge.sh), alerted by the
-# `host-group-over-budget` rule.
+# (scripts/host-gauge/host-group-gauge.sh).
 HOST_GROUPS = {"operator sessions": "operator", "runners": "runners", "os": "os"}
 HOST_GAUGE = "host_group_memory_bytes"
 BURST_POOL_BUDGET_LABEL = "burst pool"
@@ -124,8 +123,9 @@ def avg_query(expr: str) -> str:
 
 def breach_query(expr: str, budget_gib: float) -> str:
     """Max over 7d of the minimum, over 15 minutes, of the 30-minute average as
-    a ratio of budget - above 1 means the alert rule's condition held for its
-    whole `for` window at least once."""
+    a ratio of budget - above 1 means the 30-minute average sat over budget for
+    15 minutes at least once. Budgets are documentation, not an alert; the
+    report keeps the check so a drifting group shows up weekly."""
     ratio = f"avg_over_time({expr}[30m:5m]) / ({budget_gib} * {GIB})"
     return f"max_over_time(min_over_time(({ratio})[15m:5m])[7d:15m])"
 
@@ -217,7 +217,7 @@ def memory_section(base: str, budgets: dict[str, float]) -> tuple[str, list[str]
     """Per-group 7-day peak / average against budget. Returns (markdown, decisions)."""
     decisions: list[str] = []
     rows = [
-        "| Group | Budget | Peak | Average | Breached (alert would fire) |",
+        "| Group | Budget | Peak | Average | Over budget 15m+ (30m avg) |",
         "| --- | --- | --- | --- | --- |",
     ]
     groups: list[tuple[str, str, float]] = []

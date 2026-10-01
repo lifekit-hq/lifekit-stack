@@ -152,28 +152,114 @@ def test_near_cap_rule_threshold():
     assert threshold(RULES["container-near-memory-cap"]) == ("gt", 90)
 
 
-def test_memory_budget_rules_ship_and_use_percent_of_budget():
+def test_memory_rules_ship_and_the_per_group_budget_rules_are_retired():
     assert set(RULES) >= {
-        "project-memory-over-budget",
-        "burst-pool-over-budget",
+        "host-memory-pressure",
         "container-near-memory-cap",
         "host-swap-high",
     }
-    for uid in ("project-memory-over-budget", "burst-pool-over-budget"):
-        assert threshold(RULES[uid]) == ("gt", 100)
-        assert RULES[uid]["for"] == "15m"
     assert threshold(RULES["host-swap-high"]) == ("gt", 75)
+    retired = {
+        "project-memory-over-budget",
+        "host-group-over-budget",
+        "burst-pool-over-budget",
+    }
+    assert not retired & set(RULES)
+    # Provisioning only adds and updates: a retired uid must be named to be deleted.
+    assert retired <= {d["uid"] for d in DOC["deleteRules"]}
 
 
-def test_host_group_rule_is_alert_only_on_the_documented_budgets():
-    rule = RULES["host-group-over-budget"]
-    assert threshold(rule) == ("gt", 100)
+GIB = 1073741824
+HOST_GAUGE_INTERVAL_S = 300
+SCRAPE_INTERVAL_S = 15
+
+_COMPARE = r"\(\s*(?:(?P<fn>rate)\((?P<metric>\w+)\[(?P<win>\d+)m\]\)|(?P<bare>\w+))\s*(?P<op>[<>])\s*(?P<rhs>[\d\s*()]+?)\s*\)"
+
+
+def fires(expr: str, samples: dict[str, float]) -> bool:
+    """Evaluate the pressure expression: `A or on() B` over scalar samples.
+
+    A side with no sample yields no series, as in Prometheus, so it is false.
+    """
+    sides = re.split(r"\s+or\s+on\(\)\s+", " ".join(expr.split()))
+    assert len(sides) == 2
+    verdicts = []
+    for side in sides:
+        m = re.fullmatch(_COMPARE, side)
+        assert m, side
+        key = m["metric"] or m["bare"]
+        if key not in samples:
+            verdicts.append(False)
+            continue
+        rhs = eval(m["rhs"], {"__builtins__": {}})  # arithmetic literals only
+        value = samples[key]
+        verdicts.append(value < rhs if m["op"] == "<" else value > rhs)
+    return any(verdicts)
+
+
+def rate_window_seconds(expr: str) -> int:
+    (win,) = re.findall(r"rate\(\w+\[(\d+)m\]\)", expr)
+    return int(win) * 60
+
+
+def rank_of(expr: str, groups: dict[str, float]) -> list[str]:
+    """Evaluate `topk(n, m) [unless topk(k, m)]` over a group -> bytes map."""
+    m = re.fullmatch(
+        r"topk\((\d), [\w:]+\)(?: unless topk\((\d), [\w:]+\))?", expr.strip()
+    )
+    assert m, expr
+    ordered = sorted(groups, key=groups.get, reverse=True)
+    kept = set(ordered[: int(m[1])])
+    if m[2]:
+        kept -= set(ordered[: int(m[2])])
+    return [g for g in ordered if g in kept]
+
+
+def test_host_memory_pressure_rule_semantics():
+    rule = RULES["host-memory-pressure"]
+    assert threshold(rule) == ("gt", 0)
     assert rule["for"] == "15m"
     assert rule["labels"]["severity"] == "warning"
-    (expr,) = queries(rule)
-    for group, gib in (("operator", "3.5"), ("runners", "0.75"), ("os", "1")):
-        assert f'host_group_memory_bytes{{group="{group}"}}' in expr
-        assert f"({gib} * 1073741824)" in expr
+    expr = queries(rule)[0]
+    healthy = {"node_memory_MemAvailable_bytes": 8 * GIB}
+    assert not fires(expr, healthy)
+    assert not fires(expr, healthy | {"host_vmstat_pswpin_pages_total": 68})
+    assert fires(expr, {"node_memory_MemAvailable_bytes": 1.5 * GIB})
+    assert not fires(expr, {"node_memory_MemAvailable_bytes": 2.5 * GIB})
+    assert fires(expr, healthy | {"host_vmstat_pswpin_pages_total": 1500})
+    # The swap-in counter is only rewritten every host-gauge interval; a rate
+    # window must hold two writes even when one drifts by a scrape.
+    assert rate_window_seconds(expr) >= 2 * (HOST_GAUGE_INTERVAL_S + SCRAPE_INTERVAL_S)
+
+
+def test_host_memory_pressure_message_lists_the_top_three_groups():
+    rule = RULES["host-memory-pressure"]
+    groups = {
+        "openclaw": 3.6 * GIB,
+        "platform": 1.3 * GIB,
+        "operator sessions": 4.3 * GIB,
+        "CI runners": 0.4 * GIB,
+        "OS and daemons": 0.75 * GIB,
+    }
+    by_ref = {d["refId"]: d["model"] for d in rule["data"]}
+    names = {}
+    for n in ("1", "2", "3"):
+        assert by_ref[f"R{n}"]["expression"] == f"G{n}"
+        (name,) = rank_of(by_ref[f"G{n}"]["expr"], groups)
+        names[f"R{n}"] = name
+    assert list(names.values()) == ["operator sessions", "openclaw", "platform"]
+    rendered = re.sub(
+        r"\{\{ \$values\.(R\d)\.Labels\.name \}\}",
+        lambda m: names[m[1]],
+        rule["annotations"]["description"],
+    )
+    ranks = re.findall(r"\d\. ([A-Za-z ]+?) \{\{", rendered)
+    assert ranks == list(names.values())
+    prom = yaml.safe_load(
+        (REPO / "compose/observability/prometheus/rules.yml").read_text()
+    )
+    recorded = {r["record"] for g in prom["groups"] for r in g["rules"]}
+    assert set(re.findall(r"topk\(\d, ([\w:]+)\)", by_ref["G1"]["expr"])) == recorded
 
 
 def test_claude_token_expiry_rule_matches_the_documented_date():

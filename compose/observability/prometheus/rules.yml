@@ -1,0 +1,45 @@
+# Recording rules. One series per memory group (name label) so the
+# host-memory-pressure alert (grafana alerting/rules.yml) can name the top
+# three consumers by resident memory without repeating the member selectors.
+# Groups and members are documented in docs/resource-budget.md; membership is
+# by compose project and service label, finance-sentry by name (its project is
+# the generic `docker`), the burst pool is every container the named groups do
+# not claim. Host groups come from host_group_memory_bytes (scripts/host-gauge).
+# All values exclude reclaimable page cache. deploy.sh reloads this with the
+# same SIGHUP as prometheus.yml; nothing is recreated.
+groups:
+  - name: memory-groups
+    interval: 1m
+    rules:
+      - record: lifekit:group_memory_bytes
+        expr: >-
+          sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
+            project="openclaw", service=~"openclaw-gateway|google-workspace-mcp"}),
+            "name", "openclaw", "", ""))
+          or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
+            project="compose", service!~"lifekit-orchestrator|lifekit-dashboard"}),
+            "name", "platform", "", ""))
+          or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
+            project="docker", name=~"finance-sentry-.*"}),
+            "name", "finance-sentry", "", ""))
+          or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
+            project="devclaw", service="devclaw-mcp"}),
+            "name", "devclaw-mcp", "", ""))
+          or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
+            project="dashboard"}), "name", "dashboard", "", ""))
+          or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
+            project="xui"}), "name", "xui", "", ""))
+          or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes unless (
+              docker_container_memory_usage_bytes{project="openclaw", service=~"openclaw-gateway|google-workspace-mcp"}
+              or docker_container_memory_usage_bytes{project="compose", service!~"lifekit-orchestrator|lifekit-dashboard"}
+              or docker_container_memory_usage_bytes{project="docker", name=~"finance-sentry-.*"}
+              or docker_container_memory_usage_bytes{project="devclaw", service="devclaw-mcp"}
+              or docker_container_memory_usage_bytes{project="dashboard"}
+              or docker_container_memory_usage_bytes{project="xui"})),
+            "name", "burst pool", "", ""))
+          or sum by (name) (label_replace(host_group_memory_bytes{group="operator"},
+            "name", "operator sessions", "", ""))
+          or sum by (name) (label_replace(host_group_memory_bytes{group="runners"},
+            "name", "CI runners", "", ""))
+          or sum by (name) (label_replace(host_group_memory_bytes{group="os"},
+            "name", "OS and daemons", "", ""))

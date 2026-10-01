@@ -40,6 +40,16 @@ deleteRules:
     # true and false positives with the same signature, so it is retired
     # rather than left permanently red.
     uid: root-filesystem-readonly
+  - orgId: 1
+    # Retired 2026-10-01: per-group budget thresholds alerted on legitimate
+    # work (parallel agent sessions, an image rebuild). host-memory-pressure
+    # alerts on real pressure and names the top groups; the budgets stay in
+    # docs/resource-budget.md as documentation.
+    uid: project-memory-over-budget
+  - orgId: 1
+    uid: host-group-over-budget
+  - orgId: 1
+    uid: burst-pool-over-budget
 
 groups:
   - orgId: 1
@@ -721,219 +731,130 @@ groups:
             non-essential OpenClaw crons (`openclaw cron disable <id>`), pause
             devclaw and firstmate launches, and spend the rest by hand.
 
-  # Memory budgets: docs/resource-budget.md is the table these thresholds
-  # come from. Container groups read docker_container_memory_usage_bytes, which
-  # already excludes reclaimable page cache; the host groups - operator
-  # sessions, runners, OS - read host_group_memory_bytes from the host-group
-  # gauge (scripts/host-gauge/), also without page cache.
-  #
-  # Every group is one series named by a `name` label, so the resolved
-  # message (subject = `name`, contact-points.yml.tmpl) says which group
-  # recovered. Each value is a percent of the group's budget, so the threshold
-  # is 100 whatever the group. Membership is by compose project/service label,
-  # never by container name, except finance-sentry (project `docker` is a
-  # generic name). The burst pool is everything the named groups do not claim;
-  # the same selectors appear in both rules - keep them in step with the
-  # doc's member lists.
+  # Host memory pressure. docs/resource-budget.md says who uses what (the
+  # per-group budgets are documentation, not alert thresholds: they fired on
+  # legitimate work). One host-level rule alerts on pressure itself - available
+  # RAM low or swap-in sustained - and names the top three groups by resident
+  # memory in its own message, from the lifekit:group_memory_bytes recording
+  # rule (prometheus/rules.yml). The capped-container and swap-fill rules below
+  # are unchanged.
   - orgId: 1
     name: memory-budget
     folder: lifekit
     interval: 1m
     rules:
-      - uid: project-memory-over-budget
-        title: a project is over its memory budget
+      - uid: host-memory-pressure
+        title: host memory is under pressure
         condition: C
         data:
           - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Either signal (the rule's `for` holds it 15 minutes): available RAM
+              # under 2 GiB (the critical host-ram-nearly-exhausted rule
+              # fires at 10%, about 1.56 GiB, so this is its earlier
+              # sibling), or swap-in over 1000 pages/s (about 4 MiB/s) - the
+              # host paging memory back in, which is the slowdown itself.
+              # host_vmstat_pswpin_pages_total comes from the host-group
+              # gauge, rewritten every 5 minutes, so the rate window spans
+              # at least two writes even if one write drifts by a scrape; until it exists the first side alone decides.
+              expr: >-
+                (node_memory_MemAvailable_bytes < (2 * 1073741824))
+                or on()
+                (rate(host_vmstat_pswpin_pages_total[15m]) > 1000)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+          # Rank 1 group by resident memory, for the message only.
+          - refId: G1
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: prometheus
             model:
-              refId: A
-              # 30-minute average of the group's summed usage, as a percent of
-              # its budget in GiB (1073741824 bytes each): openclaw 3.5,
-              # platform 1.5, finance-sentry 1.25, devclaw-mcp 0.25,
-              # dashboard 0.25, xui 0.25.
-              expr: >-
-                label_replace(100 * avg_over_time((sum(
-                  docker_container_memory_usage_bytes{project="openclaw",
-                  service=~"openclaw-gateway|google-workspace-mcp"}
-                  ) or vector(0))[30m:1m]) / (3.5 * 1073741824), "name", "openclaw", "", "")
-                or label_replace(100 * avg_over_time((sum(
-                  docker_container_memory_usage_bytes{project="compose",
-                  service!~"lifekit-orchestrator|lifekit-dashboard"}
-                  ) or vector(0))[30m:1m]) / (1.5 * 1073741824), "name", "platform", "", "")
-                or label_replace(100 * avg_over_time((sum(
-                  docker_container_memory_usage_bytes{project="docker",
-                  name=~"finance-sentry-.*"}
-                  ) or vector(0))[30m:1m]) / (1.25 * 1073741824), "name", "finance-sentry", "", "")
-                or label_replace(100 * avg_over_time((sum(
-                  docker_container_memory_usage_bytes{project="devclaw",
-                  service="devclaw-mcp"}
-                  ) or vector(0))[30m:1m]) / (0.25 * 1073741824), "name", "devclaw-mcp", "", "")
-                or label_replace(100 * avg_over_time((sum(
-                  docker_container_memory_usage_bytes{project="dashboard"}
-                  ) or vector(0))[30m:1m]) / (0.25 * 1073741824), "name", "dashboard", "", "")
-                or label_replace(100 * avg_over_time((sum(
-                  docker_container_memory_usage_bytes{project="xui"}
-                  ) or vector(0))[30m:1m]) / (0.25 * 1073741824), "name", "xui", "", "")
+              refId: G1
+              expr: topk(1, lifekit:group_memory_bytes)
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
-          - refId: B
+          - refId: R1
             datasourceUid: __expr__
             model:
-              refId: B
+              refId: R1
               type: reduce
-              expression: A
+              expression: G1
               reducer: last
               settings: {mode: dropNN}
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: B
-              conditions:
-                - evaluator: {type: gt, params: [100]}
-        # A group with no running container averages 0 (the `or vector(0)`
-        # zero-fill), which is not an alarm; the exporter's own absence is
-        # target-down's job.
-        noDataState: OK
-        execErrState: Error
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: "{{ $labels.name }} is over its memory budget"
-          description: >-
-            The 30-minute average of {{ $labels.name }}'s resident container
-            memory (page cache excluded) has been at
-            {{ printf "%.0f" $values.B.Value }}% of its budget for 15
-            minutes - see docs/resource-budget.md for the budget and the
-            member containers. `docker stats --no-stream` shows which one is
-            growing; a short spike would not have fired this, so it is a
-            leak or a real step up in use. Fix the cause, or raise the
-            budget in the doc and this rule together.
-
-      - uid: host-group-over-budget
-        title: a host group is over its memory budget
-        condition: C
-        data:
-          - refId: A
-            relativeTimeRange: {from: 2100, to: 0}
-            datasourceUid: prometheus
-            model:
-              refId: A
-              # 30-minute average of the host cgroup gauge
-              # (scripts/host-gauge/host-group-gauge.sh, resident memory
-              # without page cache) as a percent of the group's budget in
-              # GiB: operator sessions 3.5, runners 0.75, os 1.0.
-              expr: >-
-                label_replace(
-                  100 * avg_over_time(host_group_memory_bytes{group="operator"}[30m]) / (3.5 * 1073741824),
-                  "name", "operator sessions", "", "")
-                or label_replace(
-                  100 * avg_over_time(host_group_memory_bytes{group="runners"}[30m]) / (0.75 * 1073741824),
-                  "name", "CI runners", "", "")
-                or label_replace(
-                  100 * avg_over_time(host_group_memory_bytes{group="os"}[30m]) / (1 * 1073741824),
-                  "name", "OS and daemons", "", "")
-              instant: true
-              intervalMs: 1000
-              maxDataPoints: 43200
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              refId: B
-              type: reduce
-              expression: A
-              reducer: last
-              settings: {mode: dropNN}
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: B
-              conditions:
-                - evaluator: {type: gt, params: [100]}
-        # Alert only, never a cap: these groups run interactive work. A gauge
-        # that stopped writing is textfile-collector-stale's job.
-        noDataState: OK
-        execErrState: Error
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: "{{ $labels.name }} is over its memory budget"
-          description: >-
-            The 30-minute average of {{ $labels.name }}'s resident memory
-            (page cache excluded) has been at
-            {{ printf "%.0f" $values.B.Value }}% of its budget for 15
-            minutes - see docs/resource-budget.md for the budget and what
-            the group contains. `systemd-cgtop -m` and `ps --sort=-rss` on
-            the box show which session, runner job or daemon is growing.
-            Nothing is capped; end the runaway work, or raise the budget in
-            the doc and this rule together.
-
-      - uid: burst-pool-over-budget
-        title: the burst pool is over its memory budget
-        condition: C
-        data:
-          - refId: A
+          # Rank 2 group by resident memory, for the message only.
+          - refId: G2
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: prometheus
             model:
-              refId: A
-              # Every container the named groups of
-              # project-memory-over-budget do not claim: sandboxes, transient
-              # CI and worker containers, cli runs, rehearsals. Budget 3 GiB.
-              expr: >-
-                100 * avg_over_time((sum(docker_container_memory_usage_bytes unless (
-                  docker_container_memory_usage_bytes{project="openclaw",service=~"openclaw-gateway|google-workspace-mcp"}
-                  or docker_container_memory_usage_bytes{
-                    project="compose",
-                    service!~"lifekit-orchestrator|lifekit-dashboard"
-                    }
-                  or docker_container_memory_usage_bytes{project="docker",name=~"finance-sentry-.*"}
-                  or docker_container_memory_usage_bytes{project="devclaw",service="devclaw-mcp"}
-                  or docker_container_memory_usage_bytes{project="dashboard"}
-                  or docker_container_memory_usage_bytes{project="xui"}
-                )) or vector(0))[30m:1m]) / (3 * 1073741824)
+              refId: G2
+              expr: topk(2, lifekit:group_memory_bytes) unless topk(1, lifekit:group_memory_bytes)
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
-          - refId: B
+          - refId: R2
             datasourceUid: __expr__
             model:
-              refId: B
+              refId: R2
               type: reduce
-              expression: A
+              expression: G2
               reducer: last
               settings: {mode: dropNN}
-          - refId: C
+          # Rank 3 group by resident memory, for the message only.
+          - refId: G3
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: G3
+              expr: topk(3, lifekit:group_memory_bytes) unless topk(2, lifekit:group_memory_bytes)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: R3
             datasourceUid: __expr__
             model:
-              refId: C
-              type: threshold
-              expression: B
-              conditions:
-                - evaluator: {type: gt, params: [100]}
+              refId: R3
+              type: reduce
+              expression: G3
+              reducer: last
+              settings: {mode: dropNN}
+        # A vanished node-exporter target is target-down's job.
         noDataState: OK
         execErrState: Error
         for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "the burst pool is over its 3 GiB memory budget"
+          summary: "host memory has been under pressure for 15 minutes"
           description: >-
-            Transient containers (sandboxes, CI and worker containers,
-            openclaw-cli runs, rehearsals) have averaged
-            {{ printf "%.0f" $values.B.Value }}% of the 3 GiB burst pool over
-            30 minutes, for 15 minutes. `docker stats --no-stream` lists what
-            is running; the ones with no compose project or with a
-            long-lived age are the candidates. docs/resource-budget.md
-            defines the pool.
+            Available RAM under 2 GiB or swap-in over 1000 pages/s, held for
+            15 minutes. Top groups by resident memory right now:
+            1. {{ $values.R1.Labels.name }} {{ humanize1024 $values.R1.Value }}B,
+            2. {{ $values.R2.Labels.name }} {{ humanize1024 $values.R2.Value }}B,
+            3. {{ $values.R3.Labels.name }} {{ humanize1024 $values.R3.Value }}B
+            (docs/resource-budget.md lists the members and what each is
+            normally). `free -h`, `docker stats --no-stream`, `ps --sort=-rss`
+            for the process. Never stop a compose-managed container, the
+            Docker daemon, or a Claude session to free it.
 
       - uid: container-near-memory-cap
         title: a container is near its memory cap

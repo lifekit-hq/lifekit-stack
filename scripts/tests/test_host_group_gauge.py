@@ -24,7 +24,12 @@ def cgroup(root, rel, current, inactive=0, swap=None):
 def run(root, out, env=None):
     return subprocess.run(
         ["bash", str(SCRIPT), str(out)],
-        env={**os.environ, "CGROUP_ROOT": str(root), **(env or {})},
+        env={
+            **os.environ,
+            "CGROUP_ROOT": str(root),
+            "VMSTAT_FILE": str(root / "no-vmstat"),
+            **(env or {}),
+        },
         capture_output=True,
         text=True,
         check=False,
@@ -69,6 +74,7 @@ def test_groups_sum_and_exclude_page_cache(dirs):
         'host_group_memory_swap_bytes{group="runners"}': 3,
         'host_group_memory_bytes{group="os"}': 580,
         'host_group_memory_swap_bytes{group="os"}': 12,
+        "host_vmstat_pswpin_pages_total": 0,
     }
 
 
@@ -76,7 +82,7 @@ def test_missing_groups_report_zero(dirs):
     root, out = dirs
     assert run(root, out).returncode == 0
     assert set(metrics(out).values()) == {0}
-    assert len(metrics(out)) == 6
+    assert len(metrics(out)) == 7
 
 
 def test_operator_slice_and_os_units_are_configurable(dirs):
@@ -107,3 +113,11 @@ def test_prom_format_has_help_and_type(dirs):
     text = (out / "host_group.prom").read_text()
     for name in ("host_group_memory_bytes", "host_group_memory_swap_bytes"):
         assert f"# TYPE {name} gauge" in text
+
+
+def test_swap_in_counter_is_read_from_vmstat(dirs, tmp_path):
+    root, out = dirs
+    vmstat = tmp_path / "vmstat"
+    vmstat.write_text("pgfault 5\npswpin 1234\npswpout 9\n")
+    assert run(root, out, {"VMSTAT_FILE": str(vmstat)}).returncode == 0
+    assert metrics(out)["host_vmstat_pswpin_pages_total"] == 1234
