@@ -13,7 +13,8 @@ from pathlib import Path
 import re
 
 import pytest
-import yaml
+
+yaml = pytest.importorskip("yaml")
 
 CI = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
 JOBS = yaml.safe_load(CI.read_text())["jobs"]
