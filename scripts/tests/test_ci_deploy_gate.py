@@ -45,9 +45,18 @@ def deploys(*, ref, event, results, cancelled=False):
     py = py.replace("&&", " and ").replace("||", " or ")
     py = py.replace("!cancelled()", "(not cancelled)").replace("always()", "True")
     py = py.replace("github.ref", "ref").replace("github.event_name", "event")
-    return bool(eval(py, {"__builtins__": {}}, {  # noqa: S307 - trusted workflow text
-        "needs": results, "ref": ref, "event": event, "cancelled": cancelled,
-    }))
+    return bool(
+        eval(
+            py,
+            {"__builtins__": {}},
+            {  # noqa: S307 - trusted workflow text
+                "needs": results,
+                "ref": ref,
+                "event": event,
+                "cancelled": cancelled,
+            },
+        )
+    )
 
 
 def all_ok(**over):
@@ -94,4 +103,3 @@ def test_no_deploy_when_cancelled():
 )
 def test_never_deploys_off_main_push_or_dispatch(ref, event):
     assert not deploys(ref=ref, event=event, results=all_ok())
-
