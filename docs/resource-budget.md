@@ -2,14 +2,15 @@
 
 The box has 15.6 GiB of RAM and 8 GiB of swap (the live `/swapfile`; `scripts/bootstrap-vps.sh` creates 4 GiB on a fresh host, and the file was grown since). Every project and host group has a
 memory budget: the expected sustained footprint, so "the box is slow" has an owner to
-look at. The budgets are **documentation, not alert thresholds** (see Alerts). They sum
-to **16.2 GiB**; a **1.75 GiB burst pool** for short-lived work brings the total to
-**17.95 GiB** against the 15.6 GiB of RAM. That overcommit is intended: the groups do not peak together, and
-swap is the margin. The budgets are set against the measured 7-day maximum 30-minute
-average, are documentation only (no alert keys on them), and shorter bursts can exceed
-them. The weekly ops report on 2026-10-02 shows 15-minute-plus breaches for openclaw
-(124%), platform (244%) and the OS (103%); platform is outside this recalibration, and
-the openclaw and OS budgets are left where they are.
+look at. The budgets are **documentation, not alert thresholds** (see Alerts): no alert
+keys on them, they are set against the measured 7-day maximum 30-minute average, and
+shorter bursts can exceed them. They sum to **16.2 GiB**; a **1.75 GiB burst pool** for
+short-lived work brings the total to **17.95 GiB** against the 15.6 GiB of RAM. That
+overcommit is intended: the groups do not peak together, and swap is the margin.
+
+The weekly ops report on 2026-10-02 shows 15-minute-plus breaches for openclaw (124%),
+platform (244%) and the OS (103%). Platform is outside this recalibration, and the
+openclaw and OS budgets are left where they are.
 
 ## What a budget is
 
@@ -107,8 +108,9 @@ nothing; 2 GiB is its earlier sibling that leaves time to act. The swap-in half
 catches the slowdown without a RAM shortage showing first (the box swapped in about 68
 pages/s at the time of writing, no history yet; 1000 pages/s is about 4 MiB/s held for
 15 minutes). The rate window is 15 minutes because the counter is rewritten only every
-5 minutes, so a shorter window can contain no new value and read as zero, and a
-10-minute window holds only one write if a write drifts by a single scrape. Tune both after a week of `host_vmstat_pswpin_pages_total`.
+5 minutes: a shorter window can contain no new value and read as zero, and a 10-minute
+window holds only one write if a write drifts by a single scrape. Tune both after a
+week of `host_vmstat_pswpin_pages_total`.
 
 **The top three in the message.** The Prometheus recording rule
 `lifekit:group_memory_bytes` (`compose/observability/prometheus/rules.yml`) holds one

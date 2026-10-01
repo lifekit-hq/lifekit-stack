@@ -945,7 +945,8 @@ need nothing.
 `scripts/host-gauge/host-group-gauge.sh` writes `host_group_memory_bytes` and
 `host_group_memory_swap_bytes` per `group` (`operator`, `runners`, `os`) every 5
 minutes from `host-group-gauge.timer`, installed by the same install script
-as above. Groups and their budgets are in `docs/resource-budget.md`; the
+as above, plus `host_vmstat_pswpin_pages_total` (the swap-in counter the pressure
+alert rates). Groups and their budgets are in `docs/resource-budget.md`; the
 *host memory is under pressure* alert reads them (it lists the top three groups).
 `cat /var/lib/node_exporter/textfile/host_group.prom` shows the current values;
 `systemd-cgtop -m` and `ps --sort=-rss` show who inside a group is growing.
