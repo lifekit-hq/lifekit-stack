@@ -142,3 +142,12 @@ recoveries in one group as the same line; every other rule fires once, and its `
 the exporter that produced the series rather than what the alert is about.
 Any future producer whose whole job is to report that other things are down gets the same
 exemption; everything else goes through the relay.
+
+## Not a notification: in-app decisions
+
+This page governs messages pushed to the owner's Telegram. Kit's decision prompts
+(`ask_user` cards) and its daily needs-you digest are conversation instead: they are
+committed into kit's own Control UI chat, and the app renders them. They never pass through
+the relay, and the envelope does not apply to them. The digest's failure alert is the
+OpenClaw cron alert, sent through kit's Telegram bot like the career/social weekly alerts
+(`docs/runbook.md`, "Kit's needs-you decisions and the daily digest").
