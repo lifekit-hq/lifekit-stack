@@ -40,7 +40,15 @@ def session(file, url, status="open", updated="2026-10-02T08:00:00Z"):
 
 
 def event(ts, task="t", state="working", key=None, text=""):
-    return {"v": 1, "ts": ts, "event": "task.status", "task": task, "state": state, "key": key, "text": text}
+    return {
+        "v": 1,
+        "ts": ts,
+        "event": "task.status",
+        "task": task,
+        "state": state,
+        "key": key,
+        "text": text,
+    }
 
 
 @pytest.fixture
@@ -52,10 +60,16 @@ def fleet(tmp_path):
 
     def write(source=None, ledger=(), lavish=None):
         src = tmp_path / "home-summary.json"
-        src.write_text(source if isinstance(source, str) else json.dumps(source or summary()))
-        (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(e) + "\n" for e in ledger))
+        src.write_text(
+            source if isinstance(source, str) else json.dumps(source or summary())
+        )
+        (tmp_path / "ledger.jsonl").write_text(
+            "".join(json.dumps(e) + "\n" for e in ledger)
+        )
         if lavish is not None:
-            (tmp_path / "lavish.json").write_text(json.dumps({"sessions": dict(enumerate(lavish))}))
+            (tmp_path / "lavish.json").write_text(
+                json.dumps({"sessions": dict(enumerate(lavish))})
+            )
 
     def run(**env):
         return subprocess.run(
@@ -85,7 +99,19 @@ def fleet(tmp_path):
     def published():
         return json.loads((out / "home-summary.json").read_text())
 
-    return type("Fleet", (), {"write": staticmethod(write), "run": staticmethod(run), "metrics": staticmethod(metrics), "published": staticmethod(published), "out": out, "prom": prom, "tmp": tmp_path})
+    return type(
+        "Fleet",
+        (),
+        {
+            "write": staticmethod(write),
+            "run": staticmethod(run),
+            "metrics": staticmethod(metrics),
+            "published": staticmethod(published),
+            "out": out,
+            "prom": prom,
+            "tmp": tmp_path,
+        },
+    )
 
 
 def test_publishes_world_readable_copy_and_worker_counts(fleet):
@@ -125,18 +151,43 @@ def test_invalid_summary_is_reported_as_invalid(fleet):
 def test_decision_gets_the_newest_open_board_of_its_own_data_dir(fleet):
     data = fleet.tmp / "data"
     fleet.write(
-        summary(decisions_open=[decision("task-a"), decision("task-b"), decision("task-c"), decision("task")]),
+        summary(
+            decisions_open=[
+                decision("task-a"),
+                decision("task-b"),
+                decision("task-c"),
+                decision("task"),
+            ]
+        ),
         lavish=[
-            session(f"{data}/task-a/old.html", "http://board/old", updated="2026-10-01T00:00:00Z"),
-            session(f"{data}/task-a/plan.html", "http://board/new", updated="2026-10-02T00:00:00Z"),
-            session(f"{data}/task-a/ended.html", "http://board/ended", status="ended", updated="2026-10-03T00:00:00Z"),
+            session(
+                f"{data}/task-a/old.html",
+                "http://board/old",
+                updated="2026-10-01T00:00:00Z",
+            ),
+            session(
+                f"{data}/task-a/plan.html",
+                "http://board/new",
+                updated="2026-10-02T00:00:00Z",
+            ),
+            session(
+                f"{data}/task-a/ended.html",
+                "http://board/ended",
+                status="ended",
+                updated="2026-10-03T00:00:00Z",
+            ),
             session(f"{data}/task-b/plan.html", "http://board/b", status="ended"),
             session(f"{data}/task-c-extra/plan.html", "http://board/other"),
         ],
     )
     assert fleet.run().returncode == 0
     urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_open"]}
-    assert urls == {"task-a": "http://board/new", "task-b": None, "task-c": None, "task": None}
+    assert urls == {
+        "task-a": "http://board/new",
+        "task-b": None,
+        "task-c": None,
+        "task": None,
+    }
 
 
 @pytest.mark.parametrize("lavish", [None, "not json"])
@@ -174,7 +225,10 @@ def test_oldest_decision_age_uses_ledger_open_time_then_hold_days(fleet):
 def test_oldest_decision_age_from_ledger_alone(fleet):
     fleet.write(
         summary(decisions_open=[decision("a", "k1"), decision("b", "k2")]),
-        ledger=[event(NOW - 600, "a", "needs-decision", "k1"), event(NOW - 1000, "b", "needs-decision", "k2")],
+        ledger=[
+            event(NOW - 600, "a", "needs-decision", "k1"),
+            event(NOW - 1000, "b", "needs-decision", "k2"),
+        ],
     )
     fleet.run()
     assert fleet.metrics()["fleet_oldest_decision_age_seconds"] == 1000
@@ -189,7 +243,13 @@ def test_usage_limit_events_counted_in_the_last_hour_only(fleet):
             event(NOW - 3500, text="usage-limit pause until reset"),
             event(NOW - 3700, text="usage limit reached"),
             event(NOW - 20, text="lint failed"),
-            {"v": 1, "ts": NOW - 5, "event": "task.dispatched", "task": "t", "text": "usage limit"},
+            {
+                "v": 1,
+                "ts": NOW - 5,
+                "event": "task.dispatched",
+                "task": "t",
+                "text": "usage limit",
+            },
         ],
     )
     fleet.run()
@@ -207,16 +267,26 @@ def test_ledger_tolerates_garbage_lines_and_absence(fleet):
 
 @pytest.mark.parametrize(
     "source",
-    ["{not json", json.dumps({"schema": "other", "generated_epoch": 1}), json.dumps({"schema": "fm-secondmate-home-summary.v1"})],
+    [
+        "{not json",
+        json.dumps({"schema": "other", "generated_epoch": 1}),
+        json.dumps({"schema": "fm-secondmate-home-summary.v1"}),
+    ],
     ids=["malformed", "wrong-schema", "no-epoch"],
 )
 def test_bad_source_keeps_previous_files(fleet, source):
     fleet.write(summary())
     assert fleet.run().returncode == 0
-    before = ((fleet.out / "home-summary.json").read_text(), (fleet.prom / "fleet.prom").read_text())
+    before = (
+        (fleet.out / "home-summary.json").read_text(),
+        (fleet.prom / "fleet.prom").read_text(),
+    )
     fleet.write(source)
     assert fleet.run(FLEET_NOW=str(NOW + 60)).returncode != 0
-    assert ((fleet.out / "home-summary.json").read_text(), (fleet.prom / "fleet.prom").read_text()) == before
+    assert (
+        (fleet.out / "home-summary.json").read_text(),
+        (fleet.prom / "fleet.prom").read_text(),
+    ) == before
 
 
 def test_missing_source_keeps_previous_files(fleet):
@@ -229,7 +299,13 @@ def test_missing_source_keeps_previous_files(fleet):
 
 @pytest.mark.parametrize(
     "secret",
-    ["sk-" + "ant-" + "a" * 20, "ghp_" + "A" * 24, "xoxb-" + "1" * 12, "-----BEGIN " + "OPENSSH PRIVATE KEY-----", "tskey-" + "auth-abc123"],
+    [
+        "sk-" + "ant-" + "a" * 20,
+        "ghp_" + "A" * 24,
+        "xoxb-" + "1" * 12,
+        "-----BEGIN " + "OPENSSH PRIVATE KEY-----",
+        "tskey-" + "auth-abc123",
+    ],
 )
 def test_summary_carrying_a_credential_is_not_published(fleet, secret):
     fleet.write(summary(decisions_open=[decision("x", reason=f"leaked {secret}")]))
@@ -240,14 +316,22 @@ def test_summary_carrying_a_credential_is_not_published(fleet, secret):
 
 
 def test_ordinary_token_talk_is_not_a_credential(fleet):
-    fleet.write(summary(decisions_open=[decision("x", summary="rotate the setup-token and the api key")]))
+    fleet.write(
+        summary(
+            decisions_open=[
+                decision("x", summary="rotate the setup-token and the api key")
+            ]
+        )
+    )
     assert fleet.run().returncode == 0
 
 
 def test_needs_a_fleet_home(fleet):
     result = subprocess.run(
         ["bash", str(SCRIPT), str(fleet.out), str(fleet.prom)],
-        env={k: v for k, v in os.environ.items() if k not in ("FM_HOME", "SUMMARY_FILE")},
+        env={
+            k: v for k, v in os.environ.items() if k not in ("FM_HOME", "SUMMARY_FILE")
+        },
         capture_output=True,
         text=True,
         check=False,
@@ -291,7 +375,9 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     script = root / "usr/local/bin/lifekit-fleet-publisher.sh"
     assert os.access(script, os.X_OK)
     assert script.read_text() == SCRIPT.read_text()
-    assert service["Service"]["ExecStart"].startswith("/usr/local/bin/lifekit-fleet-publisher.sh ")
+    assert service["Service"]["ExecStart"].startswith(
+        "/usr/local/bin/lifekit-fleet-publisher.sh "
+    )
     assert (root / "var/lib/lifekit-fleet").is_dir()
     assert (root / "var/lib/node_exporter/textfile").is_dir()
     assert calls.read_text().splitlines() == [
