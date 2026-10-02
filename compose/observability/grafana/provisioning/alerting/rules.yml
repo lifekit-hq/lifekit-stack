@@ -169,7 +169,7 @@ groups:
               # it a `name` (the service) so the alert and its recovery line
               # carry a subject. Today's unscraped services this covers:
               # google-workspace-mcp, finance-sentry-postgres,
-              # finance-sentry-uptime-probe, xui-web, xui-db. Not covered:
+              # xui-web, xui-db. Not covered:
               # openclaw-cli (an on-demand profile service) and one-shot
               # projects outside the regex.
               # A deliberate service retirement fires once, for about 30
