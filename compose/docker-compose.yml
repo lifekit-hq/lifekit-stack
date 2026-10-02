@@ -162,8 +162,10 @@ services:
     # Host metrics - the box has none today (2026-09-15: root fs hit 85% used
     # unnoticed, no node_filesystem_* series existed to alert on it). Root fs
     # mounted read-only for filesystem stats only; --collector.disable-defaults
-    # + enabling just `filesystem`, `meminfo`, `loadavg` and `pressure` (PSI: CPU, memory and IO stall recorded separately, since load average conflates CPU and IO wait; record only, no alert yet) keeps this narrow,
-    # matching container-exporter's narrow-scope shape. Loopback-bound, no
+    # + enabling just `filesystem`, `meminfo`, `loadavg` and `pressure` keeps
+    # this narrow, matching container-exporter's narrow-scope shape. `pressure`
+    # is PSI: CPU, memory and IO stall recorded separately, since load average
+    # conflates CPU and IO wait (record only, no alert yet). Loopback-bound, no
     # --net=host: the filesystem collector reads its own /proc/self/mountinfo,
     # which does not require host PID/network namespaces.
     image: prom/node-exporter:v1.8.2
