@@ -1350,7 +1350,7 @@ the apps, so rolling back is pointing them back.
 
 | | Value |
 | --- | --- |
-| Who gets in | Logto users with the role `owner` (others get 403) |
+| Who gets in | Logto users with the role `admin` (others get 403), the role that also makes a Grafana Admin |
 | Session | cookie `_lifekit_edge`, 30 days, refreshed against Logto at most hourly, so a removed role or a deleted user is out within the hour. Host-only, so it covers every port of the tailnet name: one sign-in for both surfaces |
 | Dashboard `/api/*` with no session | 401, not a redirect (a `fetch()` cannot follow the sign-in page) |
 | devclaw machine clients | unchanged: a request with an `Authorization` header or a `?token=` query, and `/mcp`, `/webhooks/`, `/health`, `/metrics`, go straight to devclaw, which checks them itself |
@@ -1377,24 +1377,37 @@ contract's `edge` item stays a check for the public edge.
    - Post sign-out redirect URIs: `https://<name>:18790/` and
      `https://<name>:18791/`.
    - Copy the client id and secret for step 3.
-2. **Role.** *Authorization > Roles > Create role*, type *User*, name
-   `owner`. Then assign it to your own user: *User management > <you> >
-   Roles > Assign roles*. The gate lets in no one else.
-3. **Secrets.** Add the client id, the client secret and a new cookie secret
-   to the master file, merge, and render:
+2. **Role.** The gate lets in only Logto users with the role `admin`. If
+   Grafana sign-in already created it, nothing to do. Otherwise *Roles >
+   Create role*, name `admin`, type *User role*, no API permissions, and
+   assign it to the owner (*User management > the user > Roles*). The
+   owner's Logto account also needs an email address (a member created as
+   above has one): oauth2-proxy refuses a sign-in whose token carries none
+   with a 500 on `/oauth2/callback`.
+3. **Secrets** (captain's age key). Add the client id, the client secret
+   and a new cookie secret to the master file; nothing prints them:
 
    ```bash
-   bash scripts/secrets/edit.sh master
-   #   EDGE_OIDC_CLIENT_ID=<from step 1>
-   #   EDGE_OIDC_CLIENT_SECRET=<from step 1>
-   #   EDGE_COOKIE_SECRET=<output of: openssl rand -hex 16>
-   # merge, then on the box:
+   sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+     '["EDGE_OIDC_CLIENT_ID"]' "\"<client id>\""
+   sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+     '["EDGE_OIDC_CLIENT_SECRET"]' "\"<client secret>\""
+   sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+     '["EDGE_COOKIE_SECRET"]' "\"$(openssl rand -hex 16)\""
+   ```
+
+   Commit the file through a PR that also moves the two secrets' rows in
+   `docs/secrets.md` from the settings table up into the master inventory.
+   After merge, render, then redeploy (CI `workflow_dispatch`, or
+   `scripts/deploy.sh` as the deploy account):
+
+   ```bash
    sudo bash scripts/secrets/render-stack-env.sh
    ```
 
-   The next deploy brings the project up, but nothing reaches it yet. Its
+   That deploy brings the project up, but nothing reaches it yet. Its
    report-only "sign-in gate (host facts)" block shows red until step 4.
-4. **Cutover.** Sign in on the gate before moving anything: from the box,
+4. **Cutover.** Check the gate before moving anything: from the box,
    `curl -sI http://127.0.0.1:18890/` answers `302` to
    `https://<name>:3001/oidc/auth`. Then point the two Serve ports at the
    gate (Serve only, never `tailscale funnel`):

@@ -118,9 +118,9 @@ services:
     networks:
       - default
       - db
-      # Server-side OIDC clients on the box (Grafana) reach the token and
-      # userinfo endpoints as http://logto:3001 instead of going out through
-      # the tailnet name. The sign-in pages stay on the tailnet. Only Logto
+      # Server-side OIDC clients on the box (Grafana, the edge oauth2-proxy)
+      # reach the token and userinfo endpoints as http://logto:3001 instead
+      # of going out through the tailnet name. The sign-in pages stay on the tailnet. Only Logto
       # and its OIDC clients join this network, never lifekit-shared.
       - identity-oidc
 

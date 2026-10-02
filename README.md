@@ -72,7 +72,7 @@ Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded lo
 | Service | Image | Role |
 | --- | --- | --- |
 | `traefik` | `traefik:v3.7.13` | Forward-auth proxy. Loopback entrypoints `:18890` (dashboard) and `:18891` (devclaw), which Tailscale Serve's `18790` and `18791` point at after the cutover. Routes in `compose/edge/traefik/dynamic.yml`. |
-| `oauth2-proxy` | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.5` | Confidential OIDC client of Logto. Answers Traefik's check from a 30-day session cookie that it refreshes against Logto hourly. Only users with the Logto role `owner` get through. No host port. |
+| `oauth2-proxy` | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.5` | Confidential OIDC client of Logto. Answers Traefik's check from a 30-day session cookie that it refreshes against Logto hourly. Only users with the Logto role `admin` get through. Reaches Logto's token endpoints over `identity-oidc`. No host port. |
 
 ## Monitoring
 

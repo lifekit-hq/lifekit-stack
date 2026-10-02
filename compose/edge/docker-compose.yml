@@ -131,34 +131,39 @@ services:
     environment:
       OAUTH2_PROXY_PROVIDER: oidc
       OAUTH2_PROXY_PROVIDER_DISPLAY_NAME: lifekit
-      # The issuer Logto signs tokens as, reached over the tailnet name like a
-      # browser would. Its endpoints are given, not discovered: discovery runs
-      # at start and exits when Logto is not up yet (after a reboot both
-      # projects start at once, and on-failure:5 gives up in seconds). Keys
-      # and tokens are fetched when a sign-in needs them instead.
+      # The browser goes to the tailnet issuer's /auth; oauth2-proxy's own
+      # token, keys and userinfo calls go straight to Logto over identity-oidc
+      # (a container cannot reliably reach the host's own tailnet address
+      # through the host firewall). Logto signs tokens with the tailnet issuer
+      # whichever name answered, so the issuer check still holds. Endpoints
+      # are given, not discovered: discovery runs at start and exits when
+      # Logto is not up yet (after a reboot both projects start at once, and
+      # on-failure:5 gives up in seconds). Keys and tokens are fetched when a
+      # sign-in needs them instead.
       OAUTH2_PROXY_OIDC_ISSUER_URL: ${IDENTITY_ENDPOINT:-}/oidc
       OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"
       OAUTH2_PROXY_LOGIN_URL: ${IDENTITY_ENDPOINT:-}/oidc/auth
-      OAUTH2_PROXY_REDEEM_URL: ${IDENTITY_ENDPOINT:-}/oidc/token
-      OAUTH2_PROXY_OIDC_JWKS_URL: ${IDENTITY_ENDPOINT:-}/oidc/jwks
-      OAUTH2_PROXY_PROFILE_URL: ${IDENTITY_ENDPOINT:-}/oidc/me
+      OAUTH2_PROXY_REDEEM_URL: http://logto:3001/oidc/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: http://logto:3001/oidc/jwks
+      OAUTH2_PROXY_PROFILE_URL: http://logto:3001/oidc/me
       # Logto signs with ES384; discovery would have said so.
       OAUTH2_PROXY_OIDC_ENABLED_SIGNING_ALGS: ES384
       OAUTH2_PROXY_CLIENT_ID: ${EDGE_OIDC_CLIENT_ID:-}
       OAUTH2_PROXY_CLIENT_SECRET: ${EDGE_OIDC_CLIENT_SECRET:-}
       OAUTH2_PROXY_CODE_CHALLENGE_METHOD: S256
       # offline_access: a refresh token, so the hourly cookie refresh re-checks
-      # the user with Logto. roles: the `roles` claim the owner check reads.
+      # the user with Logto. roles: the `roles` claim the admin check reads.
       OAUTH2_PROXY_SCOPE: openid profile email offline_access roles
       # Logto issues the refresh token only on a consent prompt; for a
       # first-party app it grants consent itself, no screen.
       OAUTH2_PROXY_PROMPT: consent
       # Logto admits only the users the admin created (sign-in mode SignIn),
       # and that includes finance-sentry's invitees; these two surfaces are
-      # the owner's alone, so the gate also needs the Logto role `owner`.
+      # the owner's alone, so the gate also needs the Logto role `admin`
+      # (the same role that makes a Grafana Admin).
       OAUTH2_PROXY_EMAIL_DOMAINS: "*"
       OAUTH2_PROXY_OIDC_GROUPS_CLAIM: roles
-      OAUTH2_PROXY_ALLOWED_GROUPS: owner
+      OAUTH2_PROXY_ALLOWED_GROUPS: admin
       # Session mapping (captain 2026-09-16: 30 days remember-me, re-checked
       # hourly): the cookie lives 30 days and is refreshed against Logto at
       # most hourly, so a disabled user is out within the hour. Lax, not
@@ -198,8 +203,14 @@ services:
           pids: 64
     networks:
       - default
+      # Reaches Logto's token, keys and userinfo endpoints (identity project).
+      - identity-oidc
 
 networks:
   default: {}
   lifekit-shared:
+    external: true
+  # Logto's OIDC clients only (compose/identity/docker-compose.yml); created
+  # once by scripts/deploy.sh before the first `up`.
+  identity-oidc:
     external: true
