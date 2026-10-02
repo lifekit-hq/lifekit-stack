@@ -1,0 +1,89 @@
+#!/usr/sbin/nft -f
+# lifekit-firewall.nft - the host firewall baseline, owned by lifekit-stack.
+# Installed and loaded by scripts/host-firewall.sh (lifekit-firewall.service);
+# cutover and rollback are docs/runbook.md "Host firewall (nftables)".
+#
+# The whole baseline is ONE table, inet lifekit. The file replaces that table
+# atomically (the empty declaration + delete below make the reload idempotent)
+# and never touches any other table: no `flush ruleset`. Docker (iptables-nft:
+# tables ip/ip6 filter, nat, raw) and tailscaled (iptables mode, its default:
+# ts-input/ts-forward in the same tables) own theirs, and a flush would drop
+# every published port and container's egress until dockerd is restarted.
+#
+# How it composes with those tables: every base chain on a hook sees the
+# packet. A drop anywhere is final; an accept only ends that one chain, so a
+# packet this table accepts still passes Docker's and Tailscale's own rules,
+# and a packet it drops is gone whatever they say. Policy drop here therefore
+# closes the box without editing anyone else's chain.
+#
+# What stays reachable from outside the host:
+#   - the tailnet (tailscale0): everything, SSH included. SSH has no public
+#     rule; the provider's console is the break-glass path.
+#   - Tailscale's WireGuard port (udp/41641, PORT in /etc/default/tailscaled)
+#     for direct peer connections; without it peers still connect over DERP.
+#   - tcp/80 and tcp/443 for the public edge; nothing listens there yet.
+#   - ICMP needed for diagnostics, path MTU and IPv6 neighbour discovery.
+
+table inet lifekit
+delete table inet lifekit
+
+table inet lifekit {
+	# Interfaces whose traffic is trusted as "inside the box": the tailnet,
+	# Docker's default bridge, Docker's per-network bridges (br-<id>), and
+	# the edge network's named bridge. A compose network given a custom
+	# com.docker.network.bridge.name must be added here, or its containers
+	# lose egress and their reach to host services.
+	chain inside {
+		iifname "tailscale0" accept
+		iifname "docker0" accept
+		iifname "br-*" accept
+		iifname "lifekit-edge" accept
+	}
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		iifname "lo" accept
+
+		# IPv6 neighbour discovery: without it the box loses its IPv6
+		# gateway. Ahead of the conntrack verdicts, so it is never dropped
+		# as invalid.
+		icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } ip6 hoplimit 255 accept
+
+		ct state vmap { established : accept, related : accept, invalid : drop }
+
+		# Tailnet clients (SSH included) and containers calling host services.
+		jump inside
+
+		udp dport 41641 accept
+		tcp dport { 80, 443 } accept
+
+		icmp type echo-request limit rate 5/second accept
+		icmpv6 type echo-request limit rate 5/second accept
+		icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept
+
+		# DHCPv6 replies answer a multicast solicit, so conntrack never
+		# matches them to it (unused with static addressing; harmless).
+		ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
+	}
+
+	# Forwarded traffic is container traffic (and tailnet routing): Docker
+	# DNATs a published port to its container in prerouting, so the packet
+	# reaches this hook with the container as destination. New flows may only
+	# start inside the box - so a published port answers loopback and the
+	# tailnet, never the public interface, whatever host address it binds.
+	# The one public exception is the edge: tcp/80 and tcp/443 as dialled on
+	# the host (the conntrack original port, before DNAT) into the
+	# lifekit-edge bridge. Docker's own DOCKER-USER/DOCKER-FORWARD chains
+	# still run after this one and keep their isolation rules.
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+
+		ct state vmap { established : accept, related : accept, invalid : drop }
+
+		iifname "lo" accept
+		jump inside
+
+		oifname "lifekit-edge" meta l4proto tcp ct original proto-dst { 80, 443 } accept
+	}
+}

@@ -86,7 +86,7 @@ The split is at the process / container boundary. Within each container, the run
 
 ### 4. Loopback-only network posture
 
-OpenClaw binds to `127.0.0.1:18789` per upstream Hetzner guidance. The host's UFW closes all public ports except ICMP. Admin access (SSH, SSHFS) goes through Tailscale.
+OpenClaw binds to `127.0.0.1:18789` per upstream Hetzner guidance. The host's nftables firewall (`scripts/host-firewall.sh`, see the runbook's "Host firewall (nftables)") closes every public port except Tailscale's WireGuard port and tcp/80+443 for a public edge, and keeps published container ports off the public interface. Admin access (SSH, SSHFS) goes through Tailscale.
 
 This means:
 

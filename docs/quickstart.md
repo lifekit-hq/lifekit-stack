@@ -49,7 +49,7 @@ The wizard will:
 4. **Let you select skills.** Multi-select from the bundled skills in `skills/`. Sensible defaults; opt out of anything you don't want.
 5. **Optionally bootstrap `~/.life/` domains.** If you have a `~/.claude/CLAUDE.md` describing yourself, the wizard can draft your domain files from it (reuse of existing `lifekit onboard`).
 6. **Render templates.** Generates real config files from the Jinja2 templates in `compose/` and `skills/` using the values you provided.
-7. **Provision the VPS.** Runs `scripts/bootstrap-vps.sh` on the host (installs Docker, the mesh-VPN client, UFW, creates directories). The script is idempotent — re-running it is safe.
+7. **Provision the VPS.** Runs `scripts/bootstrap-vps.sh` on the host (installs Docker, the mesh-VPN client, the nftables host firewall, creates directories). The script is idempotent — re-running it is safe.
 8. **Start the stack.** Brings up the Docker Compose stack (`OpenClaw gateway` + `lifekit-curator` + your selected skills).
 9. **Verify.** Runs `openclaw doctor`, `openclaw health`, sends a synthetic message over the chat transport, confirms round-trip.
 
