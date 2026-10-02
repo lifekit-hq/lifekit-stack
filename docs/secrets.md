@@ -137,6 +137,10 @@ file appears in one of the two inventory tables.
 | `GRAFANA_ROOT_URL` | master | setting | Grafana public root URL (tailnet name) |
 | `IDENTITY_ENDPOINT` | master | setting | Logto's public URL, the issuer base (tailnet name); optional, deploy derives it |
 | `IDENTITY_ADMIN_ENDPOINT` | master | setting | Logto admin console URL (tailnet name); optional, deploy derives it |
+| `GRAFANA_OIDC_ENABLED` | master | setting | `true` turns on Grafana's sign-in through Logto; unset is off |
+| `GRAFANA_OIDC_ONLY` | master | setting | `true` hides Grafana's password form (needs the three around it); unset is off |
+| `GRAFANA_OIDC_CLIENT_ID` | master | setting | client id of the Logto application for Grafana |
+| `GRAFANA_OIDC_CLIENT_SECRET` | master | setting | **a secret**: that application's client secret (grafana, `GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET`). Listed here, not in the table above, because the inventory test requires every secret row to be in the file and the captain adds this one only when enabling sign-in; move the row up with its rotation columns then (`sops set`, never in clear) |
 | `GRAFANA_PORT` | master | setting | loopback port |
 | `PROMETHEUS_PORT` | master | setting | loopback port |
 | `LOKI_PORT` | master | setting | loopback port |

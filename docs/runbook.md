@@ -1140,7 +1140,8 @@ it is meant for the fresh box `bootstrap-vps.sh` sets up.
 Compose project `identity` (`compose/identity/`) is the org sign-in: Logto
 1.44 as the OIDC provider, with its own Postgres 17. Every app on the box
 (lifekit dashboard, devclaw, finance-sentry, Grafana) signs in against it;
-those clients and the oauth2-proxy forward-auth are separate changes.
+those clients and the oauth2-proxy forward-auth are separate changes
+([Grafana sign-in through Logto](#grafana-sign-in-through-logto) is the first).
 `deploy.sh` brings the project up once `LOGTO_DB_PASSWORD` is in the rendered
 env file, and until then skips it with a yellow warning.
 
@@ -1263,6 +1264,70 @@ The restore prints `role "logto" already exists` and `database "logto"
 already exists`: the fresh volume created both, and those lines are expected.
 Wait for `up --wait` to return before restoring. A restore into a Postgres
 still starting fails.
+
+## Grafana sign-in through Logto
+
+Grafana's `generic_oauth` against the identity provider above: a "Sign in with
+lifekit" button next to the password form. Off by default; the compose
+settings are `GF_AUTH_GENERIC_OAUTH_*` on the `grafana` service, driven by
+`GRAFANA_OIDC_*` in the master file (`.env.example`). Roles: a Logto user with
+the role `admin` is a Grafana **Admin**, every other member a **Viewer**
+(`role_attribute_path` reads the `roles` claim; `roles` is in the requested
+scopes). Nobody becomes a Grafana server admin through it.
+
+How the pieces connect: the browser goes to the tailnet issuer
+(`https://<name>:3001/oidc/auth`). Grafana's own token and userinfo calls go to
+`http://logto:3001/oidc/...` over `identity-oidc`, an external network only
+Logto and its on-box OIDC clients join (the host firewall does not reliably let
+a container reach the host's own tailnet address; `lifekit-shared` carries the
+agent runtime and stays off Logto). `deploy.sh` creates `identity-oidc`
+idempotently before the platform `up`; both compose projects reference it as
+external. Logto signs the id_token with the tailnet issuer whichever
+name answered, so it matches the issuer `deploy.sh` derives
+(`scripts/deploy-grafana-oidc.sh`, an explicit `IDENTITY_ENDPOINT` wins).
+Grafana's `root_url` (`GRAFANA_ROOT_URL`) must stay the tailnet HTTPS address:
+it builds the redirect URI.
+
+**Logto side** (admin console, `https://<name>:3002`):
+
+1. *Roles > Create role*: name `admin`, type *User role*, no API permissions.
+   Assign it to the owner (*User management > the user > Roles*). Members
+   without it sign in as Viewer.
+2. *Applications > Create application > Traditional web*, name `Grafana`.
+   Redirect URI `https://<name>:3000/login/generic_oauth` (the same value as
+   `GRAFANA_ROOT_URL` plus `/login/generic_oauth`); post sign-out redirect
+   `https://<name>:3000/login`. Copy the client id and secret.
+
+**Enable** (operator, captain's age key for the secret):
+
+```bash
+# 1. Add the secret to the master file; nothing prints it:
+sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+  '["GRAFANA_OIDC_CLIENT_SECRET"]' "\"<client secret>\""
+sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+  '["GRAFANA_OIDC_CLIENT_ID"]' "\"<client id>\""
+sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+  '["GRAFANA_OIDC_ENABLED"]' '"true"'
+# 2. Commit the file through a PR, then render and redeploy:
+sudo bash scripts/secrets/render-stack-env.sh
+```
+
+The deploy then recreates Grafana (and, once, Logto: it joined
+`identity-oidc`). It turns red and leaves sign-in off if the client id,
+secret or issuer is missing. Sign in with the button as the owner and check
+the role under *Administration > Users and access*.
+
+**Password form off.** The local admin (`GRAFANA_ADMIN_USER`) is the
+break-glass until then. After one member has signed in, set
+`GRAFANA_OIDC_ONLY` to `true` the same way: Grafana then redirects straight
+to Logto and hides the form. The admin password still works against the API
+(`curl -u`) for a fix; the way back is unsetting `GRAFANA_OIDC_ONLY` and
+redeploying.
+
+**Rotating or moving.** A new client secret is `sops set` plus render and
+redeploy. When the issuer moves (a public domain), register the application
+again against the new issuer and update `IDENTITY_ENDPOINT` / the redirect
+URI.
 
 ## Container console logs in Loki
 

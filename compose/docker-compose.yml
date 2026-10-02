@@ -306,6 +306,33 @@ services:
       # Secret ping URL of the external dead-man check; empty = disabled
       # (heartbeat.yml is then not rendered, scripts/render-heartbeat.sh).
       HEARTBEAT_URL: ${LIFEKIT_EXTERNAL_HEARTBEAT_URL:-}
+      # Sign-in through the org identity provider (Logto, compose project
+      # identity; docs/runbook.md "Grafana sign-in through Logto"). Off unless
+      # GRAFANA_OIDC_ENABLED=true. The browser-facing /auth URL is the tailnet
+      # issuer (GRAFANA_OIDC_ISSUER, derived by deploy.sh); the server-side
+      # token and userinfo calls go straight to Logto over identity-oidc
+      # (a container cannot reliably reach the host's own tailnet address
+      # through the host firewall). Logto signs the id_token with the tailnet
+      # issuer whichever host answered, and Grafana reads the role from the
+      # userinfo `roles` claim: admin -> Admin, anyone else -> Viewer.
+      # GRAFANA_OIDC_ONLY hides the password form; deploy.sh refuses it unless
+      # sign-in is enabled and configured, so the local admin stays reachable.
+      GF_AUTH_GENERIC_OAUTH_ENABLED: ${GRAFANA_OIDC_ENABLED:-false}
+      GF_AUTH_GENERIC_OAUTH_NAME: lifekit
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: ${GRAFANA_OIDC_CLIENT_ID:-}
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${GRAFANA_OIDC_CLIENT_SECRET:-}
+      GF_AUTH_GENERIC_OAUTH_SCOPES: openid profile email roles
+      GF_AUTH_GENERIC_OAUTH_USE_PKCE: "true"
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: ${GRAFANA_OIDC_ISSUER:-}/auth
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: http://logto:3001/oidc/token
+      GF_AUTH_GENERIC_OAUTH_API_URL: http://logto:3001/oidc/me
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "contains(roles[*], 'admin') && 'Admin' || 'Viewer'"
+      GF_AUTH_GENERIC_OAUTH_ALLOW_ASSIGN_GRAFANA_ADMIN: "false"
+      # Logto only admits members its admin created, so the first sign-in may
+      # create the Grafana user.
+      GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "true"
+      GF_AUTH_DISABLE_LOGIN_FORM: ${GRAFANA_OIDC_ONLY:-false}
+      GF_AUTH_OAUTH_AUTO_LOGIN: ${GRAFANA_OIDC_ONLY:-false}
       TZ: ${OPENCLAW_TZ:-UTC}
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
@@ -329,6 +356,8 @@ services:
           pids: 512
     networks:
       - default
+      # Reaches Logto's token and userinfo endpoints (identity project).
+      - identity-oidc
 
   container-exporter:
     <<: *policy
@@ -452,6 +481,10 @@ services:
 # (mounted there as an external volume) — no service in THIS project uses it now.
 networks:
   lifekit-shared:
+    external: true
+  # Logto's OIDC clients only (compose/identity/docker-compose.yml); created
+  # once by scripts/deploy.sh before the first `up`.
+  identity-oidc:
     external: true
 
 # ── Secrets ─────────────────────────────────────────────────────────────────

@@ -141,6 +141,21 @@ else
   unset GRAFANA_EMBED_ORIGIN
 fi
 
+# Grafana sign-in through Logto: GRAFANA_OIDC_* decided before the platform
+# `up` (scripts/deploy-grafana-oidc.sh). Incomplete settings leave sign-in
+# off and the deploy red; the local admin login is never hidden unless the SSO
+# button can work. Exported for compose interpolation only.
+say "grafana oidc sign-in"
+GRAFANA_OIDC_DECISION="$(ENV_FILE="${ENV_FILE}" "${REPO_DIR}/scripts/deploy-grafana-oidc.sh")" \
+  || fail_later "grafana oidc: see the message above (docs/runbook.md \"Grafana sign-in through Logto\")"
+unset GRAFANA_OIDC_ISSUER
+while IFS='=' read -r _k _v; do
+  case "${_k}" in
+    GRAFANA_OIDC_ENABLED | GRAFANA_OIDC_ONLY | GRAFANA_OIDC_ISSUER) export "${_k}=${_v}" ;;
+  esac
+done <<<"${GRAFANA_OIDC_DECISION}"
+echo "grafana oidc: enabled=${GRAFANA_OIDC_ENABLED:-false} only=${GRAFANA_OIDC_ONLY:-false}"
+
 # ─── lifekit-dashboard: deployed from its own repo now (decoupling slice 2) ──
 #
 # The dashboard deploys from lifekit-hq/lifekit-dashboard's own deploy/
@@ -236,6 +251,12 @@ identity_compose config --format json \
 # ─── Build + start ───────────────────────────────────────────────────────────
 
 deploy_private_docker_config
+
+# `identity-oidc` joins Logto to its on-box OIDC clients (Grafana) across the
+# identity and platform compose projects, and nothing else. Both declare it
+# external, so it must exist before either `up`.
+docker network inspect identity-oidc >/dev/null 2>&1 \
+  || docker network create identity-oidc >/dev/null
 
 # ─── OpenClaw: gateway image build + version-bump state migration ────────────
 #
