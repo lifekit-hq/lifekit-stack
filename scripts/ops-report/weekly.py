@@ -56,7 +56,7 @@ GROUP_SELECTORS = {
     "devclaw-mcp": 'project="devclaw",service="devclaw-mcp"',
     "dashboard": 'project="dashboard"',
     "xui": 'project="xui"',
-    "identity": 'project="identity"',
+    "identity": 'project=~"identity|edge"',
 }
 # Host groups: budget-doc name -> `group` label of host_group_memory_bytes
 # (scripts/host-gauge/host-group-gauge.sh).

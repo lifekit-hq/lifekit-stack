@@ -1,0 +1,205 @@
+# Edge compose project (`edge`): the tailnet sign-in gate.
+#
+# One sign-in, against the org identity provider (compose/identity/), in front
+# of the lifekit dashboard and the devclaw console:
+#   traefik       - the forward-auth proxy. One loopback entrypoint per gated
+#                   surface (:18890 dashboard, :18891 devclaw); Tailscale Serve
+#                   keeps the surfaces' tailnet ports (18790, 18791) and points
+#                   them here instead of at the apps. Every request is checked
+#                   with oauth2-proxy before it reaches the app. Routes:
+#                   traefik/dynamic.yml.
+#   oauth2-proxy  - a confidential OIDC client of Logto. It answers Traefik's
+#                   check from its session cookie, and on no session redirects
+#                   the browser to Logto and back. The cookie has no domain, so
+#                   the browser sends it to every port of the tailnet name: one
+#                   sign-in covers both surfaces.
+#
+# Tailscale Serve cannot do forward-auth, so a proxy sits between it and the
+# apps. Traefik because it is the public edge's proxy too (docs/runbook.md
+# "Tailnet sign-in gate"): the public routers later join these, not a second
+# proxy product.
+#
+# scripts/deploy.sh brings this project up only once the identity project is
+# up and the edge's client and cookie secrets are in the rendered env file.
+# Until the operator points Tailscale Serve at the entrypoints, nothing reaches
+# it: the runbook section has the cutover and its one-line rollback.
+#
+# Relative paths resolve from this directory (compose/edge/). An ad-hoc command
+# needs IDENTITY_ENDPOINT set by hand (deploy.sh exports it):
+#   IDENTITY_ENDPOINT=https://<host>.<tailnet>.ts.net:3001 \
+#   docker compose -p edge --env-file /srv/lifekit-secrets/stack.env \
+#     -f compose/edge/docker-compose.yml ps
+#
+# The x-policy anchor is a copy of the platform file's (YAML anchors do not
+# cross files); keep the two in step. Both services drop every capability and
+# run as an unprivileged user.
+---
+name: edge
+
+x-policy:
+  policy: &policy
+    init: true
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: '50m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          pids: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+
+services:
+
+  traefik:
+    <<: *policy
+    image: traefik:v3.7.13
+    # Platform contract (scripts/platform-contract.py, docs/platform-contract.md):
+    # `none`, the documented opt-out for platform components, as Logto. An
+    # upstream image we configure, not a product; health is the compose
+    # healthcheck below and the deploy's report-only Serve check.
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
+    # The image runs as root to bind :80/:443. Every entrypoint here is above
+    # 1024, so nobody will do.
+    user: "65534:65534"
+    command:
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      - --log.format=json
+      - --log.level=WARN
+      # No access log: the devclaw console's old `?token=` links would write
+      # the devclaw bearer into Loki.
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --entrypoints.dashboard.address=:18890
+      - --entrypoints.devclaw.address=:18891
+      # Tailscale Serve terminates HTTPS and sends X-Forwarded-Proto/-Host;
+      # oauth2-proxy builds its callback URL from them. Both ports bind only
+      # to loopback, so only Serve (or a local process) can send them.
+      - --entrypoints.dashboard.forwardedHeaders.insecure=true
+      - --entrypoints.devclaw.forwardedHeaders.insecure=true
+      # Drop headers whose names alias the ones Traefik and oauth2-proxy set
+      # (X_Forwarded_User for X-Forwarded-User), so a client cannot spoof them.
+      - --entrypoints.dashboard.http.aliasHeadersStrategy=delete
+      - --entrypoints.devclaw.http.aliasHeadersStrategy=delete
+      - --entrypoints.ping.address=:8082
+      - --ping.entrypoint=ping
+    environment:
+      # The devclaw console's bearer (devclaw's DEVCLAW_TOKEN), which the
+      # devclaw router adds to requests that passed the sign-in check
+      # (traefik/dynamic.yml).
+      DEVCLAW_MCP_TOKEN: ${DEVCLAW_MCP_TOKEN:-}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    ports:
+      - "127.0.0.1:18890:18890"
+      - "127.0.0.1:18891:18891"
+    volumes:
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    read_only: true
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          pids: 128
+    networks:
+      - default
+      # The apps: lifekit-dashboard (compose project `dashboard`) and
+      # devclaw-mcp (compose project `devclaw`) both join it.
+      - lifekit-shared
+
+  oauth2-proxy:
+    <<: *policy
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
+    # Runs as the image's nonroot user (65532). The image is distroless (no
+    # shell, no wget), so it has no healthcheck; a failed start exits and
+    # turns `up --wait` red, and Traefik's check answers 5xx while it is down.
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_PROVIDER_DISPLAY_NAME: lifekit
+      # The issuer Logto signs tokens as, reached over the tailnet name like a
+      # browser would. Its endpoints are given, not discovered: discovery runs
+      # at start and exits when Logto is not up yet (after a reboot both
+      # projects start at once, and on-failure:5 gives up in seconds). Keys
+      # and tokens are fetched when a sign-in needs them instead.
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${IDENTITY_ENDPOINT:-}/oidc
+      OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"
+      OAUTH2_PROXY_LOGIN_URL: ${IDENTITY_ENDPOINT:-}/oidc/auth
+      OAUTH2_PROXY_REDEEM_URL: ${IDENTITY_ENDPOINT:-}/oidc/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: ${IDENTITY_ENDPOINT:-}/oidc/jwks
+      OAUTH2_PROXY_PROFILE_URL: ${IDENTITY_ENDPOINT:-}/oidc/me
+      # Logto signs with ES384; discovery would have said so.
+      OAUTH2_PROXY_OIDC_ENABLED_SIGNING_ALGS: ES384
+      OAUTH2_PROXY_CLIENT_ID: ${EDGE_OIDC_CLIENT_ID:-}
+      OAUTH2_PROXY_CLIENT_SECRET: ${EDGE_OIDC_CLIENT_SECRET:-}
+      OAUTH2_PROXY_CODE_CHALLENGE_METHOD: S256
+      # offline_access: a refresh token, so the hourly cookie refresh re-checks
+      # the user with Logto. roles: the `roles` claim the owner check reads.
+      OAUTH2_PROXY_SCOPE: openid profile email offline_access roles
+      # Logto issues the refresh token only on a consent prompt; for a
+      # first-party app it grants consent itself, no screen.
+      OAUTH2_PROXY_PROMPT: consent
+      # Logto admits only the users the admin created (sign-in mode SignIn),
+      # and that includes finance-sentry's invitees; these two surfaces are
+      # the owner's alone, so the gate also needs the Logto role `owner`.
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_OIDC_GROUPS_CLAIM: roles
+      OAUTH2_PROXY_ALLOWED_GROUPS: owner
+      # Session mapping (captain 2026-09-16: 30 days remember-me, re-checked
+      # hourly): the cookie lives 30 days and is refreshed against Logto at
+      # most hourly, so a disabled user is out within the hour. Lax, not
+      # Strict: a top-level return from another site must still carry it.
+      # No cookie domain: host-only on the tailnet name, which the browser
+      # sends to every port of it, so one sign-in covers both surfaces.
+      OAUTH2_PROXY_COOKIE_NAME: _lifekit_edge
+      OAUTH2_PROXY_COOKIE_SECRET: ${EDGE_COOKIE_SECRET:-}
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_SAMESITE: lax
+      OAUTH2_PROXY_COOKIE_EXPIRE: 720h
+      OAUTH2_PROXY_COOKIE_REFRESH: 1h
+      # Forward-auth mode: Traefik asks `/` for every request; 202 lets it
+      # through, no session redirects to Logto (no "sign in with" button
+      # page first). The callback URL is built from the X-Forwarded-* headers,
+      # so each surface signs in on its own port.
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_UPSTREAMS: static://202
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      # A fetch() cannot follow a redirect to the sign-in page, so a lapsed
+      # session answers the dashboard's /api calls with 401 instead.
+      OAUTH2_PROXY_API_ROUTES: ^/api/
+      # Where a redirect after sign-in or sign-out may go: back to the page
+      # the user asked for (any port of the tailnet name), or to Logto's
+      # end-session URL, so sign-out ends the Logto session too
+      # (docs/runbook.md). scripts/deploy.sh sets it, `<tailnet name>:*`.
+      OAUTH2_PROXY_WHITELIST_DOMAINS: ${EDGE_REDIRECT_DOMAINS:-}
+      OAUTH2_PROXY_SILENCE_PING_LOGGING: "true"
+      OAUTH2_PROXY_REQUEST_LOGGING: "false"
+      TZ: ${OPENCLAW_TZ:-UTC}
+    read_only: true
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          pids: 64
+    networks:
+      - default
+
+networks:
+  default: {}
+  lifekit-shared:
+    external: true

@@ -8,7 +8,11 @@
 # name (`tailscale status --json`, Self.DNSName), and the port found by
 # matching the dashboard container's published loopback host port (`docker ps`
 # on the dashboard compose project) against the proxy targets in
-# `tailscale serve status --json`. The dashboard is not assumed to sit on the
+# `tailscale serve status --json`. Once the tailnet sign-in gate is cut over
+# (compose project `edge`, docs/runbook.md "Tailnet sign-in gate"), Serve
+# points at the gate's dashboard entrypoint instead, so its published port
+# (container port 18890 of the edge traefik) counts as the dashboard's too.
+# The dashboard is not assumed to sit on the
 # default HTTPS port: the port is omitted only when it is 443. Never guesses:
 # if the name or the port can't be derived, nothing is printed and embedding
 # stays denied ('none'); this script always exits 0 so it can never fail a
@@ -32,6 +36,9 @@ fi
 
 DASHBOARD_PROJECT="${DASHBOARD_PROJECT:-dashboard}"
 ports="$(docker ps --filter "label=com.docker.compose.project=${DASHBOARD_PROJECT}" --format '{{.Ports}}' 2>/dev/null || true)"
+EDGE_PROJECT="${EDGE_PROJECT:-edge}"
+edge_ports="$(docker ps --filter "label=com.docker.compose.project=${EDGE_PROJECT}" \
+  --filter "label=com.docker.compose.service=traefik" --format '{{.Ports}}' 2>/dev/null || true)"
 
 origin="$(
   {
@@ -40,16 +47,19 @@ origin="$(
     tailscale serve status --json 2>/dev/null || true
     printf '\n@@@\n'
     printf '%s\n' "${ports}"
+    printf '\n@@@\n'
+    printf '%s\n' "${edge_ports}"
   } | python3 -c '
 import json, re, sys
 try:
-    status, serve, ports = sys.stdin.read().split("\n@@@\n")
+    status, serve, ports, edge_ports = sys.stdin.read().split("\n@@@\n")
     name = json.loads(status)["Self"]["DNSName"].rstrip(".").lower()
 except Exception:
     sys.exit()
 if not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+", name):
     sys.exit()
 published = set(re.findall(r"(?:127\.0\.0\.1|\[::1\]):(\d+)->", ports))
+published |= set(re.findall(r"(?:127\.0\.0\.1|\[::1\]):(\d+)->18890/", edge_ports))
 found = set()
 try:
     web = json.loads(serve).get("Web", {})

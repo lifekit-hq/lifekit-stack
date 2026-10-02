@@ -18,7 +18,10 @@ if [ "$1" = serve ]; then printf '%s' "$TS_SERVE"; else printf '%s' "$TS_JSON"; 
 """
 
 DOCKER_STUB = """#!/bin/sh
-printf '%s\\n' "$DOCKER_PORTS"
+case "$*" in
+  *project=edge*) printf '%s\\n' "$EDGE_PORTS" ;;
+  *) printf '%s\\n' "$DOCKER_PORTS" ;;
+esac
 """
 
 
@@ -47,6 +50,7 @@ def run(tmp_path):
         raw=None,
         serve=None,
         ports="127.0.0.1:19999->8080/tcp",
+        edge_ports="",
     ):
         env = {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
         env["TS_JSON"] = (
@@ -58,6 +62,7 @@ def run(tmp_path):
             else (serve_json(dns.rstrip("."), 8443, "127.0.0.1:19999") if dns else "{}")
         )
         env["DOCKER_PORTS"] = ports
+        env["EDGE_PORTS"] = edge_ports
         if fail:
             env["TS_FAIL"] = "1"
         ef = tmp_path / "env"
@@ -137,4 +142,27 @@ def test_not_derivable_stays_denied_and_succeeds(run, kwargs):
 def test_derived_origin_never_has_path_or_wildcard(run, dns):
     r = run(dns=dns)
     assert r.returncode == 0
+    assert r.stdout == ""
+
+
+EDGE_TRAEFIK = "127.0.0.1:18890->18890/tcp, 127.0.0.1:18891->18891/tcp"
+
+
+def test_dashboard_behind_the_sign_in_gate(run):
+    # After the cutover Serve points the dashboard's port at the gate's
+    # dashboard entrypoint, not at the dashboard container.
+    r = run(
+        dns="box.example.ts.net.",
+        serve=serve_json("box.example.ts.net", 18790, "127.0.0.1:18890"),
+        edge_ports=EDGE_TRAEFIK,
+    )
+    assert r.stdout == "https://box.example.ts.net:18790\n"
+
+
+def test_the_gates_devclaw_entrypoint_is_not_the_dashboard(run):
+    r = run(
+        dns="box.example.ts.net.",
+        serve=serve_json("box.example.ts.net", 18791, "127.0.0.1:18891"),
+        edge_ports=EDGE_TRAEFIK,
+    )
     assert r.stdout == ""

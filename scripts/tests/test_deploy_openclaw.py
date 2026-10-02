@@ -8,8 +8,9 @@ under `set -euo pipefail` to pin the build phase's return status (a phase
 whose last command is a false `[[ ]] && ...` would return 1 and trip
 deploy.sh's set -e), which compose project and file each phase drives, and
 the one-time cutover of the OpenClaw services out of the platform project.
-The same end-to-end run pins the gated `identity` project: declared on every
-deploy, brought up only once its password is rendered.
+The same end-to-end run pins the gated `identity` and `edge` projects:
+declared on every deploy, brought up only once their secrets are rendered
+(and, for `edge`, once `identity` is up).
 `docker` is a stub on PATH throughout; no test runs a real docker command,
 and every host path the phases touch points into the test's tmp dir.
 """
@@ -63,6 +64,7 @@ DEPLOY_ORDER = [
     "embed-origin",
     "openclaw:modules",
     "render-heartbeat",
+    "contract-static",
     "contract-static",
     "contract-static",
     "contract-static",
@@ -143,11 +145,15 @@ def marker(line: str) -> str | None:
     return None
 
 
-def full_deploy(env, tmp_path, env_text="LIFEKIT_TELEGRAM_CHAT=123\n", identity=None):
+def full_deploy(
+    env, tmp_path, env_text="LIFEKIT_TELEGRAM_CHAT=123\n", identity=None, edge=None
+):
     """Run deploy.sh end to end in a scratch repo; return (result, trace, repo).
 
     `identity` is the body of a stub scripts/deploy-identity.sh, which the
-    deploy calls only once LOGTO_DB_PASSWORD is in the env file.
+    deploy calls only once LOGTO_DB_PASSWORD is in the env file; `edge` the
+    body of a stub scripts/deploy-edge.sh, called only once identity is up
+    and the edge's three secrets are in it.
     """
     fake = tmp_path / "repo"
     (fake / "scripts/lib").mkdir(parents=True)
@@ -182,6 +188,8 @@ def full_deploy(env, tmp_path, env_text="LIFEKIT_TELEGRAM_CHAT=123\n", identity=
     state_dir.mkdir()
     if identity is not None:
         stub(fake / "scripts/deploy-identity.sh", identity)
+    if edge is not None:
+        stub(fake / "scripts/deploy-edge.sh", edge)
     Path(env["ENV_FILE"]).write_text(env_text)
 
     r = subprocess.run(
@@ -233,6 +241,13 @@ def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
         f"-f {fake}/compose/identity/docker-compose.yml config --format json"
     ]
     assert "LOGTO_DB_PASSWORD is not in" in r.stderr
+    # Nor the edge secrets: declared, never brought up.
+    edge = [line for line in trace if " -p edge " in f" {line} "]
+    assert edge == [
+        f"compose -p edge --env-file {env['ENV_FILE']} "
+        f"-f {fake}/compose/edge/docker-compose.yml config --format json"
+    ]
+    assert "(0/3); project edge not brought up" in r.stderr
 
 
 def test_identity_oidc_network_is_created_before_the_platform_up(env, tmp_path):
@@ -303,6 +318,108 @@ def test_identity_without_an_issuer_fails_the_deploy_and_stays_down(env, tmp_pat
     assert "issuer URL undecidable" in r.stderr
     assert not [line for line in trace if " -p identity " in line and " up " in line]
     assert "identity-check" not in trace
+
+
+EDGE_STUB = """#!/bin/sh
+echo "edge-$1 IDENTITY_ENDPOINT=$IDENTITY_ENDPOINT" >> "$DOCKER_CALL_LOG"
+if [ "$1" = domains ] && [ -z "$NO_DOMAINS" ]; then
+  echo "EDGE_REDIRECT_DOMAINS=box.example.ts.net:*"
+fi
+[ "$1" != check ] || [ -z "$EDGE_DRIFT" ]
+"""
+
+EDGE_SECRETS = (
+    "EDGE_OIDC_CLIENT_ID=id\nEDGE_OIDC_CLIENT_SECRET=s\nEDGE_COOKIE_SECRET='c'\n"
+)
+
+
+def edge_steps(trace, env, fake):
+    prefix = (
+        f"compose -p edge --env-file {env['ENV_FILE']} "
+        f"-f {fake}/compose/edge/docker-compose.yml "
+    )
+    return [
+        line[len(prefix) :] if line.startswith(prefix) else line
+        for line in trace
+        if line.startswith((prefix, "edge-", "identity-", "contract-enforce"))
+    ]
+
+
+@pytest.mark.parametrize("drift", [False, True])
+def test_edge_comes_up_after_identity_once_its_secrets_are_rendered(
+    env, tmp_path, drift
+):
+    if drift:
+        env["EDGE_DRIFT"] = "1"
+    r, trace, fake = full_deploy(
+        env,
+        tmp_path,
+        env_text="LIFEKIT_TELEGRAM_CHAT=123\nLOGTO_DB_PASSWORD=abc\n" + EDGE_SECRETS,
+        identity=IDENTITY_STUB,
+        edge=EDGE_STUB,
+    )
+    # Serve not yet pointed at the gate is report-only: a red line, never a
+    # red deploy.
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert ("✗ sign-in gate: not yet converged" in r.stderr) == drift
+    issuer = "IDENTITY_ENDPOINT=https://box.example.ts.net:3001"
+    assert edge_steps(trace, env, fake) == [
+        "config --format json",
+        "identity-endpoints",
+        f"edge-domains {issuer}",
+        "up -d --wait --wait-timeout 120",
+        "ps",
+        "contract-enforce",
+        "identity-check",
+        f"edge-check {issuer}",
+    ]
+    assert "redirects limited to box.example.ts.net:*" in r.stdout
+
+
+@pytest.mark.parametrize(
+    ("env_text", "expect"),
+    [
+        # Secrets rendered, but identity is not (no LOGTO_DB_PASSWORD).
+        (EDGE_SECRETS, "the identity project is not up"),
+        # Identity up, one edge secret missing.
+        (
+            "LOGTO_DB_PASSWORD=abc\nEDGE_OIDC_CLIENT_ID=id\nEDGE_COOKIE_SECRET=c\n"
+            "EDGE_OIDC_CLIENT_SECRET=\n",
+            "(2/3); project edge not brought up",
+        ),
+    ],
+)
+def test_edge_stays_down_until_identity_and_all_its_secrets(
+    env, tmp_path, env_text, expect
+):
+    r, trace, fake = full_deploy(
+        env,
+        tmp_path,
+        env_text="LIFEKIT_TELEGRAM_CHAT=123\n" + env_text,
+        identity=IDENTITY_STUB,
+        edge=EDGE_STUB,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert expect in r.stderr
+    assert [
+        s for s in edge_steps(trace, env, fake) if s.startswith(("edge-", "up "))
+    ] == []
+
+
+def test_edge_without_redirect_domains_fails_the_deploy_and_stays_down(env, tmp_path):
+    env["NO_DOMAINS"] = "1"
+    r, trace, fake = full_deploy(
+        env,
+        tmp_path,
+        env_text="LIFEKIT_TELEGRAM_CHAT=123\nLOGTO_DB_PASSWORD=abc\n" + EDGE_SECRETS,
+        identity=IDENTITY_STUB,
+        edge=EDGE_STUB,
+    )
+    assert r.returncode != 0
+    assert "redirect domains undecidable" in r.stderr
+    steps = edge_steps(trace, env, fake)
+    assert "up -d --wait --wait-timeout 120" not in steps
+    assert not [s for s in steps if s.startswith("edge-check")]
 
 
 def build_phase(env, extra_env=None):
