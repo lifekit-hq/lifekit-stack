@@ -103,6 +103,12 @@ services:
       default:
         gw_priority: 1
       lifekit-shared: {}
+    # A stable name for the host, for the Kit relay's ssh_config. A bridge IP
+    # changes when its network is recreated, and MagicDNS fails when Tailscale
+    # is down while the host is fine. host-gateway is docker0's address; the
+    # host firewall accepts bridge traffic and sshd listens on all addresses.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # OpenClaw's stop policy for a non-systemd supervisor
     # (GATEWAY_SERVICE_STOP_TIMEOUT_MS, 2026.9.6): SIGTERM drains active work,
     # then releases the gateway owner lease. Docker's 10s default SIGKILLs a
@@ -160,6 +166,13 @@ services:
       # must not be visible in any container.
       - ../../secrets:/run/lifekit/secrets:ro
       - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/gateway:/run/lifekit/gateway:ro
+      # Kit relay (docs/runbook.md, "Kit's second-mate relay"): the SSH key,
+      # pinned host key and ssh_config that skills/secondmate-relay/relay.sh
+      # uses to reach the host's kit-relay forced command. Read-only, its own
+      # directory only, and outside the state mount, like the gateway key.
+      # Until the operator creates it, Docker creates it empty and the relay
+      # simply fails to connect.
+      - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/kit-relay:/run/lifekit/kit-relay:ro
       # Vault (~/memory): bind-mounted at two paths.
       # ~/memory — canonical alias used by cron jobs, skills, and agents; also the
       # path openclaw-gateway/platform.patch.json indexes via memory.search.extraPaths.

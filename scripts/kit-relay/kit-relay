@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# kit-relay - the forced command of the Kit relay SSH key.
+#
+# authorized_keys pins this script with command="..."; sshd runs it for every
+# connection that key opens and puts what the client asked for in
+# SSH_ORIGINAL_COMMAND. No shell ever parses that string. Exactly two verbs:
+#
+#   note <request-id>     body on stdin, saved verbatim as one fm-inbox note
+#   receipts [<cursor>]   fm-inbox receipts, reduced to the notes this key sent
+#
+# Everything else is refused (exit 64 usage, 65 body, 75 rate limit).
+#
+# This is the repo copy: install-kit-relay.sh renders it with the second
+# mate's home pinned below and installs it root-owned at
+# /usr/local/libexec/kit-relay (docs/runbook.md, "Kit's second-mate relay").
+set -euo pipefail
+umask 077
+
+# Pinned here, never taken from the caller's environment.
+readonly FM_HOME='__FM_HOME__'
+readonly INBOX_BIN="$FM_HOME/bin/fm-inbox.sh"
+readonly ID_PREFIX=kit-
+readonly MAX_BYTES=32768        # refuse, never truncate
+readonly MAX_NOTES_PER_HOUR=30  # every note wakes the home's primary
+
+case "$FM_HOME" in
+  /*) ;;
+  *) printf 'kit-relay: not installed; render it with install-kit-relay.sh\n' >&2; exit 78 ;;
+esac
+
+say_log() { logger -t kit-relay -p auth.notice -- "$*" 2>/dev/null || true; }
+
+refuse() {  # <exit> <reason>
+  say_log "refused: $2"
+  printf 'kit-relay: refused: %s\n' "$2" >&2
+  exit "$1"
+}
+
+# fm-inbox.sh with nothing inherited: no FM_*_OVERRIDE, no AWS_*, no LC_* from
+# the client's SendEnv.
+run_inbox() {
+  env -i HOME="$HOME" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+    FM_HOME="$FM_HOME" "$INBOX_BIN" "$@"
+}
+
+cmd=${SSH_ORIGINAL_COMMAND-}
+[ "${#cmd}" -le 160 ] || refuse 64 "command too long"
+case "$cmd" in
+  *[!A-Za-z0-9._:\ -]*) refuse 64 "unexpected characters in command" ;;
+esac
+read -r -a words <<<"$cmd"
+[ "${#words[@]}" -ge 1 ] || refuse 64 "usage: note <request-id> | receipts [<cursor>]"
+
+case "${words[0]}" in
+  note)
+    [ "${#words[@]}" -eq 2 ] || refuse 64 "usage: note <request-id> (body on stdin)"
+    rid=${words[1]}
+    [[ $rid =~ ^kit-[A-Za-z0-9._:-]{1,120}$ ]] || refuse 64 "request id must match kit-[A-Za-z0-9._:-]{1,120}"
+    recent=$({ find "$FM_HOME/state/inbox/.requests" -maxdepth 1 -name "${ID_PREFIX}*" \
+      -mmin -60 2>/dev/null || true; } | wc -l)
+    if [ ! -e "$FM_HOME/state/inbox/.requests/$rid" ] && [ "$recent" -ge "$MAX_NOTES_PER_HOUR" ]; then
+      refuse 75 "rate limit: $recent notes in the last hour"
+    fi
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    head -c "$((MAX_BYTES + 1))" >"$tmp"
+    size=$(stat -c %s "$tmp")
+    [ "$size" -gt 0 ] || refuse 65 "empty body; nothing saved"
+    [ "$size" -le "$MAX_BYTES" ] || refuse 65 "body over $MAX_BYTES bytes; nothing saved"
+    [ "$(tr -d '\000' <"$tmp" | wc -c)" -eq "$size" ] || refuse 65 "body contains NUL bytes"
+    iconv -f UTF-8 -t UTF-8 "$tmp" >/dev/null 2>&1 || refuse 65 "body is not valid UTF-8"
+    sha=$(sha256sum "$tmp" | cut -d' ' -f1)
+    printf '{"schema":"kit-relay-received.v1","bytes":%d,"sha256":"%s"}\n' "$size" "$sha"
+    status=0
+    run_inbox note --request-id "$rid" --json - <"$tmp" || status=$?
+    say_log "note rid=$rid bytes=$size sha256=$sha exit=$status"
+    exit "$status"
+    ;;
+  receipts)
+    after=()
+    case "${#words[@]}" in
+      1) ;;
+      2) [[ ${words[1]} =~ ^[0-9]{12}$ ]] || refuse 64 "cursor must be 12 digits"
+         after=(--after "${words[1]}") ;;
+      *) refuse 64 "usage: receipts [<cursor>]" ;;
+    esac
+    out=$(run_inbox receipts "${after[@]}" --all-pending --all-handled --all-replies)
+    # Notes this key did not send stay on the box. Note and reply bodies pass
+    # through untouched; reply_cursor is the unfiltered one so the caller's
+    # cursor also moves past replies to other notes.
+    KIT_PREFIX=$ID_PREFIX python3 -c '
+import json, os, sys
+d = json.load(sys.stdin)
+p = os.environ["KIT_PREFIX"]
+mine = lambda n: (n.get("request_id") or "").startswith(p)
+pending = [n for n in d["pending"] if mine(n)]
+handled = [n for n in d["handled"] if mine(n)][:20]
+ids = {n["id"] for n in d["pending"] + d["handled"] if mine(n)}
+json.dump({
+    "schema": "kit-relay-receipts.v1",
+    "source_schema": d["schema"],
+    "home": d["home"],
+    "generated": d["generated"],
+    "pending": pending,
+    "handled": handled,
+    "replies": [r for r in d["replies"] if r["id"] in ids],
+    "reply_cursor": d["reply_cursor"],
+}, sys.stdout, ensure_ascii=False, separators=(",", ":"))
+sys.stdout.write("\n")
+' <<<"$out"
+    ;;
+  *)
+    refuse 64 "unknown verb: ${words[0]}"
+    ;;
+esac

@@ -606,6 +606,122 @@ the digest shows up in the Control UI chat without a refresh.
 can stay. Push delivery of these cards to a phone comes with the Control UI's
 HTTPS-origin setup, not with this job.
 
+### Kit's second-mate relay
+
+Kit can send the owner's words to the VPS second mate's captain inbox and read the
+replies, over one SSH key whose only power is a forced command on the host. It is a
+pipe: kit copies the text into a file and runs one script; it never decides what to send.
+
+- **Host:** `scripts/kit-relay/kit-relay`, installed root-owned at
+  `/usr/local/libexec/kit-relay` by `scripts/kit-relay/install-kit-relay.sh`, which
+  pins the second mate's home (`FM_HOME`) into the installed copy. Two verbs only:
+  `note <kit-request-id>` (body on stdin, 1 B to 32 KiB of UTF-8 without NUL, refused
+  whole otherwise, exit 65) and `receipts [<12-digit cursor>]` (only the notes whose
+  request id starts with `kit-`, with their replies). Anything else exits 64. At most
+  30 new `kit-` notes per rolling hour (exit 75); a replay of an existing request id is
+  never limited. `fm-inbox.sh` runs under `env -i`, so nothing the client sends (SendEnv,
+  `FM_*_OVERRIDE`) reaches it. Each note and refusal is logged with tag `kit-relay`
+  (`journalctl -t kit-relay`).
+- **Key:** `/srv/lifekit-secrets/kit-relay/` (`id_ed25519`, pinned `known_hosts`,
+  `ssh_config`), mounted read-only into the gateway at `/run/lifekit/kit-relay`. The
+  authorized_keys line carries `restrict` (no PTY, forwarding or agent),
+  `command=` and `from="172.16.0.0/12"` (the docker bridges only, so a copied key is
+  useless off the box). The gateway reaches the host as `host.docker.internal`
+  (`extra_hosts: host-gateway` in `compose/openclaw/docker-compose.yml`).
+- **Skill:** `skills/secondmate-relay` (`SKILL.md` + `relay.sh`), installed into kit's
+  workspace by `scripts/ensure-secondmate-relay.sh`. The request id is
+  `kit-<UTC yyyymmdd>-<sha256(body)[:16]>`, so a retry of the same text the same day is
+  a replay of the same note, never a second one.
+- **Answering:** the second mate answers a `kit-` note with `fm-inbox.sh reply <id>`
+  (one reply per note) and then `drain --ack <id>`. Kit shows replies when asked; there
+  is no push.
+
+The key reaches the second mate as the owner: any process in the gateway that can read
+it can send a note. `from=`, the two verbs, the rate limit, the `kit-` request ids and
+the log line bound that; they do not close it.
+
+Operator steps, once per host, after the PR that adds the mount has deployed. The
+deploy recreated the gateway with the mount, and Docker created
+`/srv/lifekit-secrets/kit-relay` empty and root-owned; step 2 resets it. Run as the admin
+account (`ADMIN_USER`, README "VPS users"), the account that owns the second mate's
+home and whose `authorized_keys` takes the key:
+
+```bash
+ADMIN_USER=<admin account>
+FM_HOME=<the second mate's home, holding bin/fm-inbox.sh>
+
+# 1. The forced command, root-owned, with FM_HOME pinned into it.
+sudo FM_HOME="$FM_HOME" bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh
+
+# 2. Key, pinned host key and client config, readable by the gateway's uid 1000.
+sudo install -d -o lifekit -g lifekit -m 0500 /srv/lifekit-secrets/kit-relay
+sudo -u lifekit ssh-keygen -t ed25519 -N '' -C kit-relay@openclaw-gateway \
+  -f /srv/lifekit-secrets/kit-relay/id_ed25519
+printf 'lifekit-vps %s\n' "$(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)" \
+  | sudo -u lifekit tee /srv/lifekit-secrets/kit-relay/known_hosts >/dev/null
+sudo -u lifekit tee /srv/lifekit-secrets/kit-relay/ssh_config >/dev/null <<EOF
+Host relay
+  HostName host.docker.internal
+  HostKeyAlias lifekit-vps
+  User ${ADMIN_USER}
+  IdentityFile /run/lifekit/kit-relay/id_ed25519
+  IdentitiesOnly yes
+  UserKnownHostsFile /run/lifekit/kit-relay/known_hosts
+  StrictHostKeyChecking yes
+  BatchMode yes
+  ConnectTimeout 10
+  ServerAliveInterval 10
+  ServerAliveCountMax 2
+  RequestTTY no
+  ForwardAgent no
+  ClearAllForwardings yes
+EOF
+sudo chmod 0400 /srv/lifekit-secrets/kit-relay/id_ed25519
+sudo chmod 0444 /srv/lifekit-secrets/kit-relay/known_hosts /srv/lifekit-secrets/kit-relay/ssh_config
+
+# 3. Authorize it for the admin account (append, never replace).
+printf 'restrict,command="/usr/local/libexec/kit-relay",from="172.16.0.0/12" %s\n' \
+  "$(sudo cat /srv/lifekit-secrets/kit-relay/id_ed25519.pub)" >> ~/.ssh/authorized_keys
+
+# 4. The skill into kit's workspace (as lifekit).
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-secondmate-relay.sh
+
+# 5. Kit's skill allowlist. agents.entries.kit.skills replaces the defaults and a
+#    config patch replaces arrays, so derive the whole list from the live file:
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+docker exec "$G" node -e 'const c=require("/home/node/.openclaw/openclaw.json");const s=c.agents.entries.kit.skills;if(!s.includes("secondmate-relay"))s.push("secondmate-relay");process.stdout.write(JSON.stringify({agents:{entries:{kit:{skills:s}}}}))' > /tmp/kit-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/kit-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/kit-skills.patch.json
+```
+
+The skill watcher picks up the new `SKILL.md`. If kit does not see it, force-recreate
+the gateway as in `scripts/ensure-morning-brief.sh`.
+
+**Verify** from inside the gateway, then answer the smoke note from the second mate's
+home (`fm-inbox.sh reply <id> …`, then `drain --ack <id>`) and check kit shows the reply:
+
+```bash
+S=/home/node/.openclaw/agents/kit/workspace/skills/secondmate-relay/relay.sh
+docker exec "$G" sh "$S" replies
+printf 'relay smoke test - ignore\n' > /tmp/s.txt && docker cp /tmp/s.txt "$G":/tmp/s.txt \
+  && docker exec "$G" sh "$S" note /tmp/s.txt
+docker exec "$G" ssh -F /run/lifekit/kit-relay/ssh_config relay 'id'   # refused, exit 64
+journalctl -t kit-relay --since -5min
+```
+
+**Failures kit reports:** host or sshd down gives `ssh` exit 255 within
+`ConnectTimeout` and nothing is saved, so a retry of the same text is safe.
+`Permission denied (publickey)` (line removed, `from=` mismatch, key perms) and
+`Host key verification failed` (host key changed; update the pinned `known_hosts`) need
+the operator. fm-inbox exit 3 means saved but not announced; re-sending the same body
+re-announces it.
+
+**Rollback:** delete the authorized_keys line, `sudo rm -r /srv/lifekit-secrets/kit-relay`
+and `/usr/local/libexec/kit-relay`, re-apply kit's old skills list, and remove the skill
+folder from kit's workspace. The mount and `extra_hosts` can stay: an empty directory
+gives the gateway nothing.
+
 ## Rolling back OpenClaw
 
 ### The one-rollback rule
