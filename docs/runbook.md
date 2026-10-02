@@ -1045,6 +1045,96 @@ systemctl show 'actions.runner.*' -p Id -p Restart
 Needs no other setup variables. Every runner unit should report
 `Restart=on-failure`.
 
+## Host firewall (nftables)
+
+`scripts/host-firewall.sh` owns one nftables table, `inet lifekit`
+(ruleset: `scripts/firewall/lifekit-firewall.nft`), loaded at boot by
+`lifekit-firewall.service`:
+
+- **Host input:** policy drop. Open: loopback, established/related flows,
+  everything arriving on `tailscale0` or a Docker bridge (`docker0`, `br-*`,
+  `lifekit-edge`), Tailscale's WireGuard port (udp/41641), tcp/80 and tcp/443
+  for the public edge, rate-limited ping, and the ICMP/ICMPv6
+  traffic the network needs. SSH is tailnet-only; the provider's web console is
+  the break-glass.
+- **Published container ports:** a forward-hook chain admits new flows into
+  containers only from loopback, the tailnet, a Docker bridge, or - for
+  connections dialled to host port 80 or 443 - the `lifekit-edge` bridge. It
+  plays the part of a `DOCKER-USER` rule, but in its own table: rules written
+  into Docker's iptables-nft chains with `nft` break `iptables` there, are lost
+  on every reboot, and that chain does not exist in Docker's nftables mode.
+
+It composes with Docker's and tailscaled's chains rather than replacing them:
+every base chain on a hook runs, an accept in one does not skip the others,
+and a drop in any one is final
+([Docker with nftables](https://docs.docker.com/engine/network/firewall-nftables/)).
+The script never runs `nft flush ruleset`, and nothing else on this box may
+either. Debian's `nftables.service` does, in stock `/etc/nftables.conf` and in
+its `ExecStop`, and that drops Docker's NAT until dockerd restarts. Keep
+`nftables.service` disabled and `ufw` masked; `--check` (a report-only line in
+every deploy) flags either one. A compose network given a custom bridge name
+other than `lifekit-edge` (`com.docker.network.bridge.name`) needs a line in
+the ruleset's `inside` chain.
+
+`scripts/tests/test_host_firewall.py` loads the ruleset into a throwaway
+user + network namespace beside a Docker-like table and probes it with real
+traffic.
+
+**Operator step (live cutover).** A merge does not apply it (`/etc`, root).
+Run on the box as the admin account, **from an SSH session over the tailnet**
+(`ssh <user>@<tailnet-name>`), never over the public address; `--trial`
+refuses a session that is not from the tailnet. Keep a second way in at hand:
+the provider's web console.
+
+```bash
+cd /srv/lifekit-stack            # after the merge has deployed
+
+# 1. For the record (the trial also saves both under
+#    /var/lib/lifekit/firewall/baseline-<UTC time>/):
+sudo nft list ruleset; sudo iptables -S
+
+# 2. Load the ruleset live with a 5-minute automatic rollback. Nothing is
+#    persisted yet; a reboot also undoes it.
+sudo bash scripts/host-firewall.sh --trial 300
+```
+
+3. Keep that session open. **Open a new SSH session over the tailnet** - that
+   one getting in is the real test - and check, inside the window:
+
+   ```bash
+   sudo nft list table inet lifekit                        # the table is loaded
+   systemctl list-timers lifekit-firewall-rollback.timer   # rollback still armed
+   tailscale status                                        # peers still listed
+   docker ps --format '{{.Names}} {{.Status}}'             # containers still up
+   ```
+
+   From a laptop on the tailnet, open a tailnet-served page (Grafana, the
+   dashboard). From a device **off** the tailnet (a phone on mobile data with
+   Tailscale off), confirm public SSH is gone: `nc -vz -w5 <public-ip> 22`
+   must time out, and so must `nc -6 -vz -w5 <public-ipv6> 22`.
+
+4. All good - persist it. This cancels the rollback, installs
+   `/etc/lifekit/firewall.nft` and the unit, and enables it for boot:
+
+   ```bash
+   sudo bash scripts/host-firewall.sh --confirm
+   bash scripts/host-firewall.sh --check       # exit 0: matches, enabled, active
+   ```
+
+   Anything wrong - roll back at once with
+   `sudo bash scripts/host-firewall.sh --rollback`, or do nothing: the timer
+   restores the previous state when the window ends. A confirm after the
+   window has lapsed refuses; run the trial again.
+
+**Break-glass (locked out).** From the provider's web console,
+`sudo nft delete table inet lifekit` opens the box until the next boot, and
+`sudo systemctl disable --now lifekit-firewall.service` keeps it off across
+reboots too. Docker's and Tailscale's tables are untouched either way.
+
+**Later ruleset changes** go through the same trial and confirm. A plain
+`sudo bash scripts/host-firewall.sh` installs and reloads with no rollback;
+it is meant for the fresh box `bootstrap-vps.sh` sets up.
+
 ## Container console logs in Loki
 
 The OTel collector tails every container's Docker json-file log (read-only) and
@@ -1272,7 +1362,8 @@ You provisioned a VPS, it died, and you want to come back up on a fresh one.
 
 ```bash
 # 1. New VPS, fresh Debian 13 (Ubuntu 24.04 also works). SSH in (over its temporary public address).
-# 2. From your laptop:
+# 2. From your laptop. The bootstrap joins the tailnet, then closes public SSH
+#    (see "Host firewall (nftables)" above): reconnect over the tailnet after.
 cd lifekit-stack
 lifekit init-stack --target <new-vps-ip>
 # Wizard reuses your saved wizard.yaml (from your private backup, NOT this repo).

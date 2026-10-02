@@ -407,6 +407,20 @@ if [[ "${DOCKER_PRUNE_STATUS}" != 0 ]]; then
   printf '\033[1;31m✗ docker prune timer: the box has not converged on the repository policy (installed copy, units, enabled timer); apply it with the root step in docs/runbook.md "Scheduled Docker image and build-cache prune"\033[0m\n' >&2
 fi
 
+# ─── Host firewall: host fact the repo owns, report-only ────────────────────
+#
+# scripts/host-firewall.sh carries the nftables baseline (lifekit-firewall
+# unit + ruleset). The deploy has no sudo, and a firewall change on a live box
+# goes through the timed-rollback cutover, never a deploy; it only reports
+# whether the installed copy matches and the unit is enabled and active. Same
+# shape as the three above.
+say "host firewall (host fact, report-only)"
+FIREWALL_STATUS=0
+bash "${REPO_DIR}/scripts/host-firewall.sh" --check || FIREWALL_STATUS=$?
+if [[ "${FIREWALL_STATUS}" != 0 ]]; then
+  printf '\033[1;31m✗ host firewall: the box has not converged on the repository ruleset (installed copy, unit enabled and active, no nftables.service or ufw); apply it with the timed-rollback cutover in docs/runbook.md "Host firewall (nftables)"\033[0m\n' >&2
+fi
+
 if (( ${#DEPLOY_FAILURES[@]} )); then
   say "post-deploy assertions failed"
   printf '  - %s\n' "${DEPLOY_FAILURES[@]}" >&2

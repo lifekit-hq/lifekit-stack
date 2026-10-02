@@ -57,7 +57,7 @@ To test a wizard change end-to-end, you'll need a sacrificial VPS or a local VM.
 
 ## How to add a VPS-provider adapter
 
-1. New bash bootstrap variant under `scripts/` (e.g. `bootstrap-vps-<provider>.sh`) with the same surface as `scripts/bootstrap-vps.sh` (idempotent host bootstrap, docker install, Tailscale, UFW, dirs).
+1. New bash bootstrap variant under `scripts/` (e.g. `bootstrap-vps-<provider>.sh`) with the same surface as `scripts/bootstrap-vps.sh` (idempotent host bootstrap, docker install, Tailscale, host firewall, dirs).
 2. Document the provider's prerequisites in `docs/providers/<provider>.md`.
 3. Wire it into the wizard so `lifekit init-stack` can prompt for provider choice.
 

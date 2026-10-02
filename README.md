@@ -219,7 +219,7 @@ Setups outside the [Reference deployment](#reference-deployment) are not officia
 The exact combination this stack is tested against. Every component below is a swap-point via the adapter ports in [`docs/architecture.md`](./docs/architecture.md#2-adapter-pattern-for-every-replaceable-component), not a hard dependency — these are simply the ones the maintainer runs in production.
 
 - **Host:** an arm64 VPS (10 vCPU / 15.6 GiB RAM), Debian 13. Any other Debian-family VPS with comparable specs should work; the only setup that gets active issue-tracking is this one.
-- **Mesh VPN:** [Tailscale](https://tailscale.com/) with an [unattended-join auth key](https://login.tailscale.com/admin/settings/keys). The host's UFW closes all public ports except ICMP; admin access (SSH, SSHFS) goes through the mesh.
+- **Mesh VPN:** [Tailscale](https://tailscale.com/) with an [unattended-join auth key](https://login.tailscale.com/admin/settings/keys). The host's nftables firewall (`scripts/host-firewall.sh`) closes every public port except Tailscale's WireGuard port and tcp/80+443 for a public edge; admin access (SSH, SSHFS) goes through the mesh.
 - **Chat transport:** Telegram long-polling — the gateway dials out to Telegram, no inbound webhook needed. Create a bot via [@BotFather](https://t.me/BotFather) (grab the token), then DM [@userinfobot](https://t.me/userinfobot) to get your own numeric user ID (this becomes the owner allowlist).
 - **Monitoring:** [Netdata](https://www.netdata.cloud/) on the host (not containerized). Tailnet-only dashboard at `http://<tailnet-ip>:19999`; alerts to Telegram chat `123456789`.
 - **Local LLM:** Anthropic Haiku on the same VPS (CPU-only, no GPU required).
