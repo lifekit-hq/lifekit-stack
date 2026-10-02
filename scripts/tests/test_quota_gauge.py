@@ -165,3 +165,38 @@ def test_share_crash_with_exit_one_keeps_previous_file(env):
     assert result.returncode != 0
     assert (out / "claude_quota_share.prom").read_text() == "old 1\n"
     assert not [p for p in out.iterdir() if p.name.startswith(".")]
+
+
+def test_share_report_with_warnings_keeps_previous_file(env):
+    e, bindir, out = env
+    (out / "claude_quota_share.prom").write_text("old 1\n")
+    stub = Path(e["FAKE_DIR"]) / "quota_share.py"
+    report = {**REPORT, "warnings": ["gateway session logs unreadable"], "notes": []}
+    stub.write_text(f"import json\nprint(json.dumps({report!r}))\n")
+    result = subprocess.run(
+        ["bash", str(SHARE_GAUGE), str(out), str(stub)],
+        env=e,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "gateway session logs unreadable" in result.stderr
+    assert (out / "claude_quota_share.prom").read_text() == "old 1\n"
+    assert not [p for p in out.iterdir() if p.name.startswith(".")]
+
+
+def test_share_report_with_only_notes_still_writes(env):
+    e, bindir, out = env
+    stub = Path(e["FAKE_DIR"]) / "quota_share.py"
+    report = {**REPORT, "warnings": [], "notes": ["12 weighted units did not match"]}
+    stub.write_text(f"import json\nprint(json.dumps({report!r}))\n")
+    result = subprocess.run(
+        ["bash", str(SHARE_GAUGE), str(out), str(stub)],
+        env=e,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert (out / "claude_quota_share.prom").exists()

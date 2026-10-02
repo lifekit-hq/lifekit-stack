@@ -7,7 +7,8 @@
 # Exit 1 from quota_share.py only means "a consumer is over its share" - the
 # report is still valid - while 2 means quota-axi could not be read. Whenever
 # the report is not a JSON document with a consumers array (a crash also exits
-# 1), the previous file stays in place.
+# 1), or it carries warnings (an input source could not be read, so the shares
+# would be wrong), the previous file stays in place and the warnings go to stderr.
 set -euo pipefail
 OUT_DIR="${1:-/var/lib/node_exporter/textfile}"
 QUOTA_SHARE="${2:-/srv/lifekit-stack/scripts/quota-share/quota_share.py}"
@@ -21,6 +22,10 @@ if [[ "$rc" -gt 1 ]]; then
   exit "$rc"
 fi
 jq -e '.consumers | arrays' "$report" > /dev/null
+if ! jq -e '(.warnings // []) | length == 0' "$report" > /dev/null; then
+  jq -r '.warnings[] | "quota-share: " + .' "$report" >&2
+  exit 1
+fi
 jq -r '.consumers[] | select(.imputedUsedPct != null) |
   "claude_quota_share_percent{consumer=\"\(.name)\"} \(.imputedUsedPct)"' "$report" > "$tmp"
 chmod 644 "$tmp"
