@@ -34,7 +34,7 @@ A short tour of the design decisions behind `lifekit-stack`. Long-form thinking 
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │  Tailscale (host-level service)                          │   │
 │  │  • SSH, SSHFS, admin                                     │   │
-│  │  • No public ports beyond ICMP                           │   │
+│  │  • No public ports beyond WireGuard and 80/443           │   │
 │  └─────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────┘
             ▲
