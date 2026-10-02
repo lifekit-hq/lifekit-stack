@@ -113,6 +113,13 @@ def test_rules_only_reference_real_metrics():
             9 * 86400,
         ),
         (
+            "fleet-summary-stale",
+            "fleet_summary_generated_timestamp_seconds",
+            "warning",
+            "gt",
+            900,
+        ),
+        (
             "finance-retention-stale",
             "finance_retention_last_run_age_seconds",
             "warning",

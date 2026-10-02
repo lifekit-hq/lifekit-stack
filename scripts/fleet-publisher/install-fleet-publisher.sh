@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# install-fleet-publisher.sh — install the fleet publisher as a systemd timer
+# (root). Same shape as the quota gauge. FM_HOME is the fleet home whose
+# state/home-summary.json is published; unset means this box has no fleet
+# and the install is skipped. bootstrap-vps.sh calls it; on a live box:
+#
+#   sudo FM_HOME=<fleet home> bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
+#
+# Tests set INSTALL_ROOT (a prefix for every installed path) and SYSTEMCTL; an
+# INSTALL_ROOT run needs no root and does not chown.
+
+set -euo pipefail
+
+ADMIN_USER="${ADMIN_USER:-denys}"
+FM_HOME="${FM_HOME:-}"
+INSTALL_ROOT="${INSTALL_ROOT:-}"
+SYSTEMCTL="${SYSTEMCTL:-systemctl}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -z "$FM_HOME" ]]; then
+  echo "FM_HOME is not set; skipping the fleet publisher." >&2
+  exit 0
+fi
+owner=(-o "$ADMIN_USER" -g "$ADMIN_USER")
+if [[ -n "$INSTALL_ROOT" ]]; then
+  owner=()
+elif [[ $EUID -ne 0 ]]; then
+  echo "Must run as root (sudo)." >&2
+  exit 1
+fi
+
+UNIT_DIR="$INSTALL_ROOT/etc/systemd/system"
+install -d "${owner[@]}" -m 755 "$INSTALL_ROOT/var/lib/node_exporter/textfile" "$INSTALL_ROOT/var/lib/lifekit-fleet"
+install -d -m 755 "$INSTALL_ROOT/usr/local/bin" "$UNIT_DIR"
+install -m 755 "$HERE/fleet-publisher.sh" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-publisher.sh"
+sed -e "s|__ADMIN_USER__|${ADMIN_USER}|" -e "s|__FM_HOME__|${FM_HOME}|" \
+  "$HERE/lifekit-fleet-publisher.service" > "$UNIT_DIR/lifekit-fleet-publisher.service"
+install -m 644 "$HERE/lifekit-fleet-publisher.timer" "$UNIT_DIR/lifekit-fleet-publisher.timer"
+"$SYSTEMCTL" daemon-reload
+"$SYSTEMCTL" enable --now lifekit-fleet-publisher.timer
