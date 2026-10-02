@@ -257,4 +257,3 @@ five ids the platform patch carries with the scratch gateway key.
 - `secrets.providers.default = {source: env, allowlist: [...]}` so no env
   name outside the three master-file refs can be pulled into a credential
   path. Add it to the platform patch once the env list is final.
-- Give the uptime probe its own bot so the `FINANCE_BOT_TOKEN` copy goes.
