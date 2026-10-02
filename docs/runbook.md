@@ -975,7 +975,7 @@ a Fleet row for them.
 rewritten). A malformed or credential-bearing source exits nonzero and keeps
 the previous files, so both rules fire rather than an empty fleet showing.
 
-**Install** (operator; needs sudo, nothing here writes under `/etc`):
+**Install** (operator; needs sudo, installs the script and units like the other gauges):
 
 ```bash
 sudo FM_HOME=<fleet home> bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
