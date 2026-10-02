@@ -261,6 +261,19 @@ install -m 644 "$REPO_DIR/scripts/quota-gauge/claude-quota-gauge.timer" \
 systemctl daemon-reload
 systemctl enable --now claude-quota-gauge.timer
 
+# Hourly sibling: each consumer's imputed share of the account's weekly usage
+# (scripts/quota-share) into claude_quota_share.prom. It reads the checkout at
+# /srv/lifekit-stack, which deploy.sh keeps current.
+install -m 755 "$REPO_DIR/scripts/quota-gauge/claude-quota-share-gauge.sh" \
+  /usr/local/bin/claude-quota-share-gauge.sh
+sed "s/__ADMIN_USER__/${ADMIN_USER}/" \
+  "$REPO_DIR/scripts/quota-gauge/claude-quota-share-gauge.service" \
+  > /etc/systemd/system/claude-quota-share-gauge.service
+install -m 644 "$REPO_DIR/scripts/quota-gauge/claude-quota-share-gauge.timer" \
+  /etc/systemd/system/claude-quota-share-gauge.timer
+systemctl daemon-reload
+systemctl enable --now claude-quota-share-gauge.timer
+
 # ─── Host gauge timers (host-group memory, /tmp usage, unit state) ────────────
 # Same shape as the quota gauge, every 5 minutes into the same textfile
 # directory. host-group-gauge reports RAM and swap for the operator sessions,

@@ -621,8 +621,12 @@ groups:
               refId: A
               # Age of each textfile-collector file; every gauge that writes one (the quota
               # gauge, the /tmp usage gauge, the host-group gauge) rewrites it every 5 minutes, so 15 minutes is
-              # three missed runs.
-              expr: time() - node_textfile_mtime_seconds
+              # three missed runs. The hourly quota-share file is the exception: its age
+              # has 6600s taken off, so the same 900 threshold means three missed hourly runs.
+              expr: >-
+                (time() - node_textfile_mtime_seconds{file!~".*claude_quota_share\\.prom"})
+                or
+                (time() - node_textfile_mtime_seconds{file=~".*claude_quota_share\\.prom"} - 6600)
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -653,7 +657,8 @@ groups:
           description: >-
             node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. Every gauge
             that writes into the textfile directory (the quota, /tmp usage, host-group and unit gauges' systemd
-            timers) refreshes its file every 5 minutes, so its timer or script has stopped and rules
+            timers) refreshes its file every 5 minutes (the quota-share gauge
+            hourly, judged against 2 hours), so its timer or script has stopped and rules
             reading that file are seeing stale values. `systemctl --failed`, the gauge unit's journal, and
             `systemctl list-timers` on the box.
 
@@ -859,6 +864,57 @@ groups:
             is "You've hit your weekly limit" on every agent. Disable
             non-essential OpenClaw crons (`openclaw cron disable <id>`), pause
             devclaw and firstmate launches, and spend the rest by hand.
+
+      - uid: claude-quota-runway-short
+        title: Claude quota will run out before the reset
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # quota-axi's runway: seconds of usable quota left at the current
+              # pace. Gated on the limiting window's reset being more than 12h
+              # away - the same runway just before a reset is normal, and a
+              # five-hour limit is never that far out.
+              expr: >-
+                claude_quota_runway_seconds
+                  and on() (max(claude_quota_resets_at_seconds * on(window) group_left() claude_quota_limiting_window) - time() > 43200)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [43200]}
+        # An empty result is the normal state (no exhaustion projected, reset
+        # within 12h, or the gauge absent - see claude-quota-behind-pace).
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Claude quota runs out within 12 hours, before the reset"
+          description: >-
+            claude_quota_runway_seconds is {{ printf "%.0f" $values.B.Value }}
+            seconds for 15 minutes while the limiting window resets more than 12h from
+            now: at the current pace the account is exhausted first. `quota-axi`
+            on the box shows the limiting window; the brakes are the same as
+            for claude-quota-behind-pace.
 
   # Host memory pressure. docs/resource-budget.md says who uses what (the
   # per-group budgets are documentation, not alert thresholds: they fired on

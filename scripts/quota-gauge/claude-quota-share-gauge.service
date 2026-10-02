@@ -1,0 +1,15 @@
+[Unit]
+Description=Export each consumer's share of the Claude account quota to node-exporter's textfile collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Same account as claude-quota-gauge.service: it holds the Claude credentials
+# and the session logs scripts/quota-share reads. bootstrap-vps.sh substitutes
+# the placeholder at install time.
+User=__ADMIN_USER__
+ExecStart=/usr/local/bin/claude-quota-share-gauge.sh /var/lib/node_exporter/textfile /srv/lifekit-stack/scripts/quota-share/quota_share.py
+
+[Install]
+WantedBy=multi-user.target

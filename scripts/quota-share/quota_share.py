@@ -497,7 +497,8 @@ def main(argv: list[str] | None = None) -> int:
                 }
                 for r in results
             ],
-            "warnings": warnings + notes,
+            "warnings": warnings,
+            "notes": notes,
         }
         print(json.dumps(payload, indent=2))
     else:

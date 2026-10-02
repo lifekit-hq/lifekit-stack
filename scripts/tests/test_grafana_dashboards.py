@@ -67,3 +67,55 @@ def test_node_exporter_collectors():
         "--collector.loadavg",
     ):
         assert flag in command
+
+
+def test_box_dashboard_has_runway_and_share_panels():
+    d = json.loads((PROV / "dashboards/lifekit/box.json").read_text())
+    exprs = {t["expr"]: p["title"] for p in d["panels"] for t in p.get("targets", [])}
+    assert exprs["claude_quota_runway_seconds"] == "Quota runway"
+    assert exprs["claude_quota_share_percent"] == "Quota share by consumer"
+    # no panel overlaps another on the grid
+    cells = set()
+    for p in d["panels"]:
+        g = p["gridPos"]
+        for x in range(g["x"], g["x"] + g["w"]):
+            for y in range(g["y"], g["y"] + g["h"]):
+                assert (x, y) not in cells, p["title"]
+                cells.add((x, y))
+
+
+def test_runway_status_and_window_are_unitless_and_unthresholded():
+    d = json.loads((PROV / "dashboards/lifekit/box.json").read_text())
+    (panel,) = [p for p in d["panels"] if p["title"] == "Quota runway"]
+    overrides = {
+        o["matcher"]["options"]: {p["id"]: p["value"] for p in o["properties"]}
+        for o in panel["fieldConfig"]["overrides"]
+    }
+    assert overrides["A"]["unit"] == "s"
+    assert "thresholds" in overrides["A"]
+    assert panel["fieldConfig"]["defaults"]["unit"] == "none"
+    (step,) = panel["fieldConfig"]["defaults"]["thresholds"]["steps"]
+    assert step["color"] == "text"
+
+
+def test_quota_panels_show_only_current_values():
+    d = json.loads((PROV / "dashboards/lifekit/box.json").read_text())
+    for title in ("Quota runway", "Quota share by consumer"):
+        (panel,) = [p for p in d["panels"] if p["title"] == title]
+        assert all(t["instant"] and not t["range"] for t in panel["targets"]), title
+
+
+def test_runway_status_and_window_value_mappings_are_not_empty_text():
+    # Grafana 11 renders a lone series blank when its value maps to "" - in the
+    # no_projection state only the status/window series exist, so they must map to
+    # non-empty text to stay visible.
+    d = json.loads((PROV / "dashboards/lifekit/box.json").read_text())
+    (panel,) = [p for p in d["panels"] if p["title"] == "Quota runway"]
+    overrides = {
+        o["matcher"]["options"]: {p["id"]: p["value"] for p in o["properties"]}
+        for o in panel["fieldConfig"]["overrides"]
+    }
+    for ref in ("B", "C"):
+        for mapping in overrides[ref]["mappings"]:
+            for result in mapping["options"].values():
+                assert result["text"] != ""
