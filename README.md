@@ -35,7 +35,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ### Uniform service policy
 
-Every service merges the `x-policy` anchor at the top of `compose/docker-compose.yml` (`compose/openclaw/docker-compose.yml` and `compose/identity/docker-compose.yml` carry the same anchor):
+Every service merges the `x-policy` anchor at the top of `compose/docker-compose.yml` (`compose/openclaw/docker-compose.yml`, `compose/identity/docker-compose.yml` and `compose/edge/docker-compose.yml` carry the same anchor):
 
 - `init: true`
 - `restart: on-failure:5` — restart loop circuit-breaker; gives up after 5 consecutive failures instead of pinning a CPU forever.
@@ -64,6 +64,15 @@ Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded lo
 | --- | --- | --- |
 | `logto` | `ghcr.io/logto-io/logto:1.44.0` | OIDC provider and sign-in pages on loopback `:3001` (issuer `https://<name>:3001/oidc`), admin console on loopback `:3002`. Sign-in only (no self-registration): Google and passkeys; email waits for a sending domain. |
 | `postgres` | `postgres:17-alpine` | Logto's database, on an internal network with no egress and no host port. Dumped nightly by `scripts/identity-backup/` (host timer). |
+
+## Edge services
+
+[`compose/edge/docker-compose.yml`](./compose/edge/docker-compose.yml) is compose project `edge`: the tailnet sign-in gate. One sign-in with the identity provider covers the lifekit dashboard and the devclaw console; devclaw's MCP and other bearer clients pass through unchanged. finance-sentry is not behind it: it becomes its own Logto client. `deploy.sh` brings the project up once the identity project is up and `EDGE_OIDC_CLIENT_ID`, `EDGE_OIDC_CLIENT_SECRET` and `EDGE_COOKIE_SECRET` are in the env file. Nothing reaches it until the operator points Tailscale Serve at it: `docs/runbook.md` "Tailnet sign-in gate" has the Logto client, the cutover and the rollback.
+
+| Service | Image | Role |
+| --- | --- | --- |
+| `traefik` | `traefik:v3.7.13` | Forward-auth proxy. Loopback entrypoints `:18890` (dashboard) and `:18891` (devclaw), which Tailscale Serve's `18790` and `18791` point at after the cutover. Routes in `compose/edge/traefik/dynamic.yml`. |
+| `oauth2-proxy` | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.5` | Confidential OIDC client of Logto. Answers Traefik's check from a 30-day session cookie that it refreshes against Logto hourly. Only users with the Logto role `admin` get through. Reaches Logto's token endpoints over `identity-oidc`. No host port. |
 
 ## Monitoring
 
@@ -154,6 +163,7 @@ lifekit-stack/
 ├── compose/              # docker-compose.yml (platform project), Dockerfiles, OpenClaw sources
 │   ├── openclaw/         # docker-compose.yml for compose project `openclaw` (gateway, cli, google-workspace-mcp)
 │   ├── identity/         # docker-compose.yml for compose project `identity` (logto, postgres)
+│   ├── edge/             # docker-compose.yml for compose project `edge` (traefik, oauth2-proxy: the tailnet sign-in gate)
 │   └── observability/    # prometheus + loki config, Grafana provisioning (datasources, dashboard providers, ALERT RULES)
 ├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw
 ├── skills/               # parameterized workspace skills (opt-in via wizard)

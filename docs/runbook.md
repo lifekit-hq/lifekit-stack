@@ -1139,9 +1139,11 @@ it is meant for the fresh box `bootstrap-vps.sh` sets up.
 
 Compose project `identity` (`compose/identity/`) is the org sign-in: Logto
 1.44 as the OIDC provider, with its own Postgres 17. Every app on the box
-(lifekit dashboard, devclaw, finance-sentry, Grafana) signs in against it;
-those clients and the oauth2-proxy forward-auth are separate changes
-([Grafana sign-in through Logto](#grafana-sign-in-through-logto) is the first).
+(lifekit dashboard, devclaw, finance-sentry, Grafana) signs in against it:
+the dashboard and the devclaw console through the
+[tailnet sign-in gate](#tailnet-sign-in-gate), Grafana as its own client
+([Grafana sign-in through Logto](#grafana-sign-in-through-logto)), and
+finance-sentry as its own client in a separate change.
 `deploy.sh` brings the project up once `LOGTO_DB_PASSWORD` is in the rendered
 env file, and until then skips it with a yellow warning.
 
@@ -1228,8 +1230,8 @@ with Google.
 **Registering an OIDC client** (finance-sentry, oauth2-proxy, Grafana, each
 in its own change). *Applications > Create application > Traditional web*.
 Give it a name and the app's redirect URI(s), for example
-`https://<name>:3000/login/generic_oauth` for Grafana or
-`https://<host>/oauth2/callback` for oauth2-proxy. The app then needs:
+`https://<name>:3000/login/generic_oauth` for Grafana (the sign-in gate's
+own values are in its section below). The app then needs:
 
 - issuer `https://<name>:3001/oidc`; discovery is at
   `https://<name>:3001/oidc/.well-known/openid-configuration`;
@@ -1328,6 +1330,129 @@ redeploying.
 redeploy. When the issuer moves (a public domain), register the application
 again against the new issuer and update `IDENTITY_ENDPOINT` / the redirect
 URI.
+
+## Tailnet sign-in gate
+
+Compose project `edge` (`compose/edge/`) puts one Logto sign-in in front of
+the lifekit dashboard and the devclaw console. Once signed in on either,
+the other opens without asking again. Two services:
+
+- `traefik`, the forward-auth proxy, with one loopback entrypoint per
+  surface: `127.0.0.1:18890` for the dashboard and `127.0.0.1:18891` for
+  devclaw. Routes are in `compose/edge/traefik/dynamic.yml`, mounted as a
+  directory and watched, so a route change merged to `main` applies live.
+- `oauth2-proxy`, a confidential OIDC client of Logto. It answers Traefik's
+  check for every request from its session cookie. With no session, it sends
+  the browser to Logto and back.
+
+The surfaces keep their URLs, `https://<name>:18790` and `https://<name>:18791`.
+The cutover only points Tailscale Serve's two ports at the gate instead of at
+the apps, so rolling back is pointing them back.
+
+| | Value |
+| --- | --- |
+| Who gets in | Logto users with the role `admin` (others get 403), the role that also makes a Grafana Admin |
+| Session | cookie `_lifekit_edge`, 30 days, refreshed against Logto at most hourly, so a removed role or a deleted user is out within the hour. Host-only, so it covers every port of the tailnet name: one sign-in for both surfaces |
+| Dashboard `/api/*` with no session | 401, not a redirect (a `fetch()` cannot follow the sign-in page) |
+| devclaw machine clients | unchanged: a request with an `Authorization` header or a `?token=` query, and `/mcp`, `/webhooks/`, `/health`, `/metrics`, go straight to devclaw, which checks them itself |
+| devclaw console | after sign-in, the gate adds devclaw's bearer (`DEVCLAW_MCP_TOKEN`), so no token is asked for |
+| Not behind it | finance-sentry (its own Logto client), Grafana, the OpenClaw gateway, Logto itself |
+
+**Why Traefik and oauth2-proxy.** Tailscale Serve cannot ask anyone before
+proxying, so a proxy has to sit between it and the apps. Traefik is the
+proxy the platform contract already names for the public edge
+(`docs/platform-contract.md`, `ingress`), so the public routers join this
+one later instead of a second proxy product arriving. oauth2-proxy is the
+usual forward-auth OIDC client. It keeps the session in an encrypted cookie
+(no session store to run) and re-checks it with Logto on refresh. Here
+Traefik reads its routes from a file, not from container labels; the
+contract's `edge` item stays a check for the public edge.
+
+**Operator steps, once** (admin account and the Logto admin console):
+
+1. **Logto application.** In the admin console (`https://<name>:3002`):
+   *Applications > Create application > Traditional web*, named for example
+   `lifekit sign-in gate`.
+   - Redirect URIs: `https://<name>:18790/oauth2/callback` and
+     `https://<name>:18791/oauth2/callback`.
+   - Post sign-out redirect URIs: `https://<name>:18790/` and
+     `https://<name>:18791/`.
+   - Copy the client id and secret for step 3.
+2. **Role.** The gate lets in only Logto users with the role `admin`. If
+   Grafana sign-in already created it, nothing to do. Otherwise *Roles >
+   Create role*, name `admin`, type *User role*, no API permissions, and
+   assign it to the owner (*User management > the user > Roles*). The
+   owner's Logto account also needs an email address (a member created as
+   above has one): oauth2-proxy refuses a sign-in whose token carries none
+   with a 500 on `/oauth2/callback`.
+3. **Secrets** (captain's age key). Add the client id, the client secret
+   and a new cookie secret to the master file; nothing prints them:
+
+   ```bash
+   sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+     '["EDGE_OIDC_CLIENT_ID"]' "\"<client id>\""
+   sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+     '["EDGE_OIDC_CLIENT_SECRET"]' "\"<client secret>\""
+   sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+     '["EDGE_COOKIE_SECRET"]' "\"$(openssl rand -hex 16)\""
+   ```
+
+   Commit the file through a PR that also moves the two secrets' rows in
+   `docs/secrets.md` from the settings table up into the master inventory.
+   After merge, render, then redeploy (CI `workflow_dispatch`, or
+   `scripts/deploy.sh` as the deploy account):
+
+   ```bash
+   sudo bash scripts/secrets/render-stack-env.sh
+   ```
+
+   That deploy brings the project up, but nothing reaches it yet. Its
+   report-only "sign-in gate (host facts)" block shows red until step 4.
+4. **Cutover.** Check the gate before moving anything: from the box,
+   `curl -sI http://127.0.0.1:18890/` answers `302` to
+   `https://<name>:3001/oidc/auth`. Then point the two Serve ports at the
+   gate (Serve only, never `tailscale funnel`):
+
+   ```bash
+   sudo tailscale serve --bg --https=18790 http://127.0.0.1:18890
+   sudo tailscale serve --bg --https=18791 http://127.0.0.1:18891
+   tailscale serve status        # 18790 -> :18890, 18791 -> :18891, tailnet only
+   ```
+
+   Open `https://<name>:18791/` (the devclaw console): Logto's sign-in, then
+   the console. Then open `https://<name>:18790/`: the dashboard, with no
+   second sign-in. If the dashboard still shows its old page, see the
+   service-worker note below.
+
+**Rollback** (restores direct access to both apps; the project can stay up):
+
+```bash
+sudo tailscale serve --bg --https=18790 http://127.0.0.1:18790
+sudo tailscale serve --bg --https=18791 http://127.0.0.1:18791
+```
+
+**Signing out.** `https://<name>:18791/oauth2/sign_out` ends the gate's
+session on both surfaces. Logto stays signed in, so the next visit comes back
+without a prompt. To end the Logto session too, add `rd` with Logto's
+end-session URL, URL-encoded:
+
+```
+https://<name>:18791/oauth2/sign_out?rd=https%3A%2F%2F<name>%3A3001%2Foidc%2Fsession%2Fend%3Fclient_id%3D<client id>%26post_logout_redirect_uri%3Dhttps%253A%252F%252F<name>%253A18791%252F
+```
+
+**The dashboard's service worker.** The dashboard is an installable app. Its
+service worker answers every page navigation from its cache, `/oauth2/...`
+included. So on a device that already has it installed, sign-in and
+sign-out on the dashboard's port never reach the gate. Sign in or out on
+the devclaw port instead: the cookie is shared. Or clear the dashboard's site
+data (or hard-reload) once after the cutover. The fix belongs to the
+dashboard repository: exclude `/oauth2/` from the service worker's
+navigation fallback, and send the browser to `/oauth2/start?rd=<page>` when
+`/api` answers 401.
+
+**Logs.** Neither service writes an access log: devclaw's old `?token=`
+links would put its bearer into Loki. Sign-in failures appear in
+`docker logs edge-oauth2-proxy-1`. Traefik logs only warnings and errors.
 
 ## Container console logs in Loki
 

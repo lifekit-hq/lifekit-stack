@@ -247,6 +247,8 @@ openclaw_compose --profile '*' config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 identity_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
+edge_compose config --format json \
+  | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -313,6 +315,43 @@ else
       IDENTITY_UP=1
     else
       fail_later "identity: project ${IDENTITY_PROJECT} did not come up healthy (identity_compose ps / logs logto)"
+    fi
+  fi
+fi
+
+# ─── Sign-in gate: compose project `edge`, up -d ────────────────────────────
+#
+# Traefik + oauth2-proxy in front of the dashboard and the devclaw console
+# (compose/edge/, docs/runbook.md "Tailnet sign-in gate"). Brought up only
+# once the identity project is up and the edge's client and cookie secrets
+# are in the rendered env file: until the operator has registered the client
+# in Logto and rendered them, it is skipped with a warning. Up does not move
+# any traffic: Tailscale Serve still points at the apps until the operator's
+# cutover, which the report-only check below tracks.
+say "sign-in gate (compose project ${EDGE_PROJECT})"
+EDGE_UP=0
+EDGE_SECRETS_SET=0
+for var in EDGE_OIDC_CLIENT_ID EDGE_OIDC_CLIENT_SECRET EDGE_COOKIE_SECRET; do
+  if grep -qE "^[[:space:]]*${var}=[\"']?[^\"'[:space:]]" "${ENV_FILE}"; then
+    EDGE_SECRETS_SET=$((EDGE_SECRETS_SET + 1))
+  fi
+done
+if [[ "${EDGE_SECRETS_SET}" != 3 ]]; then
+  warn "edge: EDGE_OIDC_CLIENT_ID, EDGE_OIDC_CLIENT_SECRET and EDGE_COOKIE_SECRET are not all in ${ENV_FILE} (${EDGE_SECRETS_SET}/3); project ${EDGE_PROJECT} not brought up (docs/runbook.md \"Tailnet sign-in gate\")"
+elif [[ "${IDENTITY_UP}" != 1 ]]; then
+  warn "edge: the identity project is not up; project ${EDGE_PROJECT} not brought up"
+else
+  EDGE_REDIRECT_DOMAINS="$(IDENTITY_ENDPOINT="${IDENTITY_ENDPOINT}" "${REPO_DIR}/scripts/deploy-edge.sh" domains \
+    | sed -n 's/^EDGE_REDIRECT_DOMAINS=//p' || true)"
+  if [[ -z "${EDGE_REDIRECT_DOMAINS}" ]]; then
+    fail_later "edge: redirect domains undecidable (no tailnet name); project ${EDGE_PROJECT} not brought up"
+  else
+    export EDGE_REDIRECT_DOMAINS
+    echo "edge: OIDC client of ${IDENTITY_ENDPOINT}/oidc, redirects limited to ${EDGE_REDIRECT_DOMAINS}"
+    if edge_compose up -d --wait --wait-timeout 120; then
+      EDGE_UP=1
+    else
+      fail_later "edge: project ${EDGE_PROJECT} did not come up healthy (edge_compose ps / logs)"
     fi
   fi
 fi
@@ -394,6 +433,7 @@ say "container status"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 openclaw_compose ps
 if [[ "${IDENTITY_UP}" == 1 ]]; then identity_compose ps; fi
+if [[ "${EDGE_UP}" == 1 ]]; then edge_compose ps; fi
 
 # ─── OpenClaw: smoke turns ───────────────────────────────────────────────────
 #
@@ -412,8 +452,8 @@ say "platform contract: running containers"
 STACK_PROJECT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format json \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')"
 python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" --enforce "${OPENCLAW_PROJECT}" \
-  --enforce "${IDENTITY_PROJECT}" \
-  || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT} or ${IDENTITY_PROJECT} containers fail it (table above)"
+  --enforce "${IDENTITY_PROJECT}" --enforce "${EDGE_PROJECT}" \
+  || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT}, ${IDENTITY_PROJECT} or ${EDGE_PROJECT} containers fail it (table above)"
 
 # ─── Docker builder cache cap: host fact the repo owns, report-only ──────────
 #
@@ -490,6 +530,23 @@ if [[ "${IDENTITY_UP}" == 1 ]]; then
   bash "${REPO_DIR}/scripts/deploy-identity.sh" check || IDENTITY_CHECK_STATUS=$?
   if [[ "${IDENTITY_CHECK_STATUS}" != 0 ]]; then
     printf '\033[1;31m✗ identity provider: not yet converged (lines above); apply the operator steps in docs/runbook.md "Identity provider (Logto)"\033[0m\n' >&2
+  fi
+fi
+
+# ─── Sign-in gate: host facts, report-only ──────────────────────────────────
+#
+# Pointing the dashboard's and devclaw's tailnet ports at the gate
+# (`tailscale serve`) is the operator's cutover (docs/runbook.md "Tailnet
+# sign-in gate"): the deploy account cannot run it. It reports, in red, while
+# Serve still sends either surface straight to the app, when either port is
+# public through Funnel, or when the devclaw console's bearer is missing.
+# Same shape as the identity check above; skipped while the project is not up.
+if [[ "${EDGE_UP}" == 1 ]]; then
+  say "sign-in gate (host facts, report-only)"
+  EDGE_CHECK_STATUS=0
+  ENV_FILE="${ENV_FILE}" bash "${REPO_DIR}/scripts/deploy-edge.sh" check || EDGE_CHECK_STATUS=$?
+  if [[ "${EDGE_CHECK_STATUS}" != 0 ]]; then
+    printf '\033[1;31m✗ sign-in gate: not yet converged (lines above); apply the operator steps in docs/runbook.md "Tailnet sign-in gate"\033[0m\n' >&2
   fi
 fi
 

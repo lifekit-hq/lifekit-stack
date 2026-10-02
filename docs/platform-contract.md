@@ -9,8 +9,8 @@ read-only). Its docstring is the label reference.
 
 ## Who runs it
 
-- **This repo's `deploy.sh`** runs it twice on each of its own three compose
-  projects, `compose` (the platform), `openclaw` and `identity`:
+- **This repo's `deploy.sh`** runs it twice on each of its own four compose
+  projects, `compose` (the platform), `openclaw`, `identity` and `edge`:
   - Before `up`, `--static` checks the `docker compose config` declaration. A
     service with a missing or inconsistent declaration stops the deploy before
     anything changes.

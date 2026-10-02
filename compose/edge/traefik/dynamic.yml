@@ -1,0 +1,75 @@
+# Traefik routes for the tailnet sign-in gate (compose/edge/docker-compose.yml).
+#
+# One entrypoint per surface; Tailscale Serve maps the surface's tailnet port
+# to it. On each: /oauth2/* goes straight to oauth2-proxy (the sign-in
+# callback and sign-out), everything else passes the `sso` check first.
+#
+# devclaw keeps its machine clients: a request that already carries
+# devclaw's own credential (an Authorization header, or the console's old
+# `?token=` query), the MCP endpoint and GitHub's webhook go straight to
+# devclaw, which checks them itself exactly as before. A browser request that
+# passed the sign-in check gets devclaw's bearer added here, so the console
+# opens without a token; devclaw's code is unchanged.
+#
+# This file is a Go template (Traefik's file provider): `env` reads the
+# container environment once at start.
+---
+http:
+  routers:
+    dashboard-oauth2:
+      entryPoints: [dashboard]
+      rule: PathPrefix(`/oauth2/`)
+      priority: 100
+      service: oauth2-proxy
+    dashboard:
+      entryPoints: [dashboard]
+      rule: PathPrefix(`/`)
+      priority: 1
+      middlewares: [sso]
+      service: dashboard
+
+    devclaw-oauth2:
+      entryPoints: [devclaw]
+      rule: PathPrefix(`/oauth2/`)
+      priority: 100
+      service: oauth2-proxy
+    devclaw-machine:
+      entryPoints: [devclaw]
+      rule: >-
+        HeaderRegexp(`Authorization`, `.+`) || QueryRegexp(`token`, `.+`)
+        || PathPrefix(`/mcp`) || PathPrefix(`/webhooks/`)
+        || Path(`/health`) || Path(`/metrics`)
+      priority: 50
+      service: devclaw
+    devclaw:
+      entryPoints: [devclaw]
+      rule: PathPrefix(`/`)
+      priority: 1
+      middlewares: [sso, devclaw-bearer]
+      service: devclaw
+
+  middlewares:
+    sso:
+      forwardAuth:
+        address: http://oauth2-proxy:4180/
+        trustForwardHeader: true
+        # oauth2-proxy answers with a redirect or a short error page.
+        maxResponseBodySize: 1048576
+    devclaw-bearer:
+      headers:
+        customRequestHeaders:
+          Authorization: 'Bearer {{ env "DEVCLAW_MCP_TOKEN" }}'
+
+  services:
+    oauth2-proxy:
+      loadBalancer:
+        servers:
+          - url: http://oauth2-proxy:4180
+    dashboard:
+      loadBalancer:
+        servers:
+          - url: http://lifekit-dashboard:8080
+    devclaw:
+      loadBalancer:
+        servers:
+          - url: http://devclaw-mcp:8000

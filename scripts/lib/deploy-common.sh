@@ -33,6 +33,15 @@ identity_compose() {
   docker compose -p "${IDENTITY_PROJECT}" --env-file "${ENV_FILE}" -f "${IDENTITY_COMPOSE_FILE}" "$@"
 }
 
+# The tailnet sign-in gate (Traefik + oauth2-proxy, an OIDC client of the
+# identity project) is compose project `edge` (compose/edge/), brought up by
+# deploy.sh once identity is up and the edge's secrets are in ENV_FILE.
+EDGE_PROJECT="edge"
+EDGE_COMPOSE_FILE="${REPO_DIR}/compose/edge/docker-compose.yml"
+edge_compose() {
+  docker compose -p "${EDGE_PROJECT}" --env-file "${ENV_FILE}" -f "${EDGE_COMPOSE_FILE}" "$@"
+}
+
 # CURRENT_STEP is read by the callers' EXIT traps.
 # shellcheck disable=SC2034
 CURRENT_STEP="startup"
