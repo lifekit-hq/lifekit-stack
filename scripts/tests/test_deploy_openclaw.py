@@ -162,6 +162,7 @@ def full_deploy(env, tmp_path, env_text="LIFEKIT_TELEGRAM_CHAT=123\n", identity=
         ),
     )
     stub(fake / "scripts/deploy-embed-origin.sh", LOGGING_SH % "embed-origin")
+    stub(fake / "scripts/deploy-grafana-oidc.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
     stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
     stub(fake / "scripts/tmp-scratch-policy.sh", LOGGING_SH % "tmp-scratch")
@@ -680,6 +681,7 @@ def run_gated_deploy(env, tmp_path, mode, touched):
         ),
     )
     stub(fake / "scripts/deploy-embed-origin.sh", LOGGING_SH % "embed-origin")
+    stub(fake / "scripts/deploy-grafana-oidc.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
     stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
     stub(fake / "scripts/tmp-scratch-policy.sh", LOGGING_SH % "tmp-scratch")
