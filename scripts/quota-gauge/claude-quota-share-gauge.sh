@@ -5,8 +5,9 @@
 # Claude credentials. The numbers come from scripts/quota-share (arg 2, default
 # the deployed checkout); its residual consumer is not measured and is skipped.
 # Exit 1 from quota_share.py only means "a consumer is over its share" - the
-# report is still valid - while 2 means quota-axi could not be read: then the
-# previous file stays in place.
+# report is still valid - while 2 means quota-axi could not be read. Whenever
+# the report is not a JSON document with a consumers array (a crash also exits
+# 1), the previous file stays in place.
 set -euo pipefail
 OUT_DIR="${1:-/var/lib/node_exporter/textfile}"
 QUOTA_SHARE="${2:-/srv/lifekit-stack/scripts/quota-share/quota_share.py}"
@@ -19,6 +20,7 @@ python3 "$QUOTA_SHARE" --json > "$report" || rc=$?
 if [[ "$rc" -gt 1 ]]; then
   exit "$rc"
 fi
+jq -e '.consumers | arrays' "$report" > /dev/null
 jq -r '.consumers[] | select(.imputedUsedPct != null) |
   "claude_quota_share_percent{consumer=\"\(.name)\"} \(.imputedUsedPct)"' "$report" > "$tmp"
 chmod 644 "$tmp"

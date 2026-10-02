@@ -706,7 +706,7 @@
           ]
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value_and_name"
       },
       "targets": [
@@ -717,7 +717,9 @@
           },
           "expr": "claude_quota_runway_seconds",
           "legendFormat": "runway",
-          "refId": "A"
+          "refId": "A",
+          "instant": true,
+          "range": false
         },
         {
           "datasource": {
@@ -782,7 +784,9 @@
           },
           "expr": "claude_quota_share_percent",
           "legendFormat": "{{consumer}}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true,
+          "range": false
         }
       ]
     },

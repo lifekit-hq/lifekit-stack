@@ -41,12 +41,16 @@ def env(tmp_path):
     bindir, out = tmp_path / "bin", tmp_path / "out"
     bindir.mkdir()
     out.mkdir()
-    return {
-        **os.environ,
-        "HOME": str(tmp_path),
-        "PATH": f"{bindir}:{os.environ['PATH']}",
-        "FAKE_DIR": str(tmp_path),
-    }, bindir, out
+    return (
+        {
+            **os.environ,
+            "HOME": str(tmp_path),
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "FAKE_DIR": str(tmp_path),
+        },
+        bindir,
+        out,
+    )
 
 
 def fake(bindir, name, body):
@@ -142,5 +146,22 @@ def test_share_unreadable_quota_keeps_previous_file(env):
     e, bindir, out = env
     (out / "claude_quota_share.prom").write_text("old 1\n")
     assert run_share(e, bindir, out, 2).returncode == 2
+    assert (out / "claude_quota_share.prom").read_text() == "old 1\n"
+    assert not [p for p in out.iterdir() if p.name.startswith(".")]
+
+
+def test_share_crash_with_exit_one_keeps_previous_file(env):
+    e, bindir, out = env
+    (out / "claude_quota_share.prom").write_text("old 1\n")
+    stub = Path(e["FAKE_DIR"]) / "quota_share.py"
+    stub.write_text("import sys\nsys.exit(1)\n")
+    result = subprocess.run(
+        ["bash", str(SHARE_GAUGE), str(out), str(stub)],
+        env=e,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
     assert (out / "claude_quota_share.prom").read_text() == "old 1\n"
     assert not [p for p in out.iterdir() if p.name.startswith(".")]
