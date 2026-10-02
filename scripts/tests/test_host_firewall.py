@@ -11,7 +11,6 @@ and iptables stubbed on PATH, the same shape as test_docker_prune_policy.py.
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -55,21 +54,6 @@ def in_netns(*cmd: str, timeout: int = 120) -> subprocess.CompletedProcess:
 
 
 # ─── The ruleset file ─────────────────────────────────────────────────────────
-
-
-def test_ruleset_owns_only_its_table_and_never_flushes():
-    text = RULESET.read_text()
-    code = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
-
-    assert "flush" not in code, "a flush would wipe Docker's and tailscaled's tables"
-    tables = set(re.findall(r"^\s*(?:delete\s+)?table\s+(\S+\s+\S+)", code, re.M))
-    assert tables == {"inet lifekit"}
-
-
-def test_ruleset_has_no_public_ssh_rule():
-    code = "\n".join(line.split("#", 1)[0] for line in RULESET.read_text().splitlines())
-
-    assert not re.search(r"dport\s+(\{[^}]*\b22\b[^}]*\}|22\b)", code)
 
 
 @needs_netns

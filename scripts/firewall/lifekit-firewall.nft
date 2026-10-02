@@ -61,10 +61,6 @@ table inet lifekit {
 		icmp type echo-request limit rate 5/second accept
 		icmpv6 type echo-request limit rate 5/second accept
 		icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept
-
-		# DHCPv6 replies answer a multicast solicit, so conntrack never
-		# matches them to it (unused with static addressing; harmless).
-		ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
 	}
 
 	# Forwarded traffic is container traffic (and tailnet routing): Docker

@@ -1054,7 +1054,7 @@ Needs no other setup variables. Every runner unit should report
 - **Host input:** policy drop. Open: loopback, established/related flows,
   everything arriving on `tailscale0` or a Docker bridge (`docker0`, `br-*`,
   `lifekit-edge`), Tailscale's WireGuard port (udp/41641), tcp/80 and tcp/443
-  for the public edge, rate-limited ping, and the ICMP/ICMPv6 and DHCPv6-client
+  for the public edge, rate-limited ping, and the ICMP/ICMPv6
   traffic the network needs. SSH is tailnet-only; the provider's web console is
   the break-glass.
 - **Published container ports:** a forward-hook chain admits new flows into
