@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 RELAY_DIR = REPO / "scripts/kit-relay"
@@ -558,6 +557,7 @@ def test_ensure_needs_the_agent_workspace(tmp_path):
 
 
 def test_skill_frontmatter_names_its_folder_and_gates_on_ssh():
+    yaml = pytest.importorskip("yaml")
     _, front, _ = SKILL_MD.read_text().split("---\n", 2)
     meta = yaml.safe_load(front)
     assert meta["name"] == "secondmate-relay"
@@ -565,6 +565,7 @@ def test_skill_frontmatter_names_its_folder_and_gates_on_ssh():
 
 
 def test_gateway_mounts_the_relay_key_read_only_and_names_the_host():
+    yaml = pytest.importorskip("yaml")
     gateway = yaml.safe_load(COMPOSE.read_text())["services"]["openclaw-gateway"]
     assert (
         "${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/kit-relay:/run/lifekit/kit-relay:ro"
