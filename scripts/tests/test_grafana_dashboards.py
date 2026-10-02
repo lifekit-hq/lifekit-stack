@@ -82,3 +82,20 @@ def test_box_dashboard_has_runway_and_share_panels():
             for y in range(g["y"], g["y"] + g["h"]):
                 assert (x, y) not in cells, p["title"]
                 cells.add((x, y))
+
+
+def test_runway_status_and_window_are_instant_unitless_and_unthresholded():
+    d = json.loads((PROV / "dashboards/lifekit/box.json").read_text())
+    (panel,) = [p for p in d["panels"] if p["title"] == "Quota runway"]
+    targets = {t["refId"]: t for t in panel["targets"]}
+    assert not targets["A"].get("instant")
+    assert targets["B"]["instant"] and targets["C"]["instant"]
+    overrides = {
+        o["matcher"]["options"]: {p["id"]: p["value"] for p in o["properties"]}
+        for o in panel["fieldConfig"]["overrides"]
+    }
+    assert overrides["A"]["unit"] == "s"
+    assert "thresholds" in overrides["A"]
+    assert panel["fieldConfig"]["defaults"]["unit"] == "none"
+    (step,) = panel["fieldConfig"]["defaults"]["thresholds"]["steps"]
+    assert step["color"] == "text"

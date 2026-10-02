@@ -173,24 +173,6 @@ def test_quota_pace_rule_active_and_no_five_hour_rule():
     ]
 
 
-def test_quota_runway_rule_gates_on_reset_and_has_no_blind_spot():
-    rule = RULES["claude-quota-runway-short"]
-    (expr,) = queries(rule)
-    assert "claude_quota_runway_seconds" in expr
-    # the reset gate: only while more than 12h remain to the limiting window's reset
-    assert "claude_quota_limiting_window" in expr and "> 43200" in expr
-    assert rule["labels"]["severity"] == "warning"
-    assert rule["noDataState"] == "OK"
-    assert threshold(rule) == ("lt", 43200)
-
-
-def test_hourly_quota_share_file_is_judged_on_its_own_cadence():
-    # An hourly file against the 5-minute staleness threshold would fire every hour.
-    (expr,) = queries(RULES["textfile-collector-stale"])
-    assert "claude_quota_share" in expr
-    assert "file!~" in expr and "file=~" in expr and "- 6600" in expr
-
-
 def test_near_cap_rule_threshold():
     assert threshold(RULES["container-near-memory-cap"]) == ("gt", 90)
 
@@ -608,3 +590,85 @@ def test_container_stopped_or_vanished_silent_during_exporter_outage(up):
         ]
     code, output = promtool_expr_alerts(f"({expr}) > 0", series, "30m")
     assert code == 0, output
+
+
+RUNWAY = "claude_quota_runway_seconds"
+LIMITING = 'claude_quota_limiting_window{window="seven_day"}'
+
+
+def _resets(window: str, at: int) -> str:
+    return f'claude_quota_resets_at_seconds{{window="{window}"}}', f"{at}x10"
+
+
+def test_quota_runway_rule_shape():
+    rule = RULES["claude-quota-runway-short"]
+    assert rule["labels"]["severity"] == "warning"
+    assert rule["noDataState"] == "OK"
+    assert threshold(rule) == ("lt", 43200)
+
+
+@pytest.mark.parametrize(
+    ("series", "fires"),
+    [
+        # short runway, limiting window resets 100000s out: exhausted before the reset
+        ([(RUNWAY, "3600x10"), (LIMITING, "1x10"), _resets("seven_day", 100000)], True),
+        # same runway but the reset is within 12h: normal just before a reset
+        ([(RUNWAY, "3600x10"), (LIMITING, "1x10"), _resets("seven_day", 30000)], False),
+        # the gate follows the limiting window, not whichever window resets last
+        (
+            [
+                (RUNWAY, "3600x10"),
+                ('claude_quota_limiting_window{window="five_hour"}', "1x10"),
+                _resets("five_hour", 20000),
+                _resets("seven_day", 100000),
+            ],
+            False,
+        ),
+        # runway comfortably above the threshold
+        (
+            [(RUNWAY, "86400x10"), (LIMITING, "1x10"), _resets("seven_day", 100000)],
+            False,
+        ),
+        # no runway reported (no exhaustion projected): nothing to alert on
+        ([(LIMITING, "1x10"), _resets("seven_day", 100000)], False),
+    ],
+)
+def test_quota_runway_alert_gates_on_the_limiting_windows_reset(series, fires):
+    rule = RULES["claude-quota-runway-short"]
+    (expr,) = queries(rule)
+    _, limit = threshold(rule)
+    code, output = promtool_expr_alerts(f"({expr}) < {limit}", series, "5m")
+    if fires:
+        assert code != 0 and "got:" in output, output
+    else:
+        assert code == 0, output
+
+
+@pytest.mark.parametrize(
+    ("file", "eval_time", "fires"),
+    [
+        # 5-minute files go stale after 15 minutes
+        ("claude_quota.prom", "10m", False),
+        ("claude_quota.prom", "20m", True),
+        # the hourly share file is judged on its own cadence: three missed hourly runs
+        ("claude_quota_share.prom", "20m", False),
+        ("claude_quota_share.prom", "100m", False),
+        ("claude_quota_share.prom", "130m", True),
+    ],
+)
+def test_textfile_staleness_is_per_file_cadence(file, eval_time, fires):
+    rule = RULES["textfile-collector-stale"]
+    (expr,) = queries(rule)
+    op, limit = threshold(rule)
+    assert op == "gt"
+    series = [
+        (
+            f'node_textfile_mtime_seconds{{file="/var/lib/node_exporter/textfile/{file}"}}',
+            "0x200",
+        )
+    ]
+    code, output = promtool_expr_alerts(f"({expr}) > {limit}", series, eval_time)
+    if fires:
+        assert code != 0 and "got:" in output, output
+    else:
+        assert code == 0, output
