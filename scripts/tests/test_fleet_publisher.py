@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import configparser
 import json
 import os
 import subprocess
@@ -254,15 +255,49 @@ def test_needs_a_fleet_home(fleet):
     assert result.returncode == 2
 
 
-def test_unit_files_and_installer_wiring():
-    service = (DIR / "lifekit-fleet-publisher.service").read_text()
-    assert "User=__ADMIN_USER__" in service
-    assert "FM_HOME=__FM_HOME__" in service
-    assert "Type=oneshot" in service
-    assert "OnUnitActiveSec=1min" in (DIR / "lifekit-fleet-publisher.timer").read_text()
-    installer = DIR / "install-fleet-publisher.sh"
-    assert os.access(installer, os.X_OK)
-    assert installer.name in (REPO / "scripts/bootstrap-vps.sh").read_text()
+def test_installer_renders_units_and_enables_the_timer(tmp_path):
+    root, calls = tmp_path / "root", tmp_path / "calls"
+    fake = tmp_path / "systemctl"
+    fake.write_text(f'#!/usr/bin/env bash\necho "$*" >> {calls}\n')
+    fake.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(DIR / "install-fleet-publisher.sh")],
+        env={
+            **os.environ,
+            "ADMIN_USER": "fleetadmin",
+            "FM_HOME": "/srv/fleet-home",
+            "INSTALL_ROOT": str(root),
+            "SYSTEMCTL": str(fake),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    units = root / "etc/systemd/system"
+    service = configparser.ConfigParser(interpolation=None)
+    service.optionxform = str
+    service.read_string((units / "lifekit-fleet-publisher.service").read_text())
+    assert service["Service"]["User"] == "fleetadmin"
+    assert service["Service"]["Environment"] == "FM_HOME=/srv/fleet-home"
+    assert service["Service"]["Type"] == "oneshot"
+    assert "__" not in (units / "lifekit-fleet-publisher.service").read_text()
+
+    timer = configparser.ConfigParser(interpolation=None)
+    timer.read_string((units / "lifekit-fleet-publisher.timer").read_text())
+    assert timer["Timer"]["OnUnitActiveSec"] == "1min"
+
+    script = root / "usr/local/bin/lifekit-fleet-publisher.sh"
+    assert os.access(script, os.X_OK)
+    assert script.read_text() == SCRIPT.read_text()
+    assert service["Service"]["ExecStart"].startswith("/usr/local/bin/lifekit-fleet-publisher.sh ")
+    assert (root / "var/lib/lifekit-fleet").is_dir()
+    assert (root / "var/lib/node_exporter/textfile").is_dir()
+    assert calls.read_text().splitlines() == [
+        "daemon-reload",
+        "enable --now lifekit-fleet-publisher.timer",
+    ]
 
 
 def test_installer_skips_without_a_fleet_home():
