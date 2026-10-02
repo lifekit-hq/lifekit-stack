@@ -17,6 +17,7 @@ PIECES = {
     "alert-inbox": REPO / "scripts/alert-inbox",
     "openclaw-config-sync": REPO / "scripts/sync",
     "lifekit-fleet-publisher": REPO / "scripts/fleet-publisher",
+    "lifekit-identity-backup": REPO / "scripts/identity-backup",
 }
 
 

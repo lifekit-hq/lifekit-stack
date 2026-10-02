@@ -35,12 +35,12 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ### Uniform service policy
 
-Every service merges the `x-policy` anchor at the top of `compose/docker-compose.yml` (`compose/openclaw/docker-compose.yml` carries the same anchor):
+Every service merges the `x-policy` anchor at the top of `compose/docker-compose.yml` (`compose/openclaw/docker-compose.yml` and `compose/identity/docker-compose.yml` carry the same anchor):
 
 - `init: true`
 - `restart: on-failure:5` — restart loop circuit-breaker; gives up after 5 consecutive failures instead of pinning a CPU forever.
 - `logging.driver: json-file` with `max-size: 50m` and `max-file: 3` — caps each service's on-disk log footprint at ~150MB.
-- `deploy.resources.limits.memory: 1g` — per-service ceiling. Most services override it with their own limit; the two compose files are the source for each value. Every service, profile-gated ones included, must resolve to a limit (a container without one reports the host's total RAM as its limit, which breaks any memory-share signal); `scripts/tests/test_memory_limits.py` fails when one does not.
+- `deploy.resources.limits.memory: 1g` — per-service ceiling. Most services override it with their own limit; the compose files are the source for each value. Every service, profile-gated ones included, must resolve to a limit (a container without one reports the host's total RAM as its limit, which breaks any memory-share signal); `scripts/tests/test_memory_limits.py` fails when one does not.
 - `deploy.resources.limits.pids: 256` — per-service process cap, sized per service in the compose files like the memory limit.
 - `cap_drop: [ALL]` and `security_opt: [no-new-privileges:true]` — no service gets a capability back; each runs as its image's non-root user (otel-collector is the one root process, for the Docker log files it tails). Services also set `read_only: true` where they can; the compose files comment each one that does not.
 
@@ -55,6 +55,15 @@ Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded lo
 | `openclaw-gateway` | `lifekit-openclaw:local` (built from `compose/openclaw-gateway/`) | Runtime gateway — channels, cron, skills, agent. Loopback bind on `127.0.0.1:18789`. |
 | `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. **On-demand only** — gated behind the `cli` compose profile so `docker compose up -d` does not start it. Invoke from `compose/openclaw/` via `docker compose --profile cli run --rm openclaw-cli <command>` (preferred) or `docker compose --profile cli up -d openclaw-cli` for a persistent session. |
 | `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
+
+## Identity services
+
+[`compose/identity/docker-compose.yml`](./compose/identity/docker-compose.yml) is compose project `identity`: the org identity provider every app on the box signs in through. Tailscale Serve publishes both ports on the host's tailnet name over HTTPS, tailnet-only. `deploy.sh` brings the project up once `LOGTO_DB_PASSWORD` is in the env file. `docs/runbook.md` "Identity provider (Logto)" covers the Serve ports, first boot, clients and backup.
+
+| Service | Image | Role |
+| --- | --- | --- |
+| `logto` | `ghcr.io/logto-io/logto:1.44.0` | OIDC provider and sign-in pages on loopback `:3001` (issuer `https://<name>:3001/oidc`), admin console on loopback `:3002`. Sign-in only (no self-registration): Google and passkeys; email waits for a sending domain. |
+| `postgres` | `postgres:17-alpine` | Logto's database, on an internal network with no egress and no host port. Dumped nightly by `scripts/identity-backup/` (host timer). |
 
 ## Monitoring
 
@@ -144,6 +153,7 @@ Full walkthrough: [`docs/quickstart.md`](./docs/quickstart.md).
 lifekit-stack/
 ├── compose/              # docker-compose.yml (platform project), Dockerfiles, OpenClaw sources
 │   ├── openclaw/         # docker-compose.yml for compose project `openclaw` (gateway, cli, google-workspace-mcp)
+│   ├── identity/         # docker-compose.yml for compose project `identity` (logto, postgres)
 │   └── observability/    # prometheus + loki config, Grafana provisioning (datasources, dashboard providers, ALERT RULES)
 ├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw
 ├── skills/               # parameterized workspace skills (opt-in via wizard)

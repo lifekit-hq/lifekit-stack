@@ -8,6 +8,8 @@ under `set -euo pipefail` to pin the build phase's return status (a phase
 whose last command is a false `[[ ]] && ...` would return 1 and trip
 deploy.sh's set -e), which compose project and file each phase drives, and
 the one-time cutover of the OpenClaw services out of the platform project.
+The same end-to-end run pins the gated `identity` project: declared on every
+deploy, brought up only once its password is rendered.
 `docker` is a stub on PATH throughout; no test runs a real docker command,
 and every host path the phases touch points into the test's tmp dir.
 """
@@ -61,6 +63,7 @@ DEPLOY_ORDER = [
     "embed-origin",
     "openclaw:modules",
     "render-heartbeat",
+    "contract-static",
     "contract-static",
     "contract-static",
     "openclaw:build",
@@ -140,9 +143,12 @@ def marker(line: str) -> str | None:
     return None
 
 
-def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
-    env, tmp_path
-):
+def full_deploy(env, tmp_path, env_text="LIFEKIT_TELEGRAM_CHAT=123\n", identity=None):
+    """Run deploy.sh end to end in a scratch repo; return (result, trace, repo).
+
+    `identity` is the body of a stub scripts/deploy-identity.sh, which the
+    deploy calls only once LOGTO_DB_PASSWORD is in the env file.
+    """
     fake = tmp_path / "repo"
     (fake / "scripts/lib").mkdir(parents=True)
     shutil.copy(REPO / "scripts/deploy.sh", fake / "scripts/deploy.sh")
@@ -173,7 +179,9 @@ def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
     stub(bin_dir / "curl", '#!/bin/sh\necho "curl $*" >> "$DOCKER_CALL_LOG"\n')
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    Path(env["ENV_FILE"]).write_text("LIFEKIT_TELEGRAM_CHAT=123\n")
+    if identity is not None:
+        stub(fake / "scripts/deploy-identity.sh", identity)
+    Path(env["ENV_FILE"]).write_text(env_text)
 
     r = subprocess.run(
         ["bash", str(fake / "scripts/deploy.sh")],
@@ -188,10 +196,15 @@ def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
         text=True,
         check=False,
     )
+    return r, Path(env["DOCKER_CALL_LOG"]).read_text().splitlines(), fake
 
+
+def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
+    env, tmp_path
+):
+    r, trace, fake = full_deploy(env, tmp_path)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "✓ deploy complete." in r.stdout
-    trace = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
     assert [m for m in map(marker, trace) if m] == DEPLOY_ORDER
     # The platform project no longer names, starts or manages OpenClaw's
     # services, and is never told to remove orphans.
@@ -211,6 +224,76 @@ def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
         f"-f {fake}/compose/openclaw/docker-compose.yml {args}"
         for args in ("--profile * config --format json", "ps")
     ]
+    # No LOGTO_DB_PASSWORD rendered yet: the identity project is declared
+    # (static check) but never brought up, and the deploy stays green.
+    identity = [line for line in trace if " -p identity " in f" {line} "]
+    assert identity == [
+        f"compose -p identity --env-file {env['ENV_FILE']} "
+        f"-f {fake}/compose/identity/docker-compose.yml config --format json"
+    ]
+    assert "LOGTO_DB_PASSWORD is not in" in r.stderr
+
+
+IDENTITY_STUB = """#!/bin/sh
+echo "identity-$1" >> "$DOCKER_CALL_LOG"
+if [ "$1" = endpoints ] && [ -z "$NO_ENDPOINTS" ]; then
+  echo IDENTITY_ENDPOINT=https://box.example.ts.net:3001
+  echo IDENTITY_ADMIN_ENDPOINT=https://box.example.ts.net:3002
+fi
+[ "$1" != check ] || [ -z "$CHECK_DRIFT" ]
+"""
+
+
+@pytest.mark.parametrize("drift", [False, True])
+def test_identity_comes_up_once_its_password_is_rendered(env, tmp_path, drift):
+    if drift:
+        env["CHECK_DRIFT"] = "1"
+    r, trace, fake = full_deploy(
+        env,
+        tmp_path,
+        env_text="LIFEKIT_TELEGRAM_CHAT=123\nLOGTO_DB_PASSWORD=abc\n",
+        identity=IDENTITY_STUB,
+    )
+    # Serve or sign-in-mode drift is report-only: a red line, never a red deploy.
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert ("✗ identity provider: not yet converged" in r.stderr) == drift
+    prefix = (
+        f"compose -p identity --env-file {env['ENV_FILE']} "
+        f"-f {fake}/compose/identity/docker-compose.yml "
+    )
+    steps = [
+        line[len(prefix) :]
+        if line.startswith(prefix)
+        else ("up -d --build" if "up -d --build" in line else line)
+        for line in trace
+        if line.startswith(prefix)
+        or line.startswith(("identity-", "contract-enforce"))
+        or "up -d --build" in line
+    ]
+    assert steps == [
+        "config --format json",
+        "up -d --build",
+        "identity-endpoints",
+        "up -d --wait --wait-timeout 300",
+        "ps",
+        "contract-enforce",
+        "identity-check",
+    ]
+    assert "issuer https://box.example.ts.net:3001/oidc" in r.stdout
+
+
+def test_identity_without_an_issuer_fails_the_deploy_and_stays_down(env, tmp_path):
+    env["NO_ENDPOINTS"] = "1"
+    r, trace, fake = full_deploy(
+        env,
+        tmp_path,
+        env_text="LIFEKIT_TELEGRAM_CHAT=123\nLOGTO_DB_PASSWORD=abc\n",
+        identity=IDENTITY_STUB,
+    )
+    assert r.returncode != 0
+    assert "issuer URL undecidable" in r.stderr
+    assert not [line for line in trace if " -p identity " in line and " up " in line]
+    assert "identity-check" not in trace
 
 
 def build_phase(env, extra_env=None):

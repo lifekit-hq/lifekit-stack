@@ -101,6 +101,7 @@ this inventory sets it.
 | `PARKED_BINANCE_API_KEY` | master | parked | none since 2026-07-11 (the Binance MCP was dropped). Was `BINANCE_API_KEY` in the gateway env. Not revoked: the captain rotates it at Binance later. | captain (Binance) | captain's call | not recorded | `secrets/lifekit.env.sops` |
 | `PARKED_BINANCE_API_SECRET` | master | parked | none; pair of the key above | captain (Binance) | captain's call | not recorded | `secrets/lifekit.env.sops` |
 | `LIFEKIT_EXTERNAL_HEARTBEAT_URL` | master | heartbeat-url | grafana (compose env `HEARTBEAT_URL`; external dead-man heartbeat ping, provisions/deletes the watchdog rule, `docs/runbook.md` "External heartbeat"), `scripts/deploy.sh` (reads it to log enabled/disabled). The URL itself is the credential: anyone who has it can ping (and so silence) the watchdog. | captain | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit.env.sops` |
+| `LOGTO_DB_PASSWORD` | master | db-password | identity `postgres` (`POSTGRES_PASSWORD`, set on the first boot of an empty volume only) and `logto` (`DB_URL`), compose project `identity`; `scripts/deploy.sh` brings the project up only when it is set. A change after first boot also needs `ALTER ROLE logto PASSWORD ...` inside the database (`docs/runbook.md` "Identity provider (Logto)"). | captain (`openssl rand -hex 32`) | on exposure | not recorded | `secrets/lifekit.env.sops` |
 
 ## Inventory: settings carried in the master file
 
@@ -134,6 +135,8 @@ file appears in one of the two inventory tables.
 | `WORKSPACE_MCP_TOOLS` | master | setting | google-workspace-mcp tool list |
 | `GRAFANA_ADMIN_USER` | master | setting | Grafana admin login name |
 | `GRAFANA_ROOT_URL` | master | setting | Grafana public root URL (tailnet name) |
+| `IDENTITY_ENDPOINT` | master | setting | Logto's public URL, the issuer base (tailnet name); optional, deploy derives it |
+| `IDENTITY_ADMIN_ENDPOINT` | master | setting | Logto admin console URL (tailnet name); optional, deploy derives it |
 | `GRAFANA_PORT` | master | setting | loopback port |
 | `PROMETHEUS_PORT` | master | setting | loopback port |
 | `LOKI_PORT` | master | setting | loopback port |

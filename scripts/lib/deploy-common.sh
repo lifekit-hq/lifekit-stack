@@ -24,6 +24,15 @@ openclaw_compose() {
   docker compose -p "${OPENCLAW_PROJECT}" --env-file "${ENV_FILE}" -f "${OPENCLAW_COMPOSE_FILE}" "$@"
 }
 
+# The org identity provider (Logto + its Postgres) is compose project
+# `identity` (compose/identity/), brought up by deploy.sh once its secret is
+# in ENV_FILE. Same one-place rule as openclaw_compose.
+IDENTITY_PROJECT="identity"
+IDENTITY_COMPOSE_FILE="${REPO_DIR}/compose/identity/docker-compose.yml"
+identity_compose() {
+  docker compose -p "${IDENTITY_PROJECT}" --env-file "${ENV_FILE}" -f "${IDENTITY_COMPOSE_FILE}" "$@"
+}
+
 # CURRENT_STEP is read by the callers' EXIT traps.
 # shellcheck disable=SC2034
 CURRENT_STEP="startup"

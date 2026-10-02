@@ -1,0 +1,10 @@
+[Unit]
+Description=Dump the identity provider's Postgres (compose project identity)
+
+[Service]
+Type=oneshot
+# The deploy account: it owns the backup directory and is in the docker
+# group. install-identity-backup.sh substitutes the placeholder.
+User=__LIFEKIT_USER__
+Group=__LIFEKIT_USER__
+ExecStart=/usr/local/bin/lifekit-identity-backup.sh

@@ -230,6 +230,8 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format jso
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 openclaw_compose --profile '*' config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
+identity_compose config --format json \
+  | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -263,6 +265,36 @@ if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build 
   fi
 fi
 rm -f "${UP_LOG}"
+
+# ─── Identity provider: compose project `identity`, up -d ───────────────────
+#
+# Logto + its Postgres (compose/identity/, docs/runbook.md "Identity provider
+# (Logto)"). Brought up only once LOGTO_DB_PASSWORD is in the rendered env
+# file: before the operator has added and rendered it, the project is skipped
+# with a warning instead of turning every deploy red. Once it is there, a
+# failed `up` (or a service that never turns healthy) goes red like any other
+# post-deploy assertion. The issuer URLs come from scripts/deploy-identity.sh
+# (explicit, or the tailnet name); Logto never boots with a guessed issuer.
+say "identity provider (compose project ${IDENTITY_PROJECT})"
+IDENTITY_UP=0
+if ! grep -qE '^[[:space:]]*LOGTO_DB_PASSWORD=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}"; then
+  warn "identity: LOGTO_DB_PASSWORD is not in ${ENV_FILE}; project ${IDENTITY_PROJECT} not brought up (docs/runbook.md \"Identity provider (Logto)\")"
+else
+  IDENTITY_ENV="$(ENV_FILE="${ENV_FILE}" "${REPO_DIR}/scripts/deploy-identity.sh" endpoints || true)"
+  IDENTITY_ENDPOINT="$(sed -n 's/^IDENTITY_ENDPOINT=//p' <<<"${IDENTITY_ENV}")"
+  IDENTITY_ADMIN_ENDPOINT="$(sed -n 's/^IDENTITY_ADMIN_ENDPOINT=//p' <<<"${IDENTITY_ENV}")"
+  if [[ -z "${IDENTITY_ENDPOINT}" || -z "${IDENTITY_ADMIN_ENDPOINT}" ]]; then
+    fail_later "identity: issuer URL undecidable (no tailnet name, IDENTITY_ENDPOINT / IDENTITY_ADMIN_ENDPOINT unset); project ${IDENTITY_PROJECT} not brought up"
+  else
+    export IDENTITY_ENDPOINT IDENTITY_ADMIN_ENDPOINT
+    echo "identity: issuer ${IDENTITY_ENDPOINT}/oidc, admin console ${IDENTITY_ADMIN_ENDPOINT}"
+    if identity_compose up -d --wait --wait-timeout 300; then
+      IDENTITY_UP=1
+    else
+      fail_later "identity: project ${IDENTITY_PROJECT} did not come up healthy (identity_compose ps / logs logto)"
+    fi
+  fi
+fi
 
 # ─── OpenClaw: move out of the platform project (once), up -d ───────────────
 #
@@ -340,6 +372,7 @@ openclaw_phase post_up
 say "container status"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 openclaw_compose ps
+if [[ "${IDENTITY_UP}" == 1 ]]; then identity_compose ps; fi
 
 # ─── OpenClaw: smoke turns ───────────────────────────────────────────────────
 #
@@ -358,7 +391,8 @@ say "platform contract: running containers"
 STACK_PROJECT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format json \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')"
 python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" --enforce "${OPENCLAW_PROJECT}" \
-  || fail_later "platform contract: ${STACK_PROJECT} or ${OPENCLAW_PROJECT} containers fail it (table above)"
+  --enforce "${IDENTITY_PROJECT}" \
+  || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT} or ${IDENTITY_PROJECT} containers fail it (table above)"
 
 # ─── Docker builder cache cap: host fact the repo owns, report-only ──────────
 #
@@ -419,6 +453,23 @@ FIREWALL_STATUS=0
 bash "${REPO_DIR}/scripts/host-firewall.sh" --check || FIREWALL_STATUS=$?
 if [[ "${FIREWALL_STATUS}" != 0 ]]; then
   printf '\033[1;31m✗ host firewall: the box has not converged on the repository ruleset (installed copy, unit enabled and active, no nftables.service or ufw); apply it with the timed-rollback cutover in docs/runbook.md "Host firewall (nftables)"\033[0m\n' >&2
+fi
+
+# ─── Identity provider: host facts, report-only ─────────────────────────────
+#
+# Publishing the identity ports on the tailnet (`tailscale serve`) and the
+# first-boot sign-in settings are operator steps (docs/runbook.md "Identity
+# provider (Logto)"): the deploy account cannot run them. It reports, in red,
+# when Serve does not publish 3001/3002 tailnet-only or when the sign-in mode
+# still lets anyone who reaches the page register. Same shape as the four
+# above; skipped while the project is not up.
+if [[ "${IDENTITY_UP}" == 1 ]]; then
+  say "identity provider (host facts, report-only)"
+  IDENTITY_CHECK_STATUS=0
+  bash "${REPO_DIR}/scripts/deploy-identity.sh" check || IDENTITY_CHECK_STATUS=$?
+  if [[ "${IDENTITY_CHECK_STATUS}" != 0 ]]; then
+    printf '\033[1;31m✗ identity provider: not yet converged (lines above); apply the operator steps in docs/runbook.md "Identity provider (Logto)"\033[0m\n' >&2
+  fi
 fi
 
 if (( ${#DEPLOY_FAILURES[@]} )); then
