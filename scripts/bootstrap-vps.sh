@@ -60,7 +60,7 @@ fi
 say "Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg ufw git rsync sshfs python3 python3-venv gh
+apt-get install -y -qq ca-certificates curl gnupg nftables git rsync sshfs python3 python3-venv gh
 
 # ─── Swap (4G) ────────────────────────────────────────────────────────────────
 # The 2026-05-20 cax11 freeze postmortem flagged "zero swap" as one of three
@@ -114,15 +114,6 @@ fi
 say "Joining tailnet as $TAILSCALE_HOSTNAME"
 tailscale up --authkey="$TAILSCALE_AUTH_KEY" --hostname="$TAILSCALE_HOSTNAME"
 
-# ─── UFW: deny everything public, allow SSH only on tailscale0 ────────────────
-
-say "Configuring UFW (Tailscale-only SSH)"
-ufw --force reset >/dev/null
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow in on tailscale0 to any port 22 proto tcp
-ufw --force enable
-
 # ─── Bind-mount directories ───────────────────────────────────────────────────
 
 say "Creating /srv/{lifekit-stack,life,openclaw/*} + /var/lib/lifekit"
@@ -151,6 +142,22 @@ else
   say "Cloning $REPO_URL → $REPO_DIR"
   sudo -u "$LIFEKIT_USER" git clone --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
 fi
+
+# ─── Host firewall (nftables) ─────────────────────────────────────────────────
+# One nftables table, inet lifekit, loaded at boot by lifekit-firewall.service
+# (scripts/host-firewall.sh, ruleset in scripts/firewall/lifekit-firewall.nft):
+# input policy drop with the tailnet, Tailscale's WireGuard port, tcp/80+443
+# for the edge and essential ICMP open, so SSH is tailnet-only from here on;
+# published container ports answer only loopback, the tailnet and the edge
+# bridge. It never flushes the ruleset Docker and tailscaled share. This SSH
+# session survives as an established flow; reconnect over the tailnet. On a
+# box already in service, cut over with the timed-rollback sequence in
+# docs/runbook.md "Host firewall (nftables)" instead of re-running this.
+# (It replaces the UFW setup an earlier version of this script did; ufw stays
+# off, and the script's --check flags it when active.)
+
+say "Configuring the host firewall (tailnet-only SSH)"
+bash "$REPO_DIR/scripts/host-firewall.sh"
 
 # (The lifekit-dashboard auto-redeploy timer was retired 2026-08-16 — the
 # dashboard deploys from its own repo's workflow now; ecosystem decoupling
