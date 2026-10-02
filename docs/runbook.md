@@ -1167,10 +1167,8 @@ lands the issuer moves once, and every client registers again against it.
 **Operator steps, once** (admin account; the deploy account cannot run them):
 
 ```bash
-# 1. The database password, into the master secrets file (captain's age key):
-sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
-  '["LOGTO_DB_PASSWORD"]' "\"$(openssl rand -hex 32)\""
-#    commit, merge, then render and redeploy:
+# 1. After merge, render the committed LOGTO_DB_PASSWORD into the env file,
+#    then redeploy:
 sudo bash scripts/secrets/render-stack-env.sh
 # 2. Publish both ports on the tailnet. Serve only - never `tailscale funnel`
 #    for these ports:
@@ -1180,6 +1178,11 @@ tailscale serve status        # both listed as "(tailnet only)"
 # 3. The nightly dump timer (bootstrap-vps.sh installs it on a new box):
 sudo LIFEKIT_USER=lifekit bash /srv/lifekit-stack/scripts/identity-backup/install-identity-backup.sh
 ```
+
+`LOGTO_DB_PASSWORD` is already in `secrets/lifekit.env.sops`. Only a rebuild
+from scratch creates it again, with `sops set --input-type dotenv
+--output-type dotenv secrets/lifekit.env.sops '["LOGTO_DB_PASSWORD"]'
+"\"$(openssl rand -hex 32)\""` (captain's age key).
 
 Every deploy then prints a report-only "identity provider (host facts)"
 block (`scripts/deploy-identity.sh check`): each Serve port published
