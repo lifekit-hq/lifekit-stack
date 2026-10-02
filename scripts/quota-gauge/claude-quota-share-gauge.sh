@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Export each consumer's imputed share of the shared Claude account's weekly
+# usage as a node-exporter textfile metric, claude_quota_share_percent{consumer}.
+# Runs hourly from claude-quota-share-gauge.timer as the account that holds the
+# Claude credentials. The numbers come from scripts/quota-share (arg 2, default
+# the deployed checkout); its residual consumer is not measured and is skipped.
+# Exit 1 from quota_share.py only means "a consumer is over its share" - the
+# report is still valid - while 2 means quota-axi could not be read: then the
+# previous file stays in place.
+set -euo pipefail
+OUT_DIR="${1:-/var/lib/node_exporter/textfile}"
+QUOTA_SHARE="${2:-/srv/lifekit-stack/scripts/quota-share/quota_share.py}"
+for d in "$HOME"/.nvm/versions/node/*/bin; do PATH="$d:$PATH"; done  # quota-axi is an nvm-installed npm CLI
+tmp="$(mktemp "$OUT_DIR/.claude_quota_share.XXXXXX")"
+report="$(mktemp)"
+trap 'rm -f "$tmp" "$report"' EXIT
+rc=0
+python3 "$QUOTA_SHARE" --json > "$report" || rc=$?
+if [[ "$rc" -gt 1 ]]; then
+  exit "$rc"
+fi
+jq -r '.consumers[] | select(.imputedUsedPct != null) |
+  "claude_quota_share_percent{consumer=\"\(.name)\"} \(.imputedUsedPct)"' "$report" > "$tmp"
+chmod 644 "$tmp"
+mv -f "$tmp" "$OUT_DIR/claude_quota_share.prom"

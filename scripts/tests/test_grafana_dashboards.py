@@ -67,3 +67,18 @@ def test_node_exporter_collectors():
         "--collector.loadavg",
     ):
         assert flag in command
+
+
+def test_box_dashboard_has_runway_and_share_panels():
+    d = json.loads((PROV / "dashboards/lifekit/box.json").read_text())
+    exprs = {t["expr"]: p["title"] for p in d["panels"] for t in p.get("targets", [])}
+    assert exprs["claude_quota_runway_seconds"] == "Quota runway"
+    assert exprs["claude_quota_share_percent"] == "Quota share by consumer"
+    # no panel overlaps another on the grid
+    cells = set()
+    for p in d["panels"]:
+        g = p["gridPos"]
+        for x in range(g["x"], g["x"] + g["w"]):
+            for y in range(g["y"], g["y"] + g["h"]):
+                assert (x, y) not in cells, p["title"]
+                cells.add((x, y))

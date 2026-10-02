@@ -173,6 +173,24 @@ def test_quota_pace_rule_active_and_no_five_hour_rule():
     ]
 
 
+def test_quota_runway_rule_gates_on_reset_and_has_no_blind_spot():
+    rule = RULES["claude-quota-runway-short"]
+    (expr,) = queries(rule)
+    assert "claude_quota_runway_seconds" in expr
+    # the reset gate: only while more than 12h remain to the limiting window's reset
+    assert "claude_quota_limiting_window" in expr and "> 43200" in expr
+    assert rule["labels"]["severity"] == "warning"
+    assert rule["noDataState"] == "OK"
+    assert threshold(rule) == ("lt", 43200)
+
+
+def test_hourly_quota_share_file_is_judged_on_its_own_cadence():
+    # An hourly file against the 5-minute staleness threshold would fire every hour.
+    (expr,) = queries(RULES["textfile-collector-stale"])
+    assert "claude_quota_share" in expr
+    assert "file!~" in expr and "file=~" in expr and "- 6600" in expr
+
+
 def test_near_cap_rule_threshold():
     assert threshold(RULES["container-near-memory-cap"]) == ("gt", 90)
 

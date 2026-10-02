@@ -588,8 +588,128 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "time() - node_textfile_mtime_seconds",
+          "expr": "time() - node_textfile_mtime_seconds{file!~\".*claude_quota_share\\\\.prom\"}",
           "legendFormat": "{{file}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "title": "Quota runway",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Seconds of usable quota left at the current pace (quota-axi runway, all-models scope). Limiting window and status shown in the legend.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 21600
+              },
+              {
+                "color": "green",
+                "value": 43200
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "claude_quota_runway_seconds",
+          "legendFormat": "runway",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "claude_quota_runway_status",
+          "legendFormat": "{{status}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "claude_quota_limiting_window",
+          "legendFormat": "limited by {{window}}",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "title": "Quota share by consumer",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 8,
+        "y": 27,
+        "w": 16,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Each consumer's imputed share of the account's weekly usage (scripts/quota-share, refreshed hourly). Residual consumers are not measured.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "claude_quota_share_percent",
+          "legendFormat": "{{consumer}}",
           "refId": "A"
         }
       ]
@@ -601,7 +721,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 34,
         "w": 24,
         "h": 1
       },
@@ -613,7 +733,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 35,
         "w": 8,
         "h": 7
       },
@@ -654,7 +774,7 @@
       "type": "stat",
       "gridPos": {
         "x": 8,
-        "y": 28,
+        "y": 35,
         "w": 4,
         "h": 7
       },
@@ -711,7 +831,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 28,
+        "y": 35,
         "w": 6,
         "h": 7
       },
@@ -743,7 +863,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 18,
-        "y": 28,
+        "y": 35,
         "w": 6,
         "h": 7
       },
@@ -776,7 +896,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 35,
+        "y": 42,
         "w": 24,
         "h": 1
       },
@@ -788,7 +908,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 43,
         "w": 8,
         "h": 7
       },
@@ -820,7 +940,7 @@
       "type": "stat",
       "gridPos": {
         "x": 8,
-        "y": 36,
+        "y": 43,
         "w": 4,
         "h": 7
       },
@@ -864,7 +984,7 @@
       "type": "stat",
       "gridPos": {
         "x": 12,
-        "y": 36,
+        "y": 43,
         "w": 4,
         "h": 7
       },
@@ -905,7 +1025,7 @@
       "type": "stat",
       "gridPos": {
         "x": 16,
-        "y": 36,
+        "y": 43,
         "w": 4,
         "h": 7
       },
@@ -949,7 +1069,7 @@
       "type": "stat",
       "gridPos": {
         "x": 20,
-        "y": 36,
+        "y": 43,
         "w": 4,
         "h": 7
       },
@@ -995,7 +1115,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 43,
+        "y": 50,
         "w": 24,
         "h": 1
       },
@@ -1007,7 +1127,7 @@
       "type": "stat",
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 51,
         "w": 6,
         "h": 6
       },
@@ -1064,7 +1184,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 6,
-        "y": 44,
+        "y": 51,
         "w": 18,
         "h": 6
       },
@@ -1097,7 +1217,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 50,
+        "y": 57,
         "w": 24,
         "h": 1
       },
@@ -1109,7 +1229,7 @@
       "type": "alertlist",
       "gridPos": {
         "x": 0,
-        "y": 51,
+        "y": 58,
         "w": 24,
         "h": 9
       },
