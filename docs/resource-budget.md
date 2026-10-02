@@ -50,7 +50,7 @@ history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 | xui | 0.25 | web, db (compose project `xui`) | 188 MiB |
 | operator sessions | 6.8 | the operator's login slice (`user-1001.slice`): agent sessions, their browser helpers, tools | 4.3 GiB resident at the 5-worker cap (2026-10-01); 30-minute average 3.5 p50, 5.1 p95, 6.8 max over 7 days |
 | runners | 1.4 | the CI runner services and their jobs | 0.2-0.45 GiB idle; 1.6 GiB raw and 1.0 GiB 30-minute average during the 2026-10-01 image-rebuild deploy; 1.37 GiB 30-minute average max over 7 days |
-| OS | 1.0 | dockerd, containerd, shims, tailscaled, journald | about 0.75 GiB (snapshot) |
+| OS | 1.0 | dockerd, containerd, shims, tailscaled, journald (the `os` gauge counts only these four units; cron and the other system services, about 80 MiB in the same snapshot, are not in any gauge and sit in this row's headroom) | about 0.75 GiB (snapshot) |
 | **Sum** | **16.2** | | |
 | burst pool | 1.75 | everything else that runs as a container: devclaw sandboxes, `openclaw-cli` runs, rehearsals, CI and worker validation containers, test compose projects, any orphan | 30-minute average 0.14 GiB p50, 0.78 p95, 1.66 max over 7 days; one worker container reached 3164 MiB (a spike, not sustained) |
 | **Total** | **17.95** | of 15.6 GiB RAM | |
@@ -134,7 +134,7 @@ collector is off), the swap-in signal above. The groups are:
 | --- | --- |
 | `operator` | `user.slice/user-1001.slice` |
 | `runners` | `system.slice/actions.runner.*.service` |
-| `os` | `system.slice/{docker,containerd,tailscaled,systemd-journald}.service` (never all of `system.slice`: docker's container scopes live there) |
+| `os` | `system.slice/{docker,containerd,tailscaled,systemd-journald}.service` (never all of `system.slice`: docker's container scopes live there; cron, sshd and the other system services are therefore not counted) |
 
 The swap gauge is margin, not budget: it has no rule of its own, the host-wide
 *host swap is over 75% used* rule covers it.
