@@ -21,7 +21,9 @@ Runs on the VPS as the `lifekit` (or `denys`) account. Needs `quota-axi` on
 the gateway container of the `openclaw` compose project (found by its compose
 labels); reads `devclaw_tokens_total` from the local
 Prometheus at `127.0.0.1:9090` if reachable. Any of those being unavailable
-degrades that one consumer's numbers (a `note:`/`warnings` line says so; the hourly share gauge keeps its previous file while `warnings` is non-empty) —
+degrades that one consumer's numbers (a `warnings` entry says so; `--json` keeps
+config-mismatch `notes` separate, the table prints both as `note:` lines on stderr,
+and the hourly share gauge keeps its previous file while `warnings` is non-empty) —
 it never crashes the whole report.
 
 It prints only percentages: no raw token counts, no credentials.
