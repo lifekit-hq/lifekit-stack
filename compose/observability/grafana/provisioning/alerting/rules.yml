@@ -150,6 +150,82 @@ groups:
             daemon is not restarting it. `docker logs --tail 100 {{ $labels.name }}`,
             then `docker compose -p {{ $labels.project }} up -d {{ $labels.service }}`.
 
+      - uid: container-stopped-or-vanished
+        title: long-running container is stopped or gone
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # container-exited-abnormally needs exit_code != 0, so a clean
+              # `docker stop` (exit 0) is invisible to it, and a removed
+              # container has no series at all (noDataState OK). Two legs
+              # close both holes for long-running projects, whatever the exit
+              # code: (1) 1 for a container that exists but is not running and
+              # not between restarts; (2) a (project, service) that had a running
+              # series 30 minutes ago and has none now - label_replace gives
+              # it a `name` (the service) so the alert and its recovery line
+              # carry a subject. Today's unscraped services this covers:
+              # google-workspace-mcp, finance-sentry-postgres,
+              # finance-sentry-uptime-probe, xui-web, xui-db. Not covered:
+              # openclaw-cli (an on-demand profile service) and one-shot
+              # projects outside the regex.
+              # A deliberate service retirement fires once, for about 30
+              # minutes: the vanished leg ends when the 30m offset window
+              # passes the removal. A removal is not worth a second page.
+              # The vanished leg only counts while the container-exporter
+              # scrape is up: an exporter outage makes every series vanish at
+              # once, and that is target-down's alarm, not twenty of these.
+              expr: >-
+                ((1 - docker_container_running{project=~"compose|openclaw|docker|devclaw|dashboard|xui", service!="openclaw-cli"})
+                  * (1 - docker_container_restarting{project=~"compose|openclaw|docker|devclaw|dashboard|xui", service!="openclaw-cli"}))
+                or
+                label_replace(
+                  group by (project, service) (
+                    docker_container_running{project=~"compose|openclaw|docker|devclaw|dashboard|xui", service!="openclaw-cli"} offset 30m)
+                  unless
+                  group by (project, service) (
+                    docker_container_running{project=~"compose|openclaw|docker|devclaw|dashboard|xui", service!="openclaw-cli"}),
+                  "name", "$1", "service", "(.*)")
+                and on() (max(up{job="containers"}) == 1)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # Silence is the normal state; the exporter's own absence is
+        # target-down's job.
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.name }} is stopped or gone"
+          description: >-
+            {{ $labels.name }} (compose {{ $labels.project }}/{{ $labels.service }})
+            has not been running for 15 minutes - stopped cleanly, or removed
+            with no replacement. If it was retired on purpose this fires once
+            and clears itself within about 30 minutes. Otherwise
+            `docker compose -p {{ $labels.project }} up -d {{ $labels.service }}`;
+            `docker logs --tail 100 {{ $labels.name }}` shows how it stopped.
+
       - uid: container-restarting
         title: container is restart-looping
         condition: C
