@@ -608,7 +608,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Seconds of usable quota left at the current pace (quota-axi runway, all-models scope). Below it: the current runway status and the window that limits it.",
+      "description": "Seconds of usable quota left at the current pace (quota-axi runway, all-models scope) and the projected exhaustion time. Below them: the current runway status and the window that limits it.",
       "fieldConfig": {
         "defaults": {
           "unit": "none",
@@ -652,6 +652,18 @@
                     }
                   ]
                 }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
               }
             ]
           },
@@ -718,6 +730,17 @@
           "expr": "claude_quota_runway_seconds",
           "legendFormat": "runway",
           "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "claude_quota_projected_exhausted_at_seconds * 1000",
+          "legendFormat": "exhausts",
+          "refId": "D",
           "instant": true,
           "range": false
         },

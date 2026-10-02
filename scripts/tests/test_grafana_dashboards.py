@@ -105,6 +105,26 @@ def test_quota_panels_show_only_current_values():
         assert all(t["instant"] and not t["range"] for t in panel["targets"]), title
 
 
+def test_runway_panel_shows_projected_exhaustion_as_instant_datetime():
+    d = json.loads((PROV / "dashboards/lifekit/box.json").read_text())
+    (panel,) = [p for p in d["panels"] if p["title"] == "Quota runway"]
+    (target,) = [
+        t
+        for t in panel["targets"]
+        if t["expr"].startswith("claude_quota_projected_exhausted_at_seconds")
+    ]
+    assert target["instant"] and not target["range"]
+    assert target["expr"].endswith("* 1000")
+    (override,) = [
+        o
+        for o in panel["fieldConfig"]["overrides"]
+        if o["matcher"]["options"] == target["refId"]
+    ]
+    assert {p["id"]: p["value"] for p in override["properties"]}[
+        "unit"
+    ] == "dateTimeAsIso"
+
+
 def test_runway_status_and_window_value_mappings_are_not_empty_text():
     # Grafana 11 renders a lone series blank when its value maps to "" - in the
     # no_projection state only the status/window series exist, so they must map to
