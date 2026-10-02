@@ -77,7 +77,8 @@ services:
       - --log.level=WARN
       # No access log: the devclaw console's old `?token=` links would write
       # the devclaw bearer into Loki.
-      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
       - --entrypoints.dashboard.address=:18890
       - --entrypoints.devclaw.address=:18891
       # Tailscale Serve terminates HTTPS and sends X-Forwarded-Proto/-Host;
@@ -101,7 +102,9 @@ services:
       - "127.0.0.1:18890:18890"
       - "127.0.0.1:18891:18891"
     volumes:
-      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      # A directory, not the file: git replaces the file on deploy, and a
+      # single-file bind mount would keep the old inode.
+      - ./traefik:/etc/traefik/dynamic:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/ping"]
       interval: 30s

@@ -1339,7 +1339,8 @@ the other opens without asking again. Two services:
 
 - `traefik`, the forward-auth proxy, with one loopback entrypoint per
   surface: `127.0.0.1:18890` for the dashboard and `127.0.0.1:18891` for
-  devclaw. Routes are in `compose/edge/traefik/dynamic.yml`.
+  devclaw. Routes are in `compose/edge/traefik/dynamic.yml`, mounted as a
+  directory and watched, so a route change merged to `main` applies live.
 - `oauth2-proxy`, a confidential OIDC client of Logto. It answers Traefik's
   check for every request from its session cookie. With no session, it sends
   the browser to Logto and back.
