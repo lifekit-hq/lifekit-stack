@@ -294,6 +294,14 @@ ADMIN_USER="$ADMIN_USER" bash "$REPO_DIR/scripts/host-gauge/install-host-gauges.
 say "Installing fleet publisher script + systemd units"
 ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" bash "$REPO_DIR/scripts/fleet-publisher/install-fleet-publisher.sh"
 
+# ─── Identity database dump timer ─────────────────────────────────────────────
+# Nightly pg_dumpall of the identity provider's Postgres (compose project
+# identity) into /srv/openclaw/backups/identity, newest 14 kept. A no-op until
+# the identity project is deployed; see scripts/identity-backup/.
+
+say "Installing identity backup script + systemd units"
+LIFEKIT_USER="$LIFEKIT_USER" bash "$REPO_DIR/scripts/identity-backup/install-identity-backup.sh"
+
 # ─── GitHub Actions self-hosted runner ────────────────────────────────────────
 
 if [[ -n "$RUNNER_REG_TOKEN" ]]; then

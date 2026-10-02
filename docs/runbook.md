@@ -1135,6 +1135,132 @@ reboots too. Docker's and Tailscale's tables are untouched either way.
 `sudo bash scripts/host-firewall.sh` installs and reloads with no rollback;
 it is meant for the fresh box `bootstrap-vps.sh` sets up.
 
+## Identity provider (Logto)
+
+Compose project `identity` (`compose/identity/`) is the org sign-in: Logto
+1.44 as the OIDC provider, with its own Postgres 17. Every app on the box
+(lifekit dashboard, devclaw, finance-sentry, Grafana) signs in against it;
+those clients and the oauth2-proxy forward-auth are separate changes.
+`deploy.sh` brings the project up once `LOGTO_DB_PASSWORD` is in the rendered
+env file, and until then skips it with a yellow warning.
+
+| | URL | Reach |
+| --- | --- | --- |
+| Sign-in pages, OIDC (issuer `https://<name>:3001/oidc`) | `https://<name>:3001` | tailnet |
+| Admin console | `https://<name>:3002` | tailnet |
+
+`<name>` is this host's tailnet name (`<host>.<tailnet>.ts.net`). Both ports
+bind to loopback; Tailscale Serve terminates HTTPS on the tailnet name and
+proxies to them. `deploy.sh` derives both URLs from `tailscale status`, so an
+explicit `IDENTITY_ENDPOINT` / `IDENTITY_ADMIN_ENDPOINT` in the master file is
+only for moving the issuer.
+
+**Why dedicated Serve ports, not a path on 443.** Port 443 on this node
+carries a Funnel (the public edge), so anything served there is on the public
+internet; the identity provider stays tailnet-only until a public domain is
+decided. Ports 8443 and 10000 are avoided too: they are the other
+Funnel-capable ports, one `--funnel` away from public. Logto also expects to
+own its origin (it does not run cleanly under a path prefix), and its issuer
+URL is baked into every token and client registration. When the public domain
+lands the issuer moves once, and every client registers again against it.
+
+**Operator steps, once** (admin account; the deploy account cannot run them):
+
+```bash
+# 1. The database password, into the master secrets file (captain's age key):
+sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+  '["LOGTO_DB_PASSWORD"]' "\"$(openssl rand -hex 32)\""
+#    commit, merge, then render and redeploy:
+sudo bash scripts/secrets/render-stack-env.sh
+# 2. Publish both ports on the tailnet. Serve only - never `tailscale funnel`
+#    for these ports:
+sudo tailscale serve --bg --https=3001 http://127.0.0.1:3001
+sudo tailscale serve --bg --https=3002 http://127.0.0.1:3002
+tailscale serve status        # both listed as "(tailnet only)"
+# 3. The nightly dump timer (bootstrap-vps.sh installs it on a new box):
+sudo LIFEKIT_USER=lifekit bash /srv/lifekit-stack/scripts/identity-backup/install-identity-backup.sh
+```
+
+Every deploy then prints a report-only "identity provider (host facts)"
+block (`scripts/deploy-identity.sh check`): each Serve port published
+tailnet-only, and the sign-in mode `SignIn`. A red `✗` there means a step
+here is not done yet. A Funnel on either port is called out by name.
+
+**First boot, in the admin console** (`https://<name>:3002`). Do it as soon
+as the project first turns healthy: until the admin exists, anyone on the
+tailnet who opens the console can create it.
+
+1. Create the admin account. Logto closes admin sign-up after the first one.
+   Keep the password in KeePassXC.
+2. **Sign-in mode.** *Sign-in experience > Sign-up and sign-in*: turn user
+   registration off, so the mode is `SignIn` (members are created by the
+   admin, below). The deploy's report line checks it.
+3. **Google.** In Google Cloud, create an OAuth client of type *Web
+   application*. Then *Connectors > Social connectors > Add > Google*: paste
+   its client id and secret. Copy the connector's redirect URI,
+   `https://<name>:3001/callback/<connectorId>`, into the Google client's
+   *Authorized redirect URIs*. Add Google to the sign-in page. Under *Social
+   sign-in* turn on automatic account linking, so a member's first Google
+   sign-in attaches to the user created for that address instead of
+   prompting.
+4. **Passkeys.** *Sign-in experience > Sign-up and sign-in > Passkey
+   sign-in*: on, with the passkey button and autofill. A member adds a
+   passkey after their first sign-in. Passkeys are bound to the host name,
+   so they need registering again after the issuer moves.
+5. **Email: leave it off** until a sending domain exists. To enable it with
+   Resend: verify the sending domain in Resend and create an API key. Then
+   *Connectors > Email and SMS > SMTP*: host `smtp.resend.com`, port `465`,
+   `secure` on, username `resend`, password the API key, `fromEmail` an
+   address on the verified domain. Send the test email from the connector
+   page. Finally add *Email address* (verification code) as a sign-in
+   identifier. The API key lives in Logto's database, not in the secrets
+   files; rotate it in the connector page.
+
+**Creating a member.** *User management > Add user*. Use the same email as
+the finance-sentry invite, so the two accounts meet on one address. Hand the
+generated password over out of band, or leave it unused and let them sign in
+with Google.
+
+**Registering an OIDC client** (finance-sentry, oauth2-proxy, Grafana, each
+in its own change). *Applications > Create application > Traditional web*.
+Give it a name and the app's redirect URI(s), for example
+`https://<name>:3000/login/generic_oauth` for Grafana or
+`https://<host>/oauth2/callback` for oauth2-proxy. The app then needs:
+
+- issuer `https://<name>:3001/oidc`; discovery is at
+  `https://<name>:3001/oidc/.well-known/openid-configuration`;
+- the application's client id and secret (the secret into the app's secrets
+  boundary, inventoried like any other);
+- scopes `openid profile email`.
+
+**Upgrading Logto.** Bump the image tag in `compose/identity/docker-compose.yml`
+through a PR. Take a dump first (`sudo systemctl start
+lifekit-identity-backup.service`). On start the container applies the schema
+alterations up to the new version, so a rollback to the old tag needs the
+pre-upgrade dump restored, not just the old tag.
+
+**Backup and restore.** `lifekit-identity-backup.timer` dumps the whole
+cluster nightly at 02:45 (`pg_dumpall`: Logto's per-tenant roles as well as
+its data). The dump goes to
+`/srv/openclaw/backups/identity/identity-<UTC stamp>.sql.gz`, 0600, newest 14
+kept. A failed run turns the oneshot failed, and the host unit gauge reports
+it. To restore, as the deploy account, from `/srv/lifekit-stack`:
+
+```bash
+docker stop identity-logto-1
+docker rm -f identity-postgres-1 && docker volume rm identity_postgres_data
+docker compose -p identity --env-file /srv/lifekit-secrets/stack.env \
+  -f compose/identity/docker-compose.yml up -d --wait postgres
+gunzip -c /srv/openclaw/backups/identity/identity-<stamp>.sql.gz \
+  | docker exec -i identity-postgres-1 psql -q -U logto -d postgres
+bash scripts/deploy.sh      # brings logto back; its log says "Seeding skipped"
+```
+
+The restore prints `role "logto" already exists` and `database "logto"
+already exists`: the fresh volume created both, and those lines are expected.
+Wait for `up --wait` to return before restoring. A restore into a Postgres
+still starting fails.
+
 ## Container console logs in Loki
 
 The OTel collector tails every container's Docker json-file log (read-only) and
@@ -1206,6 +1332,7 @@ vault runbook for owner detail.
 - `/srv/openclaw/config/` — OpenClaw config (the compose env file lives in `/srv/lifekit-secrets/`)
 - `/srv/openclaw/secret-key/` — OpenClaw OAuth encryption key (lose this and you re-pair every channel)
 - `/srv/openclaw/workspace/` — workspace skills (recoverable from this repo, but having a local copy is faster)
+- `/srv/openclaw/backups/identity/` — nightly dumps of the identity provider's database (users, sign-in settings, OIDC clients and signing keys; [Identity provider (Logto)](#identity-provider-logto) has the restore)
 
 Snapshot these via your provider's backups or rsync to another box.
 

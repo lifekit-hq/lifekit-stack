@@ -1,0 +1,165 @@
+# Identity compose project (`identity`): the org identity provider.
+#
+# One sign-in for every app on the box (lifekit dashboard, devclaw,
+# finance-sentry, Grafana): Logto as the OIDC provider, with its own Postgres.
+#   logto     - ghcr.io/logto-io/logto: OIDC endpoint + sign-in pages on :3001,
+#               admin console on :3002, both loopback-bound. Tailscale Serve
+#               publishes them on the host's tailnet name over HTTPS
+#               (tailnet-only, never Funnel); docs/runbook.md "Identity
+#               provider (Logto)" has the Serve ports and why.
+#   postgres  - Logto's database. No host port, and on an internal network
+#               with no egress: only logto reaches it.
+#
+# Relative paths resolve from this directory (compose/identity/).
+#
+# scripts/deploy.sh drives this project through identity_compose
+# (scripts/lib/deploy-common.sh) and brings it up only once LOGTO_DB_PASSWORD
+# is in the rendered env file. It exports IDENTITY_ENDPOINT and
+# IDENTITY_ADMIN_ENDPOINT (derived from the tailnet name unless set
+# explicitly), so an ad-hoc `up` needs both set by hand:
+#   IDENTITY_ENDPOINT=https://<host>.<tailnet>.ts.net:3001 \
+#   IDENTITY_ADMIN_ENDPOINT=https://<host>.<tailnet>.ts.net:3002 \
+#   docker compose -p identity --env-file /srv/lifekit-secrets/stack.env \
+#     -f compose/identity/docker-compose.yml ps
+#
+# Sign-in settings (sign-in mode, Google, passkeys, email) live in Logto's
+# database, not here: they are the runbook's first-boot steps. The nightly
+# pg_dump is scripts/identity-backup/ (a host timer).
+#
+# The x-policy anchor is a copy of the platform file's (YAML anchors do not
+# cross files); keep the two in step. Both services drop every capability and
+# run as their image's unprivileged user.
+---
+name: identity
+
+x-policy:
+  policy: &policy
+    init: true
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: '50m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          pids: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+
+services:
+
+  logto:
+    <<: *policy
+    image: ghcr.io/logto-io/logto:1.44.0
+    # Platform contract (scripts/platform-contract.py, docs/platform-contract.md):
+    # `none`, the documented opt-out for platform components, as Grafana. Logto
+    # is an upstream image we do not change and it has no /metrics endpoint
+    # and no JSON logs, so it cannot meet v1 as shipped; health is the compose
+    # healthcheck below and the deploy's report-only sign-in-mode check.
+    labels:
+      lifekit.contract: "none"  # platform component, not a product (scripts/platform-contract.py)
+    # The image's user is root and its entrypoint is `npm run start`. Run as
+    # the image's `node` user instead and call the CLI and the server
+    # directly, so nothing needs a writable home for npm. On every start:
+    # seed a fresh database (skipped when it is already seeded), apply the
+    # schema alterations up to this image's version (a no-op unless the image
+    # tag moved; take a dump first, runbook), then start the server.
+    user: "1000:1000"
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        set -e;
+        version=$$(node -p "require('./packages/core/package.json').version");
+        node_modules/.bin/logto db seed --swe;
+        node_modules/.bin/logto db alteration deploy "$$version";
+        cd packages/core;
+        NODE_ENV=production exec node .
+    environment:
+      DB_URL: postgres://logto:${LOGTO_DB_PASSWORD:-}@postgres:5432/logto
+      # The public URLs Logto issues tokens and links for: the issuer is
+      # ${IDENTITY_ENDPOINT}/oidc. Set by scripts/deploy.sh; empty here
+      # means the deploy did not bring this project up.
+      ENDPOINT: ${IDENTITY_ENDPOINT:-}
+      ADMIN_ENDPOINT: ${IDENTITY_ADMIN_ENDPOINT:-}
+      # Tailscale Serve terminates TLS and sends X-Forwarded-Proto: https.
+      # Logto needs it to set its secure cookies. The ports bind only to
+      # loopback, so only the Serve proxy (or a local process) can send it.
+      TRUST_PROXY_HEADER: "1"
+      TZ: ${OPENCLAW_TZ:-UTC}
+    ports:
+      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:3002:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/api/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+      # The CLI copies its alteration scripts here before seeding or
+      # altering; an empty, root-owned directory in the image.
+      - /etc/logto/packages/cli/alteration-scripts:uid=1000,gid=1000,mode=0755
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          pids: 256
+    networks:
+      - default
+      - db
+
+  postgres:
+    <<: *policy
+    image: postgres:17-alpine
+    labels:
+      lifekit.contract: "none"  # datastore, not a product (scripts/platform-contract.py)
+    # The alpine image's postgres user. The named volume inherits the image's
+    # postgres-owned data directory, so the entrypoint never needs root (or
+    # the chown/setuid capabilities dropped above).
+    user: "70:70"
+    environment:
+      POSTGRES_USER: logto
+      POSTGRES_PASSWORD: ${LOGTO_DB_PASSWORD:-}
+      POSTGRES_DB: logto
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "logto", "-d", "logto"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    shm_size: 64m
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          pids: 256
+    networks:
+      - db
+
+networks:
+  # Logto's egress (Google token exchange, the SMTP connector once enabled).
+  default: {}
+  # Logto <-> Postgres only. internal: no route off the box.
+  db:
+    internal: true
+
+volumes:
+  postgres_data:

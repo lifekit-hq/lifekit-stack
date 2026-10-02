@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 
 COMPOSE = Path(__file__).resolve().parents[2] / "compose"
-# The platform project and the openclaw project, each from its own directory.
-COMPOSE_DIRS = [COMPOSE, COMPOSE / "openclaw"]
+# The platform, openclaw and identity projects, each from its own directory.
+COMPOSE_DIRS = [COMPOSE, COMPOSE / "openclaw", COMPOSE / "identity"]
 
 pytestmark = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker compose unavailable"

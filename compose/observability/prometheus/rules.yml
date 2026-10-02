@@ -29,13 +29,16 @@ groups:
             project="dashboard"}), "name", "dashboard", "", ""))
           or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
             project="xui"}), "name", "xui", "", ""))
+          or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
+            project="identity"}), "name", "identity", "", ""))
           or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes unless (
               docker_container_memory_usage_bytes{project="openclaw", service=~"openclaw-gateway|google-workspace-mcp"}
               or docker_container_memory_usage_bytes{project="compose"}
               or docker_container_memory_usage_bytes{project="docker", name=~"finance-sentry-.*"}
               or docker_container_memory_usage_bytes{project="devclaw", service="devclaw-mcp"}
               or docker_container_memory_usage_bytes{project="dashboard"}
-              or docker_container_memory_usage_bytes{project="xui"})),
+              or docker_container_memory_usage_bytes{project="xui"}
+              or docker_container_memory_usage_bytes{project="identity"})),
             "name", "burst pool", "", ""))
           or sum by (name) (label_replace(host_group_memory_bytes{group="operator"},
             "name", "operator sessions", "", ""))
