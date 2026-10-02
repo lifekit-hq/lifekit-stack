@@ -120,8 +120,9 @@ services:
       - db
       # Server-side OIDC clients on the box (Grafana) reach the token and
       # userinfo endpoints as http://logto:3001 instead of going out through
-      # the tailnet name. The sign-in pages stay on the tailnet.
-      - lifekit-shared
+      # the tailnet name. The sign-in pages stay on the tailnet. Only Logto
+      # and its OIDC clients join this network, never lifekit-shared.
+      - identity-oidc
 
   postgres:
     <<: *policy
@@ -164,9 +165,9 @@ networks:
   # Logto <-> Postgres only. internal: no route off the box.
   db:
     internal: true
-  # The cross-project seam owned by devclaw's compose project (see
-  # compose/docker-compose.yml, "Networks").
-  lifekit-shared:
+  # Logto <-> its on-box OIDC clients (Grafana first), across compose
+  # projects. External: scripts/deploy.sh creates it once before any `up`.
+  identity-oidc:
     external: true
 
 volumes:

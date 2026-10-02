@@ -252,6 +252,12 @@ identity_compose config --format json \
 
 deploy_private_docker_config
 
+# `identity-oidc` joins Logto to its on-box OIDC clients (Grafana) across the
+# identity and platform compose projects, and nothing else. Both declare it
+# external, so it must exist before either `up`.
+docker network inspect identity-oidc >/dev/null 2>&1 \
+  || docker network create identity-oidc >/dev/null
+
 # ─── OpenClaw: gateway image build + version-bump state migration ────────────
 #
 # scripts/deploy-openclaw.sh, phase `build`. Migrates state BEFORE the new

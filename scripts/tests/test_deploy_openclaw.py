@@ -235,6 +235,14 @@ def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
     assert "LOGTO_DB_PASSWORD is not in" in r.stderr
 
 
+def test_identity_oidc_network_is_created_before_the_platform_up(env, tmp_path):
+    r, trace, _ = full_deploy(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    create = trace.index("network inspect identity-oidc")
+    up = next(i for i, line in enumerate(trace) if "up -d --build" in line)
+    assert create < up
+
+
 IDENTITY_STUB = """#!/bin/sh
 echo "identity-$1" >> "$DOCKER_CALL_LOG"
 if [ "$1" = endpoints ] && [ -z "$NO_ENDPOINTS" ]; then

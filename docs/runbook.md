@@ -1277,9 +1277,12 @@ scopes). Nobody becomes a Grafana server admin through it.
 
 How the pieces connect: the browser goes to the tailnet issuer
 (`https://<name>:3001/oidc/auth`). Grafana's own token and userinfo calls go to
-`http://logto:3001/oidc/...` over `lifekit-shared`, which Logto joins for this
-(the host firewall does not reliably let a container reach the host's own
-tailnet address). Logto signs the id_token with the tailnet issuer whichever
+`http://logto:3001/oidc/...` over `identity-oidc`, an external network only
+Logto and its on-box OIDC clients join (the host firewall does not reliably let
+a container reach the host's own tailnet address; `lifekit-shared` carries the
+agent runtime and stays off Logto). `deploy.sh` creates `identity-oidc`
+idempotently before the platform `up`; both compose projects reference it as
+external. Logto signs the id_token with the tailnet issuer whichever
 name answered, so it matches the issuer `deploy.sh` derives
 (`scripts/deploy-grafana-oidc.sh`, an explicit `IDENTITY_ENDPOINT` wins).
 Grafana's `root_url` (`GRAFANA_ROOT_URL`) must stay the tailnet HTTPS address:
@@ -1310,7 +1313,7 @@ sudo bash scripts/secrets/render-stack-env.sh
 ```
 
 The deploy then recreates Grafana (and, once, Logto: it joined
-`lifekit-shared`). It turns red and leaves sign-in off if the client id,
+`identity-oidc`). It turns red and leaves sign-in off if the client id,
 secret or issuer is missing. Sign in with the button as the owner and check
 the role under *Administration > Users and access*.
 

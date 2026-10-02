@@ -310,7 +310,7 @@ services:
       # identity; docs/runbook.md "Grafana sign-in through Logto"). Off unless
       # GRAFANA_OIDC_ENABLED=true. The browser-facing /auth URL is the tailnet
       # issuer (GRAFANA_OIDC_ISSUER, derived by deploy.sh); the server-side
-      # token and userinfo calls go straight to Logto over lifekit-shared
+      # token and userinfo calls go straight to Logto over identity-oidc
       # (a container cannot reliably reach the host's own tailnet address
       # through the host firewall). Logto signs the id_token with the tailnet
       # issuer whichever host answered, and Grafana reads the role from the
@@ -357,7 +357,7 @@ services:
     networks:
       - default
       # Reaches Logto's token and userinfo endpoints (identity project).
-      - lifekit-shared
+      - identity-oidc
 
   container-exporter:
     <<: *policy
@@ -481,6 +481,10 @@ services:
 # (mounted there as an external volume) — no service in THIS project uses it now.
 networks:
   lifekit-shared:
+    external: true
+  # Logto's OIDC clients only (compose/identity/docker-compose.yml); created
+  # once by scripts/deploy.sh before the first `up`.
+  identity-oidc:
     external: true
 
 # ── Secrets ─────────────────────────────────────────────────────────────────

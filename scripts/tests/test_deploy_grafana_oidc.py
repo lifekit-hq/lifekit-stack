@@ -149,7 +149,8 @@ def test_compose_default_is_password_only():
     assert env["GF_AUTH_GENERIC_OAUTH_ENABLED"] == "false"
     assert env["GF_AUTH_DISABLE_LOGIN_FORM"] == "false"
     assert env["GF_AUTH_OAUTH_AUTO_LOGIN"] == "false"
-    assert "lifekit-shared" in svc["networks"]
+    assert "identity-oidc" in svc["networks"]
+    assert "lifekit-shared" not in svc["networks"]
 
 
 def test_compose_maps_roles_and_server_side_urls():
@@ -166,3 +167,29 @@ def test_compose_maps_roles_and_server_side_urls():
     assert "'admin') && 'Admin' || 'Viewer'" in (
         env["GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH"]
     )
+
+
+def test_logto_and_grafana_share_identity_oidc_but_logto_is_off_lifekit_shared():
+    import shutil
+
+    if shutil.which("docker") is None:
+        pytest.skip("docker compose unavailable")
+    env = {
+        **os.environ,
+        "LOGTO_DB_PASSWORD": "x",
+        "IDENTITY_ENDPOINT": "https://box.example.ts.net:3001",
+        "IDENTITY_ADMIN_ENDPOINT": "https://box.example.ts.net:3002",
+    }
+    proc = subprocess.run(
+        ["docker", "compose", "config", "--format", "json"],
+        cwd=REPO / "compose/identity",
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        pytest.skip(f"docker compose config unavailable: {proc.stderr.strip()[:200]}")
+    logto = json.loads(proc.stdout)["services"]["logto"]
+    assert "identity-oidc" in logto["networks"]
+    assert "lifekit-shared" not in logto["networks"]
