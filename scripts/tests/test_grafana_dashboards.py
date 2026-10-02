@@ -103,3 +103,19 @@ def test_quota_panels_show_only_current_values():
     for title in ("Quota runway", "Quota share by consumer"):
         (panel,) = [p for p in d["panels"] if p["title"] == title]
         assert all(t["instant"] and not t["range"] for t in panel["targets"]), title
+
+
+def test_runway_status_and_window_value_mappings_are_not_empty_text():
+    # Grafana 11 renders a lone series blank when its value maps to "" - in the
+    # no_projection state only the status/window series exist, so they must map to
+    # non-empty text to stay visible.
+    d = json.loads((PROV / "dashboards/lifekit/box.json").read_text())
+    (panel,) = [p for p in d["panels"] if p["title"] == "Quota runway"]
+    overrides = {
+        o["matcher"]["options"]: {p["id"]: p["value"] for p in o["properties"]}
+        for o in panel["fieldConfig"]["overrides"]
+    }
+    for ref in ("B", "C"):
+        for mapping in overrides[ref]["mappings"]:
+            for result in mapping["options"].values():
+                assert result["text"] != ""
