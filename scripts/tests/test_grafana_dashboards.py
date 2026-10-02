@@ -43,8 +43,17 @@ def test_dashboard_shape(path):
 def test_box_dashboard_covers_rows():
     d = json.loads((PROV / "dashboards/lifekit/box.json").read_text())
     assert d["uid"] == "lifekit-box"
-    assert sum(p["type"] == "row" for p in d["panels"]) == 6
+    assert sum(p["type"] == "row" for p in d["panels"]) == 7
     assert any(p["type"] == "alertlist" for p in d["panels"])
+    exprs = " ".join(t["expr"] for p in d["panels"] for t in p.get("targets", []))
+    for metric in (
+        "fleet_workers",
+        "fleet_decisions_open",
+        "fleet_oldest_decision_age_seconds",
+        "fleet_usage_limit_events_1h",
+        "fleet_summary_generated_timestamp_seconds",
+    ):
+        assert metric in exprs
 
 
 def test_node_exporter_collectors():

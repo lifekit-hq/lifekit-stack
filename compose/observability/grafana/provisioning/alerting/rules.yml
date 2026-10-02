@@ -1540,6 +1540,56 @@ groups:
     folder: lifekit
     interval: 1m
     rules:
+      - uid: fleet-summary-stale
+        title: fleet summary is stale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Age of the fleet home's own summary (its generated_epoch, copied
+              # by scripts/fleet-publisher/, which rewrites fleet.prom every
+              # minute). The fleet home refreshes the summary on its watch loop
+              # within a minute or two, so 15 minutes is a dead loop. A dead
+              # publisher stops the fleet.prom mtime instead, which the
+              # textfile-collector-stale rule catches.
+              expr: time() - fleet_summary_generated_timestamp_seconds
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [900]}
+        # Only boxes that run the publisher have the series; a vanished
+        # series is the publisher's or node-exporter's rule to report.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "the fleet summary has not been refreshed for over 15 minutes"
+          description: >-
+            fleet_summary_generated_timestamp_seconds is {{ humanizeDuration $values.B.Value }} old: the fleet
+            home's watch loop that rewrites home-summary.json has stopped, so the dashboard's fleet view is
+            showing a frozen picture. Check the fleet home's watch loop, then
+            `journalctl -u lifekit-fleet-publisher.service` and `systemctl list-timers` on the box.
+
       - uid: grafana-notification-delivery-failing
         title: Grafana alert notification delivery is failing
         condition: C

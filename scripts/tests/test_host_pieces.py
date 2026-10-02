@@ -16,6 +16,7 @@ PIECES = {
     "media-prune": REPO / "scripts/media-prune",
     "alert-inbox": REPO / "scripts/alert-inbox",
     "openclaw-config-sync": REPO / "scripts/sync",
+    "lifekit-fleet-publisher": REPO / "scripts/fleet-publisher",
 }
 
 

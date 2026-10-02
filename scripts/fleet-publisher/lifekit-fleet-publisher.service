@@ -1,0 +1,10 @@
+[Unit]
+Description=Publish the fleet summary and fleet metrics for the dashboard and Prometheus
+
+[Service]
+Type=oneshot
+# The account that owns the fleet home and Lavish state (README "VPS users").
+# The installer substitutes both placeholders.
+User=__ADMIN_USER__
+Environment=FM_HOME=__FM_HOME__
+ExecStart=/usr/local/bin/lifekit-fleet-publisher.sh /var/lib/lifekit-fleet /var/lib/node_exporter/textfile
