@@ -654,7 +654,7 @@ FM_HOME=<the second mate's home, holding bin/fm-inbox.sh>
 sudo FM_HOME="$FM_HOME" bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh
 
 # 2. Key, pinned host key and client config, readable by the gateway's uid 1000.
-sudo install -d -o lifekit -g lifekit -m 0500 /srv/lifekit-secrets/kit-relay
+sudo install -d -o lifekit -g lifekit -m 0700 /srv/lifekit-secrets/kit-relay
 sudo -u lifekit ssh-keygen -t ed25519 -N '' -C kit-relay@openclaw-gateway \
   -f /srv/lifekit-secrets/kit-relay/id_ed25519
 printf 'lifekit-vps %s\n' "$(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)" \
@@ -678,6 +678,7 @@ Host relay
 EOF
 sudo chmod 0400 /srv/lifekit-secrets/kit-relay/id_ed25519
 sudo chmod 0444 /srv/lifekit-secrets/kit-relay/known_hosts /srv/lifekit-secrets/kit-relay/ssh_config
+sudo chmod 0500 /srv/lifekit-secrets/kit-relay
 
 # 3. Authorize it for the admin account (append, never replace).
 printf 'restrict,command="/usr/local/libexec/kit-relay",from="172.16.0.0/12" %s\n' \
@@ -687,10 +688,12 @@ printf 'restrict,command="/usr/local/libexec/kit-relay",from="172.16.0.0/12" %s\
 sudo -u lifekit /srv/lifekit-stack/scripts/ensure-secondmate-relay.sh
 
 # 5. Kit's skill allowlist. agents.entries.kit.skills replaces the defaults and a
-#    config patch replaces arrays, so derive the whole list from the live file:
+#    config patch replaces arrays, so derive the whole list from the live file.
+#    Skip this step when step 4 reported kit as unfiltered (no skills list): every
+#    skill is already allowed.
 G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway)
-docker exec "$G" node -e 'const c=require("/home/node/.openclaw/openclaw.json");const s=c.agents.entries.kit.skills;if(!s.includes("secondmate-relay"))s.push("secondmate-relay");process.stdout.write(JSON.stringify({agents:{entries:{kit:{skills:s}}}}))' > /tmp/kit-skills.patch.json
+docker exec "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const s=c.agents.entries.kit.skills;if(!Array.isArray(s))process.exit(1);if(!s.includes("secondmate-relay"))s.push("secondmate-relay");process.stdout.write(JSON.stringify({agents:{entries:{kit:{skills:s}}}}))' > /tmp/kit-skills.patch.json
 docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/kit-skills.patch.json
 docker exec -i "$G" openclaw config patch --stdin < /tmp/kit-skills.patch.json
 ```

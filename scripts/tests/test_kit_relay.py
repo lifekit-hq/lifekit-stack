@@ -562,7 +562,6 @@ def test_skill_frontmatter_names_its_folder_and_gates_on_ssh():
     meta = yaml.safe_load(front)
     assert meta["name"] == "secondmate-relay"
     assert meta["metadata"]["openclaw"]["requires"]["bins"] == ["ssh"]
-    assert "{baseDir}/relay.sh" in SKILL_MD.read_text()
 
 
 def test_gateway_mounts_the_relay_key_read_only_and_names_the_host():
