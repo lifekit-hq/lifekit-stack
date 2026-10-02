@@ -763,7 +763,9 @@ groups:
       # firstmate, devclaw, all OpenClaw agents), and every other guard only
       # watches its own corner. scripts/quota-gauge writes claude_quota_* from
       # `quota-axi --json` through node-exporter's textfile collector every
-      # 5 minutes; these two rules watch the weekly window itself. No five-hour-window rule on purpose.
+      # 5 minutes; the first two rules watch the weekly window itself, the third
+      # (claude-quota-runway-short) the account-wide runway. No five-hour-window
+      # rule on purpose.
       - uid: claude-quota-behind-pace
         title: Claude weekly quota is behind pace
         condition: C
