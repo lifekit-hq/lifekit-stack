@@ -105,6 +105,19 @@ def test_runway_lines_absent_when_quota_axi_has_no_runway(env):
     assert not [ln for ln in prom(out / "claude_quota.prom") if "runway" in ln]
 
 
+def test_null_resets_at_skips_only_that_series(env):
+    e, bindir, out = env
+    data = payload()
+    data["providers"][0]["windows"].append(
+        {"id": "five_hour", "resetsAt": None, "percentRemaining": 100}
+    )
+    assert run_gauge(e, bindir, out, data).returncode == 0
+    lines = prom(out / "claude_quota.prom")
+    assert 'claude_quota_percent_remaining{window="five_hour"} 100' in lines
+    assert 'claude_quota_resets_at_seconds{window="seven_day"} 1791180000' in lines
+    assert not [ln for ln in lines if 'resets_at_seconds{window="five_hour"' in ln]
+
+
 REPORT = {
     "consumers": [
         {"name": "firstmate", "imputedUsedPct": 12.5},
