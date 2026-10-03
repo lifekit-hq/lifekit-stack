@@ -8,7 +8,8 @@
 # Besides the per-window gauges it exports the account-wide runway (all-models
 # scope): seconds of usable quota left at the current pace, the projected
 # exhaustion time, quota-axi's runway status as a label, and which window
-# limits it. Runway lines are simply absent when quota-axi reports none.
+# limits it. Runway lines are simply absent when quota-axi reports none, and
+# so is a window's reset line when its resetsAt is null (a window with no use).
 set -euo pipefail
 OUT_DIR="${1:-/var/lib/node_exporter/textfile}"
 for d in "$HOME"/.nvm/versions/node/*/bin; do PATH="$d:$PATH"; done  # quota-axi is an nvm-installed npm CLI
@@ -21,7 +22,7 @@ quota-axi --provider claude --no-credential-refresh --json | jq -r '
     "claude_quota_percent_remaining{window=\"\(.id)\"} \(.percentRemaining | numbers)",
     "claude_quota_burn_multiple{window=\"\(.id)\"} \(.pace.burnMultiple | numbers)",
     "claude_quota_reserve_percent_points{window=\"\(.id)\"} \(.pace.reservePercentPoints | numbers)",
-    "claude_quota_resets_at_seconds{window=\"\(.id)\"} \(.resetsAt | iso)"),
+    "claude_quota_resets_at_seconds{window=\"\(.id)\"} \(.resetsAt | strings | iso)"),
   (.quotaSemantics.effectiveAvailability[]? | select(.scope == "all_models") | .runway // empty |
     "claude_quota_runway_seconds \(.usableRunwaySeconds | numbers)",
     (.projectedExhaustedAt | strings | "claude_quota_projected_exhausted_at_seconds \(iso)"),
