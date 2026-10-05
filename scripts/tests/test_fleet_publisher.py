@@ -122,7 +122,9 @@ def test_publishes_world_readable_copy_and_worker_counts(fleet):
     assert (fleet.prom / "fleet.prom").stat().st_mode & 0o777 == 0o644
     got = fleet.published()
     assert got["published_epoch"] == NOW
-    assert got["active_children"] == summary()["active_children"]
+    assert [{k: c[k] for k in ("id", "state")} for c in got["active_children"]] == [
+        {"id": c["id"], "state": c["state"]} for c in summary()["active_children"]
+    ]
     m = fleet.metrics()
     assert m['fleet_workers{state="working"}'] == 2
     assert m['fleet_workers{state="blocked"}'] == 1
@@ -181,7 +183,7 @@ def test_decision_gets_the_newest_open_board_of_its_own_data_dir(fleet):
         ],
     )
     assert fleet.run().returncode == 0
-    urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_open"]}
+    urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_parked"]}
     assert urls == {
         "task-a": "http://board/new",
         "task-b": None,
@@ -196,7 +198,388 @@ def test_missing_or_broken_lavish_state_still_publishes(fleet, lavish):
     if lavish:
         (fleet.tmp / "lavish.json").write_text(lavish)
     assert fleet.run().returncode == 0
-    assert fleet.published()["decisions_open"][0]["board_url"] is None
+    assert fleet.published()["decisions_parked"][0]["board_url"] is None
+
+
+def stub(path, body):
+    path.write_text("#!/usr/bin/env bash\n" + body)
+    path.chmod(0o755)
+    return str(path)
+
+
+def test_board_url_follows_the_captain_hold_binding_not_the_directory(fleet):
+    data = fleet.tmp / "data"
+    hold = stub(
+        fleet.tmp / "hold.sh",
+        'case "$1 $2" in "binding lavish-bound"|"binding lavish-wrong") echo "(any)";;'
+        " *) exit 1;; esac",
+    )
+    tasks = stub(
+        fleet.tmp / "tasks.sh",
+        'echo "body: \\"Captain hold origin: scout-origin\\n\\nRouted by x\\""',
+    )
+    fleet.write(
+        summary(decisions_open=[decision("held-call"), decision("other-call")]),
+        lavish=[
+            session(f"{data}/scout-origin/board.html", "http://board/bound"),
+            session(f"{data}/elsewhere/board.html", "http://board/wrong"),
+            session(f"{data}/scout-origin/unbound.html", "http://board/unbound"),
+        ],
+    )
+    # The session key is the last url segment: only "bound" and "wrong" are bound.
+    assert fleet.run(CAPTAIN_HOLD=hold, TASKS_AXI=tasks).returncode == 0
+    urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_open"]}
+    # Neither decision has an ask record, so both are parked: read them there.
+    parked = {d["id"]: d["board_url"] for d in fleet.published()["decisions_parked"]}
+    assert urls == {}
+    assert parked == {
+        "held-call": "http://board/bound",
+        "other-call": "http://board/bound",
+    }
+
+
+def test_board_url_falls_back_to_the_directory_when_nothing_is_bound(fleet):
+    data = fleet.tmp / "data"
+    hold = stub(fleet.tmp / "hold.sh", "exit 1")
+    fleet.write(
+        summary(decisions_open=[decision("task-a")]),
+        lavish=[session(f"{data}/task-a/plan.html", "http://board/dir")],
+    )
+    assert fleet.run(CAPTAIN_HOLD=hold).returncode == 0
+    assert fleet.published()["decisions_parked"][0]["board_url"] == "http://board/dir"
+
+
+def write_ask(fleet, id_, **record):
+    d = fleet.tmp / "state" / "decisions"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{id_}.json").write_text(json.dumps(record))
+
+
+def test_ask_is_the_contract_shape_when_a_structured_record_exists(fleet):
+    data = fleet.tmp / "data"
+    write_ask(
+        fleet,
+        "pick-layout",
+        ask="Which layout should ship?",
+        options=[{"label": "Feed"}, {"label": "Cockpit", "recommended": True}, "Tabs"],
+        free_text=True,
+    )
+    fleet.write(
+        summary(
+            decisions_open=[
+                decision(
+                    "pick-layout",
+                    summary="lifekit-dashboard#9: Fleet layout",
+                    hold_bucket="live",
+                    reason="waits on the captain's word",
+                )
+            ]
+        ),
+        lavish=[session(f"{data}/pick-layout/board.html", "http://board/pick")],
+    )
+    assert fleet.run(STATE_DIR=str(fleet.tmp / "state")).returncode == 0
+    got = fleet.published()
+    (row,) = got["decisions_open"]
+    assert row["ask"] == {
+        "question": "Which layout should ship?",
+        "options": [
+            {"id": "2", "label": "Cockpit", "recommended": True},
+            {"id": "1", "label": "Feed", "recommended": False},
+            {"id": "3", "label": "Tabs", "recommended": False},
+        ],
+        "free_text_allowed": True,
+        "link": "http://board/pick",
+    }
+    assert row["restart"]["kind"] == "captain_word"
+    assert row["project"] == "lifekit-dashboard"
+    assert got["decisions_parked"] == []
+
+
+def test_no_structured_ask_means_no_ask(fleet):
+    fleet.write(
+        summary(
+            decisions_open=[
+                decision(
+                    "parked-one",
+                    reason="waits on the captain's word, parked",
+                    hold_bucket="live",
+                ),
+                # A record exists but the hold is dated, so it is not a live ask.
+                decision("dated-one", hold_until="2099-01-01", hold_bucket="dated"),
+            ]
+        )
+    )
+    write_ask(fleet, "dated-one", ask="Later?", options=["Yes"])
+    assert fleet.run(STATE_DIR=str(fleet.tmp / "state")).returncode == 0
+    got = fleet.published()
+    assert got["decisions_open"] == []
+    assert {d["id"] for d in got["decisions_parked"]} == {"parked-one", "dated-one"}
+    assert all("ask" not in d for d in got["decisions_parked"])
+    assert got["decisions_total"] == 2
+    # Metrics keep counting the source's open decisions.
+    assert fleet.metrics()["fleet_decisions_open"] == 2
+
+
+def test_ask_link_is_the_decision_page_without_a_board(fleet):
+    write_ask(fleet, "no-board", ask="Ship it?", options=[{"id": "go", "label": "Go"}])
+    fleet.write(summary(decisions_open=[decision("no-board", hold_bucket="live")]))
+    assert fleet.run(STATE_DIR=str(fleet.tmp / "state")).returncode == 0
+    (row,) = fleet.published()["decisions_open"]
+    assert row["ask"]["link"] == "/decisions/no-board"
+    assert row["ask"]["options"] == [{"id": "go", "label": "Go", "recommended": False}]
+    assert row["ask"]["free_text_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    ("raw", "plain"),
+    [
+        (
+            "chore(design): adopt impeccable project-scoped",
+            "adopt impeccable project-scoped",
+        ),
+        ("fix(tokens)!: one font contract", "one font contract"),
+        ("Scout: mobile foundation end to end", "mobile foundation end to end"),
+        ("finance-sentry#574: Dashboard time filtering", "Dashboard time filtering"),
+        ("feat(ui): finance-sentry#12: nested prefix", "nested prefix"),
+        ("Working: the status word", "the status word"),
+        # Cut at 70 characters by the snapshot: drop the partial word.
+        (
+            "chore(design): adopt impeccable project-scoped (impeccable plan step 1…",
+            "adopt impeccable project-scoped (impeccable plan step…",
+        ),
+        ("a title that ends on a whole word …", "a title that ends on a whole word…"),
+        ("Plain title", "Plain title"),
+        ("", ""),
+    ],
+)
+def test_title_plain_drops_prefixes_ids_and_cut_words(fleet, raw, plain):
+    fleet.write(
+        summary(
+            active_children=[{"id": "a", "state": "working", "name": raw}],
+            landed=[{"id": "l", "title": raw}],
+            holds=[{"id": "h", "title": raw, "reason": "x"}],
+        )
+    )
+    assert fleet.run().returncode == 0
+    got = fleet.published()
+    assert got["active_children"][0]["title_plain"] == plain
+    assert got["landed"][0]["title_plain"] == plain
+    assert got["holds"][0]["title_plain"] == plain
+
+
+def test_children_carry_since_produces_open_url_and_project(fleet):
+    state = fleet.tmp / "state"
+    state.mkdir()
+    data = fleet.tmp / "data"
+    for id_ in ("shipper", "scouter", "issuer", "plain"):
+        (state / f"{id_}.meta").write_text("x")
+        os.utime(state / f"{id_}.meta", (NOW - 3600, NOW - 3600))
+    (state / "shipper.status").write_text(
+        "working: first https://github.com/acme/widgets/pull/1\n"
+        "done: https://github.com/acme/widgets/pull/2 checks green\n"
+    )
+    fleet.write(
+        summary(
+            active_children=[
+                {
+                    "id": "shipper",
+                    "state": "working",
+                    "kind": "ship",
+                    "name": "feat(x): a",
+                    "repo": "widgets",
+                },
+                {
+                    "id": "scouter",
+                    "state": "working",
+                    "kind": "scout",
+                    "name": "Scout: b",
+                },
+                {
+                    "id": "issuer",
+                    "state": "working",
+                    "kind": "ship",
+                    "name": "widgets#7: c",
+                },
+                {"id": "plain", "state": "working", "kind": "ops", "name": "d"},
+                {"id": "nometa", "state": "working", "kind": "ship", "name": "e"},
+            ],
+            landed=[{"id": "old", "pr_url": "https://github.com/acme/widgets/pull/3"}],
+        ),
+        lavish=[session(f"{data}/scouter/board.html", "http://board/scout")],
+    )
+    assert fleet.run(STATE_DIR=str(state)).returncode == 0
+    kids = {c["id"]: c for c in fleet.published()["active_children"]}
+    assert kids["shipper"]["since_epoch"] == NOW - 3600
+    assert kids["shipper"]["produces"] == "pr"
+    assert kids["shipper"]["open_url"] == "https://github.com/acme/widgets/pull/2"
+    assert kids["shipper"]["project"] == "widgets"
+    assert kids["scouter"]["produces"] == "report"
+    assert kids["scouter"]["open_url"] == "http://board/scout"
+    assert kids["issuer"]["open_url"] == "https://github.com/acme/widgets/issues/7"
+    assert kids["issuer"]["project"] == "widgets"
+    assert kids["plain"]["produces"] == "landing"
+    assert kids["plain"]["open_url"] is None
+    assert kids["nometa"]["since_epoch"] is None
+    assert kids["nometa"]["project"] is None
+
+
+def test_landed_items_get_since_produces_open_url_and_project(fleet):
+    fleet.write(
+        summary(
+            landed=[
+                {
+                    "id": "merged",
+                    "title": "widgets#3: x",
+                    "pr_url": "https://github.com/acme/widgets/pull/3",
+                    "completion": {"date": "2026-10-05"},
+                },
+                {
+                    "id": "nothing",
+                    "title": "ops thing",
+                    "pr_url": None,
+                    "report_path": None,
+                    "completion": {},
+                },
+            ]
+        )
+    )
+    assert fleet.run().returncode == 0
+    merged, nothing = fleet.published()["landed"]
+    assert merged["since_epoch"] == 1791158400
+    assert merged["produces"] == "pr"
+    assert merged["open_url"] == "https://github.com/acme/widgets/pull/3"
+    assert merged["project"] == "widgets"
+    assert (nothing["since_epoch"], nothing["produces"], nothing["open_url"]) == (
+        None,
+        "landing",
+        None,
+    )
+    assert nothing["project"] is None
+
+
+def test_finished_reports_are_copied_and_served_by_url(fleet):
+    data = fleet.tmp / "data"
+    (data / "scout-a").mkdir()
+    (data / "scout-a/report.md").write_text("# Report A\n")
+    fleet.write(
+        summary(
+            landed=[
+                {
+                    "id": "scout-a",
+                    "title": "Scout: a",
+                    "report_path": "data/scout-a/report.md",
+                }
+            ]
+        )
+    )
+    assert (
+        fleet.run(
+            REPORT_ROOT=str(fleet.tmp), REPORT_URL_BASE="/api/fleet/reports/"
+        ).returncode
+        == 0
+    )
+    (item,) = fleet.published()["landed"]
+    assert item["report_url"] == "/api/fleet/reports/scout-a/report.md"
+    assert item["open_url"] == item["report_url"]
+    copy = fleet.out / "reports/scout-a/report.md"
+    assert copy.read_text() == "# Report A\n"
+    assert copy.stat().st_mode & 0o777 == 0o644
+    assert (fleet.out / "reports").stat().st_mode & 0o777 == 0o755
+    # Once no landed item names a report the stale copy goes away.
+    fleet.write(summary())
+    assert fleet.run().returncode == 0
+    assert not (fleet.out / "reports").exists()
+    assert not [p for p in fleet.out.iterdir() if p.name != "home-summary.json"]
+
+
+def test_reports_outside_the_data_dir_or_with_credentials_are_not_served(fleet):
+    data = fleet.tmp / "data"
+    (data / "ok").mkdir()
+    (data / "ok/report.md").write_text("fine")
+    (data / "secret").mkdir()
+    (data / "secret/report.md").write_text("key " + "ghp_" + "A" * 24)
+    (fleet.tmp / "outside.md").write_text("outside")
+    (data / "link").mkdir()
+    (data / "link/report.md").symlink_to(fleet.tmp / "outside.md")
+    (data / "notes.txt").write_text("not markdown")
+    paths = {
+        "ok": "data/ok/report.md",
+        "secret": "data/secret/report.md",
+        "link": "data/link/report.md",
+        "dotdot": "data/../outside.md",
+        "abs": str(fleet.tmp / "outside.md"),
+        "txt": "data/notes.txt",
+        "missing": "data/missing/report.md",
+    }
+    fleet.write(
+        summary(
+            landed=[{"id": k, "title": k, "report_path": v} for k, v in paths.items()]
+        )
+    )
+    assert fleet.run(REPORT_ROOT=str(fleet.tmp)).returncode == 0
+    urls = {i["id"]: i["report_url"] for i in fleet.published()["landed"]}
+    assert urls == {
+        "ok": "reports/ok/report.md",
+        **{k: None for k in paths if k != "ok"},
+    }
+    assert sorted(p.name for p in (fleet.out / "reports").iterdir()) == ["ok"]
+
+
+def test_holds_get_restart_kind_project_and_full_total(fleet):
+    fleet.write(
+        summary(
+            counts={"holds": 34},
+            holds=[
+                {
+                    "id": "blocked",
+                    "title": "x",
+                    "reason": "waits on the domain",
+                    "unresolved_blocker_ids": ["dep-1", "dep-2"],
+                },
+                {
+                    "id": "props",
+                    "title": "lifekit-stack#5: y",
+                    "reason": "parked until his new proposals are evaluated",
+                },
+                {"id": "word", "title": "z", "reason": "waits on the captain's word"},
+                {
+                    "id": "dated",
+                    "title": "w",
+                    "reason": "restart 2026-10-07, else at the next audit",
+                },
+                {"id": "event", "title": "v", "reason": "after the next memory-audit"},
+            ],
+        )
+    )
+    assert fleet.run().returncode == 0
+    got = fleet.published()
+    assert got["holds_total"] == 34
+    restart = {h["id"]: h["restart"] for h in got["holds"]}
+    assert restart["blocked"] == {
+        "kind": "after_work",
+        "blocker_ids": ["dep-1", "dep-2"],
+        "text": "waits on the domain",
+    }
+    assert restart["props"]["kind"] == "proposals"
+    assert restart["word"]["kind"] == "captain_word"
+    assert restart["dated"] == {
+        "kind": "date",
+        "until": "2026-10-07",
+        "text": "restart 2026-10-07, else at the next audit",
+    }
+    assert restart["event"] == {"kind": "event", "text": "after the next memory-audit"}
+    assert {h["id"]: h["project"] for h in got["holds"]}["props"] == "lifekit-stack"
+
+
+def test_holds_total_defaults_to_the_list_length_and_output_is_versioned(fleet):
+    fleet.write(summary(holds=[{"id": "h", "title": "t", "reason": "r"}]))
+    assert fleet.run().returncode == 0
+    got = fleet.published()
+    assert got["holds_total"] == 1
+    assert got["publisher_schema"] == "lifekit-fleet-publisher.v1"
+    # The source summary's own fields still pass through.
+    assert got["schema"] == "fm-secondmate-home-summary.v1"
+    assert got["valid"] is True
 
 
 def test_oldest_decision_age_uses_ledger_open_time_then_hold_days(fleet):
