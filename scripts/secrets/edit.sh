@@ -3,8 +3,8 @@
 # re-encrypts on save; no plaintext file is written (finance-sentry's
 # docker/secrets-edit.sh, same shape).
 #
-#   scripts/secrets/edit.sh master     # secrets/lifekit.env.sops   (captain key)
-#   scripts/secrets/edit.sh gateway    # secrets/lifekit-gateway.env.sops (captain key)
+#   scripts/secrets/edit.sh master     # secrets/lifekit.env.sops   (operator key)
+#   scripts/secrets/edit.sh gateway    # secrets/lifekit-gateway.env.sops (operator key)
 #
 # Then: pytest scripts/tests/test_secrets.py, commit, PR. Git history is the
 # change log. After the merge the class-specific steps in

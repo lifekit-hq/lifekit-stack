@@ -1380,10 +1380,12 @@ generated password over out of band, or leave it unused and let them sign in
 with Google.
 
 **Registering an OIDC client** (finance-sentry, oauth2-proxy, Grafana, each
-in its own change). *Applications > Create application > Traditional web*.
-Give it a name and the app's redirect URI(s), for example
-`https://<name>:3000/login/generic_oauth` for Grafana (the sign-in gate's
-own values are in its section below). The app then needs:
+in its own change). A Traditional web app with a name and the app's redirect
+URI(s), for example `https://<name>:3000/login/generic_oauth` for Grafana
+(the sign-in gate's own values are in its section below), created with
+`logto-admin.py ensure-app` ([Logto admin through the Management
+API](#logto-admin-through-the-management-api)) or in the console under
+*Applications > Create application > Traditional web*. The app then needs:
 
 - issuer `https://<name>:3001/oidc`; discovery is at
   `https://<name>:3001/oidc/.well-known/openid-configuration`;
@@ -1419,6 +1421,77 @@ already exists`: the fresh volume created both, and those lines are expected.
 Wait for `up --wait` to return before restoring. A restore into a Postgres
 still starting fails.
 
+## Logto admin through the Management API
+
+The admin-console steps below (roles, role assignments, OIDC clients and
+their redirect URIs) are scripted: `scripts/identity/logto-admin.py` calls
+Logto's Management API as the machine-to-machine app `firstmate-ops`, so they
+need no console session. Every command is idempotent (it reads first and
+changes only what differs) and never prints a secret.
+
+**Bootstrap, once** (admin account, docker group, from a checkout). The app
+is inserted straight into Logto's database, in tenant `default`, holding the
+seeded role "Logto Management API access" (scope `all` on
+`https://default.logto.app/api`). One transaction; re-running changes
+nothing:
+
+```bash
+sudo systemctl start lifekit-identity-backup.service    # a dump first
+bash scripts/identity/logto-m2m-bootstrap.sh apply --env-out ~/m2m.env
+bash scripts/identity/logto-m2m-bootstrap.sh status
+```
+
+`--env-out` writes `LOGTO_M2M_APP_ID` and `LOGTO_M2M_APP_SECRET` to a new
+0600 file, straight from Postgres. It is operator tooling, kept out of every
+git repo: encrypt it to the operator's own SOPS file and delete the plain
+copy (`sops encrypt --input-type dotenv --output-type dotenv ~/m2m.env >
+<file>.sops && shred -u ~/m2m.env`). Logto needs no restart: the app works
+as soon as the transaction commits.
+
+**Use.** Credentials come from the environment; `LOGTO_ENDPOINT` defaults to
+`http://127.0.0.1:3001`, Logto's loopback port:
+
+```bash
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py token-check'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-role admin'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py assign-role <email> admin'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-app "<name>" \
+  --redirect-uri <uri> --post-logout-uri <uri> --secret-file ~/<name>.secret'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-redirects <app> \
+  --redirect-uri <uri> --post-logout-uri <uri>'
+```
+
+`assign-role` takes a user id, primary email or username. `ensure-app`
+creates a Traditional web app, or brings an existing one's URIs to the given
+lists. `set-redirects` replaces the list it is given and keeps the other.
+`--secret-file` writes the app's client secret to a new 0600 file for
+`sops set` to read (`"\"$(cat ~/<name>.secret)\""`), then `shred -u` it.
+
+**Reversing a change.** Each change appends a line to the ledger
+(`~/.local/state/lifekit/logto-admin.ledger.jsonl`, or `LOGTO_ADMIN_LEDGER`):
+the ids it created or touched, and the inverse request. `logto-admin.py
+ledger` lists it; `logto-admin.py undo [N]` sends entry N's inverse (default:
+the newest not yet undone): delete the role or app it created, take the role
+back, or restore the previous redirect URIs.
+
+**Removing the app** ends the delegation:
+
+```bash
+bash scripts/identity/logto-m2m-bootstrap.sh remove
+```
+
+New tokens stop at once. A token already issued stays valid until it
+expires, at most an hour, so a suspected leak also waits that hour out (or
+restarts Logto, which does not end it either: the token is a signed JWT).
+
+**Rehearsal.** `bash scripts/identity/rehearse-logto-admin.sh` runs the
+bootstrap, every admin command, `undo` and the removal against a throwaway
+Logto (its own compose project, `logto-rehearsal`, with its own database,
+the same images as `compose/identity/`, loopback ports 13001/13002), then
+tears it down. It never touches the `identity` project. Run it after a Logto
+upgrade, before the bootstrap or the script is used against the new
+version: the bootstrap writes Logto's tables directly.
+
 ## Grafana sign-in through Logto
 
 Grafana's `generic_oauth` against the identity provider above: a "Sign in with
@@ -1442,22 +1515,44 @@ name answered, so it matches the issuer `deploy.sh` derives
 Grafana's `root_url` (`GRAFANA_ROOT_URL`) must stay the tailnet HTTPS address:
 it builds the redirect URI.
 
-**Logto side** (admin console, `https://<name>:3002`):
+**Logto side**, with `scripts/identity/logto-admin.py` ([Logto admin
+through the Management API](#logto-admin-through-the-management-api); each
+command under `sops exec-env` as shown there):
 
-1. *Roles > Create role*: name `admin`, type *User role*, no API permissions.
-   Assign it to the owner (*User management > the user > Roles*). Members
-   without it sign in as Viewer.
-2. *Applications > Create application > Traditional web*, name `Grafana`.
-   Redirect URI `https://<name>:3000/login/generic_oauth` (the same value as
+1. The role `admin` (a User role, no API permissions), assigned to the
+   owner. Members without it sign in as Viewer.
+
+   ```bash
+   python3 scripts/identity/logto-admin.py ensure-role admin
+   python3 scripts/identity/logto-admin.py assign-role <owner email> admin
+   ```
+
+2. The Traditional web app `Grafana`. Redirect URI
+   `https://<name>:3000/login/generic_oauth` (the same value as
    `GRAFANA_ROOT_URL` plus `/login/generic_oauth`); post sign-out redirect
-   `https://<name>:3000/login`. Copy the client id and secret.
+   `https://<name>:3000/login`. It prints the client id; the secret goes to
+   the file:
+
+   ```bash
+   python3 scripts/identity/logto-admin.py ensure-app Grafana \
+     --redirect-uri https://<name>:3000/login/generic_oauth \
+     --post-logout-uri https://<name>:3000/login --secret-file ~/grafana.secret
+   ```
+
+   On an existing `Grafana` app this sets the two URIs instead
+   (`set-redirects Grafana` does only that).
+
+In the admin console (`https://<name>:3002`) the same is *Roles > Create
+role*, then *User management > the user > Roles*, then *Applications >
+Create application > Traditional web*.
 
 **Enable** (operator, captain's age key for the secret):
 
 ```bash
 # 1. Add the secret to the master file; nothing prints it:
 sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
-  '["GRAFANA_OIDC_CLIENT_SECRET"]' "\"<client secret>\""
+  '["GRAFANA_OIDC_CLIENT_SECRET"]' "\"$(cat ~/grafana.secret)\""
+shred -u ~/grafana.secret
 sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
   '["GRAFANA_OIDC_CLIENT_ID"]' "\"<client id>\""
 sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
@@ -1520,23 +1615,33 @@ usual forward-auth OIDC client. It keeps the session in an encrypted cookie
 Traefik reads its routes from a file, not from container labels; the
 contract's `edge` item stays a check for the public edge.
 
-**Operator steps, once** (admin account and the Logto admin console):
+**Operator steps, once** (admin account; the Logto steps with
+`scripts/identity/logto-admin.py`, [Logto admin through the Management
+API](#logto-admin-through-the-management-api), or the admin console):
 
-1. **Logto application.** In the admin console (`https://<name>:3002`):
-   *Applications > Create application > Traditional web*, named for example
-   `lifekit sign-in gate`.
-   - Redirect URIs: `https://<name>:18790/oauth2/callback` and
-     `https://<name>:18791/oauth2/callback`.
-   - Post sign-out redirect URIs: `https://<name>:18790/` and
-     `https://<name>:18791/`.
-   - Copy the client id and secret for step 3.
+1. **Logto application.** A Traditional web app, named for example
+   `lifekit sign-in gate`, with both surfaces' callback and sign-out URIs.
+   It prints the client id; the secret goes to the file for step 3:
+
+   ```bash
+   python3 scripts/identity/logto-admin.py ensure-app "lifekit sign-in gate" \
+     --redirect-uri https://<name>:18790/oauth2/callback \
+     --redirect-uri https://<name>:18791/oauth2/callback \
+     --post-logout-uri https://<name>:18790/ \
+     --post-logout-uri https://<name>:18791/ --secret-file ~/gate.secret
+   ```
+
 2. **Role.** The gate lets in only Logto users with the role `admin`. If
-   Grafana sign-in already created it, nothing to do. Otherwise *Roles >
-   Create role*, name `admin`, type *User role*, no API permissions, and
-   assign it to the owner (*User management > the user > Roles*). The
-   owner's Logto account also needs an email address (a member created as
-   above has one): oauth2-proxy refuses a sign-in whose token carries none
-   with a 500 on `/oauth2/callback`.
+   Grafana sign-in already created it, both commands report it is there:
+
+   ```bash
+   python3 scripts/identity/logto-admin.py ensure-role admin
+   python3 scripts/identity/logto-admin.py assign-role <owner email> admin
+   ```
+
+   The owner's Logto account also needs an email address (a member created
+   as above has one): oauth2-proxy refuses a sign-in whose token carries
+   none with a 500 on `/oauth2/callback`.
 3. **Secrets** (captain's age key). Add the client id, the client secret
    and a new cookie secret to the master file; nothing prints them:
 
@@ -1544,7 +1649,8 @@ contract's `edge` item stays a check for the public edge.
    sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
      '["EDGE_OIDC_CLIENT_ID"]' "\"<client id>\""
    sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
-     '["EDGE_OIDC_CLIENT_SECRET"]' "\"<client secret>\""
+     '["EDGE_OIDC_CLIENT_SECRET"]' "\"$(cat ~/gate.secret)\""
+   shred -u ~/gate.secret
    sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
      '["EDGE_COOKIE_SECRET"]' "\"$(openssl rand -hex 16)\""
    ```
