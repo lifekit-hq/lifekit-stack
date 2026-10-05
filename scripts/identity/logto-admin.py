@@ -12,6 +12,7 @@ command is idempotent: it reads first and changes only what differs.
                               [--secret-file PATH]
     logto-admin.py set-redirects APP [--redirect-uri URI]... [--post-logout-uri URI]...
     logto-admin.py set-sign-in-exp [--logo-url URL] [--dark-logo-url URL] [--favicon URL]
+                              [--dark-favicon URL]
                               [--primary-color HEX] [--dark-primary-color HEX]
                               [--dark-mode | --no-dark-mode]
                               [--sign-in-identifiers {email,phone,username}...]
@@ -381,6 +382,7 @@ def cmd_set_redirects(api: Api, ledger: Ledger, args) -> None:
 
 
 HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+SVG_DATA_URI = re.compile(r"^data:image/svg\+xml;base64,[A-Za-z0-9+/]+={0,2}$")
 IDENTIFIERS = ("email", "phone", "username")
 
 
@@ -390,10 +392,19 @@ def hex_color(value: str) -> str:
     return value
 
 
-def http_url(value: str) -> str:
+def image_url(value: str) -> str:
+    """An http(s) URL, or an inline base64 SVG data: URI (no hosting needed)."""
+    if value.startswith("data:"):
+        if not SVG_DATA_URI.match(value):
+            raise argparse.ArgumentTypeError(
+                f"{value[:40]!r} is not a data:image/svg+xml;base64,... URI"
+            )
+        return value
     parts = urllib.parse.urlsplit(value)
     if parts.scheme not in ("http", "https") or not parts.netloc:
-        raise argparse.ArgumentTypeError(f"{value!r} is not an http(s) URL")
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not an http(s) URL or data:image/svg+xml;base64 URI"
+        )
     return value
 
 
@@ -415,6 +426,7 @@ def cmd_set_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
         ("branding", "logoUrl", args.logo_url),
         ("branding", "darkLogoUrl", args.dark_logo_url),
         ("branding", "favicon", args.favicon),
+        ("branding", "darkFavicon", args.dark_favicon),
         ("color", "primaryColor", args.primary_color),
         ("color", "isDarkModeEnabled", args.dark_mode),
         ("color", "darkPrimaryColor", args.dark_primary_color),
@@ -528,9 +540,10 @@ def parser() -> argparse.ArgumentParser:
     x = sub.add_parser(
         "set-sign-in-exp", help="set sign-in experience branding, color and methods"
     )
-    x.add_argument("--logo-url", type=http_url, metavar="URL")
-    x.add_argument("--dark-logo-url", type=http_url, metavar="URL")
-    x.add_argument("--favicon", type=http_url, metavar="URL")
+    x.add_argument("--logo-url", type=image_url, metavar="URL")
+    x.add_argument("--dark-logo-url", type=image_url, metavar="URL")
+    x.add_argument("--favicon", type=image_url, metavar="URL")
+    x.add_argument("--dark-favicon", type=image_url, metavar="URL")
     x.add_argument("--primary-color", type=hex_color, metavar="HEX")
     x.add_argument("--dark-primary-color", type=hex_color, metavar="HEX")
     x.add_argument("--dark-mode", action=argparse.BooleanOptionalAction, default=None)
