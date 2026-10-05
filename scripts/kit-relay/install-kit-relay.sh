@@ -13,6 +13,11 @@
 #
 # Root owns the installed copy, so the key's holder cannot rewrite what the
 # key runs. Re-running converges.
+#
+# One installed script serves two authorized keys, told apart by the argument
+# pinned in each authorized_keys command=: none (Kit's key, kit- request ids) or
+# "dashboard" (the dashboard's key, dash- ids). Installing does not touch
+# authorized_keys; the operator adds each line (runbook).
 
 set -euo pipefail
 
@@ -40,6 +45,7 @@ trap 'rm -f "$rendered"' EXIT
 sed "s|__FM_HOME__|${FM_HOME}|" "$HERE/kit-relay" >"$rendered"
 grep -q "^readonly FM_HOME='${FM_HOME}'\$" "$rendered" || die "render did not pin FM_HOME"
 bash -n "$rendered" || die "rendered script does not parse"
+grep -q '^  dashboard) ID_PREFIX=dash- ;;$' "$rendered" || die "rendered script lacks the dashboard sender"
 
 if [[ "$mode" == print ]]; then
   cat "$rendered"

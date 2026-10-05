@@ -729,6 +729,35 @@ and `/usr/local/libexec/kit-relay`, re-apply kit's old skills list, and remove t
 folder from kit's workspace. The mount and `extra_hosts` can stay: an empty directory
 gives the gateway nothing.
 
+#### Dashboard sender (proposal box)
+
+The dashboard can queue a `proposal:` or `task:` note for the second mate while Claude
+quota is exhausted (Kit shares that login, so its relay cannot run then). It is a second
+authorized key on the same root-owned forced command, not a second script:
+
+- **Sender:** the key's `command=` passes the sender as an argument,
+  `command="/usr/local/libexec/kit-relay dashboard"`; no argument is Kit's key. The
+  sender picks the request-id prefix (`dash-` instead of `kit-`), the rate bucket
+  (30 new `dash-` notes per rolling hour, counted apart from Kit's) and the `receipts`
+  view (only `dash-` notes and their replies). Nothing the client sends picks the
+  sender. Kit's key, prefix and bucket are unchanged.
+- **Key:** `/srv/lifekit-secrets/dashboard-relay/` (`id_ed25519`, pinned `known_hosts`,
+  `ssh_config`, the same shape as `kit-relay/`), mounted read-only into the dashboard
+  container at `/run/lifekit/dashboard-relay` (the mount lives in lifekit-dashboard). The
+  body starts with `proposal:` or `task:`; the relay does not interpret it.
+- **Operator step** (after the dashboard PR deploys; re-run step 1 above first so the
+  installed copy knows the sender, then repeat step 2 with `dashboard-relay` in place of
+  `kit-relay` and `-C dashboard-relay@dashboard`, and `IdentityFile` /
+  `UserKnownHostsFile` under `/run/lifekit/dashboard-relay/`). Authorize it:
+
+  ```bash
+  printf 'restrict,command="/usr/local/libexec/kit-relay dashboard",from="172.16.0.0/12" %s\n' \
+    "$(sudo cat /srv/lifekit-secrets/dashboard-relay/id_ed25519.pub)" >> ~/.ssh/authorized_keys
+  ```
+
+- **Rollback:** delete that authorized_keys line and `sudo rm -r /srv/lifekit-secrets/dashboard-relay`.
+  Kit's relay is untouched. The second mate answers a `dash-` note like a `kit-` one.
+
 ## Rolling back OpenClaw
 
 ### The one-rollback rule

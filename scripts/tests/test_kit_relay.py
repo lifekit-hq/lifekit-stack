@@ -111,13 +111,17 @@ class Relay:
         }
 
     def run(
-        self, cmd: str | None, body: bytes = b"", **env
+        self, cmd: str | None, body: bytes = b"", sender: tuple[str, ...] = (), **env
     ) -> subprocess.CompletedProcess:
         full = {**self.env, **env}
         if cmd is not None:
             full["SSH_ORIGINAL_COMMAND"] = cmd
         return subprocess.run(
-            [str(self.script)], input=body, env=full, capture_output=True, check=False
+            [str(self.script), *sender],
+            input=body,
+            env=full,
+            capture_output=True,
+            check=False,
         )
 
     def calls(self) -> list[dict]:
@@ -323,6 +327,68 @@ def test_rate_limit_counts_only_recent_kit_notes(relay):
     fill_requests(relay, 10, prefix="kit-stale-", age_s=2 * 3600)
     fill_requests(relay, 10, prefix="alert-")
     assert relay.run("note kit-new", b"body\n").returncode == 0
+
+
+# ─── the dashboard sender ────────────────────────────────────────────────────
+
+DASH = ("dashboard",)
+
+
+def test_dashboard_note_uses_the_dash_prefix(relay):
+    result = relay.run("note dash-20261005-abc", b"proposal: add a thing\n", DASH)
+    assert result.returncode == 0, result.stderr
+    assert lines(result)[1]["outcome"] == "created"
+    assert relay.requests() == ["dash-20261005-abc"]
+    assert "rid=dash-20261005-abc" in relay.logged()
+
+
+def test_each_sender_refuses_the_others_prefix(relay):
+    dash = relay.run("note kit-1", b"body\n", DASH)
+    kit = relay.run("note dash-1", b"body\n")
+    assert dash.returncode == kit.returncode == 64
+    assert "must match dash-" in dash.stderr.decode()
+    assert "must match kit-" in kit.stderr.decode()
+    assert relay.calls() == []
+
+
+def test_explicit_kit_argument_is_kits_key(relay):
+    assert relay.run("note kit-1", b"body\n", ("kit",)).returncode == 0
+
+
+def test_unknown_sender_is_refused_before_anything_runs(relay):
+    result = relay.run("note kit-1", b"body\n", ("root",))
+    assert result.returncode == 78
+    assert "unknown sender" in result.stderr.decode()
+    assert relay.calls() == []
+
+
+def test_rate_buckets_are_separate(relay):
+    fill_requests(relay, 30, prefix="kit-old-")
+    assert relay.run("note dash-new", b"body\n", DASH).returncode == 0
+    fill_requests(relay, 30, prefix="dash-old-")
+    result = relay.run("note dash-new2", b"body\n", DASH)
+    assert result.returncode == 75
+    assert "rate limit: 31 notes" in result.stderr.decode()
+    assert relay.run("note dash-old-3", b"body\n", DASH).returncode == 0  # replay
+
+
+def test_receipts_are_filtered_to_the_senders_prefix(relay):
+    data = receipts_fixture()
+    data["pending"].append({"id": "p4", "request_id": "dash-a", "body": "d"})
+    data["handled"].append({"id": "hd", "request_id": "dash-h", "body": "d"})
+    data["replies"].append({"id": "hd", "at": "2026-10-05T00:00:00Z", "body": "ok"})
+    (relay.home / "receipts.json").write_text(json.dumps(data))
+    [out] = lines(relay.run("receipts", sender=DASH))
+    assert [n["id"] for n in out["pending"]] == ["p4"]
+    assert [n["id"] for n in out["handled"]] == ["hd"]
+    assert [r["id"] for r in out["replies"]] == ["hd"]
+    [kit] = lines(relay.run("receipts"))
+    assert [n["id"] for n in kit["pending"]] == ["p1"]
+    assert all(r["id"] != "hd" for r in kit["replies"])
+
+
+def test_installed_script_knows_the_dashboard_sender(relay):
+    assert "  dashboard) ID_PREFIX=dash- ;;\n" in relay.script.read_text()
 
 
 # ─── environment and exit codes ──────────────────────────────────────────────
@@ -554,6 +620,12 @@ def test_ensure_needs_the_agent_workspace(tmp_path):
     result = run_ensure(tmp_path)
     assert result.returncode == 1
     assert "no workspace for agent 'kit'" in result.stderr
+
+
+def test_skill_passes_proposal_prefixes_through_verbatim():
+    text = SKILL_MD.read_text()
+    assert "`proposal:`" in text
+    assert "keep it and send the whole text verbatim" in text
 
 
 def test_skill_frontmatter_names_its_folder_and_gates_on_ssh():
