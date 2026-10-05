@@ -326,7 +326,10 @@ services:
       GF_AUTH_GENERIC_OAUTH_AUTH_URL: ${GRAFANA_OIDC_ISSUER:-}/auth
       GF_AUTH_GENERIC_OAUTH_TOKEN_URL: http://logto:3001/oidc/token
       GF_AUTH_GENERIC_OAUTH_API_URL: http://logto:3001/oidc/me
-      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "contains(roles[*], 'admin') && 'Admin' || 'Viewer'"
+      # Only the Logto role admin gets a role; strict mode refuses any sign-in
+      # where the path yields none (Grafana "Configure generic OAuth").
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "contains(roles[*], 'admin') && 'Admin' || ''"
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT: "true"
       GF_AUTH_GENERIC_OAUTH_ALLOW_ASSIGN_GRAFANA_ADMIN: "false"
       # Logto only admits members its admin created, so the first sign-in may
       # create the Grafana user.

@@ -164,10 +164,10 @@ def test_compose_maps_roles_and_server_side_urls():
     assert env["GF_AUTH_GENERIC_OAUTH_TOKEN_URL"] == "http://logto:3001/oidc/token"
     assert env["GF_AUTH_GENERIC_OAUTH_API_URL"] == "http://logto:3001/oidc/me"
     assert "roles" in env["GF_AUTH_GENERIC_OAUTH_SCOPES"].split()
-    assert (
-        "'admin') && 'Admin' || 'Viewer'"
-        in (env["GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH"])
-    )
+    path = env["GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH"]
+    assert "'admin') && 'Admin' || ''" in path
+    assert "Viewer" not in path
+    assert env["GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT"] == "true"
 
 
 def test_logto_and_grafana_share_identity_oidc_but_logto_is_off_lifekit_shared():

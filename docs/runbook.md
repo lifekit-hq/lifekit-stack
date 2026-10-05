@@ -1498,9 +1498,10 @@ Grafana's `generic_oauth` against the identity provider above: a "Sign in with
 lifekit" button next to the password form. Off by default; the compose
 settings are `GF_AUTH_GENERIC_OAUTH_*` on the `grafana` service, driven by
 `GRAFANA_OIDC_*` in the master file (`.env.example`). Roles: a Logto user with
-the role `admin` is a Grafana **Admin**, every other member a **Viewer**
-(`role_attribute_path` reads the `roles` claim; `roles` is in the requested
-scopes). Nobody becomes a Grafana server admin through it.
+the role `admin` is a Grafana **Admin**; every other member is **refused**
+(`role_attribute_path` reads the `roles` claim and yields no role for a
+non-admin, and `role_attribute_strict` turns that into a denied sign-in;
+`roles` is in the requested scopes). Nobody becomes a Grafana server admin through it.
 
 How the pieces connect: the browser goes to the tailnet issuer
 (`https://<name>:3001/oidc/auth`). Grafana's own token and userinfo calls go to
@@ -1520,7 +1521,7 @@ through the Management API](#logto-admin-through-the-management-api); each
 command under `sops exec-env` as shown there):
 
 1. The role `admin` (a User role, no API permissions), assigned to the
-   owner. Members without it sign in as Viewer.
+   owner. Members without it are refused at Grafana sign-in.
 
    ```bash
    python3 scripts/identity/logto-admin.py ensure-role admin
