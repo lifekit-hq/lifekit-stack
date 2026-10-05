@@ -5,7 +5,7 @@
  * producer knows (project, the ask, the options) into the contract payload
  * (docs/decision-contract.md); `renderDecision(payload)` turns that payload into
  * Telegram HTML. The dashboard decision page consumes the same payload, so the
- * schema below is the one definition (mirrored in docs/decision-contract.schema.json,
+ * schema below is the one definition (mirrored in compose/notify-relay/decision-contract.schema.json,
  * a test keeps the two equal).
  */
 

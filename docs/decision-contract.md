@@ -2,7 +2,7 @@
 
 A decision that needs the owner reaches the phone as one typed payload, answerable from a review
 board. `notify-relay` builds it (`compose/notify-relay/decision.js`) and the dashboard decision page
-renders the same payload. The schema is [`decision-contract.schema.json`](./decision-contract.schema.json);
+renders the same payload. The schema is [`decision-contract.schema.json`](../compose/notify-relay/decision-contract.schema.json);
 `compose/notify-relay/test/decision.test.js` keeps it equal to the code and is the executable form of
 this page (when they disagree, the tests win).
 

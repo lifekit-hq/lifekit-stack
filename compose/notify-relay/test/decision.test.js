@@ -29,7 +29,7 @@ const input = {
 
 test("schema file equals the code's schema", () => {
   const file = JSON.parse(
-    readFileSync(new URL("../../../docs/decision-contract.schema.json", import.meta.url), "utf8"),
+    readFileSync(new URL("../decision-contract.schema.json", import.meta.url), "utf8"),
   );
   assert.deepEqual(file, JSON.parse(JSON.stringify(DECISION_SCHEMA)));
 });
