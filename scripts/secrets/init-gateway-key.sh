@@ -52,6 +52,6 @@ fi
 echo "gateway recipient (public, goes into .sops.yaml under secrets/lifekit-gateway.env.sops):"
 "${AGE_KEYGEN}" -y "${KEY_FILE}"
 echo
-echo "Next: add it to .sops.yaml, then 'sops updatekeys secrets/lifekit-gateway.env.sops' (or the first"
+echo "Next: add it to .sops.yaml, then re-key secrets/lifekit-gateway.env.sops with move 4 of docs/secrets-runbook.md (or the first"
 echo "import-legacy-env.sh run) as the captain, merge, and copy the private key into KeePassXC:"
 echo "  sudo cat ${KEY_FILE}"

@@ -8,21 +8,38 @@
 #              per-repo key). On the box it is the admin account's
 #              ~/.config/sops/age/keys.txt (0600); an offline copy lives in
 #              the captain's KeePassXC. Never on a service account.
+#   firstmate - the operator's agent's own age key, so it runs operator
+#              steps (edit.sh, sops set, the render) without borrowing the
+#              captain's (captain's call, 2026-10-05: kept beside his key in
+#              its own file, his untouched). On the box it is the admin
+#              account's ~/.config/sops/age/firstmate.agekey (0600), minted
+#              with age-keygen straight to file and passed as
+#              SOPS_AGE_KEY_FILE. No offline copy: the captain is a
+#              recipient of every file, so a lost key is re-minted and he
+#              re-keys. Never on a service account.
 #   gateway  - the OpenClaw gateway resolver's key, generated on the box by
 #              scripts/secrets/init-gateway-key.sh into
 #              /srv/lifekit-secrets/gateway/lifekit-gateway.agekey (0400,
 #              service account). It can open the gateway file and nothing
 #              else.
 #
-# secrets/lifekit.env.sops          master   captain only
-# secrets/lifekit-gateway.env.sops  gateway  captain + gateway
+# The operators {captain, firstmate} are recipients of both files; the
+# gateway key is the one gateway-only identity, never in master:
+# secrets/lifekit.env.sops          master   captain + firstmate
+# secrets/lifekit-gateway.env.sops  gateway  captain + firstmate + gateway
 #
 # Editing: scripts/secrets/edit.sh <master|gateway>. Re-keying after a
-# recipient change: sops updatekeys secrets/<file> (docs/secrets-runbook.md).
+# recipient change: move 4 of docs/secrets-runbook.md, run with a key that
+# is already a recipient. sops 3.9.1's updatekeys ignores --input-type and
+# parses a .sops name as JSON, so it re-keys a .env-named copy under a
+# temporary --config with this rule's recipients, then copies it back.
 creation_rules:
   - path_regex: secrets/lifekit\.env\.sops$
-    age: age146hmku2m4667lmx63ysge7szjlyc48a6x7r5zg8ur56wxlq4t3pqsyv390
+    age: >-
+      age146hmku2m4667lmx63ysge7szjlyc48a6x7r5zg8ur56wxlq4t3pqsyv390,
+      age13jychju36cwhxh9lwtu0zd8kr08deqr25pnawu2639cfs6m7uaksdjkhrl
   - path_regex: secrets/lifekit-gateway\.env\.sops$
     age: >-
       age146hmku2m4667lmx63ysge7szjlyc48a6x7r5zg8ur56wxlq4t3pqsyv390,
+      age13jychju36cwhxh9lwtu0zd8kr08deqr25pnawu2639cfs6m7uaksdjkhrl,
       age1u7tqt92wz9a3xgp8ljurhzd22tr4t0frxnpj8epgnxfmmhdskpjq4ppl4g
