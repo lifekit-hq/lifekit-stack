@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "notify-relay decision payload (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "project",
+    "title",
+    "body",
+    "decision_id",
+    "options",
+    "free_text_allowed",
+    "link"
+  ],
+  "properties": {
+    "kind": {
+      "enum": [
+        "decision",
+        "blocked",
+        "done",
+        "info"
+      ]
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decision_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "maxLength": 64
+    },
+    "options": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "recommended"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "recommended": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "free_text_allowed": {
+      "type": "boolean"
+    },
+    "link": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

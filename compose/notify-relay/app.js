@@ -10,6 +10,10 @@
  *   GET  /metrics  — Prometheus text (build info, requests, Telegram sends, readiness)
  *   POST /notify   — body = message envelope (docs/message-format.md);
  *                    rendered to Telegram HTML by render.js
+ *   POST /decision — body = decision input (docs/decision-contract.md); one
+ *                    Telegram message per decision id, edited in place when
+ *                    the same id is posted again
+ *   POST /decision/clear — body = {decision_id}; deletes that message (answered)
  *   POST /devclaw  — body = devclaw task row JSON (compatibility: mapped onto
  *                    the same renderer)
  *   POST /text     — body = {text} (compatibility: rendered as an `info`
@@ -30,13 +34,14 @@ import {
   render,
   validateEnvelope,
 } from "./render.js";
+import { buildDecision, renderDecision, validateDecisionInput } from "./decision.js";
 
 // A pass is cached for 5 minutes; a failure only briefly, so a startup blip
 // clears on the next probe instead of reading not-ready for minutes.
 const READY_TTL_MS = 5 * 60 * 1000;
 const NOT_READY_TTL_MS = 15 * 1000;
 const PROBES = new Set(["/health", "/ready", "/metrics"]);
-const POST_ROUTES = new Set(["/notify", "/devclaw", "/text"]);
+const POST_ROUTES = new Set(["/notify", "/decision", "/decision/clear", "/devclaw", "/text"]);
 const TELEGRAM_API = "https://api.telegram.org";
 
 // W3C trace context: continue the caller's trace, or start one.
@@ -78,7 +83,7 @@ export async function fetchTransport(request) {
  * Build the relay. `transport(request)` is the only way bytes leave the
  * process; it must resolve to a Response-like object ({ok, status, json()}).
  */
-export function createApp({ token, chat, transport = fetchTransport, log }) {
+export function createApp({ token, chat, transport = fetchTransport, log, links = {} }) {
   if (!token) throw new Error("token is required");
   if (!chat) throw new Error("chat is required");
   if (!log) throw new Error("log is required");
@@ -152,6 +157,23 @@ export function createApp({ token, chat, transport = fetchTransport, log }) {
     return `${out.join("\n")}\n`;
   }
 
+  // decision id -> Telegram message id: the replace/clear tag. In memory only
+  // (the container is read-only), so a restart forgets it and the next post for
+  // an id sends a fresh message.
+  const decisionMessages = new Map();
+
+  // A Bot API call that is not sendMessage; resolves to the parsed body.
+  async function telegramCall(method, params) {
+    const res = await transport({
+      method: "POST",
+      url: `${TELEGRAM_API}/bot${token}/${method}`,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: chat, ...params }),
+    });
+    const body = await res.json().catch(() => ({}));
+    return { ok: res.ok && body.ok === true, status: res.status, body };
+  }
+
   // Every message leaves through here: one renderer, one parse mode.
   async function sendTelegram(html) {
     let res;
@@ -210,6 +232,29 @@ export function createApp({ token, chat, transport = fetchTransport, log }) {
     }
   }
 
+  // Post or replace the one message for a decision id.
+  async function upsertDecision(payload) {
+    const html = renderDecision(payload);
+    const known = decisionMessages.get(payload.decision_id);
+    if (known !== undefined) {
+      const edit = await telegramCall("editMessageText", {
+        message_id: known,
+        text: html,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      });
+      // An identical re-post is "not modified": the message is already right.
+      if (edit.ok || /not modified/i.test(edit.body.description ?? "")) {
+        sends.ok += 1;
+        return { message_id: known, replaced: true };
+      }
+      decisionMessages.delete(payload.decision_id);
+    }
+    const result = await sendTelegram(html);
+    decisionMessages.set(payload.decision_id, result.message_id);
+    return { message_id: result.message_id, replaced: false };
+  }
+
   async function handle(req, res, reqLog, path) {
     if (path === "/health") {
       json(res, 200, { ok: true, name: "notify-relay" });
@@ -248,6 +293,53 @@ export function createApp({ token, chat, transport = fetchTransport, log }) {
         level: payload.level,
         source: payload.source,
       });
+      return;
+    }
+
+    // POST /decision — the typed decision contract (docs/decision-contract.md).
+    if (path === "/decision") {
+      const problems = validateDecisionInput(payload);
+      if (problems.length) {
+        reqLog("warn", "/decision invalid input", { problems });
+        json(res, 400, { error: problems.join("; ") });
+        return;
+      }
+      const decision = buildDecision(payload, links);
+      try {
+        const out = await upsertDecision(decision);
+        reqLog("info", "/decision delivered", { decision_id: decision.decision_id, ...out });
+        json(res, 200, { ok: true, replaced: out.replaced, decision });
+      } catch (err) {
+        reqLog("error", "/decision send failed", { decision_id: decision.decision_id, error: err.message });
+        json(res, 502, { error: err.message });
+      }
+      return;
+    }
+
+    // POST /decision/clear — the decision was answered: its message goes away.
+    if (path === "/decision/clear") {
+      const id = String(payload?.decision_id ?? "").trim();
+      if (!id) {
+        json(res, 400, { error: "missing 'decision_id'" });
+        return;
+      }
+      const known = decisionMessages.get(id);
+      if (known === undefined) {
+        json(res, 200, { ok: true, cleared: false });
+        return;
+      }
+      try {
+        const del = await telegramCall("deleteMessage", { message_id: known });
+        if (!del.ok && !/not found/i.test(del.body.description ?? "")) {
+          throw new Error(`Telegram API ${del.status}: ${del.body.description ?? "unknown error"}`);
+        }
+        decisionMessages.delete(id);
+        reqLog("info", "/decision/clear done", { decision_id: id });
+        json(res, 200, { ok: true, cleared: true });
+      } catch (err) {
+        reqLog("error", "/decision/clear failed", { decision_id: id, error: err.message });
+        json(res, 502, { error: err.message });
+      }
       return;
     }
 

@@ -143,6 +143,12 @@ the exporter that produced the series rather than what the alert is about.
 Any future producer whose whole job is to report that other things are down gets the same
 exemption; everything else goes through the relay.
 
+## Decisions
+
+Decisions that need the owner are a typed payload with their own route, `POST /decision`, one
+message per decision id (replaced in place, cleared when answered): see
+[`decision-contract.md`](./decision-contract.md).
+
 ## Not a notification: in-app decisions
 
 This page governs messages pushed to the owner's Telegram. Kit's decision prompts
