@@ -29,8 +29,9 @@
 # secrets/lifekit-gateway.env.sops  gateway  captain + firstmate + gateway
 #
 # Editing: scripts/secrets/edit.sh <master|gateway>. Re-keying after a
-# recipient change: sops updatekeys secrets/<file>, run with a key that is
-# already a recipient (docs/secrets-runbook.md).
+# recipient change: sops updatekeys -y --input-type dotenv secrets/<file>
+# (sops infers json from the .sops extension otherwise), run with a key
+# that is already a recipient (docs/secrets-runbook.md).
 creation_rules:
   - path_regex: secrets/lifekit\.env\.sops$
     age: >-
