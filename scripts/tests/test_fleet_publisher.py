@@ -71,9 +71,10 @@ def fleet(tmp_path):
                 json.dumps({"sessions": dict(enumerate(lavish))})
             )
 
-    def run(**env):
+    def run(cwd=None, **env):
         return subprocess.run(
             ["bash", str(SCRIPT), str(out), str(prom)],
+            cwd=cwd,
             env={
                 **os.environ,
                 "SUMMARY_FILE": str(tmp_path / "home-summary.json"),
@@ -122,9 +123,7 @@ def test_publishes_world_readable_copy_and_worker_counts(fleet):
     assert (fleet.prom / "fleet.prom").stat().st_mode & 0o777 == 0o644
     got = fleet.published()
     assert got["published_epoch"] == NOW
-    assert [{k: c[k] for k in ("id", "state")} for c in got["active_children"]] == [
-        {"id": c["id"], "state": c["state"]} for c in summary()["active_children"]
-    ]
+    assert got["active_children"] == summary()["active_children"]
     m = fleet.metrics()
     assert m['fleet_workers{state="working"}'] == 2
     assert m['fleet_workers{state="blocked"}'] == 1
@@ -183,7 +182,7 @@ def test_decision_gets_the_newest_open_board_of_its_own_data_dir(fleet):
         ],
     )
     assert fleet.run().returncode == 0
-    urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_parked"]}
+    urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_open"]}
     assert urls == {
         "task-a": "http://board/new",
         "task-b": None,
@@ -198,7 +197,7 @@ def test_missing_or_broken_lavish_state_still_publishes(fleet, lavish):
     if lavish:
         (fleet.tmp / "lavish.json").write_text(lavish)
     assert fleet.run().returncode == 0
-    assert fleet.published()["decisions_parked"][0]["board_url"] is None
+    assert fleet.published()["decisions_open"][0]["board_url"] is None
 
 
 def stub(path, body):
@@ -207,17 +206,18 @@ def stub(path, body):
     return str(path)
 
 
-def test_board_url_follows_the_captain_hold_binding_not_the_directory(fleet):
+HOLD_BINDS_BOUND_AND_WRONG = (
+    'case "$1 $2" in "binding lavish-bound"|"binding lavish-wrong") echo "(any)";;'
+    " *) exit 1;; esac"
+)
+TASKS_AXI_ONLY_FROM_FM_HOME = (
+    '[[ "$PWD" == "$EXPECTED_PWD" ]] || { echo "NOT_FOUND" >&2; exit 1; }\n'
+    'echo "body: \\"Captain hold origin: scout-origin\\n\\nRouted by x\\""'
+)
+
+
+def bound_board_fleet(fleet):
     data = fleet.tmp / "data"
-    hold = stub(
-        fleet.tmp / "hold.sh",
-        'case "$1 $2" in "binding lavish-bound"|"binding lavish-wrong") echo "(any)";;'
-        " *) exit 1;; esac",
-    )
-    tasks = stub(
-        fleet.tmp / "tasks.sh",
-        'echo "body: \\"Captain hold origin: scout-origin\\n\\nRouted by x\\""',
-    )
     fleet.write(
         summary(decisions_open=[decision("held-call"), decision("other-call")]),
         lavish=[
@@ -226,15 +226,69 @@ def test_board_url_follows_the_captain_hold_binding_not_the_directory(fleet):
             session(f"{data}/scout-origin/unbound.html", "http://board/unbound"),
         ],
     )
+
+
+def test_board_url_follows_the_captain_hold_binding_not_the_directory(fleet):
+    hold = stub(fleet.tmp / "hold.sh", HOLD_BINDS_BOUND_AND_WRONG)
+    tasks = stub(fleet.tmp / "tasks.sh", TASKS_AXI_ONLY_FROM_FM_HOME)
+    bound_board_fleet(fleet)
     # The session key is the last url segment: only "bound" and "wrong" are bound.
-    assert fleet.run(CAPTAIN_HOLD=hold, TASKS_AXI=tasks).returncode == 0
+    result = fleet.run(
+        CAPTAIN_HOLD=hold,
+        TASKS_AXI=tasks,
+        FM_HOME=str(fleet.tmp),
+        EXPECTED_PWD=str(fleet.tmp),
+    )
+    assert result.returncode == 0, result.stderr
     urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_open"]}
-    # Neither decision has an ask record, so both are parked: read them there.
-    parked = {d["id"]: d["board_url"] for d in fleet.published()["decisions_parked"]}
-    assert urls == {}
-    assert parked == {
+    assert urls == {
         "held-call": "http://board/bound",
         "other-call": "http://board/bound",
+    }
+
+
+def test_hold_origin_lookup_runs_from_the_fleet_home(fleet, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    hold = stub(fleet.tmp / "hold.sh", HOLD_BINDS_BOUND_AND_WRONG)
+    tasks = stub(fleet.tmp / "tasks.sh", TASKS_AXI_ONLY_FROM_FM_HOME)
+    bound_board_fleet(fleet)
+    env = {"CAPTAIN_HOLD": hold, "TASKS_AXI": tasks, "EXPECTED_PWD": str(fleet.tmp)}
+    # A lookup the backlog cannot answer is logged, and the board falls back.
+    result = fleet.run(cwd=elsewhere, FM_HOME=str(elsewhere), **env)
+    assert result.returncode == 0
+    assert "tasks-axi show held-call failed: NOT_FOUND" in result.stderr
+    assert {d["board_url"] for d in fleet.published()["decisions_open"]} == {None}
+    # Run from FM_HOME it answers, whatever directory the publisher started in.
+    result = fleet.run(cwd=elsewhere, FM_HOME=str(fleet.tmp), **env)
+    assert result.returncode == 0, result.stderr
+    assert {d["board_url"] for d in fleet.published()["decisions_open"]} == {
+        "http://board/bound"
+    }
+
+
+def test_hold_origin_lookup_puts_the_tasks_axi_directory_on_path(fleet, tmp_path):
+    bindir = tmp_path / "toolchain"
+    bindir.mkdir()
+    stub(bindir / "node", "exit 0\n")
+    tasks = stub(
+        bindir / "tasks-axi",
+        'command -v node > /dev/null || { echo "node: not found" >&2; exit 127; }\n'
+        + TASKS_AXI_ONLY_FROM_FM_HOME,
+    )
+    hold = stub(fleet.tmp / "hold.sh", HOLD_BINDS_BOUND_AND_WRONG)
+    bound_board_fleet(fleet)
+    result = fleet.run(
+        CAPTAIN_HOLD=hold,
+        TASKS_AXI=tasks,
+        FM_HOME=str(fleet.tmp),
+        EXPECTED_PWD=str(fleet.tmp),
+        PATH="/usr/bin:/bin",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "node: not found" not in result.stderr
+    assert {d["board_url"] for d in fleet.published()["decisions_open"]} == {
+        "http://board/bound"
     }
 
 
@@ -246,215 +300,7 @@ def test_board_url_falls_back_to_the_directory_when_nothing_is_bound(fleet):
         lavish=[session(f"{data}/task-a/plan.html", "http://board/dir")],
     )
     assert fleet.run(CAPTAIN_HOLD=hold).returncode == 0
-    assert fleet.published()["decisions_parked"][0]["board_url"] == "http://board/dir"
-
-
-def write_ask(fleet, id_, **record):
-    d = fleet.tmp / "state" / "decisions"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"{id_}.json").write_text(json.dumps(record))
-
-
-def test_ask_is_the_contract_shape_when_a_structured_record_exists(fleet):
-    data = fleet.tmp / "data"
-    write_ask(
-        fleet,
-        "pick-layout",
-        ask="Which layout should ship?",
-        options=[{"label": "Feed"}, {"label": "Cockpit", "recommended": True}, "Tabs"],
-        free_text=True,
-    )
-    fleet.write(
-        summary(
-            decisions_open=[
-                decision(
-                    "pick-layout",
-                    summary="lifekit-dashboard#9: Fleet layout",
-                    hold_bucket="live",
-                    reason="waits on the captain's word",
-                )
-            ]
-        ),
-        lavish=[session(f"{data}/pick-layout/board.html", "http://board/pick")],
-    )
-    assert fleet.run(STATE_DIR=str(fleet.tmp / "state")).returncode == 0
-    got = fleet.published()
-    (row,) = got["decisions_open"]
-    assert row["ask"] == {
-        "question": "Which layout should ship?",
-        "options": [
-            {"id": "2", "label": "Cockpit", "recommended": True},
-            {"id": "1", "label": "Feed", "recommended": False},
-            {"id": "3", "label": "Tabs", "recommended": False},
-        ],
-        "free_text_allowed": True,
-        "link": "http://board/pick",
-    }
-    assert row["restart"]["kind"] == "captain_word"
-    assert row["project"] == "lifekit-dashboard"
-    assert got["decisions_parked"] == []
-
-
-def test_no_structured_ask_means_no_ask(fleet):
-    fleet.write(
-        summary(
-            decisions_open=[
-                decision(
-                    "parked-one",
-                    reason="waits on the captain's word, parked",
-                    hold_bucket="live",
-                ),
-                # A record exists but the hold is dated, so it is not a live ask.
-                decision("dated-one", hold_until="2099-01-01", hold_bucket="dated"),
-            ]
-        )
-    )
-    write_ask(fleet, "dated-one", ask="Later?", options=["Yes"])
-    assert fleet.run(STATE_DIR=str(fleet.tmp / "state")).returncode == 0
-    got = fleet.published()
-    assert got["decisions_open"] == []
-    assert {d["id"] for d in got["decisions_parked"]} == {"parked-one", "dated-one"}
-    assert all("ask" not in d for d in got["decisions_parked"])
-    assert got["decisions_total"] == 2
-    # Metrics keep counting the source's open decisions.
-    assert fleet.metrics()["fleet_decisions_open"] == 2
-
-
-def test_ask_link_is_the_decision_page_without_a_board(fleet):
-    write_ask(fleet, "no-board", ask="Ship it?", options=[{"id": "go", "label": "Go"}])
-    fleet.write(summary(decisions_open=[decision("no-board", hold_bucket="live")]))
-    assert fleet.run(STATE_DIR=str(fleet.tmp / "state")).returncode == 0
-    (row,) = fleet.published()["decisions_open"]
-    assert row["ask"]["link"] == "/decisions/no-board"
-    assert row["ask"]["options"] == [{"id": "go", "label": "Go", "recommended": False}]
-    assert row["ask"]["free_text_allowed"] is False
-
-
-@pytest.mark.parametrize(
-    ("raw", "plain"),
-    [
-        (
-            "chore(design): adopt impeccable project-scoped",
-            "adopt impeccable project-scoped",
-        ),
-        ("fix(tokens)!: one font contract", "one font contract"),
-        ("Scout: mobile foundation end to end", "mobile foundation end to end"),
-        ("finance-sentry#574: Dashboard time filtering", "Dashboard time filtering"),
-        ("feat(ui): finance-sentry#12: nested prefix", "nested prefix"),
-        ("Working: the status word", "the status word"),
-        # Cut at 70 characters by the snapshot: drop the partial word.
-        (
-            "chore(design): adopt impeccable project-scoped (impeccable plan step 1…",
-            "adopt impeccable project-scoped (impeccable plan step…",
-        ),
-        ("a title that ends on a whole word …", "a title that ends on a whole word…"),
-        ("Plain title", "Plain title"),
-        ("", ""),
-    ],
-)
-def test_title_plain_drops_prefixes_ids_and_cut_words(fleet, raw, plain):
-    fleet.write(
-        summary(
-            active_children=[{"id": "a", "state": "working", "name": raw}],
-            landed=[{"id": "l", "title": raw}],
-            holds=[{"id": "h", "title": raw, "reason": "x"}],
-        )
-    )
-    assert fleet.run().returncode == 0
-    got = fleet.published()
-    assert got["active_children"][0]["title_plain"] == plain
-    assert got["landed"][0]["title_plain"] == plain
-    assert got["holds"][0]["title_plain"] == plain
-
-
-def test_children_carry_since_produces_open_url_and_project(fleet):
-    state = fleet.tmp / "state"
-    state.mkdir()
-    data = fleet.tmp / "data"
-    for id_ in ("shipper", "scouter", "issuer", "plain"):
-        (state / f"{id_}.meta").write_text("x")
-        os.utime(state / f"{id_}.meta", (NOW - 3600, NOW - 3600))
-    (state / "shipper.status").write_text(
-        "working: first https://github.com/acme/widgets/pull/1\n"
-        "done: https://github.com/acme/widgets/pull/2 checks green\n"
-    )
-    fleet.write(
-        summary(
-            active_children=[
-                {
-                    "id": "shipper",
-                    "state": "working",
-                    "kind": "ship",
-                    "name": "feat(x): a",
-                    "repo": "widgets",
-                },
-                {
-                    "id": "scouter",
-                    "state": "working",
-                    "kind": "scout",
-                    "name": "Scout: b",
-                },
-                {
-                    "id": "issuer",
-                    "state": "working",
-                    "kind": "ship",
-                    "name": "widgets#7: c",
-                },
-                {"id": "plain", "state": "working", "kind": "ops", "name": "d"},
-                {"id": "nometa", "state": "working", "kind": "ship", "name": "e"},
-            ],
-            landed=[{"id": "old", "pr_url": "https://github.com/acme/widgets/pull/3"}],
-        ),
-        lavish=[session(f"{data}/scouter/board.html", "http://board/scout")],
-    )
-    assert fleet.run(STATE_DIR=str(state)).returncode == 0
-    kids = {c["id"]: c for c in fleet.published()["active_children"]}
-    assert kids["shipper"]["since_epoch"] == NOW - 3600
-    assert kids["shipper"]["produces"] == "pr"
-    assert kids["shipper"]["open_url"] == "https://github.com/acme/widgets/pull/2"
-    assert kids["shipper"]["project"] == "widgets"
-    assert kids["scouter"]["produces"] == "report"
-    assert kids["scouter"]["open_url"] == "http://board/scout"
-    assert kids["issuer"]["open_url"] == "https://github.com/acme/widgets/issues/7"
-    assert kids["issuer"]["project"] == "widgets"
-    assert kids["plain"]["produces"] == "landing"
-    assert kids["plain"]["open_url"] is None
-    assert kids["nometa"]["since_epoch"] is None
-    assert kids["nometa"]["project"] is None
-
-
-def test_landed_items_get_since_produces_open_url_and_project(fleet):
-    fleet.write(
-        summary(
-            landed=[
-                {
-                    "id": "merged",
-                    "title": "widgets#3: x",
-                    "pr_url": "https://github.com/acme/widgets/pull/3",
-                    "completion": {"date": "2026-10-05"},
-                },
-                {
-                    "id": "nothing",
-                    "title": "ops thing",
-                    "pr_url": None,
-                    "report_path": None,
-                    "completion": {},
-                },
-            ]
-        )
-    )
-    assert fleet.run().returncode == 0
-    merged, nothing = fleet.published()["landed"]
-    assert merged["since_epoch"] == 1791158400
-    assert merged["produces"] == "pr"
-    assert merged["open_url"] == "https://github.com/acme/widgets/pull/3"
-    assert merged["project"] == "widgets"
-    assert (nothing["since_epoch"], nothing["produces"], nothing["open_url"]) == (
-        None,
-        "landing",
-        None,
-    )
-    assert nothing["project"] is None
+    assert fleet.published()["decisions_open"][0]["board_url"] == "http://board/dir"
 
 
 def test_finished_reports_are_copied_and_served_by_url(fleet):
@@ -480,7 +326,7 @@ def test_finished_reports_are_copied_and_served_by_url(fleet):
     )
     (item,) = fleet.published()["landed"]
     assert item["report_url"] == "/api/fleet/reports/scout-a/report.md"
-    assert item["open_url"] == item["report_url"]
+    assert item["report_path"] == "data/scout-a/report.md"
     copy = fleet.out / "reports/scout-a/report.md"
     assert copy.read_text() == "# Report A\n"
     assert copy.stat().st_mode & 0o777 == 0o644
@@ -490,6 +336,36 @@ def test_finished_reports_are_copied_and_served_by_url(fleet):
     assert fleet.run().returncode == 0
     assert not (fleet.out / "reports").exists()
     assert not [p for p in fleet.out.iterdir() if p.name != "home-summary.json"]
+
+
+def test_republishing_reports_keeps_served_ones_in_place_and_drops_stale(fleet):
+    data = fleet.tmp / "data"
+    for id_ in ("keep", "drop"):
+        (data / id_).mkdir()
+        (data / id_ / "report.md").write_text(f"# {id_} v1\n")
+
+    def landed(*ids):
+        return summary(
+            landed=[
+                {"id": i, "title": i, "report_path": f"data/{i}/report.md"} for i in ids
+            ]
+        )
+
+    fleet.write(landed("keep", "drop"))
+    assert fleet.run(REPORT_ROOT=str(fleet.tmp)).returncode == 0
+    served = fleet.out / "reports"
+    served_inode = served.stat().st_ino
+    (data / "keep/report.md").write_text("# keep v2\n")
+    fleet.write(landed("keep"))
+    assert fleet.run(REPORT_ROOT=str(fleet.tmp)).returncode == 0
+    assert served.stat().st_ino == served_inode
+    assert (served / "keep/report.md").read_text() == "# keep v2\n"
+    assert not (served / "drop").exists()
+    assert sorted(p.name for p in served.iterdir()) == ["keep"]
+    assert sorted(p.name for p in fleet.out.iterdir()) == [
+        "home-summary.json",
+        "reports",
+    ]
 
 
 def test_reports_outside_the_data_dir_or_with_credentials_are_not_served(fleet):
@@ -523,63 +399,6 @@ def test_reports_outside_the_data_dir_or_with_credentials_are_not_served(fleet):
         **{k: None for k in paths if k != "ok"},
     }
     assert sorted(p.name for p in (fleet.out / "reports").iterdir()) == ["ok"]
-
-
-def test_holds_get_restart_kind_project_and_full_total(fleet):
-    fleet.write(
-        summary(
-            counts={"holds": 34},
-            holds=[
-                {
-                    "id": "blocked",
-                    "title": "x",
-                    "reason": "waits on the domain",
-                    "unresolved_blocker_ids": ["dep-1", "dep-2"],
-                },
-                {
-                    "id": "props",
-                    "title": "lifekit-stack#5: y",
-                    "reason": "parked until his new proposals are evaluated",
-                },
-                {"id": "word", "title": "z", "reason": "waits on the captain's word"},
-                {
-                    "id": "dated",
-                    "title": "w",
-                    "reason": "restart 2026-10-07, else at the next audit",
-                },
-                {"id": "event", "title": "v", "reason": "after the next memory-audit"},
-            ],
-        )
-    )
-    assert fleet.run().returncode == 0
-    got = fleet.published()
-    assert got["holds_total"] == 34
-    restart = {h["id"]: h["restart"] for h in got["holds"]}
-    assert restart["blocked"] == {
-        "kind": "after_work",
-        "blocker_ids": ["dep-1", "dep-2"],
-        "text": "waits on the domain",
-    }
-    assert restart["props"]["kind"] == "proposals"
-    assert restart["word"]["kind"] == "captain_word"
-    assert restart["dated"] == {
-        "kind": "date",
-        "until": "2026-10-07",
-        "text": "restart 2026-10-07, else at the next audit",
-    }
-    assert restart["event"] == {"kind": "event", "text": "after the next memory-audit"}
-    assert {h["id"]: h["project"] for h in got["holds"]}["props"] == "lifekit-stack"
-
-
-def test_holds_total_defaults_to_the_list_length_and_output_is_versioned(fleet):
-    fleet.write(summary(holds=[{"id": "h", "title": "t", "reason": "r"}]))
-    assert fleet.run().returncode == 0
-    got = fleet.published()
-    assert got["holds_total"] == 1
-    assert got["publisher_schema"] == "lifekit-fleet-publisher.v1"
-    # The source summary's own fields still pass through.
-    assert got["schema"] == "fm-secondmate-home-summary.v1"
-    assert got["valid"] is True
 
 
 def test_oldest_decision_age_uses_ledger_open_time_then_hold_days(fleet):
@@ -733,6 +552,7 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
             **os.environ,
             "ADMIN_USER": "fleetadmin",
             "FM_HOME": "/srv/fleet-home",
+            "TASKS_AXI": "/opt/tools/bin/tasks-axi",
             "INSTALL_ROOT": str(root),
             "SYSTEMCTL": str(fake),
         },
@@ -747,7 +567,10 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     service.optionxform = str
     service.read_string((units / "lifekit-fleet-publisher.service").read_text())
     assert service["Service"]["User"] == "fleetadmin"
-    assert service["Service"]["Environment"] == "FM_HOME=/srv/fleet-home"
+    assert (
+        service["Service"]["Environment"]
+        == '"FM_HOME=/srv/fleet-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
+    )
     assert service["Service"]["Type"] == "oneshot"
     assert "__" not in (units / "lifekit-fleet-publisher.service").read_text()
 
