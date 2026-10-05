@@ -4,7 +4,7 @@ Description=Publish the fleet summary and fleet metrics for the dashboard and Pr
 [Service]
 Type=oneshot
 # The account that owns the fleet home and Lavish state (README "VPS users").
-# The installer substitutes both placeholders.
+# The installer substitutes the placeholders.
 User=__ADMIN_USER__
-Environment=FM_HOME=__FM_HOME__
+Environment="FM_HOME=__FM_HOME__" "TASKS_AXI=__TASKS_AXI__"
 ExecStart=/usr/local/bin/lifekit-fleet-publisher.sh /var/lib/lifekit-fleet /var/lib/node_exporter/textfile

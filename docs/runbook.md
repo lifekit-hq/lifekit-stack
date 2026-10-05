@@ -1110,8 +1110,11 @@ alert rates). Groups and their budgets are in `docs/resource-budget.md`; the
 and the Lavish state. It reads the fleet home's `state/home-summary.json`
 (task names, states and reasons only; the script refuses to publish if it ever
 matches a credential pattern), joins each open decision to the URL of the open
-Lavish session whose file lives under `data/<decision id>/` (`board_url`, or
-`null`), and writes it atomically to `/var/lib/lifekit-fleet/home-summary.json`,
+Lavish session the captain-hold binding feeds it (`board_url`; else the session
+whose file lives under `data/<decision id>/`; else `null`), copies finished
+reports to `/var/lib/lifekit-fleet/reports/` (`report_url` on each landed item;
+output contract in `scripts/fleet-publisher/README.md`), and writes the summary
+atomically to `/var/lib/lifekit-fleet/home-summary.json`,
 world-readable, for the dashboard to bind-mount read-only. It also writes
 `fleet.prom` into the textfile directory: `fleet_workers{state}`,
 `fleet_decisions_open`, `fleet_oldest_decision_age_seconds` (from the
