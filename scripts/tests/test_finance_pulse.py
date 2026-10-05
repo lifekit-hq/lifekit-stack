@@ -48,7 +48,11 @@ def run(tmp_path: Path, message: str, name: str = "ledger-pulse"):
             json.dumps(
                 {
                     "jobs": [
-                        {"id": "other", "name": "heartbeat-finance", "payload": {"message": "x"}},
+                        {
+                            "id": "other",
+                            "name": "heartbeat-finance",
+                            "payload": {"message": "x"},
+                        },
                         {
                             "id": "job1",
                             "name": name,
@@ -64,13 +68,21 @@ def run(tmp_path: Path, message: str, name: str = "ledger-pulse"):
     docker = bindir / "docker"
     docker.write_text(FAKE_DOCKER)
     docker.chmod(0o755)
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "FAKE_STATE": str(state)}
-    return subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True), state
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "FAKE_STATE": str(state),
+    }
+    return subprocess.run(
+        ["bash", str(SCRIPT)], env=env, capture_output=True, text=True
+    ), state
 
 
 def edits(tmp_path: Path) -> list[list[str]]:
     f = tmp_path / "edits.jsonl"
-    return [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
+    return (
+        [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
+    )
 
 
 def test_checklist_lands_in_payload_message(tmp_path):
@@ -78,7 +90,11 @@ def test_checklist_lands_in_payload_message(tmp_path):
     res, state = run(tmp_path, old)
     assert res.returncode == 0, res.stderr
     (cmd,) = edits(tmp_path)
-    assert cmd[:3] == ["cron", "edit", "job1"]  # the ledger-pulse row, not heartbeat-finance
+    assert cmd[:3] == [
+        "cron",
+        "edit",
+        "job1",
+    ]  # the ledger-pulse row, not heartbeat-finance
     message = json.loads(state.read_text())["jobs"][1]["payload"]["message"]
     assert message == cmd[cmd.index("--message") + 1]
     assert CHECKLIST.read_text().strip() in message
