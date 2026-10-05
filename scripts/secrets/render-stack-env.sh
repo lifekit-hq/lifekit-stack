@@ -37,8 +37,8 @@ elif [[ "${SECRETS_DIR}" == /srv/* ]]; then
   exit 1
 fi
 
-# The operator key (captain's by default, or firstmate's): SOPS_AGE_KEY_FILE if set (sudo -E), else the invoking
-# user's default sops location.
+# The operator key (captain's by default, or firstmate's): SOPS_AGE_KEY_FILE
+# if set (sudo -E), else the invoking user's default sops location.
 if [[ -z "${SOPS_AGE_KEY_FILE:-}" && -n "${SUDO_USER:-}" ]]; then
   SOPS_AGE_KEY_FILE="$(getent passwd "${SUDO_USER}" | cut -d: -f6)/.config/sops/age/keys.txt"
 fi

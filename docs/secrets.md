@@ -193,7 +193,7 @@ file appears in one of the two inventory tables.
 | SSH host keys | regenerating is acceptable | update `known_hosts` |
 | Kit relay SSH key (`/srv/lifekit-secrets/kit-relay`) | per box, re-mintable; the forced command and `from=` limit it to the inbox | re-run the key steps in `docs/runbook.md`, "Kit's second-mate relay" |
 | The GitHub App private key (`RELEASE_APP_PRIVATE_KEY`) | lives in GitHub, re-mintable | app settings |
-| finance-sentry's values | their one home is finance-sentry's `docker/.env.sops`, same captain key | that repo |
+| finance-sentry's values | their one home is finance-sentry's `docker/.env.sops`, same operator keys (captain and firstmate), governed by that repo's own `.sops.yaml` | that repo |
 | devclaw's delivery secrets (`CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN`, `NODE_AUTH_TOKEN`) | GitHub Actions secrets of the devclaw repo; its deploy writes them | `gh secret set` in that repo |
 | lifekit-dashboard's env (`/srv/dashboard/.env`) | that repo's deploy owns it; it carries a pair of `OPENCLAW_GATEWAY_TOKEN` | that repo |
 | XUI (`/etc/xui/.env`) | not lifekit; ruled out 2026-09-16 | its own backup |
