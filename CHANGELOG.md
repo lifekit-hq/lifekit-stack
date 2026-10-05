@@ -18,6 +18,64 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.5](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.4...v0.1.5) (2026-10-05)
+
+
+### Features
+
+* **bootstrap:** install alert-inbox, media-prune and config-sync from the repo ([#256](https://github.com/lifekit-hq/lifekit-stack/issues/256)) ([1c4cf09](https://github.com/lifekit-hq/lifekit-stack/commit/1c4cf09728bcdb2bb068e37dd53852ea9df99fe9))
+* **compose:** add Logto identity provider on the tailnet ([#273](https://github.com/lifekit-hq/lifekit-stack/issues/273)) ([fe5909e](https://github.com/lifekit-hq/lifekit-stack/commit/fe5909ea4268bbf032c40c1bb4a9381f5b1d40ce))
+* **compose:** add tailnet sign-in gate for the dashboard and devclaw console ([#275](https://github.com/lifekit-hq/lifekit-stack/issues/275)) ([5b1b7b2](https://github.com/lifekit-hq/lifekit-stack/commit/5b1b7b28f3552414640ae5a26e77f70e59f63a72))
+* **compose:** record node-exporter pressure-stall (PSI) metrics ([#267](https://github.com/lifekit-hq/lifekit-stack/issues/267)) ([6b2af0c](https://github.com/lifekit-hq/lifekit-stack/commit/6b2af0c2cac4aedccbbc0e15d200818e0ad31e4c))
+* **compose:** ship container console logs to Loki via otel-collector ([#248](https://github.com/lifekit-hq/lifekit-stack/issues/248)) ([79df000](https://github.com/lifekit-hq/lifekit-stack/commit/79df000cd325a307bbb681cd965fe0799ba0ddc1))
+* **compose:** sign in to Grafana through Logto ([#274](https://github.com/lifekit-hq/lifekit-stack/issues/274)) ([6b36924](https://github.com/lifekit-hq/lifekit-stack/commit/6b36924e94674fe27acd78cd34637444450c45a0))
+* **deploy:** schedule a nightly 14-day Docker image and build-cache prune ([#253](https://github.com/lifekit-hq/lifekit-stack/issues/253)) ([0ad4043](https://github.com/lifekit-hq/lifekit-stack/commit/0ad404364aa493b8f0614810bf3e4ce8c973f54f))
+* **identity:** script Logto admin steps through an M2M app ([#282](https://github.com/lifekit-hq/lifekit-stack/issues/282)) ([3d304a6](https://github.com/lifekit-hq/lifekit-stack/commit/3d304a6cb9c3d0873d163b97959eb27162a71f2b))
+* **kit-relay:** accept the dashboard as a second sender with its own dash- prefix and rate bucket ([#284](https://github.com/lifekit-hq/lifekit-stack/issues/284)) ([e2147c7](https://github.com/lifekit-hq/lifekit-stack/commit/e2147c76fe5f91b9505007026ab06f919d8908b8))
+* **kit-relay:** relay Kit's notes to the second mate's captain inbox ([#277](https://github.com/lifekit-hq/lifekit-stack/issues/277)) ([64236fe](https://github.com/lifekit-hq/lifekit-stack/commit/64236fe9e02c1748a9f3b3d296f7c8e788b4d56d))
+* **kit:** ask needs-you decisions in-app and post a daily digest of open ones ([#259](https://github.com/lifekit-hq/lifekit-stack/issues/259)) ([8e6a14d](https://github.com/lifekit-hq/lifekit-stack/commit/8e6a14dd35b05664ceb6b0054f0df44cf84e9519))
+* **observability:** add host unit-state gauge and host-unit-down-or-failed alert ([#262](https://github.com/lifekit-hq/lifekit-stack/issues/262)) ([20953ae](https://github.com/lifekit-hq/lifekit-stack/commit/20953ae7f5f3a001023f509a99f6a5834f92609d))
+* **observability:** alert on stale finance-sentry backup-verify and retention runs ([#263](https://github.com/lifekit-hq/lifekit-stack/issues/263)) ([613b71c](https://github.com/lifekit-hq/lifekit-stack/commit/613b71c5b92653a29165af8f646c0123988f072c))
+* **observability:** alert on stopped or vanished long-running containers ([#266](https://github.com/lifekit-hq/lifekit-stack/issues/266)) ([6b07842](https://github.com/lifekit-hq/lifekit-stack/commit/6b0784242ad6f9aee611d3f484f1ff87fc09a8e9))
+* **observability:** show Claude quota runway and per-consumer share on box dashboard ([#271](https://github.com/lifekit-hq/lifekit-stack/issues/271)) ([867810f](https://github.com/lifekit-hq/lifekit-stack/commit/867810f42fca5a6845316f9be865758e13b6b630))
+* **observability:** show projected quota exhaustion on the runway panel ([#272](https://github.com/lifekit-hq/lifekit-stack/issues/272)) ([9476b83](https://github.com/lifekit-hq/lifekit-stack/commit/9476b839e4174b757991b40f3de8c7a295692222))
+* **ops-report:** report host groups with real numbers in the weekly report ([#244](https://github.com/lifekit-hq/lifekit-stack/issues/244)) ([368fd0f](https://github.com/lifekit-hq/lifekit-stack/commit/368fd0fa7bfb4f86b14aacbbe7fb13e573f72912))
+* **scripts:** add nftables host firewall baseline with timed-rollback cutover ([#270](https://github.com/lifekit-hq/lifekit-stack/issues/270)) ([f68a2f7](https://github.com/lifekit-hq/lifekit-stack/commit/f68a2f796d77dfbf89ab85efa6e3a022803129a4))
+* **scripts:** publish fleet summary and fleet metrics every minute ([#269](https://github.com/lifekit-hq/lifekit-stack/issues/269)) ([9683051](https://github.com/lifekit-hq/lifekit-stack/commit/9683051f74ecd5f03b031f2e3d7c000e0f1db28a))
+* **secrets:** add firstmate as a SOPS recipient beside the captain ([#283](https://github.com/lifekit-hq/lifekit-stack/issues/283)) ([7ccdb01](https://github.com/lifekit-hq/lifekit-stack/commit/7ccdb01727851728687566e556dc63421cc929f0))
+* **secrets:** alert 30 days before the Claude service token expires ([#250](https://github.com/lifekit-hq/lifekit-stack/issues/250)) ([868ef61](https://github.com/lifekit-hq/lifekit-stack/commit/868ef6179574dc3cae4ded60256a8e9414d47a09))
+* **secrets:** set Grafana and sign-in gate Logto client secrets in the master file ([#285](https://github.com/lifekit-hq/lifekit-stack/issues/285)) ([3f7c1bd](https://github.com/lifekit-hq/lifekit-stack/commit/3f7c1bd367b6fc857a3a0eb01aa4143d305a1c8b))
+
+
+### Bug Fixes
+
+* **ci:** deploy on main push despite skipped decrypt-check ancestor ([#260](https://github.com/lifekit-hq/lifekit-stack/issues/260)) ([a95b371](https://github.com/lifekit-hq/lifekit-stack/commit/a95b371c8691f4995457ee1e3b823fc8467aab1a))
+* **compose:** give the OpenClaw gateway a 330s stop grace period ([#246](https://github.com/lifekit-hq/lifekit-stack/issues/246)) ([a6aba7e](https://github.com/lifekit-hq/lifekit-stack/commit/a6aba7ec0d7df9e7097ab63db9029f99fe42fa44))
+* **grafana:** refuse Logto sign-in for users without the admin role ([#286](https://github.com/lifekit-hq/lifekit-stack/issues/286)) ([27c3f49](https://github.com/lifekit-hq/lifekit-stack/commit/27c3f49e4a023662047b674122af87fbd0526dd8))
+* **host:** restart GitHub Actions runner units on failure ([#265](https://github.com/lifekit-hq/lifekit-stack/issues/265)) ([6380715](https://github.com/lifekit-hq/lifekit-stack/commit/6380715adc3a03d779c2574fe22d5c7967609ff6))
+* **observability:** replace per-group memory alerts with one host pressure alert ([#261](https://github.com/lifekit-hq/lifekit-stack/issues/261)) ([1cb1629](https://github.com/lifekit-hq/lifekit-stack/commit/1cb1629e2b02a8ae52659ea8ad74973a92299f5a))
+* **quota-gauge:** skip reset series when a window's resetsAt is null ([#278](https://github.com/lifekit-hq/lifekit-stack/issues/278)) ([81ee793](https://github.com/lifekit-hq/lifekit-stack/commit/81ee7939981af8862abf8de3f1b9fd384a37b2b5))
+* **scripts:** carry the ledger-pulse checklist in payload.message ([#279](https://github.com/lifekit-hq/lifekit-stack/issues/279)) ([641f0f1](https://github.com/lifekit-hq/lifekit-stack/commit/641f0f10998d4e76da430c62f5ea307e61716eb0))
+
+
+### Performance
+
+* **openclaw:** slim the gateway image ([#258](https://github.com/lifekit-hq/lifekit-stack/issues/258)) ([fec480b](https://github.com/lifekit-hq/lifekit-stack/commit/fec480b621141146fb5fb5f3a808947f1e59e103))
+
+
+### Refactoring
+
+* **compose:** run OpenClaw as its own compose project ([#243](https://github.com/lifekit-hq/lifekit-stack/issues/243)) ([8716940](https://github.com/lifekit-hq/lifekit-stack/commit/87169400fc9f62122882f385d5297dc95e7b956f))
+
+
+### Documentation
+
+* **compose:** drop dangling postmortem pointer from policy comment ([#254](https://github.com/lifekit-hq/lifekit-stack/issues/254)) ([d0aa67f](https://github.com/lifekit-hq/lifekit-stack/commit/d0aa67f61e151a1e022f1a1472d22cdf72b76ee9))
+* correct stale host, swap and env-file references ([#255](https://github.com/lifekit-hq/lifekit-stack/issues/255)) ([45a56e1](https://github.com/lifekit-hq/lifekit-stack/commit/45a56e115dcdc547438ccb0083804384c0bba194))
+* **resource-budget:** list uptime-probe in the finance-sentry group ([#257](https://github.com/lifekit-hq/lifekit-stack/issues/257)) ([3c6d66c](https://github.com/lifekit-hq/lifekit-stack/commit/3c6d66ca89d82556777d5c2ab20c8472fa13e1af))
+* **resource-budget:** name cron and other system services outside the OS gauge ([#268](https://github.com/lifekit-hq/lifekit-stack/issues/268)) ([e817808](https://github.com/lifekit-hq/lifekit-stack/commit/e81780895e075f820309cdfbc72f4529bbd40767))
+* retire finance-sentry uptime probe from budget and docs ([#276](https://github.com/lifekit-hq/lifekit-stack/issues/276)) ([6f012dd](https://github.com/lifekit-hq/lifekit-stack/commit/6f012ddb328bfb7690163ba16abb81c0f0c5ea96))
+
 ## [0.1.4](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.3...v0.1.4) (2026-09-29)
 
 
