@@ -502,6 +502,8 @@ def test_set_sign_in_exp_branding_color_merge_and_undo(logto):
         "https://h/logo-dark.svg",
         "--favicon",
         "https://h/fav.ico",
+        "--dark-favicon",
+        "https://h/fav-dark.ico",
         "--primary-color",
         "#112233",
         "--dark-mode",
@@ -513,6 +515,7 @@ def test_set_sign_in_exp_branding_color_merge_and_undo(logto):
         "logoUrl": "https://h/logo.svg",
         "darkLogoUrl": "https://h/logo-dark.svg",
         "favicon": "https://h/fav.ico",
+        "darkFavicon": "https://h/fav-dark.ico",
     }
     # color is replaced whole by PATCH: unasked leaves must survive the merge
     assert fake["color"] == {
@@ -526,6 +529,7 @@ def test_set_sign_in_exp_branding_color_merge_and_undo(logto):
         "logoUrl": "https://old/logo.png",
         "darkLogoUrl": None,
         "favicon": None,
+        "darkFavicon": None,
     }
     assert entry["before"]["color"] == {
         "primaryColor": "#6139F6",
@@ -535,10 +539,43 @@ def test_set_sign_in_exp_branding_color_merge_and_undo(logto):
     assert fake == original
 
 
+def test_set_sign_in_exp_accepts_svg_data_uri_and_undoes(logto):
+    fake = logto.fake.sign_in_exp
+    original = json.loads(json.dumps(fake))
+    uri = "data:image/svg+xml;base64," + base64.b64encode(b"<svg/>").decode()
+    proc = logto(
+        "set-sign-in-exp",
+        "--logo-url",
+        uri,
+        "--dark-logo-url",
+        uri,
+        "--favicon",
+        uri,
+        "--dark-favicon",
+        uri,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert fake["branding"] == {
+        "logoUrl": uri,
+        "darkLogoUrl": uri,
+        "favicon": uri,
+        "darkFavicon": uri,
+    }
+    assert logto("undo").returncode == 0
+    assert fake == original
+
+
 def test_set_sign_in_exp_rejects_bad_input(logto):
     assert logto("set-sign-in-exp").returncode != 0
     assert logto("set-sign-in-exp", "--primary-color", "red").returncode == 2
     assert logto("set-sign-in-exp", "--logo-url", "javascript:x").returncode == 2
+    for bad in (
+        "data:text/html;base64,PHNjcmlwdD4=",
+        "data:image/svg+xml,<svg/>",
+        "data:image/png;base64,iVBORw0KGgo=",
+        "data:image/svg+xml;base64,not base64!",
+    ):
+        assert logto("set-sign-in-exp", "--dark-favicon", bad).returncode == 2
     assert logto("set-sign-in-exp", "--sign-in-identifiers", "fax").returncode == 2
     assert not [r for r in logto.fake.requests if r[0] == "PATCH"]
 

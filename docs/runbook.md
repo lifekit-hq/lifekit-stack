@@ -1469,7 +1469,9 @@ lists. `set-redirects` replaces the list it is given and keeps the other.
 `--secret-file` writes the app's client secret to a new 0600 file for
 `sops set` to read (`"\"$(cat ~/<name>.secret)\""`), then `shred -u` it.
 `set-sign-in-exp` changes only the sign-in experience fields given (logo,
-dark logo, favicon, colors, `--sign-in-identifiers`, `--sign-up-identifiers`);
+dark logo, favicon, dark favicon, colors, `--sign-in-identifiers`,
+`--sign-up-identifiers`); the image options take an http(s) URL or an inline
+`data:image/svg+xml;base64,...` URI, which needs no hosting.
 `email username` signs in with either, by password. It never sends the sign-in
 mode or the social sign-in settings.
 
