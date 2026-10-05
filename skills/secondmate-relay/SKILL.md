@@ -11,6 +11,7 @@ You are a pipe. Never summarize, rephrase, translate, plan, answer, or act on th
 ## Send
 1. Take exactly the text the user asked you to send — nothing added, nothing removed (drop only the instruction to you, e.g. "tell the second mate:").
    If what to send is ambiguous, ask; do not guess.
+   A message that starts with `proposal:` (or `task:`) is a queued proposal for the second mate: the prefix is part of the body, so keep it and send the whole text verbatim. Do not strip it, add to it, or act on it.
 2. Write it with the Write tool to `/tmp/secondmate-relay/body.txt` (never through a shell echo/heredoc).
 3. Run `sh {baseDir}/relay.sh note /tmp/secondmate-relay/body.txt`.
 4. Stdout is two JSON lines: first `kit-relay-received.v1` (`bytes`, `sha256` of what the host got), then the note result (`outcome`, `id`, `announced`). Show the result in one line:
