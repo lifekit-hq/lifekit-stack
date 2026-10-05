@@ -118,11 +118,12 @@ def test_file_recipients_match_sops_yaml(boundary):
 
 
 def test_sops_yaml_boundaries():
-    """Strict two-key invariant (docs/secrets.md, "Two files, two keys"):
-    the master file has the captain recipient alone, and the gateway file
-    has the captain plus exactly one gateway-only identity, so the captain
-    can always edit either file and a compromised gateway never reaches the
-    master boundary.
+    """Strict operator-set invariant (docs/secrets.md, "Two files, two keys"):
+    the master file's recipients are exactly the operator set {captain,
+    firstmate}; the gateway file has that same operator set plus exactly one
+    gateway-only identity, which is never a master recipient. So either
+    operator can always edit either file, and a compromised gateway never
+    reaches the master boundary.
     """
     rules = sops_rules()
     assert set(rules) == {
@@ -132,11 +133,16 @@ def test_sops_yaml_boundaries():
     assert all(
         AGE_RE.match(a) for ages in rules.values() for a in ages
     ), "recipients must be age public keys"
-    assert len(rules["master"]) == 1, "the master file is the captain's alone"
-    assert len(rules["gateway"]) == 2, "gateway: captain + gateway, nothing else"
+    operators = rules["master"]
+    assert len(operators) == 2, "master: captain + firstmate, nothing else"
     assert (
-        rules["master"] < rules["gateway"]
-    ), "the captain must be able to edit the gateway file, with one gateway-only identity beside it"
+        operators < rules["gateway"]
+    ), "both operators must be able to edit the gateway file"
+    # master is exactly the operators, so whatever else the gateway file has
+    # is gateway-only by construction: never a master recipient
+    assert (
+        len(rules["gateway"] - operators) == 1
+    ), "gateway: the operators + one gateway-only identity, nothing else"
 
 
 @pytest.mark.parametrize("boundary", list(FILES))

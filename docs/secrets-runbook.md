@@ -12,7 +12,7 @@ admin account also has its own), `age-keygen` for minting keys, `git`.
 ## The four moves
 
 ```bash
-# 1. edit a value in place (captain key; nothing plaintext touches disk)
+# 1. edit a value in place (an operator key; nothing plaintext touches disk)
 scripts/secrets/edit.sh master        # or: gateway
 .venv/bin/python -m pytest -q scripts/tests/test_secrets.py
 git commit -am "chore(secrets): rotate <NAME>"     # then PR, CI green, merge
@@ -23,9 +23,20 @@ sudo bash scripts/secrets/render-stack-env.sh      # -> /srv/lifekit-secrets/sta
 # 3. redeploy (recreates the services whose env changed, reloads gateway refs)
 gh workflow run ci.yml --ref main                  # or on the box: bash scripts/deploy.sh
 
-# 4. re-key a file after a recipient change in .sops.yaml (captain key)
+# 4. re-key a file after a recipient change in .sops.yaml (an operator key)
 sops updatekeys secrets/lifekit-gateway.env.sops   # or lifekit.env.sops
 ```
+
+Which operator key a move uses is `SOPS_AGE_KEY_FILE`; unset, every move
+uses the captain's `~/.config/sops/age/keys.txt`. Firstmate runs the same
+moves with its own key and never the captain's:
+
+| Move | With the firstmate key |
+| --- | --- |
+| 1. edit | `SOPS_AGE_KEY_FILE=~/.config/sops/age/firstmate.agekey scripts/secrets/edit.sh master` (`edit.sh` honours the variable); a single value: the same variable on `sops set` |
+| 2. render | `sudo SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/firstmate.agekey" bash scripts/secrets/render-stack-env.sh` (the script takes the variable before its `SUDO_USER` default) |
+| 3. redeploy | no key: the deploy reads the rendered env and the gateway key |
+| 4. re-key | `SOPS_AGE_KEY_FILE=~/.config/sops/age/firstmate.agekey sops updatekeys -y secrets/<file>`; it only works once firstmate is already a recipient of that file, so adding firstmate as a recipient takes the captain key |
 
 ## Rotation, one sequence per class
 
@@ -45,6 +56,7 @@ sops updatekeys secrets/lifekit-gateway.env.sops   # or lifekit.env.sops
 | **db-password** | `LOGTO_DB_PASSWORD` | the env value sets the password on the first boot of an empty volume only, so change the role first: `openssl rand -hex 32`, then `docker exec identity-postgres-1 psql -U logto -d logto -c "ALTER ROLE logto PASSWORD '<new>'"`, then the same value with `edit.sh master`, merge, render, redeploy (recreates logto with the new `DB_URL`; it cannot open new connections in between). Verify: the deploy's identity step turns healthy. |
 | **parked** | `PARKED_BINANCE_API_KEY`, `PARKED_BINANCE_API_SECRET` | captain's call: rotate at Binance, `edit.sh master`. When a consumer appears, drop the prefix and move the row; if none by 2026-12-31, delete both. |
 | **gateway age key** | `/srv/lifekit-secrets/gateway/lifekit-gateway.agekey` | `sudo mv` the old key aside, `sudo bash scripts/secrets/init-gateway-key.sh` (prints the new recipient), replace the recipient in `.sops.yaml`, `sops updatekeys secrets/lifekit-gateway.env.sops`, merge (the deploy's dry run proves the new key opens the file), copy the new private key to KeePassXC, delete the old one. Yearly review: first 2027-09-19. |
+| **firstmate age key** | `~/.config/sops/age/firstmate.agekey` (admin account, 0600) | On compromise or loss, or yearly with the gateway key review. `age-keygen -o firstmate.agekey.new` (0600, the key straight to file, never printed; it prints the new recipient), replace the firstmate recipient in both rules of `.sops.yaml`, `sops updatekeys -y` both files with a key that is still a recipient (the old firstmate key, or the captain's), merge, then move the new file into place and delete the old one. On compromise also rotate each file's data key (`sops -r -i secrets/<file>`) and treat every value the old key could open as seen. Revoking firstmate outright is the same, removing its recipient instead of replacing it. finance-sentry's `docker/.env.sops` and `~/.config/firstmate/logto-m2m.env.sops` are encrypted to it too: re-key them in the same window. No offline copy: a lost key is re-minted and re-keyed with the captain key. |
 | **captain age key** | `~/.config/sops/age/keys.txt` | `age-keygen -o keys.new`, add its recipient to both rules in `.sops.yaml`, `sops updatekeys` both files with the OLD key still present, merge, install the new key file (0600) and KeePassXC, then drop the old recipient with a second `updatekeys` and merge. finance-sentry's `docker/.env.sops` uses the same identity: re-key it in the same window. |
 
 Rotation on migration (all telegram-bot and mcp-bearer rows marked "at

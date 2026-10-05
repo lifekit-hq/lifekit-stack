@@ -16,15 +16,24 @@ a second person appears, not before.
 
 | File | Boundary | Recipients | Who decrypts | Holds |
 | --- | --- | --- | --- | --- |
-| `secrets/lifekit.env.sops` | **master** | captain | the captain (`~/.config/sops/age/keys.txt` on the admin account, offline copy in KeePassXC), and the box only during bootstrap or a render, through that same key | every compose-interpolated secret and setting; parked secrets |
-| `secrets/lifekit-gateway.env.sops` | **gateway** | captain + gateway | the OpenClaw gateway's exec resolver, with `/srv/lifekit-secrets/gateway/lifekit-gateway.agekey` (lifekit, 0400); the captain, to edit | only what OpenClaw resolves through a SecretRef and nothing else uses |
+| `secrets/lifekit.env.sops` | **master** | captain + firstmate | the two operators: the captain (`~/.config/sops/age/keys.txt` on the admin account, offline copy in KeePassXC) and firstmate, the operator's agent (`~/.config/sops/age/firstmate.agekey` on the admin account, passed as `SOPS_AGE_KEY_FILE`); the box only during bootstrap or a render, through one of those keys | every compose-interpolated secret and setting; parked secrets |
+| `secrets/lifekit-gateway.env.sops` | **gateway** | captain + firstmate + gateway | the OpenClaw gateway's exec resolver, with `/srv/lifekit-secrets/gateway/lifekit-gateway.agekey` (lifekit, 0400); either operator, to edit | only what OpenClaw resolves through a SecretRef and nothing else uses |
 
 Least privilege is structural, not procedural: the gateway key is a
 recipient of the gateway file only, so a compromised gateway (or an
 exec-capable agent inside it, which runs as the same uid and can read what
 the gateway reads) reaches five bot tokens the gateway holds in memory
-anyway, and nothing from the master file. The master key never sits on a
-service account.
+anyway, and nothing from the master file. The operator keys never sit on
+a service account.
+
+The operator set is {captain, firstmate}: both are recipients of both
+files, and the gateway key is the one identity that is in the gateway file
+and never in master (`test_sops_yaml_boundaries` holds this). Firstmate's
+key exists so it runs operator steps (`edit.sh`, `sops set`, the render)
+with its own identity and never borrows the captain's; it is revoked on its
+own (secrets runbook, "firstmate age key"). Both keys sit on the admin
+account, so this separates identities, not readers: that uid can already
+read the rendered env.
 
 Both files are dotenv: key names are plaintext, values are encrypted, and
 git history is the change log (one rotation, one commit). Recipients are in
@@ -174,7 +183,8 @@ file appears in one of the two inventory tables.
 
 | Credential | Why not | Recovery |
 | --- | --- | --- |
-| The two age private keys | they are the roots; the captain key is on the admin account and in KeePassXC, the gateway key is minted per box (`scripts/secrets/init-gateway-key.sh`) and also copied to KeePassXC | KeePassXC |
+| The age private keys | they are the roots; the captain key is on the admin account and in KeePassXC, the gateway key is minted per box (`scripts/secrets/init-gateway-key.sh`) and also copied to KeePassXC, the firstmate key is minted on the admin account and has no offline copy | KeePassXC; a lost firstmate key is re-minted and re-keyed with the captain key |
+| Firstmate's Logto Management API client (`~/.config/firstmate/logto-m2m.env.sops` on the admin account) | operator tooling, not a stack consumer: a SOPS dotenv encrypted to firstmate + captain, kept out of every git repo. Logto already stores each app secret in its own database (and the nightly identity dump), so the file adds no reader | delete the M2M app in Logto (every token stops), create a new one |
 | Claude Code refreshing login (`/home/lifekit/.claude`), the Codex OAuth profile, the Google Workspace MCP refresh token | OAuth refresh material rotates on use; OpenClaw excludes OAuth profiles from SecretRefs | interactive login; `scripts/google-mcp-bootstrap.sh` |
 | Tailscale node state and auth keys | node identity is per machine; a stored auth key is a standing join credential. Key expiry for `lifekit-vps` is disabled in the admin console instead. | single-use key at rebuild |
 | GitHub Actions runner registrations | re-mintable, per registration | fresh registration token |
