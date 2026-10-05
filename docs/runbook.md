@@ -1655,9 +1655,9 @@ API](#logto-admin-through-the-management-api), or the admin console):
      '["EDGE_COOKIE_SECRET"]' "\"$(openssl rand -hex 16)\""
    ```
 
-   Commit the file through a PR that also moves the two secrets' rows in
-   `docs/secrets.md` from the settings table up into the master inventory.
-   After merge, render, then redeploy (CI `workflow_dispatch`, or
+   Commit the file through a PR; the three secrets' rows are already in the
+   master inventory of `docs/secrets.md` (the inventory test requires a row
+   for every secret in the file). After merge, render, then redeploy (CI `workflow_dispatch`, or
    `scripts/deploy.sh` as the deploy account):
 
    ```bash

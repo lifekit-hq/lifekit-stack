@@ -111,6 +111,9 @@ this inventory sets it.
 | `PARKED_BINANCE_API_SECRET` | master | parked | none; pair of the key above | captain (Binance) | captain's call | not recorded | `secrets/lifekit.env.sops` |
 | `LIFEKIT_EXTERNAL_HEARTBEAT_URL` | master | heartbeat-url | grafana (compose env `HEARTBEAT_URL`; external dead-man heartbeat ping, provisions/deletes the watchdog rule, `docs/runbook.md` "External heartbeat"), `scripts/deploy.sh` (reads it to log enabled/disabled). The URL itself is the credential: anyone who has it can ping (and so silence) the watchdog. | captain | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit.env.sops` |
 | `LOGTO_DB_PASSWORD` | master | db-password | identity `postgres` (`POSTGRES_PASSWORD`, set on the first boot of an empty volume only) and `logto` (`DB_URL`), compose project `identity`; `scripts/deploy.sh` brings the project up only when it is set. A change after first boot also needs `ALTER ROLE logto PASSWORD ...` inside the database (`docs/runbook.md` "Identity provider (Logto)"). | captain (`openssl rand -hex 32`) | on exposure | not recorded | `secrets/lifekit.env.sops` |
+| `GRAFANA_OIDC_CLIENT_SECRET` | master | oauth-client | grafana (`GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET`), the Logto application `Grafana`. | captain (Logto, `logto-admin.py`) | on exposure | 2026-10-05 (created) | `secrets/lifekit.env.sops` |
+| `EDGE_OIDC_CLIENT_SECRET` | master | oauth-client | edge `oauth2-proxy` (`OAUTH2_PROXY_CLIENT_SECRET`), the Logto application `lifekit sign-in gate`. | captain (Logto, `logto-admin.py`) | on exposure | 2026-10-05 (created) | `secrets/lifekit.env.sops` |
+| `EDGE_COOKIE_SECRET` | master | cookie-secret | edge `oauth2-proxy` (`OAUTH2_PROXY_COOKIE_SECRET`): encrypts and signs the sign-in gate's session cookie. | captain (`openssl rand -hex 16`) | on exposure; a change signs everyone out | 2026-10-05 (created) | `secrets/lifekit.env.sops` |
 
 ## Inventory: settings carried in the master file
 
@@ -149,10 +152,7 @@ file appears in one of the two inventory tables.
 | `GRAFANA_OIDC_ENABLED` | master | setting | `true` turns on Grafana's sign-in through Logto; unset is off |
 | `GRAFANA_OIDC_ONLY` | master | setting | `true` hides Grafana's password form (needs the three around it); unset is off |
 | `GRAFANA_OIDC_CLIENT_ID` | master | setting | client id of the Logto application for Grafana |
-| `GRAFANA_OIDC_CLIENT_SECRET` | master | setting | **a secret**: that application's client secret (grafana, `GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET`). Listed here, not in the table above, because the inventory test requires every secret row to be in the file and the captain adds this one only when enabling sign-in; move the row up with its rotation columns then (`sops set`, never in clear) |
 | `EDGE_OIDC_CLIENT_ID` | master | setting | client id of the Logto application for the tailnet sign-in gate (edge `oauth2-proxy`); `scripts/deploy.sh` brings compose project `edge` up only when all three `EDGE_*` are set |
-| `EDGE_OIDC_CLIENT_SECRET` | master | setting | **a secret**: that application's client secret (edge `oauth2-proxy`, `OAUTH2_PROXY_CLIENT_SECRET`). Listed here for the same reason as `GRAFANA_OIDC_CLIENT_SECRET`: the captain adds it only when enabling the gate; move the row up with its rotation columns then (class oauth-client) |
-| `EDGE_COOKIE_SECRET` | master | setting | **a secret**: encrypts and signs the sign-in gate's session cookie (edge `oauth2-proxy`, `OAUTH2_PROXY_COOKIE_SECRET`; `openssl rand -hex 16`). Same reason; move it up as class cookie-secret when added |
 | `GRAFANA_PORT` | master | setting | loopback port |
 | `PROMETHEUS_PORT` | master | setting | loopback port |
 | `LOKI_PORT` | master | setting | loopback port |
