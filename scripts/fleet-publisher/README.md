@@ -29,7 +29,8 @@ fleet home is only ever read (files, `fm-captain-hold.sh binding`,
 - **`report_url`**: landed items whose `report_path` is a regular `.md` file under
   `DATA_DIR`, free of credential patterns and at most 2 MiB, are copied to
   `OUT_DIR/reports/<id>/report.md`; the url is `REPORT_URL_BASE/<id>/report.md`
-  (default base `reports`, relative to the published summary). The dashboard serves
-  `OUT_DIR/reports/`. Reports that fail a check are skipped, never linked. Files are
+  (default base `reports`). The url is relative to the published summary and the
+  dashboard resolves it; the route serving `OUT_DIR/reports/` is the dashboard's.
+  Reports that fail a check are skipped, never linked. Files are
   replaced one rename at a time, so a report the previous summary linked is never
   briefly absent.
