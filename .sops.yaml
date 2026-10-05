@@ -29,9 +29,10 @@
 # secrets/lifekit-gateway.env.sops  gateway  captain + firstmate + gateway
 #
 # Editing: scripts/secrets/edit.sh <master|gateway>. Re-keying after a
-# recipient change: sops updatekeys -y --input-type dotenv secrets/<file>
-# (sops infers json from the .sops extension otherwise), run with a key
-# that is already a recipient (docs/secrets-runbook.md).
+# recipient change: move 4 of docs/secrets-runbook.md, run with a key that
+# is already a recipient. sops 3.9.1's updatekeys ignores --input-type and
+# parses a .sops name as JSON, so it re-keys a .env-named copy under a
+# temporary --config with this rule's recipients, then copies it back.
 creation_rules:
   - path_regex: secrets/lifekit\.env\.sops$
     age: >-

@@ -114,7 +114,7 @@ def test_file_recipients_match_sops_yaml(boundary):
     _, meta = parse_sops_dotenv(require(boundary))
     assert (
         recipients_of(meta) == sops_rules()[boundary]
-    ), f"{boundary}: re-key with sops updatekeys -y --input-type dotenv"
+    ), f"{boundary}: re-key it (docs/secrets-runbook.md, move 4)"
 
 
 def test_sops_yaml_boundaries():
