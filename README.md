@@ -58,7 +58,7 @@ Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded lo
 
 ## Identity services
 
-[`compose/identity/docker-compose.yml`](./compose/identity/docker-compose.yml) is compose project `identity`: the org identity provider every app on the box signs in through. Tailscale Serve publishes both ports on the host's tailnet name over HTTPS, tailnet-only. `deploy.sh` brings the project up once `LOGTO_DB_PASSWORD` is in the env file. `docs/runbook.md` "Identity provider (Logto)" covers the Serve ports, first boot, clients and backup. Logto and its on-box OIDC clients (Grafana first) share the external `identity-oidc` network, which `deploy.sh` creates; `lifekit-shared` stays off Logto.
+[`compose/identity/docker-compose.yml`](./compose/identity/docker-compose.yml) is compose project `identity`: the org identity provider every app on the box signs in through. Tailscale Serve publishes both ports on the host's tailnet name over HTTPS, tailnet-only. `deploy.sh` brings the project up once `LOGTO_DB_PASSWORD` is in the env file. `docs/runbook.md` "Identity provider (Logto)" covers the Serve ports, first boot, clients and backup; "Logto admin through the Management API" covers the scripted admin steps (`scripts/identity/`). Logto and its on-box OIDC clients (Grafana first) share the external `identity-oidc` network, which `deploy.sh` creates; `lifekit-shared` stays off Logto.
 
 | Service | Image | Role |
 | --- | --- | --- |

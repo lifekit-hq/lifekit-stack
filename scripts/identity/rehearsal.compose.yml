@@ -1,0 +1,88 @@
+# Throwaway Logto for scripts/identity/rehearse-logto-admin.sh: the same
+# images and start-up as compose/identity/docker-compose.yml, as its own
+# compose project with its own database volume. It joins no external network
+# (never identity-oidc) and binds loopback ports away from the live 3001/3002.
+# The rehearsal script sets every variable below and tears the project down,
+# volume included, on exit.
+---
+services:
+
+  logto:
+    image: ${REHEARSAL_LOGTO_IMAGE:?}
+    labels:
+      lifekit.contract: "none"  # throwaway rehearsal, never deployed (scripts/platform-contract.py)
+    user: "1000:1000"
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        set -e;
+        version=$$(node -p "require('./packages/core/package.json').version");
+        node_modules/.bin/logto db seed --swe;
+        node_modules/.bin/logto db alteration deploy "$$version";
+        cd packages/core;
+        NODE_ENV=production exec node .
+    environment:
+      DB_URL: postgres://logto:${REHEARSAL_DB_PASSWORD:?}@postgres:5432/logto
+      # An https issuer reached over loopback http, as in production.
+      ENDPOINT: https://logto-rehearsal.invalid:${REHEARSAL_PORT:?}
+      ADMIN_ENDPOINT: https://logto-rehearsal.invalid:${REHEARSAL_ADMIN_PORT:?}
+      TRUST_PROXY_HEADER: "1"
+    ports:
+      - "127.0.0.1:${REHEARSAL_PORT:?}:3001"
+      - "127.0.0.1:${REHEARSAL_ADMIN_PORT:?}:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/api/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 90s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /etc/logto/packages/cli/alteration-scripts:uid=1000,gid=1000,mode=0755
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          pids: 256
+
+  postgres:
+    image: ${REHEARSAL_POSTGRES_IMAGE:?}
+    labels:
+      lifekit.contract: "none"  # throwaway rehearsal, never deployed (scripts/platform-contract.py)
+    user: "70:70"
+    environment:
+      POSTGRES_USER: logto
+      POSTGRES_PASSWORD: ${REHEARSAL_DB_PASSWORD:?}
+      POSTGRES_DB: logto
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "logto", "-d", "logto"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    shm_size: 64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          pids: 256
+
+volumes:
+  postgres_data:
