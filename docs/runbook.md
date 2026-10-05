@@ -402,7 +402,7 @@ rebuilt one.
    - "Cadence": delete the `ledger-scan` `dry_run` bullet and the
      "Silence-check" bullet (the pulse checklist owns the quiet-week digest).
      Reword the first bullet to "Event-driven only. No polling scan, no daily
-     digest, no morning brief. The pulse (`ledger-pulse` scratch) carries
+     digest, no morning brief. The pulse (`ledger-pulse` message) carries
      the digest and the quiet-week check." and the THESIS BREAK bullet to
      "always notify - bypasses every silence rule." Keep the Delivery bullet.
 
