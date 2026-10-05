@@ -11,6 +11,11 @@ command is idempotent: it reads first and changes only what differs.
     logto-admin.py ensure-app NAME [--redirect-uri URI]... [--post-logout-uri URI]...
                               [--secret-file PATH]
     logto-admin.py set-redirects APP [--redirect-uri URI]... [--post-logout-uri URI]...
+    logto-admin.py set-sign-in-exp [--logo-url URL] [--dark-logo-url URL] [--favicon URL]
+                              [--primary-color HEX] [--dark-primary-color HEX]
+                              [--dark-mode | --no-dark-mode]
+                              [--sign-in-identifiers {email,phone,username}...]
+                              [--sign-up-identifiers {email,phone,username,none}...]
     logto-admin.py ledger
     logto-admin.py undo [N]
 
@@ -20,7 +25,12 @@ Traditional web app; given URIs, it also brings an existing app's URIs to
 exactly those. set-redirects replaces the given list and keeps the other one
 (pass both to set both). --secret-file writes the app's default client
 secret to a new 0600 file (never over an existing one), for `sops set` to
-read; nothing prints a secret.
+read; nothing prints a secret. set-sign-in-exp changes only the sign-in
+experience fields it is given (PATCH /api/sign-in-exp; signInMode and the
+social sign-in settings are never sent). --sign-in-identifiers email username
+lets users sign in with either one: each is password verification, password
+primary, no verification code. Logto replaces a PATCHed object whole, so the
+current color, branding, signIn and signUp are read first and merged.
 
 Credentials come from the environment, never argv:
   LOGTO_M2M_APP_ID, LOGTO_M2M_APP_SECRET  the M2M app (scripts/identity/logto-m2m-bootstrap.sh)
@@ -43,6 +53,7 @@ import base64
 import datetime
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -369,6 +380,94 @@ def cmd_set_redirects(api: Api, ledger: Ledger, args) -> None:
     patch_redirects(api, ledger, app, args.redirect_uri, args.post_logout_uri)
 
 
+HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+IDENTIFIERS = ("email", "phone", "username")
+
+
+def hex_color(value: str) -> str:
+    if not HEX_COLOR.match(value):
+        raise argparse.ArgumentTypeError(f"{value!r} is not a #rgb or #rrggbb color")
+    return value
+
+
+def http_url(value: str) -> str:
+    parts = urllib.parse.urlsplit(value)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an http(s) URL")
+    return value
+
+
+def sign_in_methods(identifiers: list[str]) -> list[dict]:
+    return [
+        {
+            "identifier": i,
+            "password": True,
+            "verificationCode": False,
+            "isPasswordPrimary": True,
+        }
+        for i in dict.fromkeys(identifiers)
+    ]
+
+
+def cmd_set_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
+    # (top-level key, leaf key, wanted value); a None value means "not asked for".
+    wanted = [
+        ("branding", "logoUrl", args.logo_url),
+        ("branding", "darkLogoUrl", args.dark_logo_url),
+        ("branding", "favicon", args.favicon),
+        ("color", "primaryColor", args.primary_color),
+        ("color", "isDarkModeEnabled", args.dark_mode),
+        ("color", "darkPrimaryColor", args.dark_primary_color),
+        (
+            "signIn",
+            "methods",
+            None
+            if args.sign_in_identifiers is None
+            else sign_in_methods(args.sign_in_identifiers),
+        ),
+        (
+            "signUp",
+            "identifiers",
+            None
+            if args.sign_up_identifiers is None
+            else [i for i in dict.fromkeys(args.sign_up_identifiers) if i != "none"],
+        ),
+    ]
+    wanted = [w for w in wanted if w[2] is not None]
+    if not wanted:
+        raise SystemExit("set-sign-in-exp: pass at least one field to set")
+    _, _, current = api.call("GET", "/api/sign-in-exp")
+    if not isinstance(current, dict):
+        raise AdminError("GET /api/sign-in-exp: expected an object")
+    before: dict[str, dict] = {}
+    after: dict[str, dict] = {}
+    for top, leaf, value in wanted:
+        cur = current.get(top) or {}
+        if cur.get(leaf) != value:
+            before.setdefault(top, {})[leaf] = cur.get(leaf)
+            after.setdefault(top, {})[leaf] = value
+    if not after:
+        say("sign-in experience: already set")
+        return
+    # PATCH replaces each top-level object, so send the current one with only
+    # the changed leaves swapped in; undo sends back the prior whole object.
+    body = {
+        top: {**(current.get(top) or {}), **leaves} for top, leaves in after.items()
+    }
+    prior = {top: current.get(top) or {} for top in after}
+    api.call("PATCH", "/api/sign-in-exp", body)
+    n = ledger.append(
+        {
+            "action": "set-sign-in-exp",
+            "before": before,
+            "after": after,
+            "undo": {"method": "PATCH", "path": "/api/sign-in-exp", "body": prior},
+        }
+    )
+    changed = ", ".join(f"{t}.{k}" for t, leaves in after.items() for k in leaves)
+    say(f"sign-in experience: set {changed}, ledger #{n}")
+
+
 def cmd_ledger(_api, ledger: Ledger, _args) -> None:
     for e in ledger.entries():
         say(json.dumps(e, sort_keys=True))
@@ -426,6 +525,27 @@ def parser() -> argparse.ArgumentParser:
         s.add_argument("--post-logout-uri", action="append", metavar="URI")
         if name == "ensure-app":
             s.add_argument("--secret-file", metavar="PATH")
+    x = sub.add_parser(
+        "set-sign-in-exp", help="set sign-in experience branding, color and methods"
+    )
+    x.add_argument("--logo-url", type=http_url, metavar="URL")
+    x.add_argument("--dark-logo-url", type=http_url, metavar="URL")
+    x.add_argument("--favicon", type=http_url, metavar="URL")
+    x.add_argument("--primary-color", type=hex_color, metavar="HEX")
+    x.add_argument("--dark-primary-color", type=hex_color, metavar="HEX")
+    x.add_argument("--dark-mode", action=argparse.BooleanOptionalAction, default=None)
+    x.add_argument(
+        "--sign-in-identifiers",
+        nargs="+",
+        choices=IDENTIFIERS,
+        help="password sign-in with each of these (e.g. email username)",
+    )
+    x.add_argument(
+        "--sign-up-identifiers",
+        nargs="+",
+        choices=(*IDENTIFIERS, "none"),
+        help="sign-up identifiers; 'none' empties the list",
+    )
     sub.add_parser("ledger", help="print the change ledger")
     u = sub.add_parser(
         "undo", help="reverse a ledger entry (default: the newest not undone)"
@@ -440,6 +560,7 @@ COMMANDS = {
     "assign-role": cmd_assign_role,
     "ensure-app": cmd_ensure_app,
     "set-redirects": cmd_set_redirects,
+    "set-sign-in-exp": cmd_set_sign_in_exp,
     "ledger": cmd_ledger,
     "undo": cmd_undo,
 }

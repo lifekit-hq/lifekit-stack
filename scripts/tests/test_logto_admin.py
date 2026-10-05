@@ -41,6 +41,29 @@ class FakeLogto:
         self.user_roles: dict[str, list[str]] = {}
         self.apps: list[dict] = []
         self.secrets: dict[str, list[dict]] = {}
+        self.sign_in_exp = {
+            "id": "default",
+            "color": {
+                "primaryColor": "#6139F6",
+                "isDarkModeEnabled": False,
+                "darkPrimaryColor": "#9F7AFF",
+            },
+            "branding": {"logoUrl": "https://old/logo.png"},
+            "signInMode": "SignInAndRegister",
+            "signIn": {
+                "methods": [
+                    {
+                        "identifier": "username",
+                        "password": True,
+                        "verificationCode": False,
+                        "isPasswordPrimary": True,
+                    }
+                ]
+            },
+            "signUp": {"identifiers": ["username"], "password": True, "verify": False},
+            "socialSignInConnectorTargets": ["google"],
+            "socialSignIn": {"automaticAccountLinking": False},
+        }
         self.requests: list[tuple[str, str, object]] = []
         self.seq = 0
 
@@ -103,6 +126,17 @@ def handler_for(fake: FakeLogto):
                 return self.reply(401, {"code": "auth.unauthorized", "message": "no"})
             data = json.loads(raw) if raw else None
             fake.requests.append((method, url.path, data))
+            if parts == ["api", "sign-in-exp"]:
+                if method == "GET":
+                    return self.reply(200, fake.sign_in_exp)
+                if method == "PATCH":
+                    bad = set(data) - {"color", "branding", "signIn", "signUp"}
+                    if bad:
+                        return self.reply(
+                            400, {"code": "guard.invalid_input", "message": str(bad)}
+                        )
+                    fake.sign_in_exp.update(data)
+                    return self.reply(200, fake.sign_in_exp)
             if parts[:2] == ["api", "roles"]:
                 if method == "GET":
                     return self.page(fake.roles, query)
@@ -427,6 +461,86 @@ def test_undo_reverses_newest_first(logto):
     again = logto("undo", "2")
     assert again.returncode == 0
     assert "already undone" in again.stdout
+
+
+SOCIAL_KEYS = ("signInMode", "socialSignInConnectorTargets", "socialSignIn")
+
+
+def test_set_sign_in_exp_email_and_username(logto):
+    fake = logto.fake.sign_in_exp
+    untouched = {k: json.loads(json.dumps(fake[k])) for k in SOCIAL_KEYS}
+    proc = logto(
+        "set-sign-in-exp",
+        "--sign-in-identifiers",
+        "email",
+        "username",
+        "--sign-up-identifiers",
+        "username",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert [m["identifier"] for m in fake["signIn"]["methods"]] == ["email", "username"]
+    assert all(
+        m["password"] and m["isPasswordPrimary"] and not m["verificationCode"]
+        for m in fake["signIn"]["methods"]
+    )
+    patch = [r for r in logto.fake.requests if r[0] == "PATCH"]
+    assert [set(r[2]) for r in patch] == [{"signIn"}]
+    assert {k: fake[k] for k in SOCIAL_KEYS} == untouched
+    again = logto("set-sign-in-exp", "--sign-in-identifiers", "email", "username")
+    assert "already set" in again.stdout
+    assert len([r for r in logto.fake.requests if r[0] == "PATCH"]) == 1
+
+
+def test_set_sign_in_exp_branding_color_merge_and_undo(logto):
+    fake = logto.fake.sign_in_exp
+    original = json.loads(json.dumps(fake))
+    proc = logto(
+        "set-sign-in-exp",
+        "--logo-url",
+        "https://h/logo.svg",
+        "--dark-logo-url",
+        "https://h/logo-dark.svg",
+        "--favicon",
+        "https://h/fav.ico",
+        "--primary-color",
+        "#112233",
+        "--dark-mode",
+        "--sign-up-identifiers",
+        "none",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert fake["branding"] == {
+        "logoUrl": "https://h/logo.svg",
+        "darkLogoUrl": "https://h/logo-dark.svg",
+        "favicon": "https://h/fav.ico",
+    }
+    # color is replaced whole by PATCH: unasked leaves must survive the merge
+    assert fake["color"] == {
+        "primaryColor": "#112233",
+        "isDarkModeEnabled": True,
+        "darkPrimaryColor": "#9F7AFF",
+    }
+    assert fake["signUp"] == {"identifiers": [], "password": True, "verify": False}
+    entry = ledger_entries(logto)[-1]
+    assert entry["before"]["branding"] == {
+        "logoUrl": "https://old/logo.png",
+        "darkLogoUrl": None,
+        "favicon": None,
+    }
+    assert entry["before"]["color"] == {
+        "primaryColor": "#6139F6",
+        "isDarkModeEnabled": False,
+    }
+    assert logto("undo").returncode == 0
+    assert fake == original
+
+
+def test_set_sign_in_exp_rejects_bad_input(logto):
+    assert logto("set-sign-in-exp").returncode != 0
+    assert logto("set-sign-in-exp", "--primary-color", "red").returncode == 2
+    assert logto("set-sign-in-exp", "--logo-url", "javascript:x").returncode == 2
+    assert logto("set-sign-in-exp", "--sign-in-identifiers", "fax").returncode == 2
+    assert not [r for r in logto.fake.requests if r[0] == "PATCH"]
 
 
 def test_ledger_needs_no_credentials(logto, tmp_path):
