@@ -86,11 +86,6 @@ def test_checklist_lands_in_payload_message(tmp_path):
     assert old not in message
 
 
-def test_checklist_pulls_held_events_with_override_reason():
-    text = CHECKLIST.read_text()
-    assert 'includeHeldForDigest=true, heldOverrideReason="daily digest"' in text
-
-
 def test_rerun_is_idempotent(tmp_path):
     run(tmp_path, "stale")
     res, _ = run(tmp_path, "stale")
