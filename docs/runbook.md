@@ -220,26 +220,27 @@ agent, and gives the finance agent a heartbeat:
   to the compose `environment` does change the service definition, so the
   deploy that first carries them recreates the gateway once in `up -d`.
 
-The pulse's checklist is not config. It is the scratch of the `ledger-pulse`
-cron row (the workspace `HEARTBEAT.md` is a no-op in 2026.9.4; see "The
-finance heartbeat, retired for an isolated cron job" below for why the pulse
-is a cron row and not the heartbeat lane), declared by
-`scripts/ensure-finance-pulse.sh` from `scripts/finance-pulse.md`, the same
-way `scripts/ensure-morning-brief.sh` declares its cron. Run it once on the
-host after the `ledger-pulse` row has been created on the gateway. Until then
-the scratch is empty and every run skips with no model call.
+The pulse's checklist is not config. It is the `payload.message` of the
+`ledger-pulse` cron row: an `agentTurn` run receives only that message (the
+per-job scratch, and the workspace `HEARTBEAT.md`, which is a no-op in
+2026.9.4, never reach it; see "The finance heartbeat, retired for an isolated
+cron job" below for why the pulse is a cron row and not the heartbeat lane).
+`scripts/ensure-finance-pulse.sh` declares it from `scripts/finance-pulse.md`,
+the same way `scripts/ensure-morning-brief.sh` declares its cron: the message
+is a short contract preamble (`NO_REPLY` or exactly one message) followed by
+the checklist verbatim. Run it on the host after the `ledger-pulse` row has
+been created on the gateway; it is idempotent and rewrites the message with
+`openclaw cron edit --message` only when it differs. The edit hot-reloads and
+restarts nothing.
 
-The pulse checklist does not hot-reload like the hook mapping does, and a
-plain re-run of `scripts/ensure-finance-pulse.sh` leaves a non-empty scratch
-that differs from the file untouched (its convergence rule). After the change
-that adds the `record_event_verdict` step to `scripts/finance-pulse.md` lands,
-the operator overwrites the live scratch once on the host with the replace
-form, after checking what the live scratch holds
-(`docker exec openclaw-openclaw-gateway-1 openclaw cron scratch <id>`) in case
-the agent rewrote it:
+A pulse whose message carries no checklist still runs the model (scratch does
+not gate an agentTurn run), but only calls the companion pull by chance - the
+failure mode of 2026-09-26 to 2026-10-05, when a checklist seeded into the
+scratch was never shown to the model and companion events went undelivered.
+After any change to `scripts/finance-pulse.md`, re-run the script on the host:
 
 ```bash
-FINANCE_PULSE_REPLACE=1 /srv/lifekit-stack/scripts/ensure-finance-pulse.sh
+/srv/lifekit-stack/scripts/ensure-finance-pulse.sh
 ```
 
 #### The finance heartbeat, retired for an isolated cron job (fs-685, 2026-09-26)
@@ -283,7 +284,7 @@ openclaw cron create --json <<JSON
   "sessionTarget": "isolated",
   "payload": {
     "kind": "agentTurn",
-    "message": "Periodic check-in for the Ledger finance agent pulse. There is no standing task list configured right now -- do not infer or repeat old tasks from prior chats. If nothing needs the operators attention, your entire final reply must be exactly NO_REPLY and nothing else. If something does need attention, send exactly one Telegram message covering it, then stop -- no additional messages, working notes, or recaps.",
+    "message": "placeholder - ensure-finance-pulse.sh replaces this with the preamble plus scripts/finance-pulse.md",
     "model": "anthropic/claude-sonnet-4-6",
     "timeoutSeconds": 180,
     "lightContext": true,
@@ -300,6 +301,9 @@ openclaw cron create --json <<JSON
 JSON
 '
 ```
+
+Right after creating the row, run `/srv/lifekit-stack/scripts/ensure-finance-pulse.sh`
+so the message carries the checklist (the placeholder above does not).
 
 **Verify** after creating or after any change to the row: trigger one run
 (`openclaw cron run <id> --expect-final --json`) and confirm the result's
