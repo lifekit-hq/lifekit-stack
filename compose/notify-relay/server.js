@@ -7,6 +7,10 @@
  *   TELEGRAM_BOT_TOKEN     — bot token (from @BotFather)
  *   LIFEKIT_TELEGRAM_CHAT  — chat id to send to
  *
+ * Optional env (decision links, docs/decision-contract.md):
+ *   NOTIFY_BOARD_BASE_URL      — origin of the review boards (…/session/<id>)
+ *   NOTIFY_DASHBOARD_BASE_URL  — origin of the dashboard (…/decisions/<id>)
+ *
  * No docker socket, no exec, no extra deps.
  */
 
@@ -33,7 +37,15 @@ if (!CHAT) {
   process.exit(1);
 }
 
-const app = createApp({ token: TOKEN, chat: CHAT, log });
+const app = createApp({
+  token: TOKEN,
+  chat: CHAT,
+  log,
+  links: {
+    boardBaseUrl: process.env.NOTIFY_BOARD_BASE_URL ?? "",
+    dashboardBaseUrl: process.env.NOTIFY_DASHBOARD_BASE_URL ?? "",
+  },
+});
 const server = createServer(app.requestListener);
 
 server.listen(PORT, "0.0.0.0", () => {
