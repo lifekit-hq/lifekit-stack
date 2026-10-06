@@ -15,7 +15,7 @@ name: OpenClaw bump rehearsal
 
 on:
   pull_request:
-    paths: ["compose/openclaw-gateway/Dockerfile"]
+    paths: ["compose/openclaw-gateway/Dockerfile", "scripts/rehearse-openclaw-bump.sh"]
   workflow_dispatch:
 
 permissions:

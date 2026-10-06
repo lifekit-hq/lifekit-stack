@@ -55,7 +55,12 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Not copied: browser/tools/logs are rebuildable, workspace and wiki are mounted
 # separately, backups and *.migrated.* are large with no migration value.
 # agents/ is deliberately included - the SQLite migrations happen there.
+# tmp/ and the cache dirs are the running gateway's scratch (plugin-build
+# captures with whole node_modules trees, created and deleted continuously):
+# nothing in them is state, copying them takes minutes, and files vanish
+# mid-copy. Any new scratch dir the gateway keeps under config goes here.
 EXCLUDES=('/browser/' '/tools/' '/logs/' '/workspace/' '/wiki/' '/backups/'
+  '/tmp/' '/.tmp/' '/cache/' '/.cache/'
   '/openclaw-config-*.tar.gz' '*.migrated.*')
 
 while (($#)); do
@@ -124,35 +129,56 @@ existing_ancestor() {
 
 sources_kb() {
   local args=() e
-  for e in "${EXCLUDES[@]}"; do args+=("--exclude=${e#/}"); done
+  # du matches basenames and a trailing slash defeats the match, so strip both
+  # (rsync needs them); an excluded name nested deeper is skipped here too,
+  # which only under-counts a little against the 25 GiB headroom.
+  for e in "${EXCLUDES[@]}"; do e="${e#/}"; args+=("--exclude=${e%/}"); done
   du -sxk "${args[@]}" "$1" | awk '{print $1}'
 }
 
 check_headroom() {
-  local avail need kb ws
+  local avail need kb ws skipped e
   kb="$(sources_kb "${STATE}")"
   ws="$(du -sxk "${WORKSPACE}" | awk '{print $1}')"
   COPIED_KB=$((kb + ws))
   avail="$(df --output=avail -k "$(existing_ancestor "${DEST}")" | tail -n1 | tr -d ' ')"
   need=$((COPIED_KB + HEADROOM_KB))
+  skipped=0
+  for e in tmp .tmp cache .cache; do
+    [[ -d "${STATE}/${e}" ]] && skipped=$((skipped + $(du -sxk "${STATE}/${e}" 2>/dev/null | awk '{print $1}')))
+  done
+  say "skipping gateway scratch (tmp/cache): $((skipped / 1024)) MiB"
   say "copying $((COPIED_KB / 1024)) MiB; free $((avail / 1024)) MiB; need $((need / 1024)) MiB"
   if ((avail < need)); then
     die "not enough headroom: free $((avail / 1024)) MiB, need $((need / 1024)) MiB (copy + 25 GiB)"
   fi
 }
 
+# rsync from a live tree: exit 24 means files vanished between listing and
+# reading (the gateway deleted them). The rest of the copy is complete, so it
+# is a warning; any other non-zero exit still fails the run.
+rsync_live() {
+  local rc=0
+  rsync "$@" || rc=$?
+  if ((rc == 24)); then
+    say "warning: some source files vanished during the copy (rsync 24); continuing"
+    return 0
+  fi
+  return "${rc}"
+}
+
 copy_state() {
   local e ex=()
   for e in "${EXCLUDES[@]}"; do ex+=("--exclude=${e}"); done
   rm -rf "${DEST}/config" "${DEST}/workspace" "${DEST}/secret-key"
-  rsync -a "${ex[@]}" "${STATE}/" "${DEST}/config/"
-  rsync -a "${WORKSPACE}/" "${DEST}/workspace/"
+  rsync_live -a "${ex[@]}" "${STATE}/" "${DEST}/config/"
+  rsync_live -a "${WORKSPACE}/" "${DEST}/workspace/"
   # oc() bind-mounts into the copy at these excluded paths; a mount target
   # dockerd has to create is root-owned, and a green run's cleanup then
   # cannot remove it.
   mkdir -p "${DEST}/config/workspace" "${DEST}/config/wiki/main"
   if [[ -d "${SECRET_DIR}" ]]; then
-    rsync -a "${SECRET_DIR}/" "${DEST}/secret-key/"
+    rsync_live -a "${SECRET_DIR}/" "${DEST}/secret-key/"
   else
     mkdir -p "${DEST}/secret-key"
   fi
