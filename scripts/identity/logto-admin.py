@@ -16,9 +16,9 @@ command is idempotent: it reads first and changes only what differs.
                               [--primary-color HEX] [--dark-primary-color HEX]
                               [--dark-mode | --no-dark-mode]
                               [--sign-in-identifiers {email,phone,username}...]
-                              [--code-sign-in-identifiers {email,phone}...]
+                              [--code-sign-in-identifiers {email}...]
                               [--sign-up-identifiers {email,phone,username,none}...]
-    logto-admin.py set-email-connector --user ADDRESS [--host H] [--port N]
+    logto-admin.py set-email-connector --user ADDRESS
                               [--from-email ADDRESS] [--from-name NAME]
     logto-admin.py send-test-email ADDRESS
     logto-admin.py ledger
@@ -41,9 +41,8 @@ connector exists. The two lists together replace the whole methods list.
 Logto replaces a PATCHed object whole, so the current color, branding, signIn
 and signUp are read first and merged.
 
-set-email-connector creates or updates Logto's SMTP email connector (default
-smtp.gmail.com:465, TLS; any other port uses STARTTLS and refuses to send
-without it). The login is --user; the password is read from LOGTO_SMTP_PASSWORD
+set-email-connector creates or updates Logto's SMTP email connector (always
+smtp.gmail.com:465, TLS). The login is --user; the password is read from LOGTO_SMTP_PASSWORD
 (a Google app password: whitespace is dropped), never argv, and is never
 printed or written to the ledger. fromEmail defaults to --user, which is the
 address Gmail sends as. Logto allows one email connector. send-test-email
@@ -499,6 +498,8 @@ def cmd_set_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
 
 
 SMTP_CONNECTOR = "simple-mail-transfer-protocol"
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 465
 # (usageType, subject, text): Logto's SMTP connector requires the first four;
 # the rest cover every other flow that can send a code. {{code}} is Logto's.
 EMAIL_TEMPLATES = (
@@ -550,17 +551,14 @@ def smtp_config(args, password: str) -> dict:
     sender = args.from_email or args.user
     if args.from_name:
         sender = f"{args.from_name} <{sender}>"
-    secure = args.port == 465
     config = {
-        "host": args.host,
-        "port": args.port,
-        "secure": secure,
+        "host": os.environ.get("LOGTO_ADMIN_TEST_ONLY_SMTP_HOST", SMTP_HOST),
+        "port": SMTP_PORT,
+        "secure": True,
         "auth": {"type": "login", "user": args.user, "pass": password},
         "fromEmail": sender,
         "templates": email_templates(),
     }
-    if not secure:
-        config["requireTLS"] = True
     return config
 
 
@@ -600,8 +598,6 @@ def cmd_set_email_connector(api: Api, ledger: Ledger, args) -> None:
             {
                 "action": "create-email-connector",
                 "connector": {"id": created["id"], "connectorId": SMTP_CONNECTOR},
-                "host": args.host,
-                "port": args.port,
                 "undo": {
                     "method": "DELETE",
                     "path": f"/api/connectors/{created['id']}",
@@ -718,8 +714,8 @@ def parser() -> argparse.ArgumentParser:
     x.add_argument(
         "--code-sign-in-identifiers",
         nargs="+",
-        choices=("email", "phone"),
-        help="sign-in by emailed (or texted) code for each of these; needs the connector",
+        choices=("email",),
+        help="sign-in by emailed code for each of these; needs the connector",
     )
     x.add_argument(
         "--sign-up-identifiers",
@@ -732,8 +728,6 @@ def parser() -> argparse.ArgumentParser:
         help="create or update the SMTP email connector (password in LOGTO_SMTP_PASSWORD)",
     )
     e.add_argument("--user", required=True, help="SMTP login, e.g. the Gmail address")
-    e.add_argument("--host", default="smtp.gmail.com")
-    e.add_argument("--port", type=int, default=465)
     e.add_argument("--from-email", help="sender address (default: --user)")
     e.add_argument("--from-name", help="sender display name")
     t = sub.add_parser(

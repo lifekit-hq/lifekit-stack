@@ -182,7 +182,7 @@ expect_fail "ensure-app refuses a name held by a non-Traditional app" admin ensu
 echo "== email connector (SMTP host smtp.invalid: nothing leaves the throwaway)"
 smtp_password="abcdefghijklmnop"
 echo "${smtp_password}" >>"${WORK}/secrets.pat"
-smtp() { LOGTO_SMTP_PASSWORD="abcd efgh ijkl mnop" admin set-email-connector --user rehearsal@example.invalid --host smtp.invalid "$@"; }
+smtp() { LOGTO_ADMIN_TEST_ONLY_SMTP_HOST=smtp.invalid LOGTO_SMTP_PASSWORD="abcd efgh ijkl mnop" admin set-email-connector --user rehearsal@example.invalid "$@"; }
 expect_fail "email sign-in before the connector exists (Logto refuses)" admin set-sign-in-exp \
   --sign-in-identifiers email username --code-sign-in-identifiers email
 expect_fail "send-test-email with no connector" admin send-test-email owner@rehearsal.invalid

@@ -1430,8 +1430,7 @@ still starting fails.
 Members sign in with a code mailed to their address, sent through Logto's SMTP
 connector over `smtp.gmail.com`. Gmail needs no verified sending domain, which
 is why it is the first path; a domain and Resend replace it later (the
-connector is one object, `set-email-connector --host smtp.resend.com --user
-resend --from-email <address on the domain>` re-points it). Mail is only
+connector is one object, re-pointed then). Mail is only
 for members who already exist: the sign-in mode stays `SignIn`, so nobody
 registers by email.
 
@@ -1439,14 +1438,14 @@ registers by email.
 2-Step Verification on: *Security > 2-Step Verification > App passwords*,
 name it for this stack, copy the 16 letters (Google shows them in four groups;
 the spaces are dropped). Put it in the master file's reserved slot
-`LOGTO_SMTP_APP_PASSWORD` (the slot exists, empty):
+`PARKED_LOGTO_SMTP_APP_PASSWORD` (the slot exists, empty):
 
 ```bash
-scripts/secrets/edit.sh master    # fill LOGTO_SMTP_APP_PASSWORD, save
+scripts/secrets/edit.sh master    # fill PARKED_LOGTO_SMTP_APP_PASSWORD, save
 ```
 
-Merge that change; nothing needs a render or a redeploy, because no service
-interpolates it. Gmail sends as the account's own address (a different
+Merge that change; nothing needs a render or a redeploy: no service
+interpolates it, and the `PARKED_` prefix keeps the render from writing it out. Gmail sends as the account's own address (a different
 `--from-email` is rewritten unless it is a verified "Send mail as" alias of
 that account), and a Gmail account has a daily sending limit, plenty for
 sign-in codes.
@@ -1456,7 +1455,7 @@ sign-in codes.
 
 ```bash
 # 1. The connector, from the master file's slot:
-LOGTO_SMTP_PASSWORD="$(sops decrypt --extract '["LOGTO_SMTP_APP_PASSWORD"]' \
+LOGTO_SMTP_PASSWORD="$(sops decrypt --extract '["PARKED_LOGTO_SMTP_APP_PASSWORD"]' \
     --input-type dotenv --output-type dotenv secrets/lifekit.env.sops)" \
   sops exec-env <m2m>.sops 'python3 scripts/identity/logto-admin.py \
     set-email-connector --user <address> --from-name "<sender name>"'
@@ -1474,8 +1473,8 @@ Adjust step 3 to the methods in force: `--sign-in-identifiers` and
 in both means password or code for email). Logto refuses step 3 while no email
 connector exists. `set-email-connector` is idempotent and reports changed
 fields by name only; a changed password re-applies the same way, and it
-reports `already set` when nothing differs. Port 465 uses TLS; another port
-(587) uses STARTTLS and the connector then refuses to send without it.
+reports `already set` when nothing differs. The connector is always
+`smtp.gmail.com:465` over TLS.
 
 **Verify.** `send-test-email` succeeds and the message arrives (look in spam
 the first time); then sign in on the sign-in page with *Email address*,
@@ -1489,7 +1488,8 @@ update of an existing connector has no undo, because the previous config holds
 the previous password: run the command again with the old values.
 
 **Rehearsal.** `scripts/identity/rehearse-logto-admin.sh` runs this against a
-throwaway Logto with an unreachable SMTP host (`smtp.invalid`): connector
+throwaway Logto with an unreachable SMTP host (`smtp.invalid`, through the
+script's test-only `LOGTO_ADMIN_TEST_ONLY_SMTP_HOST`): connector
 create, update and no-op, Logto's refusal of email-code sign-in without a
 connector, the sign-in methods as stored, the test-send route, and the undo.
 A real send needs the real password, so it is the operator step above.

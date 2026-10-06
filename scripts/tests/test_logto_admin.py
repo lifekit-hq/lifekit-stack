@@ -716,10 +716,16 @@ def test_set_email_connector_updates_without_a_secret_in_the_ledger(logto):
     assert "zzzzzzzzzzzzzzzz" not in logto.ledger.read_text()
 
 
-def test_set_email_connector_starttls_port_requires_tls(logto):
-    assert smtp(logto, "--port", "587").returncode == 0
-    cfg = logto.fake.connectors[0]["config"]
-    assert (cfg["port"], cfg["secure"], cfg["requireTLS"]) == (587, False, True)
+def test_set_email_connector_takes_no_host_or_port(logto):
+    for flag, value in (("--host", "smtp.resend.com"), ("--port", "587")):
+        assert smtp(logto, flag, value).returncode == 2
+    assert not [r for r in logto.fake.requests if r[1] == "/api/connectors"]
+
+
+def test_code_sign_in_is_email_only(logto):
+    proc = logto("set-sign-in-exp", "--code-sign-in-identifiers", "phone")
+    assert proc.returncode == 2
+    assert not [r for r in logto.fake.requests if r[0] == "PATCH"]
 
 
 def test_set_email_connector_needs_a_password(logto):
