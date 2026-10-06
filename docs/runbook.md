@@ -87,7 +87,8 @@ live state. The copy skips the gateway's `tmp/` and cache dirs (plugin-build
 scratch that is deleted while it copies) and treats rsync exit 24 (files
 vanished mid-copy) as a warning; any other rsync failure is red. The full
 doctor logs stay in the copy, which a red run keeps (pruned after 7 days) and
-a green run removes. If a green run cannot remove everything, it prints a warning and keeps the verdict; delete the leftover copy by hand.
+a green run removes. If a green run cannot remove everything, it prints a
+warning and keeps the verdict; delete the leftover copy by hand.
 
 The lint verdict keys on each finding's `checkId`. Any warning or error is red
 except three rehearsal-only classes, which the script tolerates: MCP servers

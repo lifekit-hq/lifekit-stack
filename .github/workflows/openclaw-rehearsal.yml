@@ -1,13 +1,13 @@
 name: OpenClaw bump rehearsal
 
 # Fork policy: same-repo heads only, `pull_request` (never `pull_request_target`).
-# A fork PR touching the Dockerfile gets no rehearsal here - the check builds and
+# A fork PR touching the Dockerfile or the script gets no rehearsal here - the check builds and
 # runs PR-authored code against a copy of live state, which is only safe when the
 # branch already required push access to create. Fork bumps use the by-hand
 # `scripts/rehearse-openclaw-bump.sh` recipe instead.
 #
 # Not a required check: a paths-filtered required check would block every PR that
-# doesn't touch this path. Red fails this job but does not block the PR.
+# doesn't touch these paths. Red fails this job but does not block the PR.
 #
 # Privacy: the script keeps the full doctor log on the runner; only the class-only
 # summary it writes to stdout goes to the job's step summary. No artifact upload,
