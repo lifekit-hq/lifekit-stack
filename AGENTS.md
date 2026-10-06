@@ -97,7 +97,7 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
 - **No build gate in CI.** Docker images are not built per-PR (the runner is the 15.6 GiB production
   VPS); hadolint lints every Dockerfile on every PR, and the images build at deploy. The one
   exception is `.github/workflows/openclaw-rehearsal.yml`: path-gated to same-repo PRs touching
-  `compose/openclaw-gateway/Dockerfile`, non-required, and it builds and rehearses that image
+  `compose/openclaw-gateway/Dockerfile` or the rehearsal script, non-required, and it builds and rehearses that image
   against a copy of live state via `scripts/rehearse-openclaw-bump.sh`.
 - **CI runs on the VPS self-hosted runner** (deploy must; lint/tests follow it — the runner has no
   provisionable Python, hence the throwaway-venv pattern in `ci.yml`). The release workflows run

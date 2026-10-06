@@ -70,14 +70,17 @@ exit 0
 
 RSYNC_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$RSYNC_CALL_LOG"
-[ "${STUB_RSYNC_RC:-0}" = 0 ] || exit "$STUB_RSYNC_RC"
+# Like real rsync: a vanished-files exit (24) still leaves the copy in place.
 for last; do :; done
-mkdir -p "$last"
-case "$last" in */config/) cp "$STUB_BEFORE" "$last/openclaw.json" ;; esac
-exit 0
+if [ "${STUB_RSYNC_RC:-0}" = 0 ] || [ "$STUB_RSYNC_RC" = 24 ]; then
+  mkdir -p "$last"
+  case "$last" in */config/) cp "$STUB_BEFORE" "$last/openclaw.json" ;; esac
+fi
+exit "${STUB_RSYNC_RC:-0}"
 """
 
 DU_STUB = """#!/bin/sh
+[ -z "${DU_CALL_LOG:-}" ] || printf '%s\\n' "$*" >> "$DU_CALL_LOG"
 for last; do :; done
 printf '%s\\t%s\\n' "${STUB_DU_KB:-1024}" "$last"
 """
@@ -248,11 +251,44 @@ def test_exclude_list_reaches_rsync(rig):
         "/workspace/",
         "/wiki/",
         "/backups/",
+        "/tmp/",
+        "/.tmp/",
+        "/cache/",
+        "/.cache/",
         "/openclaw-config-*.tar.gz",
         "*.migrated.*",
     ):
         assert f"--exclude={pat}" in config_call
     assert "--exclude=/agents" not in config_call
+
+
+def test_vanished_files_exit_is_a_warning_not_a_failure(rig):
+    # rsync 24 = files vanished mid-copy of a live tree (the gateway deleting
+    # its scratch); the rest of the copy is whole, so the run goes on.
+    out = run(rig, extra_env={"STUB_RSYNC_RC": "24"})
+    assert out.returncode == 0, out.stderr
+    assert "vanished" in out.stderr
+    assert "GREEN" in out.stdout
+    calls = rig["rsync_log"].read_text().splitlines()
+    assert any("/config/" in c for c in calls)
+    assert any("/workspace/" in c for c in calls)
+
+
+@pytest.mark.parametrize("rc", ["1", "11", "23", "30"])
+def test_other_rsync_failures_still_fail_the_run(rig, rc):
+    out = run(rig, extra_env={"STUB_RSYNC_RC": rc})
+    assert out.returncode == int(rc)
+    assert "vanished" not in out.stderr
+
+
+def test_headroom_estimate_skips_excluded_dirs(rig):
+    # du matches basenames: a trailing slash would make --exclude a no-op.
+    log = rig["tmp"] / "du.log"
+    assert run(rig, extra_env={"DU_CALL_LOG": str(log)}).returncode == 0
+    est = next(c for c in log.read_text().splitlines() if "--exclude" in c)
+    for name in ("tmp", ".tmp", "cache", ".cache", "browser"):
+        assert f"--exclude={name} " in est + " "
+    assert "--exclude=tmp/" not in est
 
 
 def test_aborts_before_copy_when_headroom_short(rig):
