@@ -5,29 +5,35 @@
 # connection that key opens and puts what the client asked for in
 # SSH_ORIGINAL_COMMAND. No shell ever parses that string. Exactly two verbs:
 #
-#   note <request-id>     body on stdin, saved verbatim as one fm-inbox note
-#   receipts [<cursor>]   fm-inbox receipts, reduced to the notes this key sent
+#   note <request-id> [<home>]     body on stdin, saved verbatim as one fm-inbox note
+#   receipts [<cursor>] [<home>]   fm-inbox receipts, reduced to the notes this key sent
 #
 # Everything else is refused (exit 64 usage, 65 body, 75 rate limit).
+#
+# <home> names which fm-inbox home the verb acts on. It is the basename of one
+# of the homes pinned below (the default home, plus at most one more that the
+# installer pins), matched exactly against that fixed list. No home means the
+# default home. A client never supplies a path: an unknown name, a path or a
+# traversal is refused (exit 64) before anything is read or written.
 #
 # One script, two keys. authorized_keys names the sender as the command's
 # argument: no argument or "kit" is Kit's key (request ids kit-*); "dashboard"
 # is the dashboard's key (dash-*). Each sender has its own request-id prefix,
 # rate bucket and receipts view; nothing in the client's input picks the sender.
 #
-# This is the repo copy: install-kit-relay.sh renders it with the second
-# mate's home pinned below and installs it root-owned at
+# This is the repo copy: install-kit-relay.sh renders it with the homes
+# pinned below and installs it root-owned at
 # /usr/local/libexec/kit-relay (docs/runbook.md, "Kit's second-mate relay").
 set -euo pipefail
 umask 077
 
 # Pinned here, never taken from the caller's environment.
-readonly FM_HOME='__FM_HOME__'
-readonly INBOX_BIN="$FM_HOME/bin/fm-inbox.sh"
+readonly DEFAULT_HOME='__FM_HOME__'
+readonly ALT_HOME='__FM_HOME_ALT__'   # empty unless the installer pinned a second home
 readonly MAX_BYTES=32768        # refuse, never truncate
 readonly MAX_NOTES_PER_HOUR=30  # every note wakes the home's primary
 
-case "$FM_HOME" in
+case "$DEFAULT_HOME" in
   /*) ;;
   *) printf 'kit-relay: not installed; render it with install-kit-relay.sh\n' >&2; exit 78 ;;
 esac
@@ -40,12 +46,38 @@ case "${1-kit}" in
 esac
 readonly ID_PREFIX
 
+# Set by resolve_home before any verb touches a home.
+FM_HOME=$DEFAULT_HOME
+HOME_LOG=
+
 say_log() { logger -t kit-relay -p auth.notice -- "$*" 2>/dev/null || true; }
 
 refuse() {  # <exit> <reason>
   say_log "refused: $2"
   printf 'kit-relay: refused: %s\n' "$2" >&2
   exit "$1"
+}
+
+# <home> -> FM_HOME. Exact match against the pinned homes' basenames; the
+# client's string is never turned into a path. No argument keeps the default
+# home and the log line unchanged.
+resolve_home() {  # [<home>]
+  if [ "$#" -eq 0 ]; then
+    FM_HOME=$DEFAULT_HOME
+  else
+    [[ $1 =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || refuse 64 "unknown home"
+    if [ "$1" = "${DEFAULT_HOME##*/}" ]; then
+      FM_HOME=$DEFAULT_HOME
+    elif [ -n "$ALT_HOME" ] && [ "$1" = "${ALT_HOME##*/}" ]; then
+      FM_HOME=$ALT_HOME
+    else
+      refuse 64 "unknown home"
+    fi
+    HOME_LOG=" home=$1"
+  fi
+  readonly FM_HOME HOME_LOG
+  INBOX_BIN="$FM_HOME/bin/fm-inbox.sh"
+  readonly INBOX_BIN
 }
 
 # fm-inbox.sh with nothing inherited: no FM_*_OVERRIDE, no AWS_*, no LC_* from
@@ -61,14 +93,16 @@ case "$cmd" in
   *[!A-Za-z0-9._:\ -]*) refuse 64 "unexpected characters in command" ;;
 esac
 read -r -a words <<<"$cmd"
-[ "${#words[@]}" -ge 1 ] || refuse 64 "usage: note <request-id> | receipts [<cursor>]"
+[ "${#words[@]}" -ge 1 ] || refuse 64 "usage: note <request-id> [<home>] | receipts [<cursor>] [<home>]"
 
 case "${words[0]}" in
   note)
-    [ "${#words[@]}" -eq 2 ] || refuse 64 "usage: note <request-id> (body on stdin)"
+    { [ "${#words[@]}" -eq 2 ] || [ "${#words[@]}" -eq 3 ]; } \
+      || refuse 64 "usage: note <request-id> [<home>] (body on stdin)"
     rid=${words[1]}
     [[ $rid =~ ^${ID_PREFIX}[A-Za-z0-9._:-]{1,120}$ ]] \
       || refuse 64 "request id must match ${ID_PREFIX}[A-Za-z0-9._:-]{1,120}"
+    resolve_home "${words[@]:2}"
     recent=$({ find "$FM_HOME/state/inbox/.requests" -maxdepth 1 -name "${ID_PREFIX}*" \
       -mmin -60 2>/dev/null || true; } | wc -l)
     if [ ! -e "$FM_HOME/state/inbox/.requests/$rid" ] && [ "$recent" -ge "$MAX_NOTES_PER_HOUR" ]; then
@@ -86,17 +120,19 @@ case "${words[0]}" in
     printf '{"schema":"kit-relay-received.v1","bytes":%d,"sha256":"%s"}\n' "$size" "$sha"
     status=0
     run_inbox note --request-id "$rid" --json - <"$tmp" || status=$?
-    say_log "note rid=$rid bytes=$size sha256=$sha exit=$status"
+    say_log "note rid=$rid bytes=$size sha256=$sha exit=$status$HOME_LOG"
     exit "$status"
     ;;
   receipts)
     after=()
-    case "${#words[@]}" in
-      1) ;;
-      2) [[ ${words[1]} =~ ^[0-9]{12}$ ]] || refuse 64 "cursor must be 12 digits"
-         after=(--after "${words[1]}") ;;
-      *) refuse 64 "usage: receipts [<cursor>]" ;;
-    esac
+    args=("${words[@]:1}")
+    if [ "${#args[@]}" -ge 1 ] && [[ ${args[0]} =~ ^[0-9]+$ ]]; then
+      [[ ${args[0]} =~ ^[0-9]{12}$ ]] || refuse 64 "cursor must be 12 digits"
+      after=(--after "${args[0]}")
+      args=("${args[@]:1}")
+    fi
+    [ "${#args[@]}" -le 1 ] || refuse 64 "usage: receipts [<cursor>] [<home>]"
+    resolve_home "${args[@]}"
     out=$(run_inbox receipts "${after[@]}" --all-pending --all-handled --all-replies)
     # Notes this key did not send stay on the box. Note and reply bodies pass
     # through untouched; reply_cursor is the unfiltered one so the caller's

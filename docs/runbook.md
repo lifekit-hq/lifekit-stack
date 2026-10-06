@@ -618,9 +618,10 @@ pipe: kit copies the text into a file and runs one script; it never decides what
 
 - **Host:** `scripts/kit-relay/kit-relay`, installed root-owned at
   `/usr/local/libexec/kit-relay` by `scripts/kit-relay/install-kit-relay.sh`, which
-  pins the second mate's home (`FM_HOME`) into the installed copy. Two verbs only:
-  `note <kit-request-id>` (body on stdin, 1 B to 32 KiB of UTF-8 without NUL, refused
-  whole otherwise, exit 65) and `receipts [<12-digit cursor>]` (only the notes whose
+  pins the second mate's home (`FM_HOME`, the default) and optionally one more home
+  (`FM_HOME_ALT`, see "Home argument" below) into the installed copy. Two verbs only:
+  `note <kit-request-id> [<home>]` (body on stdin, 1 B to 32 KiB of UTF-8 without NUL, refused
+  whole otherwise, exit 65) and `receipts [<12-digit cursor>] [<home>]` (only the notes whose
   request id starts with `kit-`, with their replies). Anything else exits 64. At most
   30 new `kit-` notes per rolling hour (exit 75); a replay of an existing request id is
   never limited. `fm-inbox.sh` runs under `env -i`, so nothing the client sends (SendEnv,
@@ -757,6 +758,38 @@ authorized key on the same root-owned forced command, not a second script:
 
 - **Rollback:** delete that authorized_keys line and `sudo rm -r /srv/lifekit-secrets/dashboard-relay`.
   Kit's relay is untouched. The second mate answers a `dash-` note like a `kit-` one.
+
+#### Home argument (answers for the main home)
+
+Both verbs take an optional last word, the home the verb acts on, so a dashboard answer
+to a call owned by the main home lands in that home's inbox. The same two keys and the
+same root-owned script serve it; there is no second key.
+
+- **Allowlist:** the installed copy pins at most two homes: `FM_HOME`, the default, and
+  an optional `FM_HOME_ALT`. A client names one by the **last part of its path**
+  (for example `fm-vps`, `firstmate`) and the script compares that string exactly against the two
+  pinned names. A path, `..`, a wrong case, a prefix, anything else exits 64 with
+  nothing read or written; the client's string is never turned into a path. With no
+  home word the default home is used and behaviour, including the log line, is as
+  before. Requests, the rate bucket (per prefix, per home) and receipts are those of
+  the home named. Naming a home appends ` home=<name>` to the log line.
+- **Wire:** `note dash-<id> firstmate`, `receipts firstmate`,
+  `receipts <12-digit cursor> firstmate`. The ssh_config and keys are unchanged.
+- **Install** (operator step, after the PR deploys; this is the only host change, and
+  `authorized_keys` stays as it is). Run as root; each home must hold `bin/fm-inbox.sh`
+  and their last path parts must differ. `--print` first, to diff against the installed
+  copy:
+
+  ```bash
+  sudo FM_HOME=<the second mate's home> FM_HOME_ALT=<the main home> \
+    bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh
+  ```
+
+  Verify through the dashboard key from inside the dashboard container (or any ssh with
+  that key): `relay 'receipts firstmate'` returns the main home's receipts and
+  `relay 'receipts nowhere'` exits 64; `journalctl -t kit-relay --since -5min` shows both.
+- **Rollback:** re-run the installer without `FM_HOME_ALT`; a home word other than the
+  default's name is then refused.
 
 ## Rolling back OpenClaw
 
