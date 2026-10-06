@@ -29,6 +29,8 @@ APP_ID = "m2mappid"
 APP_SECRET = "m2m-secret-value-0123456789abcdef"
 TOKEN = "access-token-value-zyx"
 GATE_SECRET = "gate-secret-value-abcdefghijklmnop"
+SMTP_PASSWORD = "abcdefghijklmnop"
+SMTP_PASSWORD_AS_SHOWN = "abcd efgh ijkl mnop"
 
 
 class FakeLogto:
@@ -64,6 +66,8 @@ class FakeLogto:
             "socialSignInConnectorTargets": ["google"],
             "socialSignIn": {"automaticAccountLinking": False},
         }
+        self.connectors: list[dict] = []
+        self.test_sends: list[dict] = []
         self.requests: list[tuple[str, str, object]] = []
         self.seq = 0
 
@@ -135,8 +139,67 @@ def handler_for(fake: FakeLogto):
                         return self.reply(
                             400, {"code": "guard.invalid_input", "message": str(bad)}
                         )
+                    # Logto refuses a code sign-in with no connector for it.
+                    coded = [
+                        m["identifier"]
+                        for m in data.get("signIn", {}).get("methods", [])
+                        if m.get("verificationCode")
+                    ]
+                    if "email" in coded and not any(
+                        c["type"] == "Email" for c in fake.connectors
+                    ):
+                        return self.reply(
+                            400,
+                            {
+                                "code": "sign_in_experiences.enabled_connector_not_found",
+                                "message": "no email connector",
+                            },
+                        )
                     fake.sign_in_exp.update(data)
                     return self.reply(200, fake.sign_in_exp)
+            if parts[:2] == ["api", "connectors"]:
+                if len(parts) == 2 and method == "GET":
+                    return self.reply(200, fake.connectors)
+                if len(parts) == 2 and method == "POST":
+                    if data["connectorId"] != "simple-mail-transfer-protocol":
+                        return self.reply(
+                            422, {"code": "connector.not_found", "message": "x"}
+                        )
+                    if any(c["type"] == "Email" for c in fake.connectors):
+                        return self.reply(
+                            422, {"code": "connector.more_than_one", "message": "x"}
+                        )
+                    need = {"SignIn", "Register", "ForgotPassword", "Generic"}
+                    got = {t["usageType"] for t in data["config"].get("templates", [])}
+                    if not need <= got:
+                        return self.reply(
+                            400, {"code": "connector.invalid_config", "message": "t"}
+                        )
+                    conn = {
+                        "id": fake.next_id("c"),
+                        "type": "Email",
+                        "connectorId": data["connectorId"],
+                        "config": data["config"],
+                    }
+                    fake.connectors.append(conn)
+                    return self.reply(200, conn)
+                if len(parts) == 3 and parts[2] != "simple-mail-transfer-protocol":
+                    conn = next(
+                        (c for c in fake.connectors if c["id"] == parts[2]), None
+                    )
+                    if conn is None:
+                        return self.reply(
+                            404, {"code": "entity.not_found", "message": "gone"}
+                        )
+                    if method == "PATCH":
+                        conn["config"] = data["config"]
+                        return self.reply(200, conn)
+                    if method == "DELETE":
+                        fake.connectors.remove(conn)
+                        return self.reply(204)
+                if len(parts) == 4 and parts[3] == "test" and method == "POST":
+                    fake.test_sends.append(data)
+                    return self.reply(204)
             if parts[:2] == ["api", "roles"]:
                 if method == "GET":
                     return self.page(fake.roles, query)
@@ -229,8 +292,9 @@ def logto(tmp_path):
     outputs: list[str] = []
     ledger = tmp_path / "ledger.jsonl"
 
-    def run(*args, secret=APP_SECRET, app_id=APP_ID):
+    def run(*args, secret=APP_SECRET, app_id=APP_ID, extra_env=None):
         env = {
+            **(extra_env or {}),
             "PATH": os.environ["PATH"],
             "HOME": str(tmp_path),
             "LOGTO_ENDPOINT": f"http://127.0.0.1:{server.server_port}",
@@ -254,8 +318,10 @@ def logto(tmp_path):
     yield run
     server.shutdown()
     for out in outputs:
-        for secret in (APP_SECRET, TOKEN, GATE_SECRET):
+        for secret in (APP_SECRET, TOKEN, GATE_SECRET, SMTP_PASSWORD):
             assert secret not in out
+    if ledger.exists():
+        assert SMTP_PASSWORD not in ledger.read_text()
 
 
 def ledger_entries(run) -> list[dict]:
@@ -578,6 +644,159 @@ def test_set_sign_in_exp_rejects_bad_input(logto):
         assert logto("set-sign-in-exp", "--dark-favicon", bad).returncode == 2
     assert logto("set-sign-in-exp", "--sign-in-identifiers", "fax").returncode == 2
     assert not [r for r in logto.fake.requests if r[0] == "PATCH"]
+
+
+def smtp(logto, *args, password=SMTP_PASSWORD_AS_SHOWN):
+    return logto(
+        "set-email-connector",
+        "--user",
+        "me@gmail.example",
+        *args,
+        extra_env={"LOGTO_SMTP_PASSWORD": password},
+    )
+
+
+def test_set_email_connector_creates_idempotently(logto):
+    proc = smtp(logto)
+    assert proc.returncode == 0, proc.stderr
+    assert "created" in proc.stdout
+    (conn,) = logto.fake.connectors
+    cfg = conn["config"]
+    assert (cfg["host"], cfg["port"], cfg["secure"]) == ("smtp.gmail.com", 465, True)
+    assert cfg["auth"] == {
+        "type": "login",
+        "user": "me@gmail.example",
+        "pass": SMTP_PASSWORD,
+    }
+    assert cfg["fromEmail"] == "me@gmail.example"
+    assert "requireTLS" not in cfg
+    assert {"SignIn", "Register", "ForgotPassword", "Generic"} <= {
+        t["usageType"] for t in cfg["templates"]
+    }
+    assert all("{{code}}" in t["content"] for t in cfg["templates"])
+    (entry,) = ledger_entries(logto)
+    assert entry["action"] == "create-email-connector"
+    assert entry["undo"] == {
+        "method": "DELETE",
+        "path": f"/api/connectors/{conn['id']}",
+    }
+    again = smtp(logto)
+    assert "already set" in again.stdout
+    assert [r[0] for r in logto.fake.requests if r[1] == "/api/connectors"] == [
+        "GET",
+        "POST",
+        "GET",
+    ]
+
+
+def test_set_email_connector_updates_without_a_secret_in_the_ledger(logto):
+    smtp(logto)
+    proc = smtp(logto, "--from-name", "Sign in", "--from-email", "alias@gmail.example")
+    assert proc.returncode == 0, proc.stderr
+    assert "updated fromEmail" in proc.stdout
+    assert (
+        logto.fake.connectors[0]["config"]["fromEmail"]
+        == "Sign in <alias@gmail.example>"
+    )
+    update = ledger_entries(logto)[-1]
+    assert update["action"] == "update-email-connector"
+    assert update["changed"] == ["fromEmail"]
+    assert "undo" not in update
+    # the password changes: reported by field name only
+    rotated = smtp(
+        logto,
+        "--from-name",
+        "Sign in",
+        "--from-email",
+        "alias@gmail.example",
+        password="zzzzzzzzzzzzzzzz",
+    )
+    assert "updated auth" in rotated.stdout
+    assert "zzzzzzzzzzzzzzzz" not in rotated.stdout + rotated.stderr
+    assert "zzzzzzzzzzzzzzzz" not in logto.ledger.read_text()
+
+
+def test_set_email_connector_starttls_port_requires_tls(logto):
+    assert smtp(logto, "--port", "587").returncode == 0
+    cfg = logto.fake.connectors[0]["config"]
+    assert (cfg["port"], cfg["secure"], cfg["requireTLS"]) == (587, False, True)
+
+
+def test_set_email_connector_needs_a_password(logto):
+    for password in ("", "   "):
+        proc = smtp(logto, password=password)
+        assert proc.returncode != 0
+        assert "LOGTO_SMTP_PASSWORD" in proc.stderr
+    assert not [r for r in logto.fake.requests if r[1] == "/api/connectors"]
+    bare = logto("set-email-connector", "--user", "me@gmail.example")
+    assert bare.returncode != 0 and "LOGTO_SMTP_PASSWORD" in bare.stderr
+
+
+def test_set_email_connector_refuses_a_different_email_connector(logto):
+    logto.fake.connectors.append(
+        {"id": "c0", "type": "Email", "connectorId": "aliyun-dm", "config": {}}
+    )
+    proc = smtp(logto)
+    assert proc.returncode == 1
+    assert "another email connector" in proc.stderr
+    assert [r for r in logto.fake.requests if r[0] != "GET"] == []
+
+
+def test_email_code_sign_in_needs_the_connector_and_undoes(logto):
+    fake = logto.fake.sign_in_exp
+    args = (
+        "set-sign-in-exp",
+        "--sign-in-identifiers",
+        "email",
+        "username",
+        "--code-sign-in-identifiers",
+        "email",
+    )
+    refused = logto(*args)
+    assert refused.returncode == 1
+    assert "no email connector" in refused.stderr
+    smtp(logto)
+    proc = logto(*args)
+    assert proc.returncode == 0, proc.stderr
+    methods = {m["identifier"]: m for m in fake["signIn"]["methods"]}
+    assert (methods["email"]["password"], methods["email"]["verificationCode"]) == (
+        True,
+        True,
+    )
+    assert (
+        methods["username"]["password"],
+        methods["username"]["verificationCode"],
+    ) == (
+        True,
+        False,
+    )
+    assert "already set" in logto(*args).stdout
+    code_only = logto("set-sign-in-exp", "--code-sign-in-identifiers", "email")
+    assert code_only.returncode == 0
+    (only,) = fake["signIn"]["methods"]
+    assert (only["identifier"], only["password"], only["verificationCode"]) == (
+        "email",
+        False,
+        True,
+    )
+
+
+def test_undo_deletes_the_created_connector(logto):
+    smtp(logto)
+    assert logto("undo").returncode == 0
+    assert logto.fake.connectors == []
+
+
+def test_send_test_email_uses_the_stored_config(logto):
+    missing = logto("send-test-email", "you@example.com")
+    assert missing.returncode == 1 and "no email connector" in missing.stderr
+    smtp(logto)
+    proc = logto("send-test-email", "you@example.com")
+    assert proc.returncode == 0, proc.stderr
+    (sent,) = logto.fake.test_sends
+    assert sent["email"] == "you@example.com"
+    assert sent["config"]["auth"]["pass"] == SMTP_PASSWORD
+    assert "you@example.com" in proc.stdout
 
 
 def test_ledger_needs_no_credentials(logto, tmp_path):

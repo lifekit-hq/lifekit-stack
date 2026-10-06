@@ -16,7 +16,11 @@ command is idempotent: it reads first and changes only what differs.
                               [--primary-color HEX] [--dark-primary-color HEX]
                               [--dark-mode | --no-dark-mode]
                               [--sign-in-identifiers {email,phone,username}...]
+                              [--code-sign-in-identifiers {email,phone}...]
                               [--sign-up-identifiers {email,phone,username,none}...]
+    logto-admin.py set-email-connector --user ADDRESS [--host H] [--port N]
+                              [--from-email ADDRESS] [--from-name NAME]
+    logto-admin.py send-test-email ADDRESS
     logto-admin.py ledger
     logto-admin.py undo [N]
 
@@ -30,8 +34,20 @@ read; nothing prints a secret. set-sign-in-exp changes only the sign-in
 experience fields it is given (PATCH /api/sign-in-exp; signInMode and the
 social sign-in settings are never sent). --sign-in-identifiers email username
 lets users sign in with either one: each is password verification, password
-primary, no verification code. Logto replaces a PATCHed object whole, so the
-current color, branding, signIn and signUp are read first and merged.
+primary, no verification code. --code-sign-in-identifiers email adds sign-in
+by emailed code for that identifier (alone, or together with its password when
+it is also in --sign-in-identifiers); Logto accepts it only once an email
+connector exists. The two lists together replace the whole methods list.
+Logto replaces a PATCHed object whole, so the current color, branding, signIn
+and signUp are read first and merged.
+
+set-email-connector creates or updates Logto's SMTP email connector (default
+smtp.gmail.com:465, TLS; any other port uses STARTTLS and refuses to send
+without it). The login is --user; the password is read from LOGTO_SMTP_PASSWORD
+(a Google app password: whitespace is dropped), never argv, and is never
+printed or written to the ledger. fromEmail defaults to --user, which is the
+address Gmail sends as. Logto allows one email connector. send-test-email
+sends one message through the stored connector config, to prove the path.
 
 Credentials come from the environment, never argv:
   LOGTO_M2M_APP_ID, LOGTO_M2M_APP_SECRET  the M2M app (scripts/identity/logto-m2m-bootstrap.sh)
@@ -408,20 +424,28 @@ def image_url(value: str) -> str:
     return value
 
 
-def sign_in_methods(identifiers: list[str]) -> list[dict]:
+def sign_in_methods(passwords: list[str], codes: list[str]) -> list[dict]:
     return [
         {
             "identifier": i,
-            "password": True,
-            "verificationCode": False,
+            "password": i in passwords,
+            "verificationCode": i in codes,
             "isPasswordPrimary": True,
         }
-        for i in dict.fromkeys(identifiers)
+        for i in dict.fromkeys([*passwords, *codes])
     ]
 
 
 def cmd_set_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
     # (top-level key, leaf key, wanted value); a None value means "not asked for".
+    methods = None
+    if (
+        args.sign_in_identifiers is not None
+        or args.code_sign_in_identifiers is not None
+    ):
+        methods = sign_in_methods(
+            args.sign_in_identifiers or [], args.code_sign_in_identifiers or []
+        )
     wanted = [
         ("branding", "logoUrl", args.logo_url),
         ("branding", "darkLogoUrl", args.dark_logo_url),
@@ -430,13 +454,7 @@ def cmd_set_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
         ("color", "primaryColor", args.primary_color),
         ("color", "isDarkModeEnabled", args.dark_mode),
         ("color", "darkPrimaryColor", args.dark_primary_color),
-        (
-            "signIn",
-            "methods",
-            None
-            if args.sign_in_identifiers is None
-            else sign_in_methods(args.sign_in_identifiers),
-        ),
+        ("signIn", "methods", methods),
         (
             "signUp",
             "identifiers",
@@ -478,6 +496,150 @@ def cmd_set_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
     )
     changed = ", ".join(f"{t}.{k}" for t, leaves in after.items() for k in leaves)
     say(f"sign-in experience: set {changed}, ledger #{n}")
+
+
+SMTP_CONNECTOR = "simple-mail-transfer-protocol"
+# (usageType, subject, text): Logto's SMTP connector requires the first four;
+# the rest cover every other flow that can send a code. {{code}} is Logto's.
+EMAIL_TEMPLATES = (
+    ("SignIn", "Your sign-in code", "Your sign-in code is {{code}}."),
+    ("Register", "Your sign-up code", "Your sign-up code is {{code}}."),
+    (
+        "ForgotPassword",
+        "Your password reset code",
+        "Your password reset code is {{code}}.",
+    ),
+    ("Generic", "Your verification code", "Your verification code is {{code}}."),
+    (
+        "OrganizationInvitation",
+        "Your invitation code",
+        "Your invitation code is {{code}}.",
+    ),
+    (
+        "UserPermissionValidation",
+        "Your verification code",
+        "Your verification code is {{code}}.",
+    ),
+    (
+        "BindNewIdentifier",
+        "Your verification code",
+        "Your verification code is {{code}}.",
+    ),
+    (
+        "MfaVerification",
+        "Your verification code",
+        "Your verification code is {{code}}.",
+    ),
+    ("BindMfa", "Your verification code", "Your verification code is {{code}}."),
+)
+
+
+def email_templates() -> list[dict]:
+    return [
+        {
+            "usageType": usage,
+            "contentType": "text/plain",
+            "subject": subject,
+            "content": f"{text} It expires in 10 minutes. If you did not ask for it, ignore this message.",
+        }
+        for usage, subject, text in EMAIL_TEMPLATES
+    ]
+
+
+def smtp_config(args, password: str) -> dict:
+    sender = args.from_email or args.user
+    if args.from_name:
+        sender = f"{args.from_name} <{sender}>"
+    secure = args.port == 465
+    config = {
+        "host": args.host,
+        "port": args.port,
+        "secure": secure,
+        "auth": {"type": "login", "user": args.user, "pass": password},
+        "fromEmail": sender,
+        "templates": email_templates(),
+    }
+    if not secure:
+        config["requireTLS"] = True
+    return config
+
+
+def email_connectors(api: Api) -> list[dict]:
+    # Not paged: the endpoint returns every connector.
+    _, _, out = api.call("GET", "/api/connectors")
+    if not isinstance(out, list):
+        raise AdminError("GET /api/connectors: expected a list")
+    return [c for c in out if c.get("type") == "Email"]
+
+
+def the_smtp_connector(api: Api) -> dict | None:
+    found = email_connectors(api)
+    other = [c for c in found if c.get("connectorId") != SMTP_CONNECTOR]
+    if other:
+        raise AdminError(
+            f"another email connector is configured ({other[0].get('connectorId')}); "
+            "Logto allows one, remove it first"
+        )
+    return found[0] if found else None
+
+
+def cmd_set_email_connector(api: Api, ledger: Ledger, args) -> None:
+    password = "".join(os.environ.get("LOGTO_SMTP_PASSWORD", "").split())
+    if not password:
+        raise SystemExit(
+            "set-email-connector: LOGTO_SMTP_PASSWORD is empty or unset "
+            "(the SMTP password, a Google app password)"
+        )
+    config = smtp_config(args, password)
+    existing = the_smtp_connector(api)
+    if existing is None:
+        _, _, created = api.call(
+            "POST", "/api/connectors", {"connectorId": SMTP_CONNECTOR, "config": config}
+        )
+        n = ledger.append(
+            {
+                "action": "create-email-connector",
+                "connector": {"id": created["id"], "connectorId": SMTP_CONNECTOR},
+                "host": args.host,
+                "port": args.port,
+                "undo": {
+                    "method": "DELETE",
+                    "path": f"/api/connectors/{created['id']}",
+                },
+            }
+        )
+        say(f"email connector: created ({created['id']}), ledger #{n}")
+        return
+    have = existing.get("config") or {}
+    changed = [k for k in config if have.get(k) != config[k]]
+    if not changed:
+        say(f"email connector: already set ({existing['id']})")
+        return
+    api.call("PATCH", f"/api/connectors/{existing['id']}", {"config": config})
+    # No undo: the previous config holds the previous password, and the
+    # ledger never holds a secret. Run the command again with the old values.
+    n = ledger.append(
+        {
+            "action": "update-email-connector",
+            "connector": {"id": existing["id"], "connectorId": SMTP_CONNECTOR},
+            "changed": changed,
+        }
+    )
+    say(
+        f"email connector: updated {', '.join(changed)} ({existing['id']}), ledger #{n}"
+    )
+
+
+def cmd_send_test_email(api: Api, _ledger: Ledger, args) -> None:
+    existing = the_smtp_connector(api)
+    if existing is None:
+        raise AdminError("no email connector (set-email-connector first)")
+    api.call(
+        "POST",
+        f"/api/connectors/{SMTP_CONNECTOR}/test",
+        {"email": args.address, "config": existing.get("config") or {}},
+    )
+    say(f"test email: sent to {args.address}")
 
 
 def cmd_ledger(_api, ledger: Ledger, _args) -> None:
@@ -554,11 +716,30 @@ def parser() -> argparse.ArgumentParser:
         help="password sign-in with each of these (e.g. email username)",
     )
     x.add_argument(
+        "--code-sign-in-identifiers",
+        nargs="+",
+        choices=("email", "phone"),
+        help="sign-in by emailed (or texted) code for each of these; needs the connector",
+    )
+    x.add_argument(
         "--sign-up-identifiers",
         nargs="+",
         choices=(*IDENTIFIERS, "none"),
         help="sign-up identifiers; 'none' empties the list",
     )
+    e = sub.add_parser(
+        "set-email-connector",
+        help="create or update the SMTP email connector (password in LOGTO_SMTP_PASSWORD)",
+    )
+    e.add_argument("--user", required=True, help="SMTP login, e.g. the Gmail address")
+    e.add_argument("--host", default="smtp.gmail.com")
+    e.add_argument("--port", type=int, default=465)
+    e.add_argument("--from-email", help="sender address (default: --user)")
+    e.add_argument("--from-name", help="sender display name")
+    t = sub.add_parser(
+        "send-test-email", help="send one message through the stored connector"
+    )
+    t.add_argument("address")
     sub.add_parser("ledger", help="print the change ledger")
     u = sub.add_parser(
         "undo", help="reverse a ledger entry (default: the newest not undone)"
@@ -574,6 +755,8 @@ COMMANDS = {
     "ensure-app": cmd_ensure_app,
     "set-redirects": cmd_set_redirects,
     "set-sign-in-exp": cmd_set_sign_in_exp,
+    "set-email-connector": cmd_set_email_connector,
+    "send-test-email": cmd_send_test_email,
     "ledger": cmd_ledger,
     "undo": cmd_undo,
 }

@@ -1368,14 +1368,15 @@ tailnet who opens the console can create it.
    sign-in*: on, with the passkey button and autofill. A member adds a
    passkey after their first sign-in. Passkeys are bound to the host name,
    so they need registering again after the issuer moves.
-5. **Email: leave it off** until a sending domain exists. To enable it with
-   Resend: verify the sending domain in Resend and create an API key. Then
-   *Connectors > Email and SMS > SMTP*: host `smtp.resend.com`, port `465`,
-   `secure` on, username `resend`, password the API key, `fromEmail` an
-   address on the verified domain. Send the test email from the connector
-   page. Finally add *Email address* (verification code) as a sign-in
-   identifier. The API key lives in Logto's database, not in the secrets
-   files; rotate it in the connector page.
+5. **Email: leave it off** until the captain has made a Google app password
+   ([Email sign-in (Gmail SMTP)](#email-sign-in-gmail-smtp)). With a verified
+   sending domain instead, use Resend: create an API key, then *Connectors >
+   Email and SMS > SMTP*: host `smtp.resend.com`, port `465`, `secure` on,
+   username `resend`, password the API key, `fromEmail` an address on the
+   verified domain. Send the test email from the connector page. Finally add
+   *Email address* (verification code) as a sign-in identifier. The API key
+   lives in Logto's database, not in the secrets files; rotate it in the
+   connector page.
 
 **Creating a member.** *User management > Add user*. Use the same email as
 the finance-sentry invite, so the two accounts meet on one address. Hand the
@@ -1423,6 +1424,75 @@ The restore prints `role "logto" already exists` and `database "logto"
 already exists`: the fresh volume created both, and those lines are expected.
 Wait for `up --wait` to return before restoring. A restore into a Postgres
 still starting fails.
+
+## Email sign-in (Gmail SMTP)
+
+Members sign in with a code mailed to their address, sent through Logto's SMTP
+connector over `smtp.gmail.com`. Gmail needs no verified sending domain, which
+is why it is the first path; a domain and Resend replace it later (the
+connector is one object, `set-email-connector --host smtp.resend.com --user
+resend --from-email <address on the domain>` re-points it). Mail is only
+for members who already exist: the sign-in mode stays `SignIn`, so nobody
+registers by email.
+
+**The one input: a Google app password.** From the sending Google Account, with
+2-Step Verification on: *Security > 2-Step Verification > App passwords*,
+name it for this stack, copy the 16 letters (Google shows them in four groups;
+the spaces are dropped). Put it in the master file's reserved slot
+`LOGTO_SMTP_APP_PASSWORD` (the slot exists, empty):
+
+```bash
+scripts/secrets/edit.sh master    # fill LOGTO_SMTP_APP_PASSWORD, save
+```
+
+Merge that change; nothing needs a render or a redeploy, because no service
+interpolates it. Gmail sends as the account's own address (a different
+`--from-email` is rewritten unless it is a verified "Send mail as" alias of
+that account), and a Gmail account has a daily sending limit, plenty for
+sign-in codes.
+
+**Apply** (admin account, Management API credentials as in the next section;
+`<m2m>.sops` is the operator's M2M file, `<address>` the Gmail address):
+
+```bash
+# 1. The connector, from the master file's slot:
+LOGTO_SMTP_PASSWORD="$(sops decrypt --extract '["LOGTO_SMTP_APP_PASSWORD"]' \
+    --input-type dotenv --output-type dotenv secrets/lifekit.env.sops)" \
+  sops exec-env <m2m>.sops 'python3 scripts/identity/logto-admin.py \
+    set-email-connector --user <address> --from-name "<sender name>"'
+# 2. A real message through the stored connector - the proof the path works:
+sops exec-env <m2m>.sops 'python3 scripts/identity/logto-admin.py \
+  send-test-email <address>'
+# 3. Only after the test mail arrives: turn email-code sign-in on, keeping
+#    each member's password (and username) sign-in as it is:
+sops exec-env <m2m>.sops 'python3 scripts/identity/logto-admin.py \
+  set-sign-in-exp --sign-in-identifiers email username --code-sign-in-identifiers email'
+```
+
+Adjust step 3 to the methods in force: `--sign-in-identifiers` and
+`--code-sign-in-identifiers` together replace the whole methods list (`email`
+in both means password or code for email). Logto refuses step 3 while no email
+connector exists. `set-email-connector` is idempotent and reports changed
+fields by name only; a changed password re-applies the same way, and it
+reports `already set` when nothing differs. Port 465 uses TLS; another port
+(587) uses STARTTLS and the connector then refuses to send without it.
+
+**Verify.** `send-test-email` succeeds and the message arrives (look in spam
+the first time); then sign in on the sign-in page with *Email address*,
+receive the code, and finish. A failed send names the SMTP error: `Invalid
+login` is a wrong or revoked app password, `ENOTFOUND` a wrong host, a timeout
+no route from the Logto container to `smtp.gmail.com:465`.
+
+**Reverse.** `logto-admin.py undo` takes the newest change back: the
+sign-in methods, then the connector (a create is undone by deleting it). An
+update of an existing connector has no undo, because the previous config holds
+the previous password: run the command again with the old values.
+
+**Rehearsal.** `scripts/identity/rehearse-logto-admin.sh` runs this against a
+throwaway Logto with an unreachable SMTP host (`smtp.invalid`): connector
+create, update and no-op, Logto's refusal of email-code sign-in without a
+connector, the sign-in methods as stored, the test-send route, and the undo.
+A real send needs the real password, so it is the operator step above.
 
 ## Logto admin through the Management API
 
@@ -1475,8 +1545,11 @@ lists. `set-redirects` replaces the list it is given and keeps the other.
 dark logo, favicon, dark favicon, colors, `--sign-in-identifiers`,
 `--sign-up-identifiers`); the image options take an http(s) URL or an inline
 `data:image/svg+xml;base64,...` URI, which needs no hosting.
-`email username` signs in with either, by password. It never sends the sign-in
-mode or the social sign-in settings.
+`email username` signs in with either, by password;
+`--code-sign-in-identifiers email` adds the emailed code
+([Email sign-in (Gmail SMTP)](#email-sign-in-gmail-smtp), with
+`set-email-connector` and `send-test-email`). It never sends the sign-in mode
+or the social sign-in settings.
 
 **Reversing a change.** Each change appends a line to the ledger
 (`~/.local/state/lifekit/logto-admin.ledger.jsonl`, or `LOGTO_ADMIN_LEDGER`):
@@ -1484,7 +1557,7 @@ the ids it created or touched, and the inverse request. `logto-admin.py
 ledger` lists it; `logto-admin.py undo [N]` sends entry N's inverse (default:
 the newest not yet undone): delete the role or app it created, take the role
 back, restore the previous redirect URIs, or restore the previous
-sign-in experience objects.
+sign-in experience objects, or delete the email connector it created.
 
 **Removing the app** ends the delegation:
 

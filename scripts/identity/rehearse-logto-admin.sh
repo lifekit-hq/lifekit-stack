@@ -102,7 +102,12 @@ if expr == "create-user":
     _, _, out = api.call("POST", path, {"username": "rehearsal_owner", "primaryEmail": "owner@rehearsal.invalid"})
     print(out["id"])
 else:
-    print(json.dumps(eval(expr, {"items": api.list_all(path)}), sort_keys=True))
+    # these two are not paged lists: connectors is a plain list, sign-in-exp an object
+    if path in ("/api/connectors", "/api/sign-in-exp"):
+        items = api.call("GET", path)[2]
+    else:
+        items = api.list_all(path)
+    print(json.dumps(eval(expr, {"items": items}), sort_keys=True))
 PY
 }
 export HERE
@@ -174,6 +179,27 @@ expect_ok "ensure-app gate (exists, URIs already set)" admin ensure-app "lifekit
 expect_fail "ensure-app refuses to overwrite the secret file" admin ensure-app "lifekit sign-in gate" --secret-file "${WORK}/gate.secret"
 expect_fail "ensure-app refuses a name held by a non-Traditional app" admin ensure-app firstmate-ops
 
+echo "== email connector (SMTP host smtp.invalid: nothing leaves the throwaway)"
+smtp_password="abcdefghijklmnop"
+echo "${smtp_password}" >>"${WORK}/secrets.pat"
+smtp() { LOGTO_SMTP_PASSWORD="abcd efgh ijkl mnop" admin set-email-connector --user rehearsal@example.invalid --host smtp.invalid "$@"; }
+expect_fail "email sign-in before the connector exists (Logto refuses)" admin set-sign-in-exp \
+  --sign-in-identifiers email username --code-sign-in-identifiers email
+expect_fail "send-test-email with no connector" admin send-test-email owner@rehearsal.invalid
+expect_ok "set-email-connector (creates)" smtp
+expect_ok "set-email-connector (already set)" smtp
+expect_ok "set-email-connector (updates the sender)" smtp --from-name "Sign in"
+assert_eq "connector id and sender as stored" \
+  "$(api_get /api/connectors '[[c["connectorId"], c["config"]["fromEmail"]] for c in items]')" \
+  '[["simple-mail-transfer-protocol", "Sign in <rehearsal@example.invalid>"]]'
+expect_ok "email-code sign-in (with the connector in place)" admin set-sign-in-exp \
+  --sign-in-identifiers email username --code-sign-in-identifiers email
+assert_eq "sign-in methods as stored" \
+  "$(api_get /api/sign-in-exp '[[m["identifier"], m["password"], m["verificationCode"]] for m in items["signIn"]["methods"]]')" \
+  '[["email", true, true], ["username", true, false]]'
+expect_fail "send-test-email (the SMTP host does not exist, so the send fails after the route accepted it)" \
+  admin send-test-email owner@rehearsal.invalid
+
 echo "== ledger, then undo every change in reverse"
 admin ledger
 while python3 "${HERE}/logto-admin.py" ledger | python3 -c '
@@ -185,6 +211,7 @@ sys.exit(0 if any("undo" in e and e["n"] not in done for e in es) else 1)'; do
 done
 expect_fail "undo with nothing left" admin undo
 assert_eq "apps after undo (Grafana and gate deleted)" "$(api_get /api/applications '[a["name"] for a in items]')" '["firstmate-ops"]'
+assert_eq "connectors after undo (email connector deleted)" "$(api_get /api/connectors '[c["connectorId"] for c in items]')" '[]'
 assert_eq "User roles after undo" "$(api_get /api/roles '[r["name"] for r in items if r["type"] == "User"]')" '[]'
 
 echo "== removal"
