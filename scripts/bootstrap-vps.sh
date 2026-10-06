@@ -286,13 +286,13 @@ say "Installing host gauge scripts + systemd units"
 ADMIN_USER="$ADMIN_USER" bash "$REPO_DIR/scripts/host-gauge/install-host-gauges.sh"
 
 # ─── Fleet publisher timer ────────────────────────────────────────────────────
-# Every minute, copy the fleet home's home-summary.json (with each open
-# decision's Lavish board URL joined in) to /var/lib/lifekit-fleet for the
+# Every minute, merge the fleet homes' home-summary.json (with each open
+# decision's Lavish board URL joined in) into /var/lib/lifekit-fleet for the
 # dashboard, and write fleet metrics into the textfile directory. Skipped
-# unless FM_HOME names the fleet home; see scripts/fleet-publisher/.
+# unless FM_HOMES (or FM_HOME) names the fleet homes; see scripts/fleet-publisher/.
 
 say "Installing fleet publisher script + systemd units"
-ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" bash "$REPO_DIR/scripts/fleet-publisher/install-fleet-publisher.sh"
+ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" FM_HOMES="${FM_HOMES:-}" bash "$REPO_DIR/scripts/fleet-publisher/install-fleet-publisher.sh"
 
 # ─── Identity database dump timer ─────────────────────────────────────────────
 # Nightly pg_dumpall of the identity provider's Postgres (compose project

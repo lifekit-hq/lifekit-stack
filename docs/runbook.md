@@ -1106,40 +1106,50 @@ alert rates). Groups and their budgets are in `docs/resource-budget.md`; the
 ## Fleet publisher
 
 `scripts/fleet-publisher/fleet-publisher.sh` runs every minute from
-`lifekit-fleet-publisher.timer`, as the admin account that owns the fleet home
-and the Lavish state. It reads the fleet home's `state/home-summary.json`
-(task names, states and reasons only; the script refuses to publish if it ever
-matches a credential pattern), joins each open decision to the URL of the open
-Lavish session the captain-hold binding feeds it (`board_url`; else the session
-whose file lives under `data/<decision id>/`; else `null`), copies finished
-reports to `/var/lib/lifekit-fleet/reports/` (`report_url` on each landed item;
-output contract in `scripts/fleet-publisher/README.md`), and writes the summary
-atomically to `/var/lib/lifekit-fleet/home-summary.json`,
-world-readable, for the dashboard to bind-mount read-only. It also writes
-`fleet.prom` into the textfile directory: `fleet_workers{state}`,
-`fleet_decisions_open`, `fleet_oldest_decision_age_seconds` (from the
+`lifekit-fleet-publisher.timer`, as the admin account that owns the fleet homes
+and the Lavish state. The unit's `FM_HOMES` lists the fleet homes (a unit that
+still sets only `FM_HOME` publishes that one home). For each home it reads
+`state/home-summary.json` (task names, states and reasons only; the script
+refuses to publish a home whose summary ever matches a credential pattern),
+joins each open decision to the URL of the open Lavish session that home's
+captain-hold binding feeds it (`board_url`; else the session whose file lives
+under the home's `data/<decision id>/`; else `null`), and copies finished
+reports to `/var/lib/lifekit-fleet/reports/` (`report_url` on each landed item).
+It merges the homes into one summary, tagging every task, hold and decision
+with its `home_id` and listing the homes in `homes[]` (output contract in
+`scripts/fleet-publisher/README.md`), and writes it atomically to
+`/var/lib/lifekit-fleet/home-summary.json`, world-readable, for the dashboard
+to bind-mount read-only. It also writes `fleet.prom` into the textfile
+directory, totals over every home: `fleet_workers{state}`,
+`fleet_decisions_open`, `fleet_oldest_decision_age_seconds` (from the home
 ledger's `needs-decision` line for the decision, else its hold age),
 `fleet_usage_limit_events_1h` (ledger lines naming a usage limit),
-`fleet_summary_valid`, `fleet_summary_generated_timestamp_seconds` and
+`fleet_summary_valid` (every home valid), `fleet_summary_generated_timestamp_seconds`
+(the oldest home's), and per home `fleet_home_summary_valid{home}` and
+`fleet_home_summary_generated_timestamp_seconds{home}`, plus
 `fleet_publisher_last_success_timestamp_seconds`. Grafana's `box` dashboard has
 a Fleet row for them.
 
-**Alerts:** *fleet summary is stale* fires when the summary's own
-`generated_epoch` is over 15 minutes old (the fleet home's watch loop died);
-*textfile metrics are stale* covers a dead publisher (`fleet.prom` not
-rewritten). A malformed or credential-bearing source exits nonzero and keeps
-the previous files, so both rules fire rather than an empty fleet showing.
+**Alerts:** *fleet summary is stale* fires when the oldest home summary's
+`generated_epoch` is over 15 minutes old (that home's watch loop died; the
+per-home series names it); *textfile metrics are stale* covers a dead publisher
+(`fleet.prom` not rewritten). A home whose summary is malformed or
+credential-bearing is left out and listed unpublished, the rest still publish,
+and the run exits nonzero, so *host systemd unit is down or failed* fires for
+`lifekit-fleet-publisher.service`. When no home is readable it keeps the
+previous files, so both stale rules fire rather than an empty fleet showing.
 
 **Install** (operator; needs sudo, installs the script and units like the other gauges):
 
 ```bash
-sudo FM_HOME=<fleet home> bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
+sudo FM_HOMES="<fleet home> [<fleet home> ...]" bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
 systemctl list-timers 'lifekit-fleet-publisher*'
 cat /var/lib/node_exporter/textfile/fleet.prom
 ```
 
-`bootstrap-vps.sh` runs the same installer when `FM_HOME` is set and skips it
-otherwise. The `lifekit-*.timer` glob in the unit gauge picks the timer up with
+`bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
+set and skips it otherwise. Re-running the installer is how a home is added or
+removed: it reinstalls the script and rewrites the unit's `FM_HOMES`. The `lifekit-*.timer` glob in the unit gauge picks the timer up with
 no further change. Merge deploys the Grafana rule and dashboard.
 
 ## Host unit gauge
