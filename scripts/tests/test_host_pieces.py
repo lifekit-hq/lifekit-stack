@@ -80,6 +80,23 @@ def test_alert_inbox_unit_hardcodes_no_personal_paths():
     assert not re.search(r"/home/\w", unit)
 
 
+def test_fleet_publisher_unit_hardcodes_no_personal_paths():
+    unit = (
+        REPO / "scripts/fleet-publisher/lifekit-fleet-publisher.service"
+    ).read_text()
+    assert "__ADMIN_USER__" in unit and '"FM_HOMES=__FM_HOMES__"' in unit
+    assert not re.search(r"/home/\w", unit)
+
+
+def test_bootstrap_hands_the_fleet_home_list_to_the_installer():
+    line = next(
+        ln
+        for ln in (REPO / "scripts/bootstrap-vps.sh").read_text().splitlines()
+        if "install-fleet-publisher.sh" in ln and not ln.startswith("#")
+    )
+    assert 'FM_HOMES="${FM_HOMES:-}"' in line and 'FM_HOME="${FM_HOME:-}"' in line
+
+
 RUNNER_RESTART = REPO / "scripts/runner-restart/install-runner-restart.sh"
 FAKE_SYSTEMCTL = """#!/usr/bin/env bash
 echo "$*" >> "$STATE_DIR/calls"

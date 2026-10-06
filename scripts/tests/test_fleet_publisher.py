@@ -77,6 +77,7 @@ def fleet(tmp_path):
             cwd=cwd,
             env={
                 **os.environ,
+                "FM_HOME": str(tmp_path),
                 "SUMMARY_FILE": str(tmp_path / "home-summary.json"),
                 "LEDGER_FILE": str(tmp_path / "ledger.jsonl"),
                 "DATA_DIR": str(tmp_path / "data"),
@@ -123,7 +124,27 @@ def test_publishes_world_readable_copy_and_worker_counts(fleet):
     assert (fleet.prom / "fleet.prom").stat().st_mode & 0o777 == 0o644
     got = fleet.published()
     assert got["published_epoch"] == NOW
-    assert got["active_children"] == summary()["active_children"]
+    # One home: its summary unchanged, each item tagged with the home's id.
+    home = fleet.tmp.name
+    assert got["active_children"] == [
+        {**c, "home_id": home} for c in summary()["active_children"]
+    ]
+    assert {k: got[k] for k in ("schema", "generated_epoch", "valid")} == {
+        k: summary()[k] for k in ("schema", "generated_epoch", "valid")
+    }
+    assert got["homes"] == [
+        {
+            "id": home,
+            "path": str(fleet.tmp),
+            "published": True,
+            "schema": "fm-secondmate-home-summary.v1",
+            "generated_epoch": NOW - 30,
+            "valid": True,
+            "reason": None,
+            "state": None,
+            "counts": None,
+        }
+    ]
     m = fleet.metrics()
     assert m['fleet_workers{state="working"}'] == 2
     assert m['fleet_workers{state="blocked"}'] == 1
@@ -133,6 +154,10 @@ def test_publishes_world_readable_copy_and_worker_counts(fleet):
     assert m["fleet_summary_valid"] == 1
     assert m["fleet_summary_generated_timestamp_seconds"] == NOW - 30
     assert m["fleet_publisher_last_success_timestamp_seconds"] == NOW
+    assert m[f'fleet_home_summary_valid{{home="{home}"}}'] == 1
+    assert m[f'fleet_home_summary_generated_timestamp_seconds{{home="{home}"}}'] == (
+        NOW - 30
+    )
     assert not [p for p in fleet.out.iterdir() if p.name != "home-summary.json"]
     assert not [p for p in fleet.prom.iterdir() if p.name != "fleet.prom"]
 
@@ -541,6 +566,310 @@ def test_needs_a_fleet_home(fleet):
     assert result.returncode == 2
 
 
+def make_home(root, name, source, ledger=(), hold=None):
+    """A fleet home laid out as the publisher reads it: state/, data/, bin/."""
+    home = root / name
+    (home / "state").mkdir(parents=True)
+    (home / "data").mkdir()
+    (home / "state/home-summary.json").write_text(
+        source if isinstance(source, str) else json.dumps(source)
+    )
+    (home / "state/fleet-ledger.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in ledger)
+    )
+    if hold is not None:
+        (home / "bin").mkdir()
+        stub(home / "bin/fm-captain-hold.sh", hold)
+    return home
+
+
+@pytest.fixture
+def homes(tmp_path):
+    out, prom = tmp_path / "out", tmp_path / "prom"
+    out.mkdir()
+    prom.mkdir()
+
+    def run(*dirs, **env):
+        clean = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("FM_HOME", "SUMMARY_FILE", "LEDGER_FILE", "DATA_DIR")
+        }
+        return subprocess.run(
+            ["bash", str(SCRIPT), str(out), str(prom)],
+            env={
+                **clean,
+                "FM_HOMES": " ".join(str(d) for d in dirs),
+                "LAVISH_STATE": str(tmp_path / "lavish.json"),
+                "FLEET_NOW": str(NOW),
+                **env,
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def published():
+        return json.loads((out / "home-summary.json").read_text())
+
+    def metrics():
+        parsed = {}
+        for line in (prom / "fleet.prom").read_text().splitlines():
+            if line and not line.startswith("#"):
+                name, value = line.rsplit(" ", 1)
+                parsed[name] = int(value)
+        return parsed
+
+    return type(
+        "Homes",
+        (),
+        {
+            "run": staticmethod(run),
+            "published": staticmethod(published),
+            "metrics": staticmethod(metrics),
+            "out": out,
+            "prom": prom,
+            "tmp": tmp_path,
+        },
+    )
+
+
+def two_homes(root):
+    vps = make_home(
+        root,
+        "fm-vps",
+        summary(
+            active_children=[{"id": "v1", "state": "working"}],
+            decisions_open=[decision("vps-call", "k1")],
+            holds=[{"id": "vps-hold"}],
+            landed=[{"id": "vps-done", "title": "done"}],
+            counts={"active_children": 1, "holds": 4},
+            state="ok",
+        ),
+        ledger=[event(NOW - 600, "vps-call", "needs-decision", "k1")],
+    )
+    main = make_home(
+        root,
+        "firstmate",
+        summary(
+            generated_epoch=NOW - 90,
+            valid=False,
+            reason="item x is stale",
+            active_children=[
+                {"id": "m1", "state": "working"},
+                {"id": "m2", "state": "blocked"},
+            ],
+            decisions_open=[decision("main-call", "k2"), decision("main-two")],
+            queued=[{"id": "main-next"}],
+            counts={"active_children": 2, "holds": 0, "queued": 1},
+        ),
+        ledger=[
+            event(NOW - 2000, "main-call", "needs-decision", "k2"),
+            event(NOW - 60, text="usage limit reached"),
+        ],
+    )
+    return vps, main
+
+
+def test_every_home_is_published_with_each_item_tagged_by_its_home(homes):
+    vps, main = two_homes(homes.tmp)
+    result = homes.run(vps, main)
+    assert result.returncode == 0, result.stderr
+    got = homes.published()
+    # Lists are concatenated in FM_HOMES order, every item naming its home.
+    assert [(c["id"], c["home_id"]) for c in got["active_children"]] == [
+        ("v1", "fm-vps"),
+        ("m1", "firstmate"),
+        ("m2", "firstmate"),
+    ]
+    assert [(d["id"], d["home_id"]) for d in got["decisions_open"]] == [
+        ("vps-call", "fm-vps"),
+        ("main-call", "firstmate"),
+        ("main-two", "firstmate"),
+    ]
+    assert [(h["id"], h["home_id"]) for h in got["holds"]] == [("vps-hold", "fm-vps")]
+    assert [(q["id"], q["home_id"]) for q in got["queued"]] == [
+        ("main-next", "firstmate")
+    ]
+    assert got["landed"] == [
+        {"id": "vps-done", "title": "done", "report_url": None, "home_id": "fm-vps"}
+    ]
+    # Whole-fleet fields: the oldest summary, valid only when every home is,
+    # each home's reason named, counts summed; the rest is the first home's.
+    assert got["generated_epoch"] == NOW - 90
+    assert got["valid"] is False
+    assert got["reason"] == "firstmate: item x is stale"
+    assert got["counts"] == {"active_children": 3, "holds": 4, "queued": 1}
+    assert got["state"] == "ok"
+    assert got["published_epoch"] == NOW
+    assert [
+        (h["id"], h["path"], h["published"], h["generated_epoch"], h["valid"])
+        for h in got["homes"]
+    ] == [
+        ("fm-vps", str(vps), True, NOW - 30, True),
+        ("firstmate", str(main), True, NOW - 90, False),
+    ]
+    m = homes.metrics()
+    assert m['fleet_workers{state="working"}'] == 2
+    assert m['fleet_workers{state="blocked"}'] == 1
+    assert m["fleet_decisions_open"] == 3
+    assert m["fleet_oldest_decision_age_seconds"] == 2000
+    assert m["fleet_usage_limit_events_1h"] == 1
+    assert m["fleet_summary_valid"] == 0
+    assert m["fleet_summary_generated_timestamp_seconds"] == NOW - 90
+    assert m['fleet_home_summary_valid{home="fm-vps"}'] == 1
+    assert m['fleet_home_summary_valid{home="firstmate"}'] == 0
+    assert m['fleet_home_summary_generated_timestamp_seconds{home="fm-vps"}'] == (
+        NOW - 30
+    )
+    assert m['fleet_home_summary_generated_timestamp_seconds{home="firstmate"}'] == (
+        NOW - 90
+    )
+
+
+def test_fm_homes_defaults_to_fm_home(homes):
+    vps, _ = two_homes(homes.tmp)
+    assert homes.run(FM_HOMES="", FM_HOME=str(vps)).returncode == 0
+    got = homes.published()
+    assert [h["id"] for h in got["homes"]] == ["fm-vps"]
+    assert got["valid"] is True
+    assert "reason" not in got
+
+
+# Binds session "s-<home>" to the decision "held", only when called as that
+# home: the CLI takes its home from FM_HOME, so a call that inherits another
+# home's FM_HOME misses.
+HOLD_BINDS_OWN_SESSION = (
+    '[[ "$FM_HOME" == "$(cd "$(dirname "$0")/.." && pwd)" ]] || exit 1\n'
+    '[[ "$2" == "lavish-s-$(basename "$FM_HOME")" ]] && echo held || exit 1\n'
+)
+
+
+def test_boards_are_found_through_each_homes_own_binding_and_data_dir(homes):
+    vps = make_home(
+        homes.tmp,
+        "fm-vps",
+        summary(decisions_open=[decision("held")]),
+        hold=HOLD_BINDS_OWN_SESSION,
+    )
+    main = make_home(
+        homes.tmp,
+        "firstmate",
+        summary(decisions_open=[decision("held"), decision("dir-call")]),
+        hold=HOLD_BINDS_OWN_SESSION,
+    )
+    (homes.tmp / "lavish.json").write_text(
+        json.dumps(
+            {
+                "sessions": dict(
+                    enumerate(
+                        [
+                            session(
+                                f"{vps}/data/elsewhere/b.html", "http://board/s-fm-vps"
+                            ),
+                            session(
+                                f"{main}/data/elsewhere/b.html",
+                                "http://board/s-firstmate",
+                            ),
+                            session(
+                                f"{vps}/data/dir-call/b.html", "http://board/wrong-home"
+                            ),
+                            session(
+                                f"{main}/data/dir-call/b.html", "http://board/main-dir"
+                            ),
+                        ]
+                    )
+                )
+            }
+        )
+    )
+    # The old unit's FM_HOME names the first home; it must not leak into the second.
+    result = homes.run(vps, main, FM_HOME=str(vps), TASKS_AXI="/nonexistent")
+    assert result.returncode == 0, result.stderr
+    boards = [
+        (d["home_id"], d["id"], d["board_url"])
+        for d in homes.published()["decisions_open"]
+    ]
+    assert boards == [
+        ("fm-vps", "held", "http://board/s-fm-vps"),
+        ("firstmate", "held", "http://board/s-firstmate"),
+        ("firstmate", "dir-call", "http://board/main-dir"),
+    ]
+
+
+def test_a_report_id_both_homes_land_is_served_from_the_first_home(homes):
+    vps, main = (
+        make_home(
+            homes.tmp,
+            name,
+            summary(
+                landed=[{"id": "same", "report_path": "data/same/report.md"}],
+            ),
+        )
+        for name in ("fm-vps", "firstmate")
+    )
+    for home in (vps, main):
+        (home / "data/same").mkdir()
+        (home / "data/same/report.md").write_text(f"# from {home.name}\n")
+    result = homes.run(vps, main)
+    assert result.returncode == 0, result.stderr
+    assert "firstmate: report same clashes" in result.stderr
+    urls = [(i["home_id"], i["report_url"]) for i in homes.published()["landed"]]
+    assert urls == [("fm-vps", "reports/same/report.md"), ("firstmate", None)]
+    assert (homes.out / "reports/same/report.md").read_text() == "# from fm-vps\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "code"),
+    [
+        ("{not json", 1),
+        (json.dumps(summary(reason="leaked " + "ghp_" + "A" * 24)), 3),
+    ],
+    ids=["malformed", "credential"],
+)
+def test_an_unreadable_home_is_left_out_and_fails_the_run(homes, source, code):
+    vps, _ = two_homes(homes.tmp)
+    broken = make_home(homes.tmp, "broken", source)
+    result = homes.run(vps, broken)
+    assert result.returncode == code
+    got = homes.published()
+    assert {c["home_id"] for c in got["active_children"]} == {"fm-vps"}
+    assert got["valid"] is False
+    assert got["homes"][1] == {
+        "id": "broken",
+        "path": str(broken),
+        "published": False,
+        "valid": False,
+        "reason": got["homes"][1]["reason"],
+    }
+    assert "ghp_" not in (homes.out / "home-summary.json").read_text()
+    m = homes.metrics()
+    assert m['fleet_home_summary_valid{home="broken"}'] == 0
+    assert 'fleet_home_summary_generated_timestamp_seconds{home="broken"}' not in m
+    assert m["fleet_summary_generated_timestamp_seconds"] == NOW - 30
+
+
+def test_no_readable_home_keeps_previous_files(homes):
+    vps, main = two_homes(homes.tmp)
+    assert homes.run(vps, main).returncode == 0
+    before = (homes.out / "home-summary.json").read_text()
+    for home in (vps, main):
+        (home / "state/home-summary.json").write_text("{not json")
+    assert homes.run(vps, main).returncode == 1
+    assert (homes.out / "home-summary.json").read_text() == before
+
+
+@pytest.mark.parametrize(
+    "dirs",
+    [("/srv/a/fleet", "/srv/b/fleet"), ("relative/fleet",), ("/srv/a/-bad",)],
+    ids=["duplicate-id", "relative", "bad-id"],
+)
+def test_home_list_needs_absolute_paths_with_unique_ids(homes, dirs):
+    result = homes.run(*dirs)
+    assert result.returncode == 2
+    assert not (homes.out / "home-summary.json").exists()
+
+
 def test_installer_renders_units_and_enables_the_timer(tmp_path):
     root, calls = tmp_path / "root", tmp_path / "calls"
     fake = tmp_path / "systemctl"
@@ -551,7 +880,7 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
         env={
             **os.environ,
             "ADMIN_USER": "fleetadmin",
-            "FM_HOME": "/srv/fleet-home",
+            "FM_HOMES": " /srv/fleet-home   /srv/main-home ",
             "TASKS_AXI": "/opt/tools/bin/tasks-axi",
             "INSTALL_ROOT": str(root),
             "SYSTEMCTL": str(fake),
@@ -569,7 +898,7 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     assert service["Service"]["User"] == "fleetadmin"
     assert (
         service["Service"]["Environment"]
-        == '"FM_HOME=/srv/fleet-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
+        == '"FM_HOMES=/srv/fleet-home /srv/main-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
     )
     assert service["Service"]["Type"] == "oneshot"
     assert "__" not in (units / "lifekit-fleet-publisher.service").read_text()
@@ -592,10 +921,43 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     ]
 
 
+def run_installer(tmp_path, **env):
+    fake = tmp_path / "systemctl"
+    fake.write_text("#!/usr/bin/env bash\n")
+    fake.chmod(0o755)
+    return subprocess.run(
+        ["bash", str(DIR / "install-fleet-publisher.sh")],
+        env={
+            **{k: v for k, v in os.environ.items() if k not in ("FM_HOME", "FM_HOMES")},
+            "TASKS_AXI": "/opt/tools/bin/tasks-axi",
+            "INSTALL_ROOT": str(tmp_path / "root"),
+            "SYSTEMCTL": str(fake),
+            **env,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_installer_defaults_the_home_list_to_fm_home(tmp_path):
+    result = run_installer(tmp_path, FM_HOME="/srv/fleet-home")
+    assert result.returncode == 0, result.stderr
+    unit = tmp_path / "root/etc/systemd/system/lifekit-fleet-publisher.service"
+    assert '"FM_HOMES=/srv/fleet-home" ' in unit.read_text()
+
+
+@pytest.mark.parametrize("home", ["relative/home", '/srv/a"b', "/srv/a|b"])
+def test_installer_refuses_a_home_it_cannot_render(tmp_path, home):
+    result = run_installer(tmp_path, FM_HOMES=f"/srv/ok {home}")
+    assert result.returncode == 1
+    assert not (tmp_path / "root/etc/systemd").exists()
+
+
 def test_installer_skips_without_a_fleet_home():
     result = subprocess.run(
         ["bash", str(DIR / "install-fleet-publisher.sh")],
-        env={k: v for k, v in os.environ.items() if k != "FM_HOME"},
+        env={k: v for k, v in os.environ.items() if k not in ("FM_HOME", "FM_HOMES")},
         capture_output=True,
         text=True,
         check=False,

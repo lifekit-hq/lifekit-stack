@@ -1607,9 +1607,9 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              # Age of the fleet home's own summary (its generated_epoch, copied
-              # by scripts/fleet-publisher/, which rewrites fleet.prom every
-              # minute). The fleet home refreshes the summary on its watch loop
+              # Age of the oldest fleet home's own summary (its generated_epoch,
+              # copied by scripts/fleet-publisher/, which rewrites fleet.prom
+              # every minute). A fleet home refreshes its summary on its watch loop
               # within a minute or two, so 15 minutes is a dead loop. A dead
               # publisher stops the fleet.prom mtime instead, which the
               # textfile-collector-stale rule catches.
@@ -1643,9 +1643,10 @@ groups:
         annotations:
           summary: "the fleet summary has not been refreshed for over 15 minutes"
           description: >-
-            fleet_summary_generated_timestamp_seconds is {{ humanizeDuration $values.B.Value }} old: the fleet
+            fleet_summary_generated_timestamp_seconds is {{ humanizeDuration $values.B.Value }} old: a fleet
             home's watch loop that rewrites home-summary.json has stopped, so the dashboard's fleet view is
-            showing a frozen picture. Check the fleet home's watch loop, then
+            showing a frozen picture. fleet_home_summary_generated_timestamp_seconds{home} names the home;
+            check that home's watch loop, then
             `journalctl -u lifekit-fleet-publisher.service` and `systemctl list-timers` on the box.
 
       - uid: grafana-notification-delivery-failing
