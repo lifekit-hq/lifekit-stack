@@ -1430,9 +1430,8 @@ still starting fails.
 Members sign in with a code mailed to their address, sent through Logto's SMTP
 connector over `smtp.gmail.com`. Gmail needs no verified sending domain, which
 is why it is the first path; a domain and Resend replace it later (the
-connector is one object, re-pointed then). Mail is only
-for members who already exist: the sign-in mode stays `SignIn`, so nobody
-registers by email.
+connector is one object, re-pointed then). Mail is only for members who
+already exist: the sign-in mode stays `SignIn`, so nobody registers by email.
 
 **The one input: a Google app password.** From the sending Google Account, with
 2-Step Verification on: *Security > 2-Step Verification > App passwords*,
@@ -1445,10 +1444,10 @@ scripts/secrets/edit.sh master    # fill PARKED_LOGTO_SMTP_APP_PASSWORD, save
 ```
 
 Merge that change; nothing needs a render or a redeploy: no service
-interpolates it, and the `PARKED_` prefix keeps the render from writing it out. Gmail sends as the account's own address (a different
-`--from-email` is rewritten unless it is a verified "Send mail as" alias of
-that account), and a Gmail account has a daily sending limit, plenty for
-sign-in codes.
+interpolates it, and the `PARKED_` prefix keeps the render from writing it
+out. Gmail sends as the account's own address (a different `--from-email` is
+rewritten unless it is a verified "Send mail as" alias of that account), and a
+Gmail account has a daily sending limit, plenty for sign-in codes.
 
 **Apply** (admin account, Management API credentials as in the next section;
 `<m2m>.sops` is the operator's M2M file, `<address>` the Gmail address):

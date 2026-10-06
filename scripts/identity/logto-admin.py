@@ -42,9 +42,9 @@ Logto replaces a PATCHed object whole, so the current color, branding, signIn
 and signUp are read first and merged.
 
 set-email-connector creates or updates Logto's SMTP email connector (always
-smtp.gmail.com:465, TLS). The login is --user; the password is read from LOGTO_SMTP_PASSWORD
-(a Google app password: whitespace is dropped), never argv, and is never
-printed or written to the ledger. fromEmail defaults to --user, which is the
+smtp.gmail.com:465, TLS). The login is --user; the password is read from
+LOGTO_SMTP_PASSWORD (a Google app password: whitespace is dropped), never
+argv, and is never printed or written to the ledger. fromEmail defaults to --user, which is the
 address Gmail sends as. Logto allows one email connector. send-test-email
 sends one message through the stored connector config, to prove the path.
 
