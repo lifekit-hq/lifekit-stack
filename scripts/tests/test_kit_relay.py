@@ -80,10 +80,11 @@ def write_exec(path: Path, text: str) -> Path:
     return path
 
 
-def render(fm_home: Path) -> subprocess.CompletedProcess:
+def render(fm_home: Path, alt: Path | None = None) -> subprocess.CompletedProcess:
+    extra = {"FM_HOME_ALT": str(alt)} if alt else {}
     return subprocess.run(
         ["bash", str(INSTALLER), "--print"],
-        env={**os.environ, "FM_HOME": str(fm_home)},
+        env={**os.environ, "FM_HOME": str(fm_home), **extra},
         capture_output=True,
         text=True,
         check=False,
@@ -96,13 +97,22 @@ class Relay:
         (self.home / "bin").mkdir(parents=True)
         (self.home / "state/inbox/.requests").mkdir(parents=True)
         write_exec(self.home / "bin/fm-inbox.sh", FAKE_INBOX)
+        # The second home the installer may pin; named "firstmate" on the wire.
+        self.main = tmp / "firstmate"
+        (self.main / "bin").mkdir(parents=True)
+        (self.main / "state/inbox/.requests").mkdir(parents=True)
+        write_exec(self.main / "bin/fm-inbox.sh", FAKE_INBOX)
         self.bin = tmp / "bin"
         self.bin.mkdir()
         write_exec(self.bin / "logger", FAKE_LOGGER)
         self.log = tmp / "logger.log"
-        rendered = render(self.home)
+        rendered = render(self.home, self.main)
         assert rendered.returncode == 0, rendered.stderr
         self.script = write_exec(tmp / "kit-relay", rendered.stdout)
+        # The same script rendered with no second home pinned.
+        alone = render(self.home)
+        assert alone.returncode == 0, alone.stderr
+        self.script_alone = write_exec(tmp / "kit-relay-alone", alone.stdout)
         self.env = {
             "PATH": f"{self.bin}:{os.environ['PATH']}",
             "HOME": str(tmp),
@@ -111,30 +121,37 @@ class Relay:
         }
 
     def run(
-        self, cmd: str | None, body: bytes = b"", sender: tuple[str, ...] = (), **env
+        self,
+        cmd: str | None,
+        body: bytes = b"",
+        sender: tuple[str, ...] = (),
+        script: Path | None = None,
+        **env,
     ) -> subprocess.CompletedProcess:
         full = {**self.env, **env}
         if cmd is not None:
             full["SSH_ORIGINAL_COMMAND"] = cmd
         return subprocess.run(
-            [str(self.script), *sender],
+            [str(script or self.script), *sender],
             input=body,
             env=full,
             capture_output=True,
             check=False,
         )
 
-    def calls(self) -> list[dict]:
-        path = self.home / "calls.jsonl"
+    def calls(self, home: Path | None = None) -> list[dict]:
+        path = (home or self.home) / "calls.jsonl"
         if not path.exists():
             return []
         return [json.loads(line) for line in path.read_text().splitlines()]
 
-    def requests(self) -> list[str]:
-        return sorted(p.name for p in (self.home / "state/inbox/.requests").iterdir())
+    def requests(self, home: Path | None = None) -> list[str]:
+        return sorted(
+            p.name for p in ((home or self.home) / "state/inbox/.requests").iterdir()
+        )
 
-    def notes(self) -> list[Path]:
-        return sorted((self.home / "state/inbox").glob("*.note"))
+    def notes(self, home: Path | None = None) -> list[Path]:
+        return sorted(((home or self.home) / "state/inbox").glob("*.note"))
 
     def logged(self) -> str:
         return self.log.read_text() if self.log.exists() else ""
@@ -166,8 +183,13 @@ def test_repo_copy_refuses_to_run_unrendered(tmp_path):
 
 def test_installer_pins_fm_home(relay):
     text = relay.script.read_text()
-    assert f"readonly FM_HOME='{relay.home}'\n" in text
+    assert f"readonly DEFAULT_HOME='{relay.home}'\n" in text
+    assert f"readonly ALT_HOME='{relay.main}'" in text
     assert "__FM_HOME__" not in text
+    assert "__FM_HOME_ALT__" not in text
+    alone = relay.script_alone.read_text()
+    assert f"readonly DEFAULT_HOME='{relay.home}'\n" in alone
+    assert "readonly ALT_HOME=''" in alone
 
 
 @pytest.mark.parametrize(
@@ -182,6 +204,29 @@ def test_installer_refuses_unsafe_fm_home(fm_home):
         check=False,
     )
     assert result.returncode == 1
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "alt, reason",
+    [
+        ("relative/firstmate", "FM_HOME_ALT must be an absolute path"),
+        ("/tmp/$(id)", "FM_HOME_ALT must be an absolute path"),
+        ("/tmp/First-Mate", "last path part must match"),
+        ("/tmp/home", "must differ in their last path part"),
+        ("/tmp/nowhere/firstmate", "fm-inbox.sh is missing"),
+    ],
+)
+def test_installer_refuses_unsafe_alt_home(relay, alt, reason):
+    result = subprocess.run(
+        ["bash", str(INSTALLER), "--print"],
+        env={**os.environ, "FM_HOME": str(relay.home), "FM_HOME_ALT": alt},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert reason in result.stderr
     assert result.stdout == ""
 
 
@@ -389,6 +434,131 @@ def test_receipts_are_filtered_to_the_senders_prefix(relay):
 
 def test_installed_script_knows_the_dashboard_sender(relay):
     assert "  dashboard) ID_PREFIX=dash- ;;\n" in relay.script.read_text()
+
+
+# ─── the home argument ───────────────────────────────────────────────────────
+
+
+def test_no_home_is_the_default_home(relay):
+    result = relay.run("note kit-1", b"body\n")
+    assert result.returncode == 0, result.stderr
+    assert relay.requests() == ["kit-1"]
+    assert relay.requests(relay.main) == []
+    assert relay.calls(relay.main) == []
+    assert " home=" not in relay.logged()  # the log line is the one it always was
+
+
+def test_the_default_home_can_be_named(relay):
+    result = relay.run("note kit-1 home", b"body\n")
+    assert result.returncode == 0, result.stderr
+    assert relay.requests() == ["kit-1"]
+    assert relay.requests(relay.main) == []
+    assert "rid=kit-1 " in relay.logged() and " home=home" in relay.logged()
+
+
+def test_the_main_home_gets_the_note_and_runs_with_its_own_fm_home(relay):
+    body = b"answer export-format: CSV\n"
+    result = relay.run("note dash-1 firstmate", body, DASH)
+    assert result.returncode == 0, result.stderr
+    assert relay.requests(relay.main) == ["dash-1"]
+    [stored] = relay.notes(relay.main)
+    assert stored.read_bytes() == body
+    assert relay.requests() == [] and relay.calls() == []
+    [call] = relay.calls(relay.main)
+    assert call["env"]["FM_HOME"] == str(relay.main)
+    assert set(call["env"]) == {"HOME", "PATH", "LANG", "FM_HOME"}
+    assert "home=firstmate" in relay.logged()
+
+
+def test_the_main_homes_rate_bucket_is_its_own(relay):
+    fill_requests(relay, 30)  # the default home is full
+    assert relay.run("note kit-new firstmate", b"body\n").returncode == 0
+    assert relay.run("note kit-new2", b"body\n").returncode == 75
+
+
+def test_receipts_read_the_named_home(relay):
+    default, main = receipts_fixture(), receipts_fixture()
+    default["home"], main["home"] = str(relay.home), str(relay.main)
+    main["pending"] = [{"id": "m1", "request_id": "kit-main", "body": "m"}]
+    (relay.home / "receipts.json").write_text(json.dumps(default))
+    (relay.main / "receipts.json").write_text(json.dumps(main))
+    [out] = lines(relay.run("receipts firstmate"))
+    assert (out["home"], [n["id"] for n in out["pending"]]) == (str(relay.main), ["m1"])
+    [out] = lines(relay.run("receipts 000000000001 firstmate"))
+    assert out["home"] == str(relay.main)
+    assert relay.calls(relay.main)[-1]["argv"][:3] == [
+        "receipts",
+        "--after",
+        "000000000001",
+    ]
+    assert relay.calls(relay.main)[-1]["env"]["FM_HOME"] == str(relay.main)
+    [out] = lines(relay.run("receipts"))
+    assert out["home"] == str(relay.home)
+
+
+@pytest.mark.parametrize(
+    "home",
+    [
+        "other",  # not in the allowlist
+        "FIRSTMATE",  # exact match only
+        "firstmat",  # no prefix matching
+        "firstmate2",
+        "firstmate-",
+        "..",  # traversal
+        "../firstmate",
+        "firstmate/../home",
+        "/tmp/firstmate",  # a path is never a home
+        "{main}",  # the main home's full path
+        "{default}",  # the default home's full path
+        "~",
+        "$HOME",
+        "firstmate;id",
+        "firstmate`id`",
+        "firstmate%00",
+        "fir\tstmate",
+        "-firstmate",
+        "a" * 80,
+    ],
+)
+@pytest.mark.parametrize("verb", ["note kit-bad", "receipts", "receipts 000000000001"])
+def test_an_unknown_or_hostile_home_is_refused_and_writes_nothing(relay, home, verb):
+    home = home.replace("{main}", str(relay.main)).replace("{default}", str(relay.home))
+    result = relay.run(f"{verb} {home}", b"body\n")
+    assert result.returncode == 64, result.stderr
+    assert result.stderr.decode().startswith("kit-relay: refused: ")
+    assert result.stdout == b""
+    for h in (relay.home, relay.main):
+        assert relay.calls(h) == []
+        assert relay.requests(h) == [] and relay.notes(h) == []
+
+
+def test_a_traversal_cannot_reach_a_home_that_is_not_pinned(relay, tmp_path):
+    other = tmp_path / "other"
+    (other / "bin").mkdir(parents=True)
+    write_exec(other / "bin/fm-inbox.sh", FAKE_INBOX)
+    for cmd in ("note kit-1 ../other", "note kit-1 other", f"note kit-1 {other}"):
+        assert relay.run(cmd, b"body\n").returncode == 64
+    assert relay.calls(other) == [] and not (other / "state").exists()
+
+
+def test_without_a_pinned_second_home_only_the_default_is_named(relay):
+    alone = relay.script_alone
+    assert relay.run("note kit-1 firstmate", b"body\n", script=alone).returncode == 64
+    assert relay.run("receipts firstmate", script=alone).returncode == 64
+    assert relay.calls(relay.main) == [] and relay.calls() == []
+    assert relay.run("note kit-1 home", b"body\n", script=alone).returncode == 0
+    assert relay.requests() == ["kit-1"]
+
+
+def test_too_many_words_are_still_refused(relay):
+    for cmd in (
+        "note kit-1 firstmate extra",
+        "receipts 000000000001 firstmate extra",
+        "receipts firstmate firstmate",
+        "receipts firstmate 000000000001",
+    ):
+        assert relay.run(cmd, b"body\n").returncode == 64, cmd
+    assert relay.calls() == [] and relay.calls(relay.main) == []
 
 
 # ─── environment and exit codes ──────────────────────────────────────────────
