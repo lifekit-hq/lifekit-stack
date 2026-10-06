@@ -137,17 +137,12 @@ sources_kb() {
 }
 
 check_headroom() {
-  local avail need kb ws skipped e
+  local avail need kb ws
   kb="$(sources_kb "${STATE}")"
   ws="$(du -sxk "${WORKSPACE}" | awk '{print $1}')"
   COPIED_KB=$((kb + ws))
   avail="$(df --output=avail -k "$(existing_ancestor "${DEST}")" | tail -n1 | tr -d ' ')"
   need=$((COPIED_KB + HEADROOM_KB))
-  skipped=0
-  for e in tmp .tmp cache .cache; do
-    [[ -d "${STATE}/${e}" ]] && skipped=$((skipped + $(du -sxk "${STATE}/${e}" 2>/dev/null | awk '{print $1}')))
-  done
-  say "skipping gateway scratch (tmp/cache): $((skipped / 1024)) MiB"
   say "copying $((COPIED_KB / 1024)) MiB; free $((avail / 1024)) MiB; need $((need / 1024)) MiB"
   if ((avail < need)); then
     die "not enough headroom: free $((avail / 1024)) MiB, need $((need / 1024)) MiB (copy + 25 GiB)"
