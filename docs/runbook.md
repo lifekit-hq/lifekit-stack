@@ -2066,39 +2066,60 @@ fetching, and `--workspace` at a scratch directory rehearses the whole flow.
 YouTube answers "Sign in to confirm you're not a bot" to this host's datacenter IP,
 with or without yt-dlp, a JS runtime, a PO-token provider or other player clients, and
 audio download is blocked the same way. So the one yt-dlp call that talks to YouTube
-leaves through the owner's home connection: `scripts/yt-tunnel/` is a systemd **user**
-unit (the admin account `ADMIN_USER`, README "VPS users"; nothing under `/etc`) running
-`ssh -N -D <docker0 address>:18081 <PC ssh alias>`, and `skills/youtube-transcript` fetches captions with
-`--proxy socks5h://host.docker.internal:18081`. No API key, no cookies, no paid service,
-nothing installed on the PC, and `-N` runs no command there.
+leaves through the owner's home connection. `scripts/yt-tunnel/` is two systemd **user**
+units (the admin account `ADMIN_USER`, README "VPS users"; nothing under `/etc`):
 
-- **Bind:** the docker0 address (`172.17.0.1`), which is what `host.docker.internal`
-  resolves to inside the gateway (`extra_hosts: host-gateway`). Nothing off the box can
-  reach it, but any container on a Docker bridge can: the listener is an open SOCKS
-  proxy into the PC's network. The installer refuses a wildcard bind.
-- **PC off:** ssh opens the listener only after it has connected, so while the PC is off
-  nothing listens, the unit retries with backoff (10s up to 5min, no start limit) and
-  the skill answers `transcript unavailable - the PC is off` (exit 0, not an error). A
-  listener that is up with a dead PC behind it, or a stalled fetch, gets the same answer.
+- `yt-tunnel.service` runs `ssh -N -D 127.0.0.1:18082 <PC ssh alias>`, an open SOCKS
+  proxy into the PC's network, so it binds **loopback only**. No container can reach host
+  loopback, and the installer refuses any other bind.
+- `yt-relay.service` runs `yt-relay.py`, a stdlib allow-list SOCKS5 relay, and is the
+  **only listener on the docker0 address** (`172.17.0.1:18081`, what
+  `host.docker.internal` resolves to inside the gateway via `extra_hosts: host-gateway`).
+  The installer refuses a wildcard bind. `skills/youtube-transcript` fetches captions with
+  `--proxy socks5h://host.docker.internal:18081`, i.e. only ever talks to the relay.
+
+No API key, no cookies, no paid service, nothing installed on the PC, and `-N` runs no
+command there.
+
+- **Allow-list:** the relay takes SOCKS5 no-auth CONNECT with a domain-name address only,
+  and only for `youtube.com`, `googlevideo.com`, `ytimg.com` or a subdomain of one of them
+  (label-boundary match, case-insensitive). Everything else (other names, lookalikes such
+  as `evilyoutube.com` or `youtube.com.evil.com`, IPv4/IPv6 address types, IP literals sent
+  as names) gets SOCKS reply `0x02` and a log line in `journalctl --user -u yt-relay`.
+  Allowed names go on to the tunnel unresolved, so the PC resolves them. The handshake and
+  idle time are bounded, so a stuck client cannot hold the relay.
+- **PC off:** ssh opens its listener only after it has connected, so with the PC off the
+  tunnel unit retries with backoff (10s up to 5min, no start limit) while the relay stays
+  up and answers a CONNECT with SOCKS failure `0x05` at once. The skill's pre-check is a
+  real SOCKS5 CONNECT to `www.youtube.com:443` through the relay, so any failure of it
+  (relay down, tunnel down, PC unreachable) answers `transcript unavailable - the PC is off`
+  (exit 0, not an error); so does a yt-dlp error that names the proxy or a timeout.
+- **Failed fetch is not "no captions":** yt-dlp reports a refused caption download (for
+  example an HTTP 429) as a warning and exits 0 with no file. The skill sees that warning
+  and exits 1 with it on stderr instead of answering `this video has no captions`.
 - **Captions only:** human captions first, auto-generated as the fallback, original
   language track preferred, VTT cleaned to plain text. A video with none answers
   `transcript unavailable - this video has no captions`; there is no audio fallback.
-- **Linger:** the user manager stops with the account's last session, and the tunnel
+- **Linger:** the user manager stops with the account's last session, and both units
   with it. `loginctl show-user <admin account> -p Linger` says which; `sudo loginctl
   enable-linger <admin account>` is the operator step that makes the tunnel survive logout and reboot.
 
-Install, as the admin account on the host (user scope, no sudo; idempotent). The alias is
-the PC's `Host` entry in that account's `~/.ssh/config` (key auth, no passphrase prompt):
+Both units stay disabled and uninstalled until the go-time install below; merging the PR
+changes nothing on the host. Install, as the admin account on the host (user scope, no
+sudo; idempotent). The alias is the PC's `Host` entry in that account's `~/.ssh/config`
+(key auth, no passphrase prompt):
 
 ```bash
 export YT_TUNNEL_HOST=<PC ssh alias>
 /srv/lifekit-stack/scripts/yt-tunnel/install-yt-tunnel.sh          # render, install, enable --now
-/srv/lifekit-stack/scripts/yt-tunnel/install-yt-tunnel.sh --print  # show the rendered unit only
-systemctl --user status yt-tunnel.service
+/srv/lifekit-stack/scripts/yt-tunnel/install-yt-tunnel.sh --print  # show the rendered units only
+systemctl --user status yt-tunnel.service yt-relay.service
 ```
 
-`YT_TUNNEL_PORT`, `YT_TUNNEL_BIND` and `YT_TUNNEL_UNIT_DIR` override the port (18081),
-listener address (docker0) and unit directory.
+`YT_TUNNEL_PORT` / `YT_TUNNEL_BIND` (18082, `127.0.0.1`; loopback only),
+`YT_TUNNEL_RELAY_PORT` / `YT_TUNNEL_RELAY_BIND` (18081, docker0) and `YT_TUNNEL_UNIT_DIR`
+override the defaults. The relay units run `yt-relay.py` from the checkout, so a deploy
+that changes it needs `systemctl --user restart yt-relay.service`.
 
 Install the skill, as `lifekit` on the host (after the PR is deployed, so the checkout
 has it):

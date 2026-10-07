@@ -1,0 +1,25 @@
+# yt-relay.service - systemd USER unit (the admin account, nothing under /etc).
+# Rendered and installed by scripts/yt-tunnel/install-yt-tunnel.sh, which fills
+# the @...@ placeholders; docs/runbook.md "YouTube transcripts through the PC".
+#
+# The allow-list SOCKS5 relay (yt-relay.py) and the ONLY listener on the docker
+# bridge address: the OpenClaw gateway reaches it as host.docker.internal. It
+# forwards YouTube hostnames only, through the loopback ssh forward of
+# yt-tunnel.service. It does not require that unit: with the PC off the relay
+# stays up and answers a SOCKS failure, which the skill reads as "the PC is off".
+[Unit]
+Description=Allow-list SOCKS relay for the YouTube transcript skill
+After=yt-tunnel.service
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/python3 @REPO@/scripts/yt-tunnel/yt-relay.py \
+  --listen @RELAY_BIND@:@RELAY_PORT@ \
+  --upstream @TUNNEL_BIND@:@TUNNEL_PORT@
+# The docker bridge address can appear after the user manager starts at boot.
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

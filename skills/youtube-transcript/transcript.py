@@ -3,7 +3,8 @@
 
 YouTube refuses this host's datacenter IP, so the one yt-dlp call that talks to
 YouTube goes through a SOCKS proxy on the owner's home connection
-(scripts/yt-tunnel). No API key, no cookies, no audio download: captions only.
+(scripts/yt-tunnel: an allow-list relay in front of an ssh tunnel). No API
+key, no cookies, no audio download: captions only.
 
     transcript.py <url-or-video-id>
 
@@ -39,6 +40,8 @@ UNREACHABLE = re.compile(
     r"|network is unreachable|no route to host|temporary failure in name resolution",
     re.IGNORECASE,
 )
+# yt-dlp reports a failed caption download as a WARNING and still exits 0.
+SUBS_FAILED = re.compile(r"unable to download (video )?subtitles", re.IGNORECASE)
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 
 
@@ -64,13 +67,34 @@ def video_id(arg: str) -> str | None:
     return cand if VIDEO_ID.fullmatch(cand) else None
 
 
-def proxy_reachable(proxy: str, timeout: float = 5.0) -> bool:
+def proxy_reachable(proxy: str, timeout: float = 10.0) -> bool:
+    """A real SOCKS5 CONNECT to YouTube through the proxy. The relay listens
+    even when the PC is off, so a bare TCP connect proves nothing; it answers a
+    CONNECT it cannot carry out with a failure code."""
     u = urlparse(proxy)
+    host = b"www.youtube.com"
     try:
-        with socket.create_connection((u.hostname, u.port or 1080), timeout=timeout):
-            return True
+        with socket.create_connection(
+            (u.hostname, u.port or 1080), timeout=timeout
+        ) as s:
+            s.settimeout(timeout)
+            s.sendall(b"\x05\x01\x00")
+            if recv_exact(s, 2) != b"\x05\x00":
+                return False
+            s.sendall(b"\x05\x01\x00\x03" + bytes([len(host)]) + host + b"\x01\xbb")
+            return recv_exact(s, 4)[1] == 0
     except OSError:
         return False
+
+
+def recv_exact(s: socket.socket, n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = s.recv(n - len(buf))
+        if not chunk:
+            raise OSError("proxy closed the connection")
+        buf += chunk
+    return buf
 
 
 def vtt_to_text(vtt: str) -> str:
@@ -112,7 +136,8 @@ def pick(files: list[Path]) -> Path | None:
 
 def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
     """(text, title, error). text None with error "" means no captions;
-    error "unreachable" means the proxy or PC did not answer."""
+    error "unreachable" means the proxy or PC did not answer; any other error
+    is a failed download, which is not the same as no captions."""
     base = yt_dlp_cmd()
     if not base:
         return None, "", "yt-dlp is not installed"
@@ -126,7 +151,6 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
                 "--skip-download",
                 "--no-playlist",
                 "--no-cache-dir",
-                "--no-warnings",
                 "--no-simulate",
                 "--socket-timeout",
                 "20",
@@ -156,11 +180,15 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
                 text = vtt_to_text(chosen.read_text(errors="replace"))
                 if text:
                     return text, title, ""
-            if r.returncode != 0:
+            if r.returncode != 0 or SUBS_FAILED.search(err):
                 if UNREACHABLE.search(err):
                     return None, "", "unreachable"
                 last_err = next(
-                    (ln for ln in reversed(err.splitlines()) if ln.startswith("ERROR")),
+                    (
+                        ln
+                        for ln in reversed(err.splitlines())
+                        if ln.startswith("ERROR") or SUBS_FAILED.search(ln)
+                    ),
                     err,
                 )
     return None, "", last_err
