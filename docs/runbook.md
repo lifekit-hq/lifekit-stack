@@ -1747,8 +1747,7 @@ creates a Traditional web app, or brings an existing one's URIs to the given
 lists. `set-redirects` replaces the list it is given and keeps the other.
 `--secret-file` writes the app's client secret to a new 0600 file for
 `sops set` to read (`"\"$(cat ~/<name>.secret)\""`), then `shred -u` it.
-`set-app-sign-in-exp` sets one application's own name, logo and colors; `--clear-terms-links` on
-`set-sign-in-exp` empties the Terms/Privacy links. `set-sign-in-exp` changes only the fields given (logo,
+`set-sign-in-exp` changes only the fields given (logo,
 dark logo, favicon, dark favicon, colors, `--sign-in-identifiers`,
 `--sign-up-identifiers`); the image options take an http(s) URL or an inline
 `data:image/svg+xml;base64,...` URI, which needs no hosting.
@@ -1757,6 +1756,8 @@ dark logo, favicon, dark favicon, colors, `--sign-in-identifiers`,
 ([Email sign-in (Gmail SMTP)](#email-sign-in-gmail-smtp), with
 `set-email-connector` and `send-test-email`). It never sends the sign-in mode
 or the social sign-in settings.
+`--clear-terms-links` empties its Terms/Privacy links. `set-app-sign-in-exp <app>` sets one
+application's own name, logo and colors ([Sign-in page branding](#sign-in-page-branding)).
 
 **Reversing a change.** Each change appends a line to the ledger
 (`~/.local/state/lifekit/logto-admin.ledger.jsonl`, or `LOGTO_ADMIN_LEDGER`):
