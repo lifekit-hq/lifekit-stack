@@ -1140,6 +1140,51 @@ To undo: `sudo systemctl disable --now lifekit-docker-prune.timer`, remove the
 copy and the two unit files (paths printed by `--check`), then `sudo systemctl
 daemon-reload`.
 
+## Weekly Docker image and anonymous-volume prune
+
+`scripts/docker-weekly-prune/` holds `lifekit-docker-weekly-prune.timer`
+(Sundays 04:15 with up to 30 minutes of random delay; `Persistent=true` catches
+up a missed run), run as root, same shape as the other host timers. It runs:
+
+```bash
+docker image prune -a -f --filter "label!=lifekit.keep=rollback"
+docker volume prune -f
+```
+
+It never touches build cache (the nightly prune and the cache cap above own
+that), networks or named volumes (`volume prune` without `--all` removes
+anonymous volumes only), and it restarts neither dockerd nor a container. Read
+what each half reclaimed with `journalctl -u lifekit-docker-weekly-prune.service`
+(lines tagged `[image]` / `[volume]`).
+
+**Rollback images.** `image prune -a` removes every image no container uses,
+which includes `lifekit-openclaw:prev` (the [one-rollback
+rule](#the-one-rollback-rule)). The gateway Dockerfile stamps
+`LABEL lifekit.keep="rollback"` and `:prev` is a retag of the image that ran
+the previous version, so the filter skips it. An image built before the label
+existed does not carry it, and a label cannot be added to an existing image:
+if any `*:prev` image lacks the label the script skips the image prune, still
+runs the volume prune and fails the unit with the image names on stderr. The
+label reaches `:prev` on the first version bump after it merges; until then
+the unit stays red rather than delete the rollback image. To clear it sooner,
+rebuild the running version from its commit (with the label) and tag it
+`:prev`. The nightly `lifekit-docker-prune` above filters by age, not by
+label, and does not honour the keep label.
+
+**Operator step (install).** Merging does not install it, and
+`bootstrap-vps.sh` does not call the installer; run on the box when asked to
+enable it:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/docker-weekly-prune/install-docker-weekly-prune.sh
+systemctl list-timers 'lifekit-docker-weekly-prune*'
+```
+
+Once installed, the host unit gauge covers the timer (`lifekit-*.timer`). To
+undo: `sudo systemctl disable --now lifekit-docker-weekly-prune.timer`, remove
+`/usr/local/bin/lifekit-docker-weekly-prune.sh` and the two unit files under
+`/etc/systemd/system`, then `sudo systemctl daemon-reload`.
+
 ## Moving /tmp off RAM (agent scratch)
 
 `scripts/tmp-scratch-policy.sh` owns the repository's half of getting
