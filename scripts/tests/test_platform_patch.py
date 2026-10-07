@@ -14,12 +14,11 @@ import json
 import re
 from pathlib import Path
 
-import yaml
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 PATCH = json.loads((REPO / "compose/openclaw-gateway/platform.patch.json").read_text())
 COMPOSE = (REPO / "compose/openclaw/docker-compose.yml").read_text()
-COMPOSE_YAML = yaml.safe_load(COMPOSE)
 HOOKS = PATCH["hooks"]
 ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 
@@ -124,8 +123,13 @@ def test_plugin_allowlist_keeps_what_the_stack_runs():
     assert not UNROUTED_PROVIDERS & set(allow)
 
 
+def compose_services() -> dict:
+    yaml = pytest.importorskip("yaml")
+    return yaml.safe_load(COMPOSE)["services"]
+
+
 def volumes(service: str) -> list[str]:
-    return COMPOSE_YAML["services"][service]["volumes"]
+    return compose_services()[service]["volumes"]
 
 
 def test_agent_memory_lives_in_the_vault():
@@ -148,7 +152,7 @@ def test_retired_wiki_vault_mount_is_gone():
 
 
 def test_google_workspace_mcp_is_read_only():
-    env = COMPOSE_YAML["services"]["google-workspace-mcp"]["environment"]
+    env = compose_services()["google-workspace-mcp"]["environment"]
     # A literal, so widening it is a reviewed compose change, not an env edit.
     assert env["WORKSPACE_MCP_READ_ONLY"] == "true"
     # --tools in the start command makes the server ignore permissions; a
