@@ -173,13 +173,23 @@ services:
       # Until the operator creates it, Docker creates it empty and the relay
       # simply fails to connect.
       - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/kit-relay:/run/lifekit/kit-relay:ro
-      # Vault (~/memory): bind-mounted at two paths.
-      # ~/memory — canonical alias used by cron jobs, skills, and agents; also the
-      # path openclaw-gateway/platform.patch.json indexes via memory.search.extraPaths.
-      # ~/.openclaw/wiki/main — direct real bind mount (replaces symlink) so
-      # OpenClaw wiki tools can traverse it without hitting the symlink guard.
+      # Vault (~/memory): the one path cron jobs, skills and agents use, and the
+      # path openclaw-gateway/platform.patch.json indexes via
+      # memory.search.extraPaths. (The second bind at ~/.openclaw/wiki/main was
+      # for the memory-wiki plugin, which is disabled; it is gone.)
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/.openclaw/wiki/main
+      # Agent memory in the vault (lifekit-stack#175): each kept agent's
+      # workspace memory/ - where session-memory writes its notes on /new or
+      # /reset - is the vault's episodic agents/<id>/memory/ (vault README,
+      # rotated at 90 days). The workspace memory/ directory is not
+      # configurable, so a bind mount is the lever. Only kit, finance (Ledger)
+      # and devclaw; MEMORY.md stays at the workspace root, unmounted (a
+      # single-file bind does not survive a rename-replace). The host directories
+      # must exist, owned by the gateway's uid, before this is deployed
+      # (docs/runbook.md, "Agent memory in the vault").
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/kit/memory:/home/node/.openclaw/agents/kit/workspace/memory
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/finance/memory:/home/node/.openclaw/agents/finance/workspace/memory
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/devclaw/memory:/home/node/.openclaw/agents/devclaw/workspace/memory
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
       # Claude CLI home for the claude-cli runtime: its session files land in
       # .claude/projects (scripts/quota-share reads them). Anthropic auth does
@@ -194,9 +204,10 @@ services:
       # Host gitconfig (user.name/email) so commits land with the right author.
       - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
       # workout-claw CLI: prebuilt host checkout, installed -g at container
-      # start (entrypoint). Sourced from the host clone rather than npm/GitHub
-      # because the package was never published to npm and the GitHub repo is
-      # archived (read-only). Keep /srv/workout-claw built (`npm run build`).
+      # start (entrypoint). The package is on npm (workout-claw 0.3.1, built
+      # from lifekit-hq/lifekit-health); this mount still installs from the
+      # host clone, whose own GitHub repo is archived. Keep /srv/workout-claw
+      # built (`npm run build`) until the install moves to the npm pin.
       - ${LIFEKIT_WORKOUT_CLAW_DIR:-/srv/workout-claw}:/opt/workout-claw:ro
       # workout-claw data store. The CLI hardcodes $HOME/.workout-claw
       # (src/lib/storage.ts); map it to the same logs dir under ~/.life so
@@ -336,7 +347,11 @@ services:
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/.openclaw/wiki/main
+      # Same agent-memory binds as the gateway, so a CLI `memory` command sees
+      # the notes the gateway writes.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/kit/memory:/home/node/.openclaw/agents/kit/workspace/memory
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/finance/memory:/home/node/.openclaw/agents/finance/workspace/memory
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/devclaw/memory:/home/node/.openclaw/agents/devclaw/workspace/memory
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
     entrypoint:
       - node
@@ -367,6 +382,13 @@ services:
       # `WORKSPACE_MCP_TOOLS` name (per upstream env reference) for forward-compat.
       WORKSPACE_MCP_TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
       TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
+      # Read-only: per-agent tool allow/deny is not enforced under the
+      # claude-cli runtime, so this server-side flag is the only Gmail guard
+      # that binds (no send, no write tools for any agent). The start command
+      # passes --tools, so WORKSPACE_MCP_PERMISSIONS would be ignored; this env
+      # flag is the working switch at 1.21.0. Literal, not ${...}: widening it
+      # is a reviewed change here, never an env-file edit.
+      WORKSPACE_MCP_READ_ONLY: "true"
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # Refresh-token store. Upstream image runs as non-root user `app`, so the

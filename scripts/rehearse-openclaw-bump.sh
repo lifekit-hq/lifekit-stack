@@ -52,8 +52,9 @@ HEADROOM_KB=$((25 * 1024 * 1024))   # copy + one image + slack
 DOCKER_TIMEOUT="${DOCKER_TIMEOUT:-1800}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Not copied: browser/tools/logs are rebuildable, workspace and wiki are mounted
-# separately, backups and *.migrated.* are large with no migration value.
+# Not copied: browser/tools/logs are rebuildable, workspace is mounted
+# separately, wiki/ only holds the retired memory-wiki vault mount point,
+# backups and *.migrated.* are large with no migration value.
 # agents/ is deliberately included - the SQLite migrations happen there.
 # tmp/ and the cache dirs are the running gateway's scratch (plugin-build
 # captures with whole node_modules trees, created and deleted continuously):
@@ -168,10 +169,10 @@ copy_state() {
   rm -rf "${DEST}/config" "${DEST}/workspace" "${DEST}/secret-key"
   rsync_live -a "${ex[@]}" "${STATE}/" "${DEST}/config/"
   rsync_live -a "${WORKSPACE}/" "${DEST}/workspace/"
-  # oc() bind-mounts into the copy at these excluded paths; a mount target
+  # oc() bind-mounts into the copy at this excluded path; a mount target
   # dockerd has to create is root-owned, and a green run's cleanup then
   # cannot remove it.
-  mkdir -p "${DEST}/config/workspace" "${DEST}/config/wiki/main"
+  mkdir -p "${DEST}/config/workspace"
   if [[ -d "${SECRET_DIR}" ]]; then
     rsync_live -a "${SECRET_DIR}/" "${DEST}/secret-key/"
   else
@@ -231,7 +232,6 @@ oc() {
     -v "${ws}:/home/node/.openclaw/workspace${sfx}" \
     -v "${sec}:/home/node/.config/openclaw${sfx}" \
     -v "${DEST}/vault:/home/node/memory:ro" \
-    -v "${DEST}/vault:/home/node/.openclaw/wiki/main:ro" \
     --entrypoint openclaw "${IMAGE}" "$@"
 }
 oc_copy() { oc "${DEST}/config" "${DEST}/workspace" "${DEST}/secret-key" "" -- "$@"; }

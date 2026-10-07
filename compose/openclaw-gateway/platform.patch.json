@@ -15,6 +15,26 @@
     }
   },
   "plugins": {
+    "allow": [
+      "anthropic",
+      "codex",
+      "openai",
+      "browser",
+      "canvas",
+      "cua-computer",
+      "device-pair",
+      "diagnostics-otel",
+      "diagnostics-prometheus",
+      "document-extract",
+      "file-transfer",
+      "geolocation",
+      "github",
+      "linux-node",
+      "memory-core",
+      "talk-voice",
+      "telegram",
+      "web-readability"
+    ],
     "entries": {
       "diagnostics-prometheus": {
         "enabled": true
