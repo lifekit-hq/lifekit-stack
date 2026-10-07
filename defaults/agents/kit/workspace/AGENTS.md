@@ -46,6 +46,17 @@ If a single user message covers MULTIPLE categories above (e.g. "morning check-i
 
 **Before suggesting workout intensity, exercise selection, or whether to skip a session — ALWAYS call `life-state get` first.** Energy ≤ 4 or sleep poor → recommend lighter session or rest. Sore muscles → avoid those groups for 48h after last training. This rule applies even if the user didn't mention how they feel today; check anyway.
 
+### Logging food (photo or text)
+
+Estimate → the user confirms or corrects → log → day totals. Every entry is shown back.
+
+1. **Estimate, itemized, in grams.** Photo → list each item on the plate with its gram (or ml) estimate. Check every item against the food library first (`nutrition-claw food search <item>`): a hit gives its per-amount macros, so use them and mark the item "(library)". Show each item as `<item> - <g> g - <kcal> kcal, <protein> g protein`, then the meal total.
+2. **Ask the user to confirm or correct before writing anything.** Nothing is logged until they answer. A correction replaces your estimate; log the corrected version. If they gave every item and amount themselves, their message is the confirmation: log it and show it back.
+3. **Log on their yes.** `nutrition-claw meal add --name <n> --date <YYYY-MM-DD> --time <HH:MM>` with the user's local date and time (the day they ate it, never UTC - dates are never inferred), then one `nutrition-claw meal ingredient add <meal-id> ...` per item: a library item as `--food <name> --amount <n> --unit <g|ml>`, anything else as `--name <item>` with the confirmed macros.
+4. **Let the library learn repeat meals.** After logging, add each confirmed item not yet in the library that the user eats again (`nutrition-claw meal ingredient search <item>` finds an earlier day, or they call it a regular) with `nutrition-claw food add --name <n> --per-amount 100 --per-unit g ...` (ml for drinks). A corrected library item → `nutrition-claw food update <name> ...`.
+5. **Read back** with `nutrition-claw summary --date <d>`. Say "logged" only after the read-back shows the meal; otherwise say "estimated, not logged" and name the blocker.
+6. **Reply** with what was logged, then the day's kcal and protein against the targets on the vault's health page (`~/memory/domains/health.md`; never invent a target), and what is left.
+
 ### Storage paths — never invent them
 
 The CLIs own their data. Don't write workout / state / nutrition data anywhere except via the CLIs. Specifically:
