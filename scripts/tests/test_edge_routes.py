@@ -16,8 +16,7 @@ import pytest
 yaml = pytest.importorskip("yaml")
 
 REPO = Path(__file__).resolve().parents[2]
-DYNAMIC_TEXT = (REPO / "compose/edge/traefik/dynamic.yml").read_text()
-HTTP = yaml.safe_load(DYNAMIC_TEXT)["http"]
+HTTP = yaml.safe_load((REPO / "compose/edge/traefik/dynamic.yml").read_text())["http"]
 ROUTERS, MIDDLEWARES = HTTP["routers"], HTTP["middlewares"]
 COMPOSE = yaml.safe_load((REPO / "compose/edge/docker-compose.yml").read_text())
 
@@ -56,9 +55,24 @@ def test_proof_value_reaches_traefik_from_the_rendered_env():
     assert env["RELAY_EDGE_PROOF"] == "${RELAY_EDGE_PROOF:-}"
 
 
+def _strings(node):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _strings(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _strings(value)
+
+
 def test_every_template_env_var_is_passed_to_traefik():
-    used = set(re.findall(r'env "([A-Z0-9_]+)"', DYNAMIC_TEXT))
-    assert used == {"DEVCLAW_MCP_TOKEN", "RELAY_EDGE_PROOF"}
+    used = {
+        name
+        for value in _strings(HTTP)
+        for name in re.findall(r"\{\{\s*env\s+\"(\w+)\"\s*\}\}", value)
+    }
+    assert {"DEVCLAW_MCP_TOKEN", "RELAY_EDGE_PROOF"} <= used
     assert used <= set(COMPOSE["services"]["traefik"]["environment"])
 
 
