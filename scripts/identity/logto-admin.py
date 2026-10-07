@@ -14,10 +14,13 @@ command is idempotent: it reads first and changes only what differs.
     logto-admin.py set-sign-in-exp [--logo-url URL] [--dark-logo-url URL] [--favicon URL]
                               [--dark-favicon URL]
                               [--primary-color HEX] [--dark-primary-color HEX]
-                              [--dark-mode | --no-dark-mode]
+                              [--dark-mode | --no-dark-mode] [--clear-terms-links]
                               [--sign-in-identifiers {email,phone,username}...]
                               [--code-sign-in-identifiers {email}...]
                               [--sign-up-identifiers {email,phone,username,none}...]
+    logto-admin.py set-app-sign-in-exp APP [--display-name NAME] [--logo-url URL]
+                              [--dark-logo-url URL] [--primary-color HEX]
+                              [--dark-primary-color HEX] [--if-exists]
     logto-admin.py set-email-connector --user ADDRESS
                               [--from-email ADDRESS] [--from-name NAME]
     logto-admin.py send-test-email ADDRESS
@@ -40,6 +43,13 @@ it is also in --sign-in-identifiers); Logto accepts it only once an email
 connector exists. The two lists together replace the whole methods list.
 Logto replaces a PATCHed object whole, so the current color, branding, signIn
 and signUp are read first and merged.
+
+--clear-terms-links empties the tenant's Terms of use and Privacy policy
+links, so the sign-in page shows none. set-app-sign-in-exp sets one
+application's own sign-in experience (PUT /api/applications/ID/sign-in-experience):
+the name, logo and primary color its sign-in page shows in place of the
+tenant's. Only the fields given change; --if-exists skips an unknown APP
+instead of failing.
 
 set-email-connector creates or updates Logto's SMTP email connector (always
 smtp.gmail.com:465, TLS). The login is --user; the password is read from
@@ -399,6 +409,7 @@ def cmd_set_redirects(api: Api, ledger: Ledger, args) -> None:
 HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 SVG_DATA_URI = re.compile(r"^data:image/svg\+xml;base64,[A-Za-z0-9+/]+={0,2}$")
 IDENTIFIERS = ("email", "phone", "username")
+TERMS_KEYS = ("termsOfUseUrl", "privacyPolicyUrl")
 
 
 def hex_color(value: str) -> str:
@@ -463,13 +474,18 @@ def cmd_set_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
         ),
     ]
     wanted = [w for w in wanted if w[2] is not None]
-    if not wanted:
+    if not wanted and not args.clear_terms_links:
         raise SystemExit("set-sign-in-exp: pass at least one field to set")
     _, _, current = api.call("GET", "/api/sign-in-exp")
     if not isinstance(current, dict):
         raise AdminError("GET /api/sign-in-exp: expected an object")
-    before: dict[str, dict] = {}
-    after: dict[str, dict] = {}
+    before: dict[str, object] = {}
+    after: dict[str, object] = {}
+    if args.clear_terms_links:
+        for key in ("termsOfUseUrl", "privacyPolicyUrl"):
+            if current.get(key) is not None:
+                before[key] = current[key]
+                after[key] = None
     for top, leaf, value in wanted:
         cur = current.get(top) or {}
         if cur.get(leaf) != value:
@@ -481,9 +497,13 @@ def cmd_set_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
     # PATCH replaces each top-level object, so send the current one with only
     # the changed leaves swapped in; undo sends back the prior whole object.
     body = {
-        top: {**(current.get(top) or {}), **leaves} for top, leaves in after.items()
+        top: leaves if top in TERMS_KEYS else {**(current.get(top) or {}), **leaves}
+        for top, leaves in after.items()
     }
-    prior = {top: current.get(top) or {} for top in after}
+    prior = {
+        top: current.get(top) if top in TERMS_KEYS else current.get(top) or {}
+        for top in after
+    }
     api.call("PATCH", "/api/sign-in-exp", body)
     n = ledger.append(
         {
@@ -493,8 +513,76 @@ def cmd_set_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
             "undo": {"method": "PATCH", "path": "/api/sign-in-exp", "body": prior},
         }
     )
-    changed = ", ".join(f"{t}.{k}" for t, leaves in after.items() for k in leaves)
+    changed = ", ".join(
+        t if t in TERMS_KEYS else f"{t}.{k}"
+        for t, leaves in after.items()
+        for k in (leaves if isinstance(leaves, dict) else [None])
+    )
     say(f"sign-in experience: set {changed}, ledger #{n}")
+
+
+def cmd_set_app_sign_in_exp(api: Api, ledger: Ledger, args) -> None:
+    wanted = [
+        ("branding", "logoUrl", args.logo_url),
+        ("branding", "darkLogoUrl", args.dark_logo_url),
+        ("color", "primaryColor", args.primary_color),
+        ("color", "darkPrimaryColor", args.dark_primary_color),
+        (None, "displayName", args.display_name),
+    ]
+    wanted = [w for w in wanted if w[2] is not None]
+    if not wanted:
+        raise SystemExit("set-app-sign-in-exp: pass at least one field to set")
+    app = find_app(api, args.app)
+    if not app:
+        if args.if_exists:
+            say(f"application {args.app!r}: not found, skipped")
+            return
+        raise AdminError(f"no application with id or name {args.app!r}")
+    path = f"/api/applications/{app['id']}/sign-in-experience"
+    status, _, current = api.call("GET", path, ok=(200, 404))
+    current = current if status == 200 and isinstance(current, dict) else {}
+    before: dict[str, object] = {}
+    after: dict[str, object] = {}
+    for top, leaf, value in wanted:
+        cur = current.get(top) or {} if top else current
+        if cur.get(leaf) != value:
+            if top:
+                before.setdefault(top, {})[leaf] = cur.get(leaf)
+                after.setdefault(top, {})[leaf] = value
+            else:
+                before[leaf] = cur.get(leaf)
+                after[leaf] = value
+    if not after:
+        say(f"application {app['name']!r} sign-in experience: already set")
+        return
+    # PUT replaces whole objects, so send the current one with the changed leaves
+    # swapped in; undo sends back the prior objects (empty ones when there were none).
+    body = {
+        key: {**(current.get(key) or {}), **leaves}
+        if isinstance(leaves, dict)
+        else leaves
+        for key, leaves in after.items()
+    }
+    prior = {
+        key: current.get(key) or {} if isinstance(leaves, dict) else current.get(key)
+        for key, leaves in after.items()
+    }
+    api.call("PUT", path, body)
+    n = ledger.append(
+        {
+            "action": "set-app-sign-in-exp",
+            "app": app["id"],
+            "before": before,
+            "after": after,
+            "undo": {"method": "PUT", "path": path, "body": prior},
+        }
+    )
+    changed = ", ".join(
+        f"{k}.{leaf}" if isinstance(v, dict) else k
+        for k, v in after.items()
+        for leaf in (v if isinstance(v, dict) else [None])
+    )
+    say(f"application {app['name']!r} sign-in experience: set {changed}, ledger #{n}")
 
 
 SMTP_CONNECTOR = "simple-mail-transfer-protocol"
@@ -706,6 +794,11 @@ def parser() -> argparse.ArgumentParser:
     x.add_argument("--dark-primary-color", type=hex_color, metavar="HEX")
     x.add_argument("--dark-mode", action=argparse.BooleanOptionalAction, default=None)
     x.add_argument(
+        "--clear-terms-links",
+        action="store_true",
+        help="empty the Terms of use and Privacy policy links",
+    )
+    x.add_argument(
         "--sign-in-identifiers",
         nargs="+",
         choices=IDENTIFIERS,
@@ -723,6 +816,17 @@ def parser() -> argparse.ArgumentParser:
         choices=(*IDENTIFIERS, "none"),
         help="sign-up identifiers; 'none' empties the list",
     )
+    y = sub.add_parser(
+        "set-app-sign-in-exp",
+        help="set one application's sign-in page name, logo and primary color",
+    )
+    y.add_argument("app", help="application id or exact name")
+    y.add_argument("--display-name", metavar="NAME")
+    y.add_argument("--logo-url", type=image_url, metavar="URL")
+    y.add_argument("--dark-logo-url", type=image_url, metavar="URL")
+    y.add_argument("--primary-color", type=hex_color, metavar="HEX")
+    y.add_argument("--dark-primary-color", type=hex_color, metavar="HEX")
+    y.add_argument("--if-exists", action="store_true", help="skip an unknown app")
     e = sub.add_parser(
         "set-email-connector",
         help="create or update the SMTP email connector (password in LOGTO_SMTP_PASSWORD)",
@@ -749,6 +853,7 @@ COMMANDS = {
     "ensure-app": cmd_ensure_app,
     "set-redirects": cmd_set_redirects,
     "set-sign-in-exp": cmd_set_sign_in_exp,
+    "set-app-sign-in-exp": cmd_set_app_sign_in_exp,
     "set-email-connector": cmd_set_email_connector,
     "send-test-email": cmd_send_test_email,
     "ledger": cmd_ledger,
