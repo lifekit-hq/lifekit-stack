@@ -13,7 +13,7 @@ LIVE_AGENTS_DIR=/srv/openclaw/config/agents
 # Daily notes under workspace/memory/ stay agent-local (.gitignore excludes them).
 WORKSPACE_FILES=(AGENTS.md USER.md SOUL.md IDENTITY.md TOOLS.md HEARTBEAT.md MEMORY.md BOOTSTRAP.md)
 # Agents whose workspaces we sync.
-AGENTS=(kit health career finance learning social)
+AGENTS=(kit career finance)
 
 export HOME=/home/lifekit
 export GIT_AUTHOR_NAME="Kit (lifekit-vps)"
