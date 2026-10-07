@@ -727,6 +727,49 @@ def test_every_home_is_published_with_each_item_tagged_by_its_home(homes):
     )
 
 
+def test_a_child_homes_decisions_folded_into_its_parent_count_once(homes):
+    vps, main = two_homes(homes.tmp)
+    (main / "data/secondmates.md").write_text(
+        f"- kid - Second mate on this host. (home: {vps}; scope: all)\n"
+        "- away - Overflow mate. (host: pc; root: /elsewhere/r; home: /elsewhere/h; scope: x)\n"
+    )
+    summ = json.loads((main / "state/home-summary.json").read_text())
+    summ["decisions_open"] = [
+        decision("kid", "k1"),
+        decision("kid", "k9"),
+        decision("away", "k3"),
+        decision("main-call", "k2"),
+    ]
+    (main / "state/home-summary.json").write_text(json.dumps(summ))
+    result = homes.run(vps, main)
+    assert result.returncode == 0, result.stderr
+    # The child's own item stays; the parent's copies of it go; an item for a
+    # secondmate nobody publishes, and the parent's own, are kept.
+    assert [(d["id"], d["home_id"]) for d in homes.published()["decisions_open"]] == [
+        ("vps-call", "fm-vps"),
+        ("away", "firstmate"),
+        ("main-call", "firstmate"),
+    ]
+    assert homes.metrics()["fleet_decisions_open"] == 3
+    # Order of FM_HOMES does not matter: the parent first still drops them.
+    assert homes.run(main, vps).returncode == 0
+    assert homes.metrics()["fleet_decisions_open"] == 3
+
+
+def test_a_parents_items_for_an_unpublished_child_are_kept(homes):
+    vps, main = two_homes(homes.tmp)
+    (main / "data/secondmates.md").write_text(
+        f"- kid - Second mate. (home: {vps}; scope: all)\n"
+    )
+    summ = json.loads((main / "state/home-summary.json").read_text())
+    summ["decisions_open"] = [decision("kid", "k1")]
+    (main / "state/home-summary.json").write_text(json.dumps(summ))
+    (vps / "state/home-summary.json").write_text("not json")
+    assert homes.run(vps, main).returncode == 1
+    assert [d["id"] for d in homes.published()["decisions_open"]] == ["kid"]
+    assert homes.metrics()["fleet_decisions_open"] == 1
+
+
 def test_fm_homes_defaults_to_fm_home(homes):
     vps, _ = two_homes(homes.tmp)
     assert homes.run(FM_HOMES="", FM_HOME=str(vps)).returncode == 0
