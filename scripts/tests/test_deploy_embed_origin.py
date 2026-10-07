@@ -146,6 +146,8 @@ def test_derived_origin_never_has_path_or_wildcard(run, dns):
 
 
 EDGE_TRAEFIK = "127.0.0.1:18890->18890/tcp, 127.0.0.1:18891->18891/tcp"
+# Docker collapses consecutive published ports into a range.
+EDGE_TRAEFIK_RANGE = "127.0.0.1:18890-18891->18890-18891/tcp"
 
 
 def test_dashboard_behind_the_sign_in_gate(run):
@@ -164,5 +166,41 @@ def test_the_gates_devclaw_entrypoint_is_not_the_dashboard(run):
         dns="box.example.ts.net.",
         serve=serve_json("box.example.ts.net", 18791, "127.0.0.1:18891"),
         edge_ports=EDGE_TRAEFIK,
+    )
+    assert r.stdout == ""
+
+
+def test_dashboard_behind_the_gate_published_as_a_port_range(run):
+    r = run(
+        dns="box.example.ts.net.",
+        serve=serve_json("box.example.ts.net", 18790, "127.0.0.1:18890"),
+        edge_ports=EDGE_TRAEFIK_RANGE,
+    )
+    assert r.stdout == "https://box.example.ts.net:18790\n"
+
+
+def test_range_maps_container_port_to_the_offset_host_port(run):
+    r = run(
+        dns="box.example.ts.net.",
+        serve=serve_json("box.example.ts.net", 18790, "127.0.0.1:28890"),
+        edge_ports="127.0.0.1:28890-28891->18890-18891/tcp",
+    )
+    assert r.stdout == "https://box.example.ts.net:18790\n"
+
+
+def test_the_gates_devclaw_entrypoint_in_a_range_is_not_the_dashboard(run):
+    r = run(
+        dns="box.example.ts.net.",
+        serve=serve_json("box.example.ts.net", 18791, "127.0.0.1:18891"),
+        edge_ports=EDGE_TRAEFIK_RANGE,
+    )
+    assert r.stdout == ""
+
+
+def test_range_not_covering_the_dashboard_port_stays_denied(run):
+    r = run(
+        dns="box.example.ts.net.",
+        serve=serve_json("box.example.ts.net", 4200, "127.0.0.1:8080"),
+        edge_ports="127.0.0.1:18891-18892->18891-18892/tcp",
     )
     assert r.stdout == ""
