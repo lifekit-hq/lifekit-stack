@@ -217,7 +217,11 @@ agent, and gives the finance agent a heartbeat:
   keys off, and one mapping - `POST <hook path>/finance-sentry` runs the
   finance agent in an isolated session and delivers to its Telegram chat. The
   template interpolates `kind` and `eventId` only: the push carries
-  identifiers, the agent reads the detail back through its MCP tools.
+  identifiers, the agent reads the detail back through its MCP tools. The
+  template also tells the agent to end its message with the absolute `appUrl`
+  that `get_pending_companion_events` returns per event (one bare link per
+  line, none for an event without one, never a built or guessed link), so the
+  Telegram message is clickable into the app.
 - `agents.entries.finance.heartbeat`: **retired 2026-09-26, see the fs-685
   note below** - the key is now `{"every": "0m"}`, same shape as
   `agents.defaults.heartbeat`, so the finance agent no longer ticks on the
