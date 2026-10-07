@@ -60,7 +60,7 @@ Decisions go to the OpenClaw app, not Telegram. kit keeps the one ledger of open
 
 ### Workspaces and memory
 
-Each agent's workspace holds its bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`), daily notes under `memory/`, and its installed skills. The vault is mounted read-only in spirit for every agent (`~/memory`, searchable through `memory.search`); agents propose vault edits rather than writing there, except through skills and CLIs that own their data.
+Each agent's workspace holds its bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`), daily notes under `memory/` (for Kit, Ledger and devclaw that directory is the vault's `agents/<id>/memory/`, bind-mounted - `docs/runbook.md` "Agent memory in the vault"), and its installed skills. The vault is mounted read-only in spirit for every agent (`~/memory`, searchable through `memory.search`); agents propose vault edits rather than writing there, except through skills and CLIs that own their data.
 
 ---
 
