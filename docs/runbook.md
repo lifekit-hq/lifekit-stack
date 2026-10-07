@@ -262,7 +262,11 @@ is a short contract preamble (`NO_REPLY` or exactly one message) followed by
 the checklist verbatim. Run it on the host after the `ledger-pulse` row has
 been created on the gateway; it is idempotent and rewrites the message with
 `openclaw cron edit --message` only when it differs. The edit hot-reloads and
-restarts nothing.
+restarts nothing. The checklist's closing `Links:` paragraph has the pulse end
+a sent message with the matching app page as a plain URL (`/events`,
+`/alerts`, or the single event's own `appUrl`; none for the quiet-week digest
+or a `NO_REPLY`); the app origin is not in git, so the paragraph tells the
+agent to take it from a returned `appUrl`.
 
 A pulse whose message carries no checklist still runs the model (scratch does
 not gate an agentTurn run), but only calls the companion pull by chance - the
