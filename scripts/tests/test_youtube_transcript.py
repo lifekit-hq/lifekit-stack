@@ -68,6 +68,21 @@ if mode == "boom":
     sys.exit(1)
 if mode == "none":
     sys.exit(0)
+if mode == "po_token":
+    sys.stderr.write("WARNING: [youtube] x: There are missing subtitles languages because a PO token was not provided. Subtitles for these languages are missing: en.\n")
+    sys.exit(0)
+if mode == "clean_noise":
+    sys.stderr.write("WARNING: [youtube] x: No supported JavaScript runtime could be found.\n")
+    sys.exit(0)
+if mode == "relay_0x05":
+    sys.stderr.write("ERROR: [youtube] x: Unable to download API page: ('[Errno 5] Connection refused', Socks5Error(5, 'Connection refused'))\n")
+    sys.exit(1)
+if mode == "relay_down":
+    sys.stderr.write("ERROR: [youtube] x: Unable to download API page: <SocksHTTPSConnection>: Failed to establish a new connection: [Errno 111] Connection refused\n")
+    sys.exit(1)
+if mode == "relay_0x02":
+    sys.stderr.write("ERROR: [youtube] x: Unable to download API page: ('[Errno 2] connection not allowed by ruleset', Socks5Error(2, 'connection not allowed by ruleset'))\n")
+    sys.exit(1)
 if mode == "subs429":
     sys.stderr.write("WARNING: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests\n")
     sys.exit(0)
@@ -297,6 +312,35 @@ def test_failed_subtitle_download_is_an_error_not_no_captions(run):
     assert r.stdout == ""
     assert "429" in r.stderr and "Unable to download video subtitles" in r.stderr
     assert len(calls.splitlines()) == 2  # the auto pass still got its turn
+
+
+def test_any_subtitle_warning_without_a_transcript_is_an_error(run):
+    r, _ = run(VID, mode="po_token")
+    assert r.returncode == 1 and r.stdout == ""
+    assert "PO token" in r.stderr
+
+
+def test_unrelated_warnings_on_a_clean_run_still_mean_no_captions(run):
+    r, _ = run(VID, mode="clean_noise")
+    assert (r.returncode, r.stdout.strip()) == (
+        0,
+        "transcript unavailable - this video has no captions",
+    )
+
+
+@pytest.mark.parametrize("mode", ["relay_0x05", "relay_down", "unreachable"])
+def test_relay_connection_failures_read_as_pc_off(run, mode):
+    r, _ = run(VID, mode=mode)
+    assert (r.returncode, r.stdout.strip()) == (
+        0,
+        "transcript unavailable - the PC is off",
+    )
+
+
+def test_relay_allow_list_refusal_is_an_error_not_pc_off(run):
+    r, _ = run(VID, mode="relay_0x02")
+    assert r.returncode == 1 and r.stdout == ""
+    assert "ruleset" in r.stderr
 
 
 def test_unexpected_yt_dlp_failure_is_exit_1_with_the_reason(run):

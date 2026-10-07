@@ -34,14 +34,18 @@ DEFAULT_PROXY = "socks5h://host.docker.internal:18081"
 PC_OFF = "transcript unavailable - the PC is off"
 NO_CAPTIONS = "transcript unavailable - this video has no captions"
 
-# yt-dlp stderr that means the proxy or the PC behind it did not answer.
+# yt-dlp stderr that means the relay, the tunnel or the PC behind it did not
+# answer: the relay is down, or it answered SOCKS 0x05 (upstream unreachable).
+# Any other SOCKS error (0x02 allow-list refusal, 0x01) is a real failure.
 UNREACHABLE = re.compile(
-    r"proxy|socks|unable to connect|timed out|connection (refused|reset|aborted)"
-    r"|network is unreachable|no route to host|temporary failure in name resolution",
+    r"Socks5Error\(5,|Failed to establish a new connection|timed out"
+    r"|connection (refused|reset|aborted)|network is unreachable|no route to host"
+    r"|temporary failure in name resolution",
     re.IGNORECASE,
 )
-# yt-dlp reports a failed caption download as a WARNING and still exits 0.
-SUBS_FAILED = re.compile(r"unable to download (video )?subtitles", re.IGNORECASE)
+# yt-dlp reports caption trouble (a refused download, a missing PO token) as a
+# WARNING or ERROR about subtitles/captions and can still exit 0 with no file.
+SUBS_TROUBLE = re.compile(r"^(WARNING|ERROR).*(subtitle|caption)", re.I | re.M)
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 
 
@@ -136,8 +140,8 @@ def pick(files: list[Path]) -> Path | None:
 
 def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
     """(text, title, error). text None with error "" means no captions;
-    error "unreachable" means the proxy or PC did not answer; any other error
-    is a failed download, which is not the same as no captions."""
+    error "unreachable" means the relay or PC did not answer; any other error
+    is a failed fetch, which is not the same as no captions."""
     base = yt_dlp_cmd()
     if not base:
         return None, "", "yt-dlp is not installed"
@@ -180,14 +184,14 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
                 text = vtt_to_text(chosen.read_text(errors="replace"))
                 if text:
                     return text, title, ""
-            if r.returncode != 0 or SUBS_FAILED.search(err):
+            if r.returncode != 0 or SUBS_TROUBLE.search(err):
                 if UNREACHABLE.search(err):
                     return None, "", "unreachable"
                 last_err = next(
                     (
                         ln
                         for ln in reversed(err.splitlines())
-                        if ln.startswith("ERROR") or SUBS_FAILED.search(ln)
+                        if ln.startswith("ERROR") or SUBS_TROUBLE.search(ln)
                     ),
                     err,
                 )

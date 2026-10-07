@@ -2093,10 +2093,14 @@ command there.
   up and answers a CONNECT with SOCKS failure `0x05` at once. The skill's pre-check is a
   real SOCKS5 CONNECT to `www.youtube.com:443` through the relay, so any failure of it
   (relay down, tunnel down, PC unreachable) answers `transcript unavailable - the PC is off`
-  (exit 0, not an error); so does a yt-dlp error that names the proxy or a timeout.
-- **Failed fetch is not "no captions":** yt-dlp reports a refused caption download (for
-  example an HTTP 429) as a warning and exits 0 with no file. The skill sees that warning
-  and exits 1 with it on stderr instead of answering `this video has no captions`.
+  (exit 0, not an error); so does a yt-dlp connection failure to the relay or a timeout.
+- **Failed fetch is not "no captions":** yt-dlp reports caption trouble (a refused
+  download such as an HTTP 429, a missing PO token) as a warning about subtitles or
+  captions and can exit 0 with no file. The skill answers `this video has no captions`
+  only after clean runs; any subtitle/caption warning or error without a transcript is
+  exit 1 with that line on stderr. Likewise only a relay-down or SOCKS `0x05`
+  (upstream unreachable) failure reads as the PC-off line; an allow-list refusal
+  (`0x02`) or other SOCKS error is exit 1 with the real reason.
 - **Captions only:** human captions first, auto-generated as the fallback, original
   language track preferred, VTT cleaned to plain text. A video with none answers
   `transcript unavailable - this video has no captions`; there is no audio fallback.
