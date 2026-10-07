@@ -591,8 +591,11 @@ directory in the vault (lifekit-stack#175).
 `/home/node/.openclaw/agents/<id>/workspace/memory` on `openclaw-gateway`, and
 on `openclaw-cli` too. The session-memory hook's notes, written on `/new` and
 `/reset`, and the agents' own daily notes then land in the vault's episodic
-class `agents/<agent>/memory/`, which is not wiki-linted and is rotated at 90
-days. `memory-sync.timer` commits and pushes them like any other vault edit.
+class `agents/<agent>/memory/`, which is not wiki-linted. `memory-sync.timer`
+commits and pushes them like any other vault edit. Only exact `YYYY-MM-DD.md`
+daily notes rotate at 90 days; the session-memory notes (`YYYY-MM-DD-HHMM.md`
+or `YYYY-MM-DD-<slug>.md`) do not rotate until the vault's rotate glob is
+widened, a separate follow-up.
 
 What the mounts leave out:
 
@@ -633,10 +636,12 @@ SH
 ```
 
 `bin/log.sh` commits only its own `log.md` line. The copied notes are
-committed by the next `memory-sync.timer` run, never by hand. Any dated note
-older than 90 days is retired by the next Sunday `memory_vault_audit` rotation,
-and git history keeps it. The originals stay in the workspace, hidden under
-the mount, which is what makes the rollback lossless.
+committed by the next `memory-sync.timer` run, never by hand. An exact
+`YYYY-MM-DD.md` daily note older than 90 days is retired by the next Sunday
+`memory_vault_audit` rotation, and git history keeps it; session-memory notes
+with a suffix after the date are not matched by the rotate glob and stay. The
+originals stay in the workspace, hidden under the mount, which is what makes
+the rollback lossless.
 
 **Rollback:** remove the three mount lines from both services and let the
 merge redeploy. The agents go back to their workspace copies. Notes written
@@ -645,7 +650,8 @@ while the mounts were live stay in the vault, under `agents/<id>/memory/`.
 **Verify** after the deploy:
 
 - Send `/new` to one of the three agents. A dated note appears under
-  `/srv/memory/agents/<id>/memory/`.
+  `/srv/memory/agents/<id>/memory/`, named `YYYY-MM-DD-HHMM.md` or
+  `YYYY-MM-DD-<slug>.md`.
 - A `memory_search` from that agent finds the note.
 - `docker exec openclaw-openclaw-gateway-1 openclaw doctor` is clean.
 - `curl -fsS http://127.0.0.1:18789/healthz` returns 200.
