@@ -811,6 +811,17 @@ or to compare two versions by hand - tag it explicitly for that one purpose
 and untag it yourself once you're done; `deploy.sh` will not do that
 bookkeeping for you.
 
+The old image is pinned before the build, not tagged after it. Under the
+containerd image store (the VPS's) an image id is addressable only while a tag
+references it, and `docker compose build` moves `lifekit-openclaw:local` to the
+new image, so the image the gateway is still running would be unreachable by
+then (the 2026-10-07 deploy of #280 failed that way). `deploy.sh` therefore
+tags the gateway container's image `lifekit-openclaw:pin` first, promotes the
+pin to `:prev` on a version change, and removes it on every deploy. When the
+running image cannot be pinned, the deploy accepts an existing `:prev` only if
+it reports the running version; otherwise it stops before touching the gateway.
+Rebuild that version from its commit and tag it `:prev` to unblock it.
+
 If the new version misbehaves after the deploy checks passed:
 
 ```bash

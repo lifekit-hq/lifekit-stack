@@ -32,9 +32,73 @@ OPENCLAW_SERVICES = ("openclaw-cli", "openclaw-gateway", "google-workspace-mcp")
 # LEGACY_CONTAINERS: "<service>=<id> ..." - the containers `docker ps` finds
 # for that service in the platform project ("proj", the name `config` gives),
 # and only there.
+#
+# The image store is modelled the way the containerd snapshotter behaves
+# (the VPS's): $IMG_STATE holds one file per tag with the image id in it, and
+# an id is addressable by `docker tag` only while some tag still points at it
+# - even when a container runs it. `compose build` moves lifekit-openclaw:local
+# to $NEW_IMAGE. The gateway container (`gw1`, absent when $NO_GATEWAY is set)
+# runs $RUN_IMAGE; lifekit-openclaw:local starts on it, or on $NEW_IMAGE when
+# $RUN_UNADDRESSABLE is set (the box after the 2026-10-07 failure), and
+# lifekit-openclaw:prev starts on $PREV_IMAGE when that is set. With
+# $NO_PROJECT_GATEWAY only the platform project's legacy gateway exists.
 DOCKER_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_CALL_LOG"
+S="$IMG_STATE"
+mkdir -p "$S"
+key() { printf '%s' "$1" | tr '/:' '__'; }
+if [ ! -e "$S/.init" ]; then
+  if [ -n "$RUN_UNADDRESSABLE" ]; then echo "$NEW_IMAGE" > "$S/$(key lifekit-openclaw:local)"
+  else echo "$RUN_IMAGE" > "$S/$(key lifekit-openclaw:local)"; fi
+  [ -z "$PREV_IMAGE" ] || echo "$PREV_IMAGE" > "$S/$(key lifekit-openclaw:prev)"
+  touch "$S/.init"
+fi
+resolve() {
+  if [ -f "$S/$(key "$1")" ]; then cat "$S/$(key "$1")"; return 0; fi
+  want="${1#sha256:}"
+  for f in "$S"/*; do
+    [ -f "$f" ] || continue
+    id="$(cat "$f")"
+    case "$want" in "$id"*) echo "$id"; return 0 ;; esac
+  done
+  return 1
+}
+case "$1" in
+  tag)
+    id="$(resolve "$2")" || { echo "Error response from daemon: No such image: $2" >&2; exit 1; }
+    echo "$id" > "$S/$(key "$3")"
+    exit 0 ;;
+  rmi)
+    id="$(resolve "$2")" || { echo "Error: No such image: $2" >&2; exit 1; }
+    others="$(grep -l -x "$id" "$S"/* 2>/dev/null | grep -v -F "/$(key "$2")" || true)"
+    if [ "$id" = "$RUN_IMAGE" ] && [ -z "$others" ] && [ -z "$NO_GATEWAY" ]; then
+      echo "conflict: unable to delete $2 (must be forced) - container gw1 is using its referenced image" >&2
+      exit 1
+    fi
+    rm -f "$S/$(key "$2")"
+    exit 0 ;;
+  images)
+    resolve "$3" || true
+    exit 0 ;;
+  inspect)
+    case " $* " in
+      *" {{.Image}} "*) echo "sha256:${RUN_IMAGE}000000000000"; exit 0 ;;
+      *" {{json .RepoTags}} "*)
+        tags=""
+        for f in "$S"/*; do
+          [ -f "$f" ] || continue
+          [ "$(cat "$f")" = "$3" ] && tags="$tags\\"$(basename "$f")\\","
+        done
+        echo "[${tags%,}]"; exit 0 ;;
+    esac ;;
+esac
 case " $* " in
+  *" build openclaw-gateway "*) echo "$NEW_IMAGE" > "$S/$(key lifekit-openclaw:local)" ;;
+  *" ps -a -q openclaw-gateway "*) [ -n "$NO_GATEWAY$NO_PROJECT_GATEWAY" ] || echo gw1 ;;
+  *" ps -a -q --filter ancestor="*)
+    [ -n "$NO_GATEWAY" ] || [ -n "${*##*ancestor=$RUN_IMAGE*}" ] || echo gw1 ;;
+  *" lifekit-openclaw:prev --version "*)
+    [ -z "$PREV_VER" ] || echo "OpenClaw $PREV_VER (old)" ;;
   *" config --format json "*) echo '{"name":"proj"}' ;;
   " ps -a -q "*"label=com.docker.compose.project=proj "*)
     for pair in $LEGACY_CONTAINERS; do
@@ -113,6 +177,14 @@ def env(tmp_path):
         "LEGACY_CONTAINERS": "",
         "RUNNING_VER": "2026.9.4",
         "BUILT_VER": "2026.9.5",
+        "IMG_STATE": str(tmp_path / "images"),
+        "RUN_IMAGE": "f6e77bf93da9",
+        "NEW_IMAGE": "5ab1c2d3e4f5",
+        "PREV_IMAGE": "",
+        "PREV_VER": "",
+        "NO_GATEWAY": "",
+        "NO_PROJECT_GATEWAY": "",
+        "RUN_UNADDRESSABLE": "",
         "PLUGINS_FIXED": str(tmp_path / "plugins-fixed"),
         "PLUGINS_STUCK": "",
     }
@@ -422,6 +494,16 @@ def test_edge_without_redirect_domains_fails_the_deploy_and_stays_down(env, tmp_
     assert not [s for s in steps if s.startswith("edge-check")]
 
 
+def image_tags(env):
+    """The stub image store's tags: {"repo:tag": image id}."""
+    state = Path(env["IMG_STATE"])
+    return {
+        f.name.replace("lifekit-openclaw_", "lifekit-openclaw:"): f.read_text().strip()
+        for f in state.iterdir()
+        if f.is_file() and not f.name.startswith(".")
+    }
+
+
 def build_phase(env, extra_env=None):
     script = f"""
 set -euo pipefail
@@ -463,6 +545,140 @@ def test_build_with_plugins_still_off_core_queues_a_failure_without_aborting(env
         "failure: plugins still off core 2026.9.5 after update: codex 2026.6.8"
         in r.stdout
     )
+
+
+def test_build_keeps_the_running_image_as_prev_across_the_build_that_moves_local(env):
+    # The 2026-10-07 failure: `compose build` re-tags :local to the new image,
+    # and under the containerd store the running image is then unaddressable
+    # by id. The pin tag taken before the build is what :prev is promoted from.
+    r = build_phase(env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    pin = next(
+        i
+        for i, c in enumerate(calls)
+        if c == "tag sha256:f6e77bf93da9000000000000 lifekit-openclaw:pin"
+    )
+    build = next(
+        i for i, c in enumerate(calls) if c.endswith(" build openclaw-gateway")
+    )
+    promote = calls.index("tag lifekit-openclaw:pin lifekit-openclaw:prev")
+    stop = next(
+        i for i, c in enumerate(calls) if "stop openclaw-cli openclaw-gateway" in c
+    )
+    assert pin < build < promote < stop
+    assert image_tags(env) == {
+        "lifekit-openclaw:local": env["NEW_IMAGE"],
+        "lifekit-openclaw:prev": env["RUN_IMAGE"],
+    }
+
+
+def test_build_promotion_drops_the_image_the_old_prev_pointed_to(env):
+    r = build_phase(env, {"PREV_IMAGE": "0ld0ld0ld0ld"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert image_tags(env)["lifekit-openclaw:prev"] == env["RUN_IMAGE"]
+    assert "rmi 0ld0ld0ld0ld" in Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+
+
+def test_build_without_a_version_change_leaves_no_pin_and_prev_alone(env):
+    # A same-version rebuild that yields the same image id: :local still tags
+    # it, so the pin goes. :prev is never retagged.
+    r = build_phase(
+        env,
+        {
+            "RUNNING_VER": "2026.9.5",
+            "PREV_IMAGE": "0ld0ld0ld0ld",
+            "NEW_IMAGE": "f6e77bf93da9",
+        },
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    tags = image_tags(env)
+    assert "lifekit-openclaw:pin" not in tags
+    assert tags["lifekit-openclaw:prev"] == "0ld0ld0ld0ld"
+    assert "lifekit-openclaw:prev" not in " ".join(
+        c
+        for c in Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+        if c.startswith("tag ")
+    )
+
+
+def test_build_without_a_version_change_cannot_untag_the_image_a_container_uses(env):
+    # A same-version rebuild with a new image id: the pin is the running
+    # image's last tag, docker refuses to drop it, and the deploy goes on.
+    # The next deploy removes it once the recreated gateway has moved off.
+    r = build_phase(env, {"RUNNING_VER": "2026.9.5", "PREV_IMAGE": "0ld0ld0ld0ld"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "rc=0" in r.stdout.splitlines()
+    tags = image_tags(env)
+    assert tags["lifekit-openclaw:pin"] == env["RUN_IMAGE"]
+    assert tags["lifekit-openclaw:prev"] == "0ld0ld0ld0ld"
+
+
+def test_build_clears_a_stale_pin_before_pinning_again(env):
+    state = Path(env["IMG_STATE"])
+    state.mkdir()
+    (state / "lifekit-openclaw_pin").write_text("57a1e57a1e57")
+    r = build_phase(env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    tags = image_tags(env)
+    assert "lifekit-openclaw:pin" not in tags
+    assert tags["lifekit-openclaw:prev"] == env["RUN_IMAGE"]
+
+
+def test_build_stops_before_the_gateway_when_the_running_image_cannot_be_pinned(env):
+    # The box after 2026-10-07: :local already holds the new build, so the
+    # running image has no tag and `docker tag` cannot reach it. No rollback
+    # image means no swap.
+    r = build_phase(env, {"RUN_UNADDRESSABLE": "1"})
+    assert r.returncode == 1, r.stdout + r.stderr  # `exit 1` leaves the shell
+    assert "cannot be pinned" in r.stderr
+    assert "gateway was not touched" in r.stderr
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text()
+    assert " stop " not in calls
+    assert "doctor --fix" not in calls
+    assert "lifekit-openclaw:prev" not in " ".join(
+        c for c in calls.splitlines() if c.startswith("tag ")
+    )
+
+
+def test_build_accepts_an_existing_prev_of_the_running_version_when_unpinnable(env):
+    # The one-time recovery: the operator rebuilt the running version and
+    # tagged it :prev; the deploy keeps it and carries on with the swap.
+    r = build_phase(
+        env,
+        {
+            "RUN_UNADDRESSABLE": "1",
+            "PREV_IMAGE": "9a9a9a9a9a9a",
+            "PREV_VER": "2026.9.4",
+        },
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "rc=0" in r.stdout.splitlines()
+    assert "keeping existing :prev (OpenClaw 2026.9.4)" in r.stdout
+    assert image_tags(env)["lifekit-openclaw:prev"] == "9a9a9a9a9a9a"
+    assert "doctor --fix --non-interactive" in Path(env["DOCKER_CALL_LOG"]).read_text()
+
+
+def test_build_refuses_an_unpinnable_image_when_prev_is_another_version(env):
+    r = build_phase(
+        env,
+        {
+            "RUN_UNADDRESSABLE": "1",
+            "PREV_IMAGE": "9a9a9a9a9a9a",
+            "PREV_VER": "2026.9.3",
+        },
+    )
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "prev is 2026.9.3, not 2026.9.4" in r.stderr
+    assert "doctor --fix" not in Path(env["DOCKER_CALL_LOG"]).read_text()
+
+
+def test_build_with_no_gateway_container_stops_on_a_version_change(env):
+    # RUNNING_VER cannot come from nowhere in production; the stub reports one
+    # regardless, which is what a bump with an unreadable container looks like.
+    r = build_phase(env, {"NO_GATEWAY": "1"})
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "cannot be pinned" in r.stderr
 
 
 def test_build_with_unchanged_version_migrates_nothing(env):
@@ -623,14 +839,18 @@ def test_version_bump_on_the_cutover_deploy_reads_and_stops_the_old_gateway(env)
     stub_path.write_text(
         DOCKER_STUB.replace(
             '  *" exec -T openclaw-gateway openclaw --version "*) echo "OpenClaw $RUNNING_VER (abc)" ;;\n',
-            '  " exec g1 openclaw --version ") echo "OpenClaw $RUNNING_VER (abc)" ;;\n'
-            '  *" inspect --format {{.Image}} g1 "*) echo "sha256:0123456789abcdef" ;;\n',
+            '  " exec g1 openclaw --version ") echo "OpenClaw $RUNNING_VER (abc)" ;;\n',
         )
     )
-    r = build_phase(env, {"LEGACY_CONTAINERS": "openclaw-gateway=g1"})
+    r = build_phase(
+        env,
+        {"LEGACY_CONTAINERS": "openclaw-gateway=g1", "NO_PROJECT_GATEWAY": "1"},
+    )
     assert r.returncode == 0, r.stdout + r.stderr
     calls = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
-    assert "tag 0123456789ab lifekit-openclaw:prev" in calls
+    assert "inspect --format {{.Image}} g1" in calls
+    assert "tag lifekit-openclaw:pin lifekit-openclaw:prev" in calls
+    assert image_tags(env)["lifekit-openclaw:prev"] == env["RUN_IMAGE"]
     assert calls.index("stop g1") < next(
         i for i, c in enumerate(calls) if "doctor --fix" in c
     )
