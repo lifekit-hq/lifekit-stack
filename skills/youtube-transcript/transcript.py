@@ -103,7 +103,7 @@ def vtt_to_text(vtt: str) -> str:
     out: list[str] = []
     for raw in vtt.splitlines():
         line = raw.strip()
-        if not line or "-->" in line or line.isdigit():
+        if not line or "-->" in line:
             continue
         if line == "WEBVTT" or line.startswith(
             ("Kind:", "Language:", "NOTE", "STYLE", "REGION")

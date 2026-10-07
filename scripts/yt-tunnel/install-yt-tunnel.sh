@@ -31,27 +31,33 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 tdir="${repo_root}/scripts/yt-tunnel"
 
+octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+is_ipv4() { [[ "$1" =~ ^${octet}(\.${octet}){3}$ ]]; }
+is_port() { [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$1" -le 65535 ]; }
+
 host="${YT_TUNNEL_HOST:-}"
 [ -n "$host" ] || { echo "set YT_TUNNEL_HOST to the ssh config alias of the PC" >&2; exit 1; }
+[[ "$host" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || { echo "YT_TUNNEL_HOST must be a plain ssh alias" >&2; exit 1; }
 tport="${YT_TUNNEL_PORT:-18082}"
 tbind="${YT_TUNNEL_BIND:-127.0.0.1}"
 rport="${YT_TUNNEL_RELAY_PORT:-18081}"
 rbind="${YT_TUNNEL_RELAY_BIND:-}"
 unit_dir="${YT_TUNNEL_UNIT_DIR:-${HOME}/.config/systemd/user}"
 
-case "$tbind" in
-  127.*.*.*) ;;
-  *) echo "refusing tunnel bind $tbind: the ssh forward is an open proxy into the PC's network, loopback only" >&2; exit 1 ;;
-esac
+if ! is_ipv4 "$tbind" || [[ "$tbind" != 127.* ]]; then
+  echo "refusing tunnel bind $tbind: the ssh forward is an open proxy into the PC's network, loopback only" >&2
+  exit 1
+fi
 if [ -z "$rbind" ]; then
   rbind="$(ip -4 -o addr show docker0 2>/dev/null | awk '{sub(/\/.*/, "", $4); print $4; exit}')"
 fi
 [ -n "$rbind" ] || { echo "no docker0 address; set YT_TUNNEL_RELAY_BIND" >&2; exit 1; }
-case "$rbind" in
-  0.0.0.0|::|'*') echo "refusing to bind $rbind: the relay is for the docker bridge only" >&2; exit 1 ;;
-esac
+if [ "$rbind" = 0.0.0.0 ] || ! is_ipv4 "$rbind"; then
+  echo "refusing to bind $rbind: the relay is for the docker bridge only" >&2
+  exit 1
+fi
 for p in "$tport" "$rport"; do
-  case "$p" in ''|*[!0-9]*) echo "ports must be numbers" >&2; exit 1 ;; esac
+  is_port "$p" || { echo "ports must be numbers from 1 to 65535" >&2; exit 1; }
 done
 [ "$tport" != "$rport" ] || { echo "tunnel and relay ports must differ" >&2; exit 1; }
 

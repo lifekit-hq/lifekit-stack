@@ -208,6 +208,11 @@ def test_vtt_to_text_drops_tags_timing_and_rolling_repeats():
     )
 
 
+def test_vtt_to_text_keeps_a_cue_that_is_only_digits():
+    vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n100\n\n00:00:01.000 --> 00:00:02.000\n2024\n"
+    assert transcript.vtt_to_text(vtt) == "100\n2024"
+
+
 def test_pick_prefers_original_language_track():
     files = [Path("v.en.vtt"), Path("v.en-orig.vtt")]
     assert transcript.pick(files) == Path("v.en-orig.vtt")
@@ -530,17 +535,56 @@ def test_installer_overrides_apply():
 
 
 @pytest.mark.parametrize(
-    "bad", ["172.17.0.1", "0.0.0.0", "::", "*", "10.0.0.5", "localhost"]
+    "bad",
+    [
+        "172.17.0.1",
+        "0.0.0.0",
+        "::",
+        "*",
+        "10.0.0.5",
+        "localhost",
+        "127.example.com.attacker",
+        "127.0.0.1:0.0.0.0",
+        "127.0.0.256",
+        "127.0.0.1|0.0.0.0",
+        "127.0.0",
+        "127.0.0.1.1",
+        "127.0.0.01",
+        "127.0.0.1\n0.0.0.0",
+        "127.0.0.1 ",
+    ],
 )
 def test_installer_refuses_a_non_loopback_tunnel_bind(bad):
     r = render(YT_TUNNEL_BIND=bad)
     assert r.returncode == 1 and "loopback only" in r.stderr and r.stdout == ""
 
 
-@pytest.mark.parametrize("bad", ["0.0.0.0", "::", "*"])
-def test_installer_refuses_a_wildcard_relay_bind(bad):
+@pytest.mark.parametrize(
+    "bad",
+    ["0.0.0.0", "::", "*", "172.17.0.256", "172.17.0.1|0.0.0.0", "docker0", "172.17.0"],
+)
+def test_installer_refuses_a_wildcard_or_malformed_relay_bind(bad):
     r = render(YT_TUNNEL_RELAY_BIND=bad)
     assert r.returncode == 1 and "docker bridge only" in r.stderr and r.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"YT_TUNNEL_PORT": "x"},
+        {"YT_TUNNEL_PORT": "0"},
+        {"YT_TUNNEL_PORT": "65536"},
+        {"YT_TUNNEL_PORT": "18082|x"},
+        {"YT_TUNNEL_RELAY_PORT": "018081"},
+        {"YT_TUNNEL_RELAY_PORT": "99999999999999999999"},
+        {"YT_TUNNEL_HOST": "-oProxyCommand=x"},
+        {"YT_TUNNEL_HOST": "pc|alias"},
+        {"YT_TUNNEL_HOST": "pc alias"},
+    ],
+)
+def test_installer_refuses_malformed_ports_and_host(env):
+    r = render(**env)
+    assert r.returncode == 1 and r.stdout == ""
 
 
 def test_installer_refuses_bad_ports_and_a_missing_host():
