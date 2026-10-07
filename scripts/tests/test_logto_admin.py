@@ -66,6 +66,7 @@ class FakeLogto:
             "socialSignInConnectorTargets": ["google"],
             "socialSignIn": {"automaticAccountLinking": False},
         }
+        self.app_sie: dict[str, dict] = {}
         self.connectors: list[dict] = []
         self.test_sends: list[dict] = []
         self.requests: list[tuple[str, str, object]] = []
@@ -134,7 +135,14 @@ def handler_for(fake: FakeLogto):
                 if method == "GET":
                     return self.reply(200, fake.sign_in_exp)
                 if method == "PATCH":
-                    bad = set(data) - {"color", "branding", "signIn", "signUp"}
+                    bad = set(data) - {
+                        "color",
+                        "branding",
+                        "signIn",
+                        "signUp",
+                        "termsOfUseUrl",
+                        "privacyPolicyUrl",
+                    }
                     if bad:
                         return self.reply(
                             400, {"code": "guard.invalid_input", "message": str(bad)}
@@ -231,6 +239,24 @@ def handler_for(fake: FakeLogto):
                 if method == "DELETE":
                     have.remove(parts[4])
                     return self.reply(204)
+            if (
+                parts[:2] == ["api", "applications"]
+                and parts[3:] == ["sign-in-experience"]
+                and parts[2] in {a["id"] for a in fake.apps}
+            ):
+                if method == "GET":
+                    if parts[2] not in fake.app_sie:
+                        return self.reply(404, {"message": "no sign-in experience"})
+                    return self.reply(200, fake.app_sie[parts[2]])
+                if method == "PUT":
+                    bad = set(data) - {"color", "branding", "displayName"}
+                    if bad:
+                        return self.reply(
+                            400, {"code": "guard.invalid_input", "message": str(bad)}
+                        )
+                    created = parts[2] not in fake.app_sie
+                    fake.app_sie[parts[2]] = {**fake.app_sie.get(parts[2], {}), **data}
+                    return self.reply(201 if created else 200, fake.app_sie[parts[2]])
             if parts[:2] == ["api", "applications"]:
                 if len(parts) == 2 and method == "GET":
                     return self.page(fake.apps, query)
@@ -276,6 +302,9 @@ def handler_for(fake: FakeLogto):
 
         def do_PATCH(self):  # noqa: N802
             self.handle_any("PATCH")
+
+        def do_PUT(self):  # noqa: N802
+            self.handle_any("PUT")
 
         def do_DELETE(self):  # noqa: N802
             self.handle_any("DELETE")
@@ -629,6 +658,66 @@ def test_set_sign_in_exp_accepts_svg_data_uri_and_undoes(logto):
     }
     assert logto("undo").returncode == 0
     assert fake == original
+
+
+def test_clear_terms_links_empties_both_and_undoes(logto):
+    fake = logto.fake.sign_in_exp
+    fake["termsOfUseUrl"] = "https://media.tenor.com/x.gif"
+    fake["privacyPolicyUrl"] = "https://media.tenor.com/y.gif"
+    original = json.loads(json.dumps(fake))
+    assert logto("set-sign-in-exp", "--clear-terms-links").returncode == 0
+    assert fake["termsOfUseUrl"] is None
+    assert fake["privacyPolicyUrl"] is None
+    assert "already set" in logto("set-sign-in-exp", "--clear-terms-links").stdout
+    assert logto("undo").returncode == 0
+    assert fake == original
+
+
+def test_set_app_sign_in_exp_creates_merges_and_undoes(logto):
+    logto("ensure-app", "gate")
+    app_id = logto.fake.apps[0]["id"]
+    args = (
+        "set-app-sign-in-exp",
+        "gate",
+        "--display-name",
+        "lifekit",
+        "--logo-url",
+        "https://h/lk.svg",
+        "--primary-color",
+        "#4f46e5",
+        "--dark-primary-color",
+        "#8e9aff",
+    )
+    proc = logto(*args)
+    assert proc.returncode == 0, proc.stderr
+    assert logto.fake.app_sie[app_id] == {
+        "displayName": "lifekit",
+        "branding": {"logoUrl": "https://h/lk.svg"},
+        "color": {"primaryColor": "#4f46e5", "darkPrimaryColor": "#8e9aff"},
+    }
+    assert "already set" in logto(*args).stdout
+    # a later change keeps the leaves it did not ask for
+    assert (
+        logto("set-app-sign-in-exp", "gate", "--primary-color", "#000000").returncode
+        == 0
+    )
+    assert logto.fake.app_sie[app_id]["color"] == {
+        "primaryColor": "#000000",
+        "darkPrimaryColor": "#8e9aff",
+    }
+    assert logto("undo").returncode == 0
+    assert logto.fake.app_sie[app_id]["color"]["primaryColor"] == "#4f46e5"
+
+
+def test_set_app_sign_in_exp_unknown_app(logto):
+    assert logto("set-app-sign-in-exp", "nope", "--display-name", "x").returncode == 1
+    proc = logto("set-app-sign-in-exp", "nope", "--display-name", "x", "--if-exists")
+    assert proc.returncode == 0
+    assert "skipped" in proc.stdout
+    assert logto("set-app-sign-in-exp", "nope").returncode != 0
+    assert (
+        logto("set-app-sign-in-exp", "nope", "--primary-color", "red").returncode == 2
+    )
 
 
 def test_set_sign_in_exp_rejects_bad_input(logto):

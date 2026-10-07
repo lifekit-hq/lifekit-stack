@@ -1747,7 +1747,8 @@ creates a Traditional web app, or brings an existing one's URIs to the given
 lists. `set-redirects` replaces the list it is given and keeps the other.
 `--secret-file` writes the app's client secret to a new 0600 file for
 `sops set` to read (`"\"$(cat ~/<name>.secret)\""`), then `shred -u` it.
-`set-sign-in-exp` changes only the sign-in experience fields given (logo,
+`set-app-sign-in-exp` sets one application's own name, logo and colors; `--clear-terms-links` on
+`set-sign-in-exp` empties the Terms/Privacy links. `set-sign-in-exp` changes only the fields given (logo,
 dark logo, favicon, dark favicon, colors, `--sign-in-identifiers`,
 `--sign-up-identifiers`); the image options take an http(s) URL or an inline
 `data:image/svg+xml;base64,...` URI, which needs no hosting.
@@ -1763,7 +1764,8 @@ the ids it created or touched, and the inverse request. `logto-admin.py
 ledger` lists it; `logto-admin.py undo [N]` sends entry N's inverse (default:
 the newest not yet undone): delete the role or app it created, take the role
 back, restore the previous redirect URIs, or restore the previous
-sign-in experience objects, or delete the email connector it created.
+sign-in experience objects (tenant or per application), or delete the email
+connector it created.
 
 **Removing the app** ends the delegation:
 
@@ -1782,6 +1784,28 @@ the same images as `compose/identity/`, loopback ports 13001/13002), then
 tears it down. It never touches the `identity` project. Run it after a Logto
 upgrade, before the bootstrap or the script is used against the new
 version: the bootstrap writes Logto's tables directly.
+
+## Sign-in page branding
+
+The Logto sign-in page shows each application's own mark and primary color:
+the lifekit mark in Indigo `#4f46e5` for the sign-in gate (dashboard and devclaw
+console share that one Logto client), the fs mark in Petrol `#175a6d` for
+finance-sentry's client, the tenant default (lifekit mark, Indigo) for anything
+else. Logto's per-application sign-in experience carries the logo and color;
+the tenant's Terms/Privacy links are cleared, because lifekit publishes no such
+pages. `scripts/identity/branding/README.md` has the seeds and where the marks
+come from. Operator step, with the M2M credentials; it changes the live
+sign-in page, so run it at go time:
+
+```bash
+sops exec-env <file>.sops 'bash scripts/identity/apply-branding.sh'
+```
+
+Idempotent; an application it cannot find by name is reported and skipped
+(override with `GATE_APP`, `FS_APP`, `GRAFANA_APP`). Reverse each change with
+`logto-admin.py undo`. Logto 1.44 stores an app display name but does not draw
+it on the sign-in page. No restart is needed. Re-add Terms/Privacy links once
+real pages exist, in the console or by extending `set-sign-in-exp`.
 
 ## Grafana sign-in through Logto
 
