@@ -134,3 +134,9 @@ RUN mkdir -p /home/node/.npm-global \
     && npm cache clean --force \
     && cd /home/node \
     && rm -rf /home/node/.npm-global-src
+
+# Keep label for scripts/docker-weekly-prune: deploy.sh retags the image that
+# ran the previous version as lifekit-openclaw:prev, and `docker image prune
+# -a` would delete it (no container uses it). Metadata only, so no layer
+# re-runs; the value is the one in scripts/docker-weekly-prune/docker-weekly-prune.sh.
+LABEL lifekit.keep="rollback"

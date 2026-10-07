@@ -1,0 +1,7 @@
+[Unit]
+Description=Weekly Docker prune of unused images and anonymous volumes
+
+[Service]
+Type=oneshot
+# Root: it removes images and volumes for the whole Docker host.
+ExecStart=/usr/local/bin/lifekit-docker-weekly-prune.sh
