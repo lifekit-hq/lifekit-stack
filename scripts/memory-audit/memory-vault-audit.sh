@@ -8,7 +8,7 @@
 # cron failure. Its stdout is the one-line Telegram summary.
 set -eu
 
-VAULT="${MEMORY_VAULT:-/home/node/.openclaw/wiki/main}"
+VAULT="${MEMORY_VAULT:-/home/node/memory}"
 DATE=$(date -u +%F)
 
 [ -x "$VAULT/bin/audit.sh" ] || [ -f "$VAULT/bin/audit.sh" ] || {

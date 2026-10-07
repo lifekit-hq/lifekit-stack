@@ -184,6 +184,30 @@ mirror equivalent) stays clean afterward - the first index over a vault-sized
 directory takes a noticeable but bounded amount of time on first run, then
 stays incremental.
 
+#### Provider plugin allowlist (`plugins.allow`, lifekit-stack#175)
+
+OpenClaw loads every bundled plugin that is enabled by default. That includes
+more than two dozen model-provider plugins that nothing here routes to.
+`plugins.allow` in the platform file lists the only plugin ids that load:
+
+- **The routed providers.**
+  - `anthropic`: every agent's model runs through its claude-cli backend.
+  - `openai`: the openai auth profile.
+  - `codex`: the agent runtime that `openai` runs on.
+- **The non-provider plugins the gateway already runs.** These include
+  `telegram`, `memory-core`, both diagnostics exporters, `browser` and
+  `github`.
+
+A new upstream default-on plugin stays off until someone adds it here. On
+2026.9.8 that is `kie`. The rehearsal on a copy of the live config applied the
+key with "Change will apply without restarting the gateway" and stored it
+exactly as written, so a later deploy finds nothing to change.
+
+To add a plugin, put its id in the list in the same PR that routes to it, or
+that enables it under `plugins.entries`. An entry enabled there but missing
+from `allow` never loads, and `scripts/tests/test_platform_patch.py` fails on
+it.
+
 #### Inbound hooks and the finance pulse (in the platform file since 2026-09-18)
 
 The same file turns on OpenClaw's inbound HTTP hooks for one caller and one
@@ -556,6 +580,80 @@ file's previous contents.
 
 **Rollback:** `openclaw cron rm <id>` (or `cron edit <id> --disable`). Nothing else
 depends on this row - `memory_vault_audit` keeps running unchanged either way.
+
+### Agent memory in the vault
+
+Kit (`kit`), Ledger (`finance`) and devclaw keep their workspace `memory/`
+directory in the vault (lifekit-stack#175).
+`compose/openclaw/docker-compose.yml` bind-mounts
+`${LIFEKIT_LIFE_DIR}/agents/<id>/memory` over
+`/home/node/.openclaw/agents/<id>/workspace/memory` on `openclaw-gateway`, and
+on `openclaw-cli` too. The session-memory hook's notes, written on `/new` and
+`/reset`, and the agents' own daily notes then land in the vault's episodic
+class `agents/<agent>/memory/`, which is not wiki-linted. `memory-sync.timer`
+commits and pushes them like any other vault edit. Only exact `YYYY-MM-DD.md`
+daily notes rotate at 90 days; the session-memory notes (`YYYY-MM-DD-HHMM.md`
+or `YYYY-MM-DD-<slug>.md`) do not rotate until the vault's rotate glob is
+widened, a separate follow-up.
+
+What the mounts leave out:
+
+- **No config key.** OpenClaw has no key for an agent's `memory/` path, so the
+  bind mount is the lever.
+- **`MEMORY.md` stays at the workspace root, not mounted.** A single-file bind
+  does not survive a write that replaces the file by rename. Folding it into
+  the vault is separate work.
+- **`dreaming/` and `.dreams/` are not copied.** They are memory-core dreaming
+  output. Dreaming is off, so they are dead and are deleted rather than moved.
+- **Only these three agents.** The other agents keep their memory in their
+  workspace.
+
+The mounted notes are also under the vault path that `memory.search.extraPaths`
+indexes, so a `memory_search` hit on one may show up twice: once as workspace
+memory and once as a vault page.
+
+**Host prep (operator, once, before the first deploy that carries the mounts).**
+Docker creates a missing bind source as an empty root-owned directory, which
+the gateway (uid 1000, the host `lifekit` account) cannot write to. So create
+the directories first and copy the existing notes in. The step is idempotent
+(`--ignore-existing` never overwrites a vault copy, and the log line is guarded):
+
+```bash
+sudo -u lifekit bash -euo pipefail <<'SH'
+for id in kit finance devclaw; do
+  src=/srv/openclaw/config/agents/$id/workspace/memory
+  dst=/srv/memory/agents/$id/memory
+  install -d -m 755 "$dst"
+  [ -d "$src" ] || continue
+  rsync -a --ignore-existing --exclude=/dreaming/ --exclude=/.dreams/ "$src/" "$dst/"
+  rm -rf "$src/dreaming" "$src/.dreams"
+done
+cd /srv/memory
+grep -q 'lifekit-stack#175' log.md ||
+  sh bin/log.sh "agents/{kit,finance,devclaw}/memory now hold those agents' workspace memory notes, bind-mounted into the gateway (lifekit-stack#175)"
+SH
+```
+
+`bin/log.sh` commits only its own `log.md` line. The copied notes are
+committed by the next `memory-sync.timer` run, never by hand. An exact
+`YYYY-MM-DD.md` daily note older than 90 days is retired by the next Sunday
+`memory_vault_audit` rotation, and git history keeps it; session-memory notes
+with a suffix after the date are not matched by the rotate glob and stay. The
+originals stay in the workspace, hidden under the mount, which is what makes
+the rollback lossless.
+
+**Rollback:** remove the three mount lines from both services and let the
+merge redeploy. The agents go back to their workspace copies. Notes written
+while the mounts were live stay in the vault, under `agents/<id>/memory/`.
+
+**Verify** after the deploy:
+
+- Send `/new` to one of the three agents. A dated note appears under
+  `/srv/memory/agents/<id>/memory/`, named `YYYY-MM-DD-HHMM.md` or
+  `YYYY-MM-DD-<slug>.md`.
+- A `memory_search` from that agent finds the note.
+- `docker exec openclaw-openclaw-gateway-1 openclaw doctor` is clean.
+- `curl -fsS http://127.0.0.1:18789/healthz` returns 200.
 
 ### Kit's needs-you decisions and the daily digest
 

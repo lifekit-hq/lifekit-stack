@@ -12,7 +12,7 @@ on demand in any session, and here weekly. Vault policy is encoded once, next to
 pages it governs; see the vault `README.md` "Harness" section.
 
 `memory-vault-audit.sh` only locates the vault (`$MEMORY_VAULT`, default
-`/home/node/.openclaw/wiki/main`), runs `bin/audit.sh --rotate --log`, checks that a
+`/home/node/memory`, the gateway's vault mount), runs `bin/audit.sh --rotate --log`, checks that a
 fresh `audits/latest.md` was written (delivery-required guard: a silent no-op is a cron
 failure), and prints the one-line Telegram summary. The report and `log.md` line are
 committed + pushed by the host `memory-sync.timer`.
