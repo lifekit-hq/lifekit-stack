@@ -188,6 +188,35 @@ openclaw_phase_build() {
 # The config-only backup is seconds; a full `backup create` of the state dir
 # is the manual step before a multi-month jump (docs/runbook.md).
 
+# Pin the image the gateway runs BEFORE the build. Under the containerd image
+# store (`docker info`: io.containerd.snapshotter.v1) an image id stays
+# addressable only while a tag or something else references it: the build
+# re-tags lifekit-openclaw:local to the new image, and from then on the old
+# image - which the running gateway still uses - is gone for `docker tag`
+# ("No such image: sha256:...", the 2026-10-07 deploy of #280). A pin tag
+# keeps it addressable across the build; on a version change it becomes
+# :prev below, and it is removed on every deploy either way. The container's
+# own image reference is the source, not :local: :local can already point
+# at a build the gateway is not running (an earlier deploy that built and
+# then died).
+OPENCLAW_PIN_TAG="lifekit-openclaw:pin"
+docker rmi "${OPENCLAW_PIN_TAG}" >/dev/null 2>&1 || true
+PIN_ID=""
+GATEWAY_CTR="$(openclaw_compose ps -a -q openclaw-gateway 2>/dev/null | head -1 || true)"
+if [[ -z "${GATEWAY_CTR}" ]]; then
+  # The deploy that moves OpenClaw into its own project: the running
+  # gateway is still the platform project's.
+  GATEWAY_CTR="$(openclaw_legacy_ids openclaw-gateway | head -1 || true)"
+fi
+if [[ -n "${GATEWAY_CTR}" ]]; then
+  GATEWAY_IMAGE="$(docker inspect --format '{{.Image}}' "${GATEWAY_CTR}" 2>/dev/null || true)"
+  if [[ -n "${GATEWAY_IMAGE}" ]] && docker tag "${GATEWAY_IMAGE}" "${OPENCLAW_PIN_TAG}" 2>/dev/null; then
+    PIN_ID="${GATEWAY_IMAGE#sha256:}"
+    PIN_ID="${PIN_ID:0:12}"
+    say "pinned running gateway image ${PIN_ID} as ${OPENCLAW_PIN_TAG}"
+  fi
+fi
+
 say "docker compose build"
 openclaw_compose build openclaw-gateway
 
@@ -213,18 +242,27 @@ if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_V
   # pointed to, once nothing else tags or runs it. Retag itself is gated on
   # a version change: 2026-09-13 the unconditional retag ran on three queued
   # deploys in a row and :prev ended up pointing at the new version.
-  PREV_IMAGE="$(openclaw_compose \
-    images -q openclaw-gateway 2>/dev/null | head -1 || true)"
-  if [[ -z "${PREV_IMAGE}" && -n "${LEGACY_GATEWAY}" ]]; then
-    PREV_IMAGE="$(docker inspect --format '{{.Image}}' "${LEGACY_GATEWAY}" 2>/dev/null || true)"
-    PREV_IMAGE="${PREV_IMAGE#sha256:}"
-    PREV_IMAGE="${PREV_IMAGE:0:12}"
-  fi
-  OLD_PREV_IMAGE="$(docker images -q lifekit-openclaw:prev 2>/dev/null || true)"
-  if [[ -n "${PREV_IMAGE}" ]]; then
-    say "tagging running image ${PREV_IMAGE:0:12} as :prev"
-    docker tag "${PREV_IMAGE}" lifekit-openclaw:prev
-    if [[ -n "${OLD_PREV_IMAGE}" && "${OLD_PREV_IMAGE}" != "${PREV_IMAGE}" ]]; then
+  # The pin was taken before the build (above). With no pin the running image
+  # is no longer addressable (or there is no gateway container to read it
+  # from). That is acceptable only when :prev already holds the version that
+  # runs - the one-time recovery after the 2026-10-07 failure, and a re-run
+  # after one. Otherwise stop here, before the gateway is touched, rather
+  # than swap it without a rollback image.
+  if [[ -z "${PIN_ID}" ]]; then
+    PREV_VER="$(docker run --rm --entrypoint openclaw lifekit-openclaw:prev --version 2>/dev/null | awk '{print $2}' || true)"
+    if [[ -z "${PREV_VER}" || "${PREV_VER}" != "${RUNNING_VER}" ]]; then
+      echo "OpenClaw ${RUNNING_VER} -> ${BUILT_VER}: the running gateway image cannot be pinned, and lifekit-openclaw:prev is ${PREV_VER:-missing}, not ${RUNNING_VER}." >&2
+      echo "Refusing to replace the gateway without a rollback image; the gateway was not touched. Make lifekit-openclaw:prev" >&2
+      echo "an image of ${RUNNING_VER} (docs/runbook.md \"Rolling back OpenClaw\"), then re-run." >&2
+      exit 1
+    fi
+    say "running image not pinnable; keeping existing :prev (OpenClaw ${PREV_VER}) as the rollback image"
+  else
+    OLD_PREV_IMAGE="$(docker images -q lifekit-openclaw:prev 2>/dev/null || true)"
+    say "tagging running image ${PIN_ID} as :prev"
+    docker tag "${OPENCLAW_PIN_TAG}" lifekit-openclaw:prev
+    docker rmi "${OPENCLAW_PIN_TAG}" >/dev/null 2>&1 || true
+    if [[ -n "${OLD_PREV_IMAGE}" && "${OLD_PREV_IMAGE}" != "${PIN_ID}" ]]; then
       OLD_PREV_TAGS="$(docker inspect --format '{{json .RepoTags}}' "${OLD_PREV_IMAGE}" 2>/dev/null || echo '[]')"
       OLD_PREV_IN_USE="$(docker ps -a -q --filter "ancestor=${OLD_PREV_IMAGE}" 2>/dev/null || true)"
       if [[ "${OLD_PREV_TAGS}" == "[]" && -z "${OLD_PREV_IN_USE}" ]]; then
@@ -302,6 +340,10 @@ for p in items:
   fi
 else
   say "OpenClaw version unchanged (${BUILT_VER:-unknown}); no state migration"
+  # The pin only exists for a version change. If the gateway runs an image
+  # nothing else tags (a same-version rebuild), docker refuses to untag it
+  # while the container uses it; the next deploy removes it.
+  docker rmi "${OPENCLAW_PIN_TAG}" >/dev/null 2>&1 || true
 fi
 
 }
