@@ -15,6 +15,7 @@ Two kinds of skills live here:
 | `memory-defrag` | Manual-first `/defrag` pass over the vault: dedupe/merge candidates, splits, INDEX drift, orphan sources (`defrag_scan.py`); propose-don't-apply for merges. No cron without a separate graded proposal |
 | `morning-brief` | Daily cross-project brief to Telegram (repo sweep via `gh` + devclaw live state) ending in numbered recommendations; a reply ("1 and 3") dispatches the selected items to devclaw via MCP. Owned by the `devclaw` waiter agent; installed + cron-ensured by `scripts/ensure-morning-brief.sh` (cron state lives in the gateway DB, not openclaw.json — the script is the git-side declaration) |
 | `secondmate-relay` | Kit pipes the user's words, unchanged, to the VPS second mate's captain inbox and shows its replies unchanged, through the host's `kit-relay` forced command (`scripts/kit-relay/`). Installed into kit's workspace by `scripts/ensure-secondmate-relay.sh`; kit's skill allowlist is an operator patch (`docs/runbook.md`, "Kit's second-mate relay") |
+| `youtube-transcript` | Plain-text captions of a YouTube video so an agent can summarize it, fetched with a pinned yt-dlp through an SSH SOCKS tunnel to the owner's PC (YouTube refuses the VPS IP); answers `transcript unavailable - the PC is off` when the PC is off. Tunnel unit: `scripts/yt-tunnel/`; installed into the gateway's shared skills dir by `scripts/ensure-youtube-transcript.sh` (`docs/runbook.md`, "YouTube transcripts through the PC") |
 
 ## Personal skills (v0.x)
 
