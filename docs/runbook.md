@@ -217,7 +217,11 @@ agent, and gives the finance agent a heartbeat:
   keys off, and one mapping - `POST <hook path>/finance-sentry` runs the
   finance agent in an isolated session and delivers to its Telegram chat. The
   template interpolates `kind` and `eventId` only: the push carries
-  identifiers, the agent reads the detail back through its MCP tools.
+  identifiers, the agent reads the detail back through its MCP tools. The
+  template also tells the agent to end its message with the absolute `appUrl`
+  that `get_pending_companion_events` returns per event (one bare link per
+  line, none for an event without one, never a built or guessed link), so the
+  Telegram message is clickable into the app.
 - `agents.entries.finance.heartbeat`: **retired 2026-09-26, see the fs-685
   note below** - the key is now `{"every": "0m"}`, same shape as
   `agents.defaults.heartbeat`, so the finance agent no longer ticks on the
@@ -258,7 +262,11 @@ is a short contract preamble (`NO_REPLY` or exactly one message) followed by
 the checklist verbatim. Run it on the host after the `ledger-pulse` row has
 been created on the gateway; it is idempotent and rewrites the message with
 `openclaw cron edit --message` only when it differs. The edit hot-reloads and
-restarts nothing.
+restarts nothing. The checklist's closing `Links:` paragraph has the pulse end
+a sent message with the matching app page as a plain URL (`/events`,
+`/alerts`, or the single event's own `appUrl`; none for the quiet-week digest
+or a `NO_REPLY`); the app origin is not in git, so the paragraph tells the
+agent to take it from a returned `appUrl`.
 
 A pulse whose message carries no checklist still runs the model (scratch does
 not gate an agentTurn run), but only calls the companion pull by chance - the
