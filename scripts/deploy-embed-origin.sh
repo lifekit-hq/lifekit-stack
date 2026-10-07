@@ -11,7 +11,8 @@
 # `tailscale serve status --json`. Once the tailnet sign-in gate is cut over
 # (compose project `edge`, docs/runbook.md "Tailnet sign-in gate"), Serve
 # points at the gate's dashboard entrypoint instead, so its published port
-# (container port 18890 of the edge traefik) counts as the dashboard's too.
+# (container port 18890 of the edge traefik, also when published as a
+# Docker port range such as 18890-18891->18890-18891) counts as the dashboard's too.
 # The dashboard is not assumed to sit on the
 # default HTTPS port: the port is omitted only when it is 443. Never guesses:
 # if the name or the port can't be derived, nothing is printed and embedding
@@ -59,7 +60,11 @@ except Exception:
 if not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+", name):
     sys.exit()
 published = set(re.findall(r"(?:127\.0\.0\.1|\[::1\]):(\d+)->", ports))
-published |= set(re.findall(r"(?:127\.0\.0\.1|\[::1\]):(\d+)->18890/", edge_ports))
+# Docker prints a published range as A-B->C-D (host A+i maps to container C+i),
+# a single port as A->C; take the host port mapped to container port 18890.
+for lo, hi, clo, chi in re.findall(r"(?:127\.0\.0\.1|\[::1\]):(\d+)(?:-(\d+))?->(\d+)(?:-(\d+))?/", edge_ports):
+    if int(clo) <= 18890 <= int(chi or clo):
+        published.add(str(int(lo) + 18890 - int(clo)))
 found = set()
 try:
     web = json.loads(serve).get("Web", {})
