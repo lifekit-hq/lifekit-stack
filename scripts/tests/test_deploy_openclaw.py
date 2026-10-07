@@ -110,6 +110,7 @@ case " $* " in
   *" plugins list --json "*)
     if [ -e "$PLUGINS_FIXED" ]; then v="$BUILT_VER"; else v="2026.6.8"; fi
     echo '[{"id":"codex","enabled":true,"origin":"global","version":"'"$v"'"}]' ;;
+  *" secrets reload "*) [ -z "$RELOAD_ERR" ] || { echo "$RELOAD_ERR" >&2; exit 1; } ;;
   *" plugins update "*) [ -n "$PLUGINS_STUCK" ] || touch "$PLUGINS_FIXED" ;;
 esac
 exit 0
@@ -752,7 +753,7 @@ def test_every_openclaw_phase_drives_the_openclaw_project_and_file(env, tmp_path
     for args in (
         "build openclaw-gateway",
         "up -d",
-        "exec -T openclaw-gateway openclaw secrets reload",
+        "exec -T openclaw-gateway openclaw secrets reload --timeout 120000",
         "--profile cli run --rm -T openclaw-cli channels status",
         "--profile cli stop openclaw-cli openclaw-gateway",
     ):
@@ -774,6 +775,37 @@ def test_every_openclaw_phase_drives_the_openclaw_project_and_file(env, tmp_path
     )
     # Every path the phases wrote to is inside the test's tmp dir.
     assert (tmp_path / "workspace/memory-audit").is_dir()
+
+
+def configure_failures(env, reload_err):
+    r = run_phases(env, ["configure"], {"RELOAD_ERR": reload_err})
+    failures = [
+        line
+        for line in r.stderr.splitlines()
+        if "openclaw secrets reload failed" in line
+    ]
+    return r, failures
+
+
+def test_secrets_reload_waits_120s_for_a_slow_gateway_and_passes(env):
+    # A reload after a hot config reload can take >30s, the CLI default.
+    r, failures = configure_failures(env, "")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert failures == []
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text()
+    assert "openclaw secrets reload --timeout 120000" in calls
+
+
+@pytest.mark.parametrize(
+    "err",
+    [
+        "gateway timeout after 120000ms",  # still a timeout past the 120s: real
+        "Gateway not reachable at ws://127.0.0.1:18789 (ECONNREFUSED)",
+    ],
+)
+def test_secrets_reload_failure_still_fails_the_deploy(env, err):
+    r, failures = configure_failures(env, err)
+    assert len(failures) == 1, r.stdout + r.stderr
 
 
 def cutover_calls(env):

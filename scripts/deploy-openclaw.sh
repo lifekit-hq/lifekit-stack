@@ -527,10 +527,14 @@ done
 if [[ "${GATEWAY_READY}" -ne 1 ]]; then
   fail_later "openclaw-gateway did not answer /healthz within 120s; secrets reload skipped"
 else
-  say "reloading gateway secrets"
+  # The CLI gives up after 30s by default, but a reload right after the
+  # platform patch's hot config reload took 37s (the 2026-10-07 deploy of PR 305
+  # went red on "gateway timeout after 30000ms" while the gateway logged
+  # "secrets.reload" succeeded). 120s covers that; a failure past it is real.
+  say "reloading gateway secrets (up to 120s)"
   openclaw_compose \
     exec -T openclaw-gateway openclaw \
-      secrets reload || fail_later "openclaw secrets reload failed"
+      secrets reload --timeout 120000 || fail_later "openclaw secrets reload failed"
 fi
 say "auditing gateway secrets (report only, no values printed)"
 openclaw_compose \
