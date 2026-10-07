@@ -28,7 +28,7 @@
 # owner after the first failure. The alert cannot use the job's own route: a
 # failure alert needs an outbound channel, and the Control UI chat is not one.
 # So it goes through kit's `default` Telegram account to the owner chat, the
-# same route the career/social weekly crons use for their failure alerts
+# same route the career weekly cron uses for its failure alert
 # (docs/runbook.md). The owner chat id is read from the host env file and
 # never written to git.
 #

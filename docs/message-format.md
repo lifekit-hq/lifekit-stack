@@ -155,5 +155,5 @@ This page governs messages pushed to the owner's Telegram. Kit's decision prompt
 (`ask_user` cards) and its daily needs-you digest are conversation instead: they are
 committed into kit's own Control UI chat, and the app renders them. They never pass through
 the relay, and the envelope does not apply to them. The digest's failure alert is the
-OpenClaw cron alert, sent through kit's Telegram bot like the career/social weekly alerts
+OpenClaw cron alert, sent through kit's Telegram bot like the career weekly alert
 (`docs/runbook.md`, "Kit's needs-you decisions and the daily digest").

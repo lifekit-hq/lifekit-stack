@@ -2,27 +2,26 @@
 
 How lifekit-stack shapes its OpenClaw agents: one general-purpose agent, a small set of domain agents, and the rules that keep each one reviewable.
 
-This page is the design, not a mirror of live state. The live fleet is host state: `agents.entries`, `bindings` and `channels` in `/srv/openclaw/config/openclaw.json`, and the cron jobs in the gateway's own store. Read those for what is running today (`openclaw agents list --bindings`, `openclaw cron list --all`). History: rewritten 2026-05-25 to a single Kit after a failed multi-agent attempt (see [the lesson](#the-2026-05-25-lesson-still-holds)); rewritten again 2026-09-28 for the fleet reshape that retired the nameless `fable` and `main` agents and gave `career` and `social` real work.
+This page is the design, not a mirror of live state. The live fleet is host state: `agents.entries`, `bindings` and `channels` in `/srv/openclaw/config/openclaw.json`, and the cron jobs in the gateway's own store. Read those for what is running today (`openclaw agents list --bindings`, `openclaw cron list --all`). History: rewritten 2026-05-25 to a single Kit after a failed multi-agent attempt (see [the lesson](#the-2026-05-25-lesson-still-holds)); rewritten again 2026-09-28 for the fleet reshape that retired the nameless `fable` and `main` agents and gave `career` and `social` real work; updated 2026-10-07 when kit became the front door (health folded into kit, `social` and `learning` retired, `career` paused).
 
 ---
 
 ## Shape: kit plus domain agents
 
-- **kit** is the general-purpose agent: the default and system agent, the catch-all for Telegram traffic nothing else claims, and the dispatcher for domain work that arrives there. Anything without a domain agent is kit's, including dev work (which it hands to DevClaw through the intake doorway).
-- **Domain agents** each own one domain, with their own workspace, memory, sessions and, where the owner talks to them directly, their own Telegram bot. After the 2026-09 reshape: `health`, `finance`, `learning`, `devclaw`, `career` and `social`.
+- **kit** is the front door and the general-purpose agent: the default and system agent, the catch-all for Telegram traffic nothing else claims, and the dispatcher for domain work that arrives there. Anything without a domain agent is kit's, including food and workouts (it runs the `nutrition-claw`, `workout-claw` and `life-state` CLIs itself, with targets read from the vault's `domains/health.md`) and dev work (which it hands to DevClaw through the intake doorway).
+- **Domain agents** each own one domain, with their own workspace, memory, sessions and, where the owner talks to them directly, their own Telegram bot. Since 2026-10-07: `finance`, `devclaw` and `career`.
 - **One gateway, one config.** Every agent runs in the same `openclaw-gateway` container on the `claude-cli` runtime, authenticated by the owner's Claude subscription. No API keys ([[pro-subscription-is-the-design]] in memory); a domain agent never brings a paid service with it.
 
 | Agent | Domain | How work reaches it |
 | --- | --- | --- |
-| kit | Everything without a domain agent; dispatch | Telegram default account plus the `telegram:*` catch-all |
-| health | Fitness, nutrition, daily state | kit subagent only, by design |
+| kit | Everything without a domain agent, including food, workouts and daily state; dispatch | Telegram default account plus the `telegram:*` catch-all |
 | finance | Investing, finance-sentry companion | Own Telegram account, inbound hook |
-| learning | Reading and learning | Own Telegram account |
 | devclaw | Dev harness, repo operations | Own Telegram account |
-| career | Career plan, job search, LinkedIn as a job-search tool (read-only, drafts-only) | Own Telegram account |
-| social | LinkedIn and TikTok content, the posting calendar (drafts-only) | Own Telegram account |
+| career | Career plan, job search, LinkedIn as a job-search tool (read-only, drafts-only). Paused: `career-weekly` is disabled until the job hunt restarts; the agent and its bot stay | Own Telegram account |
 
-The table is the intended route; `openclaw agents list --bindings` is the truth. At the 2026-09-28 inventory the `learning` bot had no binding of its own, so its traffic fell through to kit.
+The table is the intended route; `openclaw agents list --bindings` is the truth.
+
+Retired on 2026-10-07: `health` (its food and workout duties and its three disabled nudge crons moved to kit; it never had a channel), `social` and `learning` (deleted with `openclaw agents delete`, their Telegram accounts `social` and `reading` disabled rather than left to fall through to kit). Re-adding a domain means passing the test below again.
 
 ### What makes an agent earn its entry
 
@@ -74,7 +73,7 @@ Each agent's workspace holds its bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENT
 
 What this rules out:
 
-- An agent per domain by default. `health` stays a kit subagent because the owner never talks to it directly.
+- An agent per domain by default. Health was a kit subagent the owner never talked to directly, so on 2026-10-07 it became kit's own skills instead.
 - An agent with no written purpose. If no one can say what it is for, it is retired, not tolerated.
 - Wrapping a local CLI in an MCP server just to be consistent. Skills are the consistency.
 
@@ -88,7 +87,7 @@ The current shape does not repeat that design:
 
 - **Routing is the gateway's job, not the model's.** Work reaches a domain agent through a binding or an explicit kit subagent call, not through an orchestrator deciding to delegate.
 - **The separation that holds is workspace, memory, sessions and channel.** Treat per-agent tool policy (including `tools.exec.mode`) as advisory under `claude-cli` until it is re-verified; it is not an isolation boundary. The hard rules in each `AGENTS.md` and the owner's review of drafts are.
-- **Domain agents that act outward stay drafts-only.** `career` and `social` never post, message or submit on the owner's behalf.
+- **Domain agents that act outward stay drafts-only.** `career` never posts, messages or submits on the owner's behalf.
 
 ---
 
