@@ -26,7 +26,11 @@
 # binding, else the one whose file lives under that home's
 # data/<decision id>/, else null), report_url on every landed item (the
 # finished report.md copied to OUT_DIR/reports/<id>/report.md, else null),
-# homes[] and published_epoch. With one home every other field is its summary
+# homes[] and published_epoch. A decision a home folds in from a child home
+# this run also publishes (its id is a secondmate id in the home's
+# data/secondmates.md whose "home:" path is a published home) is left out: the
+# child's own summary is authoritative, so the owner's wait is counted once.
+# With one home every other field is its summary
 # unchanged; with more, generated_epoch, valid, reason and counts are
 # aggregated and the rest are the first home's.
 # The dashboard never reads Lavish or fleet-home state. Writes TEXTFILE_DIR/fleet.prom:
@@ -96,6 +100,13 @@ publish_home() {
   local home="$1" id="$2" summary_file="$3" ledger_file="$4" data_dir="$5" hold="$6" report_root="$7"
   local hw="$work/home-$id" seg origin out data_real src path rid
   mkdir "$hw"
+  # Secondmate ids whose home is another published home: their decisions are
+  # that home's own, folded into this one by the parent.
+  jq -Rn --slurpfile pub "$work/publishable.json" --arg self "$home" '
+    [inputs
+     | capture("^- (?<id>[A-Za-z0-9][A-Za-z0-9._-]*) - .*(\\(|; )home: (?<home>[^;)]+)[;)]")?
+     | select(.home as $h | $h != $self and ($pub[0] | index($h)))
+     | .id]' "$data_dir/secondmates.md" > "$hw/folded.json" 2> /dev/null || echo '[]' > "$hw/folded.json"
   # The ledger is megabytes: hand it to jq as files, never as arguments.
   : > "$hw/ledger.jsonl"
   [[ -r "$ledger_file" ]] && jq -cR 'fromjson? | objects' "$ledger_file" > "$hw/ledger.jsonl"
@@ -167,7 +178,7 @@ publish_home() {
   tsv_to_object < "$hw/reports.tsv" > "$hw/reports.json"
 
   jq -c --slurpfile lavs "$work/lavish.json" --arg data "$data_dir" --arg hid "$id" \
-    --slurpfile bound "$hw/bound.json" --slurpfile origins "$hw/origins.json" \
+    --slurpfile folded "$hw/folded.json" --slurpfile bound "$hw/bound.json" --slurpfile origins "$hw/origins.json" \
     --slurpfile reports "$hw/reports.json" '
     ($lavs[0] // {}) as $lav
     | $bound[0] as $bound | $origins[0] as $origins | $reports[0] as $reports
@@ -184,20 +195,20 @@ publish_home() {
       | ([open_sessions[] | select($bound[seg] != null)
           | select(($bound[seg] == $id) or ($o != null and ($bound[seg] == $o or under(.; $o))))] | newest)
         // ([open_sessions[] | select(under(.; $id))] | newest);
-    .decisions_open |= map(. + {board_url: board(.id)})
+    .decisions_open |= map(select(.id as $i | $folded[0] | index($i) | not) | . + {board_url: board(.id)})
     | if (.landed | type) == "array" then .landed |= map(. + {report_url: ($reports[.id] // null)}) else . end
     # Every listed item names the home it came from, so an answer can go back there.
     | with_entries(if (.value | type) == "array"
         then .value |= map(if type == "object" then . + {home_id: $hid} else . end) else . end)' \
     "$summary_file" >> "$work/published.jsonl"
 
-  jq -c --slurpfile ledger "$hw/ledger.jsonl" --argjson now "$NOW" --arg hid "$id" --arg path "$home" '
+  jq -c --slurpfile ledger "$hw/ledger.jsonl" --slurpfile folded "$hw/folded.json" --argjson now "$NOW" --arg hid "$id" --arg path "$home" '
     def opened($d):
       [$ledger[] | select(.task == $d.id and .key != null and .key == $d.key and .state == "needs-decision") | .ts] | min;
     def age($d):
       (opened($d) | if . != null then $now - . else null end)
       // (if $d.hold_age_days != null then $d.hold_age_days * 86400 else null end);
-    (.decisions_open // []) as $dec
+    [(.decisions_open // [])[] | select(.id as $i | $folded[0] | index($i) | not)] as $dec
     | {id: $hid,
        workers: [(.active_children // [])[] | .state],
        decisions: ($dec | length),
@@ -218,26 +229,45 @@ unpublished() { # <home id> <home dir> <exit code> <reason>
     >> "$work/homes.jsonl"
   ((rc = $3 > rc ? $3 : rc)) || true
 }
+# summary_problem <summary file>: why the summary cannot be published, else nothing.
+summary_problem() {
+  if ! jq -e '(.schema // "" | startswith("fm-secondmate-home-summary.")) and (.generated_epoch | type == "number")' \
+    "$1" > /dev/null 2>&1; then
+    echo "summary is missing or not a home summary"
+  # The summary carries task names and reasons only. Refuse to publish
+  # world-readable if a credential ever lands in it.
+  elif grep -Eq "$CREDENTIAL_RE" "$1"; then
+    echo "summary looks like it holds a credential"
+  fi
+}
+# Paths of the homes this run publishes, so a parent's decisions about one of
+# them are dropped only while that child's own summary is going out.
+sources=() problems=()
 for i in "${!homes[@]}"; do
-  home="${homes[$i]}" id="${ids[$i]}"
-  summary_file="$home/state/home-summary.json" ledger_file="$home/state/fleet-ledger.jsonl"
+  sources[i]="${homes[$i]}/state/home-summary.json"
+  ((i != 0)) || sources[i]="${SUMMARY_FILE:-${sources[i]}}"
+  problems[i]="$(summary_problem "${sources[$i]}")"
+done
+for i in "${!homes[@]}"; do
+  if [[ -z "${problems[$i]}" && -n "${homes[$i]}" ]]; then printf '%s\n' "${homes[$i]}"; fi
+done | jq -Rn '[inputs]' > "$work/publishable.json"
+for i in "${!homes[@]}"; do
+  home="${homes[$i]}" id="${ids[$i]}" summary_file="${sources[$i]}"
+  ledger_file="$home/state/fleet-ledger.jsonl"
   data_dir="$home/data" hold="$home/bin/fm-captain-hold.sh" report_root="$home"
   if ((i == 0)); then
-    summary_file="${SUMMARY_FILE:-$summary_file}" ledger_file="${LEDGER_FILE:-$ledger_file}"
+    ledger_file="${LEDGER_FILE:-$ledger_file}"
     data_dir="${DATA_DIR:-$data_dir}" hold="${CAPTAIN_HOLD:-${home:+$hold}}"
     report_root="${REPORT_ROOT:-${home:-$(dirname "$data_dir")}}"
   fi
-  if ! jq -e '(.schema // "" | startswith("fm-secondmate-home-summary.")) and (.generated_epoch | type == "number")' \
-    "$summary_file" > /dev/null; then
-    echo "fleet-publisher: $summary_file is not a home summary" >&2
-    unpublished "$id" "$home" 1 "summary is missing or not a home summary"
-    continue
-  fi
-  # The summary carries task names and reasons only. Refuse to publish
-  # world-readable if a credential ever lands in it.
-  if grep -Eq "$CREDENTIAL_RE" "$summary_file"; then
-    echo "fleet-publisher: $summary_file looks like it holds a credential; not publishing" >&2
-    unpublished "$id" "$home" 3 "summary looks like it holds a credential"
+  if [[ -n "${problems[$i]}" ]]; then
+    if [[ "${problems[$i]}" == *credential* ]]; then
+      echo "fleet-publisher: $summary_file looks like it holds a credential; not publishing" >&2
+      unpublished "$id" "$home" 3 "${problems[$i]}"
+    else
+      echo "fleet-publisher: $summary_file is not a home summary" >&2
+      unpublished "$id" "$home" 1 "${problems[$i]}"
+    fi
     continue
   fi
   publish_home "$home" "$id" "$summary_file" "$ledger_file" "$data_dir" "$hold" "$report_root"

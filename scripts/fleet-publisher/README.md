@@ -30,6 +30,13 @@ more than one home, aggregated. The fleet homes are only ever read (files,
   `; ` (else `null`), and `counts` sums each numeric count. Every other top-level
   field (`schema`, `home`, `state`, `contributions`, ...) is the first home's;
   `homes[]` has each home's own.
+- **A child home's decisions count once.** A home's `data/secondmates.md` lists its
+  secondmates as `- <id> - ... (home: <path>; ...)`. When that `home:` path is a home
+  this run also publishes, the parent's `decisions_open` items whose `id` is that
+  secondmate id (the parent folding its child's waits in) are left out of the lists,
+  `fleet_decisions_open` and the oldest-decision age: the child's own summary is
+  authoritative. Items naming a secondmate whose home is not published (or whose
+  summary is unreadable) are kept.
 - **Unreadable home**: a home whose summary is missing, malformed, or matches a
   credential pattern is left out of the lists and listed in `homes[]` with
   `published: false`, `valid: false` and a `reason`; the rest still publish and
