@@ -1865,6 +1865,40 @@ dockerd journal for containers already gone.
 The collector's own Loki export errors are not shipped (they would feed back
 into the pipeline while Loki is down); they stay visible via `docker logs`.
 
+## Ledger persona from finance-sentry
+
+finance-sentry's `agent/ledger/` is the source of truth for the finance agent's
+persona (its README, "Composition model"): the OpenClaw persona is
+`persona.core.md` + `adapters/openclaw.md`. `scripts/ledger-persona/ledger-persona.py`
+fetches those two files at the commit in `scripts/ledger-persona/PIN` (read-only,
+through `gh api` on the contents API with gh's existing login; no secret is
+added), joins them with a `---` rule, and writes the result to the finance
+agent's workspace `AGENTS.md`. Bump the pin by a PR that edits `PIN`.
+
+Nothing here runs on deploy; the install is an operator command, as `lifekit`
+on the host:
+
+```bash
+S=/srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py
+$S check     # exit 0 in sync; exit 1 prints DRIFT and a diff of live vs composed. Read-only.
+$S compose   # print the composed persona
+$S install   # write AGENTS.md (the old one is kept as AGENTS.md.pre-persona-install)
+```
+
+The workspace defaults to `/srv/openclaw/config/agents/finance/workspace`;
+override with `--workspace DIR` or `LEDGER_WORKSPACE`. `install` refuses a
+persona over OpenClaw's `bootstrapMaxChars` (20,000 characters), because the
+agent would load it truncated; `--allow-oversize` overrides. At pin `5a3999e`
+the composition is about 23,300 characters, so the first apply needs the
+persona trimmed in finance-sentry (and a pin bump) first. Only `AGENTS.md` is
+managed: `USER.md` and the other workspace files stay host state. `install`
+changes a file the agent reads on its next session and restarts nothing.
+
+First apply, once `check` shows no live-only change worth keeping (fold any
+back into finance-sentry first): run `check`, read the diff, then `install`.
+`--source DIR` composes from a local `agent/ledger` checkout instead of
+fetching, and `--workspace` at a scratch directory rehearses the whole flow.
+
 ## Backups
 
 `/srv/memory/` (the memory vault, mounted on your laptop as `~/memory/`) is your
