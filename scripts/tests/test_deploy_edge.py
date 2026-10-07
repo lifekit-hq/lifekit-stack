@@ -19,6 +19,7 @@ if [ "$1" = serve ]; then printf '%s' "$TS_SERVE"; else printf '%s' "$TS_JSON"; 
 """
 
 NAME = "box.example.ts.net"
+GOOD_ENV = ["DEVCLAW_MCP_TOKEN=t", "RELAY_EDGE_PROOF=p"]
 GATED = {18790: 18890, 18791: 18891}
 
 
@@ -97,11 +98,12 @@ def test_domains_with_tailscale_down_print_nothing(run):
 
 
 def test_check_passes_when_both_surfaces_go_through_the_gate(run):
-    r = run("check", env_lines=["DEVCLAW_MCP_TOKEN=t"])
+    r = run("check", env_lines=GOOD_ENV)
     assert r.returncode == 0, r.stdout
     assert ":18790: https -> 127.0.0.1:18890 (sign-in gate), tailnet-only" in r.stdout
     assert ":18791: https -> 127.0.0.1:18891 (sign-in gate), tailnet-only" in r.stdout
     assert "DEVCLAW_MCP_TOKEN set" in r.stdout
+    assert "RELAY_EDGE_PROOF set" in r.stdout
 
 
 def test_check_flags_a_surface_still_served_directly(run):
@@ -109,7 +111,7 @@ def test_check_flags_a_surface_still_served_directly(run):
     r = run(
         "check",
         serve=serve_json(targets={18790: 18790, 18791: 18891}),
-        env_lines=["DEVCLAW_MCP_TOKEN=t"],
+        env_lines=GOOD_ENV,
     )
     assert r.returncode == 1
     assert (
@@ -120,9 +122,7 @@ def test_check_flags_a_surface_still_served_directly(run):
 
 
 def test_check_flags_funnel_loudly(run):
-    r = run(
-        "check", serve=serve_json(funnel=(18791,)), env_lines=["DEVCLAW_MCP_TOKEN=t"]
-    )
+    r = run("check", serve=serve_json(funnel=(18791,)), env_lines=GOOD_ENV)
     assert r.returncode == 1
     assert ":18791: FUNNEL IS ON" in r.stdout
 
@@ -131,7 +131,7 @@ def test_check_flags_funnel_loudly(run):
     "serve", [serve_json(targets={18790: 18890}), "{}", "not json"]
 )
 def test_check_flags_a_port_not_published(run, serve):
-    r = run("check", serve=serve, env_lines=["DEVCLAW_MCP_TOKEN=t"])
+    r = run("check", serve=serve, env_lines=GOOD_ENV)
     assert r.returncode == 1
     assert "not published" in r.stdout or "unreadable" in r.stdout
 
@@ -140,6 +140,12 @@ def test_check_flags_a_missing_devclaw_bearer(run):
     r = run("check")
     assert r.returncode == 1
     assert "DEVCLAW_MCP_TOKEN unset" in r.stdout
+
+
+def test_check_flags_a_missing_relay_proof(run):
+    r = run("check", env_lines=["DEVCLAW_MCP_TOKEN=t"])
+    assert r.returncode == 1
+    assert "RELAY_EDGE_PROOF unset" in r.stdout
 
 
 def test_usage(run):
