@@ -97,6 +97,10 @@ services:
       # devclaw router adds to requests that passed the sign-in check
       # (traefik/dynamic.yml).
       DEVCLAW_MCP_TOKEN: ${DEVCLAW_MCP_TOKEN:-}
+      # The proof the dashboard router adds, which the dashboard's relay
+      # endpoint requires (its RELAY_EDGE_PROOF): only a request that came
+      # through here carries it.
+      RELAY_EDGE_PROOF: ${RELAY_EDGE_PROOF:-}
       TZ: ${OPENCLAW_TZ:-UTC}
     ports:
       - "127.0.0.1:18890:18890"
@@ -187,6 +191,9 @@ services:
       OAUTH2_PROXY_REVERSE_PROXY: "true"
       OAUTH2_PROXY_UPSTREAMS: static://202
       OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      # Answer the check with X-Auth-Request-Email (the signed-in user), which
+      # Traefik's `sso` middleware forwards to the app.
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
       # A fetch() cannot follow a redirect to the sign-in page, so a lapsed
       # session answers the dashboard's /api calls with 401 instead.
       OAUTH2_PROXY_API_ROUTES: ^/api/

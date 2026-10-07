@@ -115,6 +115,7 @@ this inventory sets it.
 | `EDGE_OIDC_CLIENT_SECRET` | master | oauth-client | edge `oauth2-proxy` (`OAUTH2_PROXY_CLIENT_SECRET`), the Logto application `lifekit sign-in gate`. | captain (Logto, `logto-admin.py`) | on exposure | 2026-10-05 (created) | `secrets/lifekit.env.sops` |
 | `PARKED_LOGTO_SMTP_APP_PASSWORD` | master | parked | the Logto email connector (SMTP over smtp.gmail.com): `logto-admin.py set-email-connector` reads it through `LOGTO_SMTP_PASSWORD` and Logto keeps its own copy in its database (`docs/runbook.md` "Email sign-in (Gmail SMTP)"). No compose service interpolates it, and the `PARKED_` prefix keeps the render from writing it to `stack.env`. Empty until the captain sets it; an empty value makes the command refuse. | captain (Google Account > Security > App passwords) | on exposure; revoke the app password in the Google Account | not recorded | `secrets/lifekit.env.sops` |
 | `EDGE_COOKIE_SECRET` | master | cookie-secret | edge `oauth2-proxy` (`OAUTH2_PROXY_COOKIE_SECRET`): encrypts and signs the sign-in gate's session cookie. | captain (`openssl rand -hex 16`) | on exposure; a change signs everyone out | 2026-10-05 (created) | `secrets/lifekit.env.sops` |
+| `RELAY_EDGE_PROOF` | master | edge-proof | edge `traefik` (`X-Lifekit-Edge-Proof`, the header its dashboard router adds, `compose/edge/traefik/dynamic.yml`). Pair: lifekit-dashboard `/srv/dashboard/.env` `RELAY_EDGE_PROOF`, which its relay endpoint checks so a request that skipped the edge is refused. | captain (`openssl rand -hex 32`) | on exposure | 2026-10-07 (created) | `secrets/lifekit.env.sops` |
 
 ## Inventory: settings carried in the master file
 
@@ -199,7 +200,7 @@ file appears in one of the two inventory tables.
 | The GitHub App private key (`RELEASE_APP_PRIVATE_KEY`) | lives in GitHub, re-mintable | app settings |
 | finance-sentry's values | their one home is finance-sentry's `docker/.env.sops`, same operator keys (captain and firstmate), governed by that repo's own `.sops.yaml` | that repo |
 | devclaw's delivery secrets (`CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN`, `NODE_AUTH_TOKEN`) | GitHub Actions secrets of the devclaw repo; its deploy writes them | `gh secret set` in that repo |
-| lifekit-dashboard's env (`/srv/dashboard/.env`) | that repo's deploy owns it; it carries a pair of `OPENCLAW_GATEWAY_TOKEN` | that repo |
+| lifekit-dashboard's env (`/srv/dashboard/.env`) | that repo's deploy owns it; it carries a pair of `OPENCLAW_GATEWAY_TOKEN` and of `RELAY_EDGE_PROOF` | that repo |
 | XUI (`/etc/xui/.env`) | not lifekit; ruled out 2026-09-16 | its own backup |
 | The admin account's own tool logins (Claude Code, `gh`) | personal operator tooling | re-login |
 

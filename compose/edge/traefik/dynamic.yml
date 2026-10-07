@@ -11,6 +11,9 @@
 # passed the sign-in check gets devclaw's bearer added here, so the console
 # opens without a token; devclaw's code is unchanged.
 #
+# The dashboard router also adds `X-Lifekit-Edge-Proof` (the dashboard's relay
+# gate); devclaw's router does not.
+#
 # This file is a Go template (Traefik's file provider): `env` reads the
 # container environment once at start.
 ---
@@ -25,7 +28,7 @@ http:
       entryPoints: [dashboard]
       rule: PathPrefix(`/`)
       priority: 1
-      middlewares: [sso]
+      middlewares: [sso, dashboard-edge-proof]
       service: dashboard
 
     devclaw-oauth2:
@@ -53,12 +56,27 @@ http:
       forwardAuth:
         address: http://oauth2-proxy:4180/
         trustForwardHeader: true
+        # The signed-in user's email, from oauth2-proxy's X-Auth-Request-Email
+        # (OAUTH2_PROXY_SET_XAUTHREQUEST). Traefik copies only the listed
+        # headers onto the forwarded request, replacing any client copy.
+        authResponseHeaders:
+          - X-Auth-Request-Email
         # oauth2-proxy answers with a redirect or a short error page.
         maxResponseBodySize: 1048576
     devclaw-bearer:
       headers:
         customRequestHeaders:
           Authorization: 'Bearer {{ env "DEVCLAW_MCP_TOKEN" }}'
+
+    # The dashboard's relay endpoint has no login of its own, and any container
+    # on lifekit-shared can reach the dashboard directly. This adds a secret
+    # only the edge knows (the dashboard checks it against its RELAY_EDGE_PROOF),
+    # overwriting any copy the client sent, so a request that skipped Traefik
+    # cannot carry it.
+    dashboard-edge-proof:
+      headers:
+        customRequestHeaders:
+          X-Lifekit-Edge-Proof: '{{ env "RELAY_EDGE_PROOF" }}'
 
   services:
     oauth2-proxy:

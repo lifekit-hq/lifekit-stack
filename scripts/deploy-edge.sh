@@ -13,7 +13,9 @@
 #   check    report-only host facts: Tailscale Serve sends each gated surface's
 #            tailnet port to its edge entrypoint (18790 -> 127.0.0.1:18890,
 #            18791 -> 127.0.0.1:18891), tailnet-only, NOT through Funnel; and
-#            DEVCLAW_MCP_TOKEN is set, or the console gets an empty bearer.
+#            DEVCLAW_MCP_TOKEN is set, or the console gets an empty bearer; and
+#            RELAY_EDGE_PROOF is set, or the dashboard's relay endpoint answers
+#            503 (it has no proof to check).
 #            Exit 0 when all hold, 1 otherwise; each line on stdout says which.
 #
 # Exercised with a stubbed `tailscale` in scripts/tests/test_deploy_edge.py.
@@ -111,6 +113,13 @@ sys.exit(0 if ok else 1)
     echo "  devclaw console bearer: DEVCLAW_MCP_TOKEN set"
   else
     echo "  devclaw console bearer: DEVCLAW_MCP_TOKEN unset; the console answers 401 after sign-in"
+    status=1
+  fi
+
+  if [[ -n "$(env_value RELAY_EDGE_PROOF)" ]]; then
+    echo "  dashboard relay proof: RELAY_EDGE_PROOF set"
+  else
+    echo "  dashboard relay proof: RELAY_EDGE_PROOF unset; the dashboard's relay endpoint answers 503"
     status=1
   fi
   return "${status}"
