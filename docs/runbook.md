@@ -2061,6 +2061,76 @@ back into finance-sentry first): run `check`, read the diff, then `install`.
 `--source DIR` composes from a local `agent/ledger` checkout instead of
 fetching, and `--workspace` at a scratch directory rehearses the whole flow.
 
+## YouTube transcripts through the PC
+
+YouTube answers "Sign in to confirm you're not a bot" to this host's datacenter IP,
+with or without yt-dlp, a JS runtime, a PO-token provider or other player clients, and
+audio download is blocked the same way. So the one yt-dlp call that talks to YouTube
+leaves through the owner's home connection: `scripts/yt-tunnel/` is a systemd **user**
+unit (the admin account `ADMIN_USER`, README "VPS users"; nothing under `/etc`) running
+`ssh -N -D <docker0 address>:18081 <PC ssh alias>`, and `skills/youtube-transcript` fetches captions with
+`--proxy socks5h://host.docker.internal:18081`. No API key, no cookies, no paid service,
+nothing installed on the PC, and `-N` runs no command there.
+
+- **Bind:** the docker0 address (`172.17.0.1`), which is what `host.docker.internal`
+  resolves to inside the gateway (`extra_hosts: host-gateway`). Nothing off the box can
+  reach it, but any container on a Docker bridge can: the listener is an open SOCKS
+  proxy into the PC's network. The installer refuses a wildcard bind.
+- **PC off:** ssh opens the listener only after it has connected, so while the PC is off
+  nothing listens, the unit retries with backoff (10s up to 5min, no start limit) and
+  the skill answers `transcript unavailable - the PC is off` (exit 0, not an error). A
+  listener that is up with a dead PC behind it, or a stalled fetch, gets the same answer.
+- **Captions only:** human captions first, auto-generated as the fallback, original
+  language track preferred, VTT cleaned to plain text. A video with none answers
+  `transcript unavailable - this video has no captions`; there is no audio fallback.
+- **Linger:** the user manager stops with the account's last session, and the tunnel
+  with it. `loginctl show-user <admin account> -p Linger` says which; `sudo loginctl
+  enable-linger <admin account>` is the operator step that makes the tunnel survive logout and reboot.
+
+Install, as the admin account on the host (user scope, no sudo; idempotent). The alias is
+the PC's `Host` entry in that account's `~/.ssh/config` (key auth, no passphrase prompt):
+
+```bash
+export YT_TUNNEL_HOST=<PC ssh alias>
+/srv/lifekit-stack/scripts/yt-tunnel/install-yt-tunnel.sh          # render, install, enable --now
+/srv/lifekit-stack/scripts/yt-tunnel/install-yt-tunnel.sh --print  # show the rendered unit only
+systemctl --user status yt-tunnel.service
+```
+
+`YT_TUNNEL_PORT`, `YT_TUNNEL_BIND` and `YT_TUNNEL_UNIT_DIR` override the port (18081),
+listener address (docker0) and unit directory.
+
+Install the skill, as `lifekit` on the host (after the PR is deployed, so the checkout
+has it):
+
+```bash
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-youtube-transcript.sh
+```
+
+It copies the skill into the gateway's shared skills directory
+(`/srv/openclaw/config/skills/youtube-transcript`, `~/.openclaw/skills` in the
+container, visible to every agent whose allowlist does not narrow it) with a pinned,
+checksum-verified yt-dlp zipapp beside it. The directory is a bind mount and yt-dlp is
+python (3.11 in the image), so no image rebuild and no container recreate is needed;
+the skill watcher picks up `SKILL.md`. It prints each agent's allowlist state. An agent
+with a `skills` list needs the name added: derive the whole list from the live file, as
+in "Kit's second-mate relay" step 5 (`agents.entries.<id>.skills`, a config patch
+replaces arrays). Bump yt-dlp by editing `YT_DLP_VERSION` and `YT_DLP_SHA256` in that
+script (the sum is the release's `SHA2-256SUMS` line for `yt-dlp`) and re-running it;
+YouTube changes break old yt-dlp, so bump first when fetches start failing with
+anything but the PC-off line.
+
+**Verify** from inside the gateway (the tunnel must be up):
+
+```bash
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+docker exec "$G" python3 /home/node/.openclaw/skills/youtube-transcript/transcript.py bQPU6UJ4iCw | head
+YT_TRANSCRIPT_PROXY=socks5h://host.docker.internal:1 \
+  docker exec -e YT_TRANSCRIPT_PROXY "$G" python3 /home/node/.openclaw/skills/youtube-transcript/transcript.py bQPU6UJ4iCw
+# -> transcript unavailable - the PC is off
+```
+
 ## Backups
 
 `/srv/memory/` (the memory vault, mounted on your laptop as `~/memory/`) is your

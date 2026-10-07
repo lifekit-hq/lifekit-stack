@@ -1,0 +1,40 @@
+# yt-tunnel.service - systemd USER unit (the admin account, nothing under /etc).
+# Rendered and installed by scripts/yt-tunnel/install-yt-tunnel.sh, which fills
+# the @...@ placeholders; docs/runbook.md "YouTube transcripts through the PC".
+#
+# An SSH dynamic forward (SOCKS5) from this host to the owner's PC. YouTube
+# refuses this datacenter IP, so skills/youtube-transcript sends only its
+# yt-dlp caption fetch through the PC's home connection. -N runs no command on
+# the PC and installs nothing there.
+#
+# The listener binds ONLY the Docker bridge address, so the OpenClaw gateway
+# reaches it as host.docker.internal and nothing off the box does. ssh opens the
+# listener only after it has connected, so while the PC is off nothing listens
+# and the skill reads a refused connect as "the PC is off".
+[Unit]
+Description=SSH SOCKS tunnel to the PC (home egress for YouTube captions)
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/ssh -N \
+  -D @BIND@:@PORT@ \
+  -o BatchMode=yes \
+  -o ExitOnForwardFailure=yes \
+  -o ConnectTimeout=20 \
+  -o ServerAliveInterval=15 \
+  -o ServerAliveCountMax=3 \
+  -o ControlMaster=no \
+  -o ControlPath=none \
+  -o ForwardAgent=no \
+  -o ForwardX11=no \
+  @HOST@
+# The PC is often off, so this loops for as long as it is: back off from 10s to
+# 5min between attempts and never trip the start limit.
+Restart=always
+RestartSec=10
+RestartSteps=5
+RestartMaxDelaySec=300
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
