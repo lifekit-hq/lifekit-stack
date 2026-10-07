@@ -143,6 +143,8 @@ file appears in one of the two inventory tables.
 | `OPENCLAW_FINANCE_CHAT` | master | setting | Telegram chat id the finance agent delivers to (personal id) |
 | `LIFEKIT_TELEGRAM_CHAT` | master | setting | orchestrator/alert chat id (personal id) |
 | `DEVCLAW_CHAT` | master | setting | devclaw alert chat id (personal id) |
+| `NOTIFY_BOARD_BASE_URL` | master | setting | notify-relay: origin of the board links in owner notifications (non-secret) |
+| `NOTIFY_DASHBOARD_BASE_URL` | master | setting | notify-relay: origin of the dashboard links in owner notifications (non-secret) |
 | `TELEGRAM_OWNER_USER_ID` | master | setting | the owner's Telegram user id (personal id) |
 | `USER_GOOGLE_EMAIL` | master | setting | the Google account of the workspace MCP (personal) |
 | `WORKSPACE_MCP_TOOLS` | master | setting | google-workspace-mcp tool list |
