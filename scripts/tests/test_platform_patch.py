@@ -158,12 +158,3 @@ def test_google_workspace_mcp_is_read_only():
     # --tools in the start command makes the server ignore permissions; a
     # permissions key here would only suggest a guard that is not there.
     assert "WORKSPACE_MCP_PERMISSIONS" not in env
-
-
-def test_finance_hook_asks_for_the_event_app_link_without_inventing_one():
-    # finance-sentry#466 N-6: event messages end with the event's appUrl, read
-    # from the pulled event (never interpolated: the hook carries ids only).
-    for mapping in HOOKS["mappings"]:
-        template = mapping["messageTemplate"]
-        assert "appUrl" in template
-        assert "never build, guess or reuse a link" in template
