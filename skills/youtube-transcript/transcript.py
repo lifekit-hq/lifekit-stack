@@ -38,9 +38,8 @@ NO_CAPTIONS = "transcript unavailable - this video has no captions"
 # answer: the relay is down, or it answered SOCKS 0x05 (upstream unreachable).
 # Any other SOCKS error (0x02 allow-list refusal, 0x01) is a real failure.
 UNREACHABLE = re.compile(
-    r"Socks5Error\(5,|Failed to establish a new connection|timed out"
-    r"|connection (refused|reset|aborted)|network is unreachable|no route to host"
-    r"|temporary failure in name resolution",
+    r"timed out|connection (refused|reset|aborted)|network is unreachable"
+    r"|no route to host|temporary failure in name resolution",
     re.IGNORECASE,
 )
 # yt-dlp reports caption trouble (a refused download, a missing PO token) as a

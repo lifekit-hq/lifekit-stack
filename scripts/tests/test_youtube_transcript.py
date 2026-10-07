@@ -75,13 +75,13 @@ if mode == "clean_noise":
     sys.stderr.write("WARNING: [youtube] x: No supported JavaScript runtime could be found.\n")
     sys.exit(0)
 if mode == "relay_0x05":
-    sys.stderr.write("ERROR: [youtube] x: Unable to download API page: ('[Errno 5] Connection refused', Socks5Error(5, 'Connection refused'))\n")
+    sys.stderr.write("ERROR: [youtube] x: Unable to download API page: <urlopen error [Errno 5] Connection refused> (caused by ProxyError(\"<urlopen error [Errno 5] Connection refused>\"))\n")
     sys.exit(1)
 if mode == "relay_down":
-    sys.stderr.write("ERROR: [youtube] x: Unable to download API page: <SocksHTTPSConnection>: Failed to establish a new connection: [Errno 111] Connection refused\n")
+    sys.stderr.write("ERROR: [youtube] x: Unable to download API page: <urlopen error [Errno 111] Connection refused> (caused by URLError(ConnectionRefusedError(111, 'Connection refused')))\n")
     sys.exit(1)
 if mode == "relay_0x02":
-    sys.stderr.write("ERROR: [youtube] x: Unable to download API page: ('[Errno 2] connection not allowed by ruleset', Socks5Error(2, 'connection not allowed by ruleset'))\n")
+    sys.stderr.write("ERROR: [youtube] x: Unable to download API page: <urlopen error [Errno 2] connection not allowed by ruleset> (caused by ProxyError(\"<urlopen error [Errno 2] connection not allowed by ruleset>\"))\n")
     sys.exit(1)
 if mode == "subs429":
     sys.stderr.write("WARNING: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests\n")
