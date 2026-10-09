@@ -52,7 +52,7 @@ MIB = 1024**2
 GROUP_SELECTORS = {
     "openclaw": 'project="openclaw",service=~"openclaw-gateway|google-workspace-mcp"',
     "platform": 'project="compose"',
-    "finance-sentry": 'project="docker",name=~"finance-sentry-.*"',
+    "finance-sentry": 'project=~"docker|finance-sentry",name=~"finance-sentry-.*"',
     "devclaw-mcp": 'project="devclaw",service="devclaw-mcp"',
     "dashboard": 'project="dashboard"',
     "xui": 'project="xui"',
