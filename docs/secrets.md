@@ -56,8 +56,9 @@ git history is the change log (one rotation, one commit). Recipients are in
   protocol (ids in on stdin, JSON values out on stdout), runs the image's
   pinned `sops` once per request against the file mounted read-only from this
   checkout, with the gateway key mounted read-only from
-  `/srv/lifekit-secrets/gateway/`. Every agent's `anthropic:setup-token`
-  auth profile points at it too (`claude-oauth-token`); that ref lives in
+  `/srv/lifekit-secrets/gateway/`. Every agent's `anthropic:api-key` and
+  `anthropic:setup-token` auth profiles point at it too (`anthropic-api-key`,
+  `claude-oauth-token`); those refs live in
   each agent's auth store on the box, not in the patch (secrets runbook,
   "Claude service token"). The deploy's platform-patch dry run
   resolves those refs (`--allow-exec`) before writing anything, and
@@ -93,6 +94,7 @@ this inventory sets it.
 | `LEARNING_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `reading` | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
 | `SOCIAL_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `social`. Literal copies in two `openclaw.json` backups from 2026-07 - purged by the runbook. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
 | `CLAUDE_OAUTH_TOKEN` | gateway | api-token | openclaw-gateway, through SecretRef id `claude-oauth-token`: an exec/sops `tokenRef` on the `anthropic:setup-token` profile in every agent's own auth store (secrets runbook, "Claude service token"); devclaw reads it too once it resumes. A one-year setup-token from `claude setup-token`. | captain (`claude setup-token`) | yearly, before it expires: the `claude-oauth-token-expiring` alert fires 30 days ahead. Expires 2027-09-30. | 2026-09-30 (created) | `secrets/lifekit-gateway.env.sops` |
+| `ANTHROPIC_API_KEY` | gateway | api-token | openclaw-gateway, through SecretRef id `anthropic-api-key`: an exec/sops `tokenRef` on the `anthropic:api-key` profile in every agent's own auth store, first in `auth.order` ahead of the setup-token fallback. Console key `lifekit-vps`, prepaid credits that expire 2026-11-09; not valid for Claude Code. | captain (Anthropic Console) | on exposure, or when the credits expire (2026-11-09) | 2026-10-09 (created) | `secrets/lifekit-gateway.env.sops` |
 
 ### master - `secrets/lifekit.env.sops`
 

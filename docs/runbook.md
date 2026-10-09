@@ -2298,7 +2298,7 @@ Common causes:
 1. **Telegram token rotated** — compare the account's bot token (a SOPS secret, see `docs/secrets.md`) against your BotFather token. Rotate it there, then `openclaw secrets reload`.
 2. **Polling stalled** — `docker compose -p openclaw restart openclaw-gateway`.
 3. **OpenClaw OOM** — `dmesg | grep -i oom`. If yes, scale up the VPS.
-4. **Anthropic auth failing** — every agent authenticates with the `anthropic:setup-token` profile, a `tokenRef` to `CLAUDE_OAUTH_TOKEN`. Run `docker exec openclaw-openclaw-gateway-1 openclaw models status --agent <id>`: the `anthropic` line must read `anthropic:setup-token=token:ref(exec:claude-oauth-token)` with `effective=` the agent's own store. Then run `openclaw secrets audit --allow-exec`, which must show no unresolved ref. The live check, and the yearly rotation if the token has expired, are in `docs/secrets-runbook.md`, "Claude service token".
+4. **Anthropic auth failing** — every agent authenticates with the `anthropic:api-key` profile (a ref to `ANTHROPIC_API_KEY`, prepaid credits that expire 2026-11-09), first in `auth.order`, falling back to the `anthropic:setup-token` profile (a `tokenRef` to `CLAUDE_OAUTH_TOKEN`) when the credits lapse. Run `docker exec openclaw-openclaw-gateway-1 openclaw models status --agent <id>`: the `anthropic` line must list both profiles as exec refs (`exec:anthropic-api-key`, `exec:claude-oauth-token`) with `effective=` the agent's own store. Then run `openclaw secrets audit --allow-exec`, which must show no unresolved ref. The live check, and the yearly rotation if the token has expired, are in `docs/secrets-runbook.md`, "Claude service token".
 
 ## When a skill says "command not found" or "sharp: missing native binary"
 
