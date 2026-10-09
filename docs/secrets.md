@@ -56,8 +56,9 @@ git history is the change log (one rotation, one commit). Recipients are in
   protocol (ids in on stdin, JSON values out on stdout), runs the image's
   pinned `sops` once per request against the file mounted read-only from this
   checkout, with the gateway key mounted read-only from
-  `/srv/lifekit-secrets/gateway/`. Every agent's `anthropic:setup-token`
-  auth profile points at it too (`claude-oauth-token`); that ref lives in
+  `/srv/lifekit-secrets/gateway/`. Every agent's `anthropic:api-key` and
+  `anthropic:setup-token` auth profiles point at it too (`anthropic-api-key`,
+  `claude-oauth-token`); those refs live in
   each agent's auth store on the box, not in the patch (secrets runbook,
   "Claude service token"). The deploy's platform-patch dry run
   resolves those refs (`--allow-exec`) before writing anything, and
