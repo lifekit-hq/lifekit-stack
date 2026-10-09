@@ -2075,9 +2075,9 @@ $S install   # write AGENTS.md (the old one is kept as AGENTS.md.pre-persona-ins
 The workspace defaults to `/srv/openclaw/config/agents/finance/workspace`;
 override with `--workspace DIR` or `LEDGER_WORKSPACE`. `install` refuses a
 persona over OpenClaw's `bootstrapMaxChars` (20,000 characters), because the
-agent would load it truncated; `--allow-oversize` overrides. At pin `5a3999e`
-the composition is about 23,300 characters, so the first apply needs the
-persona trimmed in finance-sentry (and a pin bump) first. Only `AGENTS.md` is
+agent would load it truncated; `--allow-oversize` overrides. The pin must be
+at or past finance-sentry's trim under that limit (#968; the composition is about
+18,500 characters there, it was about 23,300 before). Only `AGENTS.md` is
 managed: `USER.md` and the other workspace files stay host state. `install`
 changes a file the agent reads on its next session and restarts nothing.
 
