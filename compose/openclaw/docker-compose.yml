@@ -269,10 +269,10 @@ services:
           npm install -g /opt/workout-claw 2>&1 | tail -3 | jlog
         fi
         if ! command -v nutrition-claw >/dev/null 2>&1; then
-          npm install -g /home/node/.openclaw/agents/health/workspace/skills/nutrition-claw 2>&1 | tail -3 | jlog
+          npm install -g /home/node/.openclaw/agents/kit/workspace/skills/nutrition-claw 2>&1 | tail -3 | jlog
         fi
         if ! command -v life-state >/dev/null 2>&1; then
-          npm install -g /home/node/.openclaw/agents/health/workspace/skills/life-state 2>&1 | tail -3 | jlog
+          npm install -g /home/node/.openclaw/agents/kit/workspace/skills/life-state 2>&1 | tail -3 | jlog
         fi
         exec "$$@"
       - --
