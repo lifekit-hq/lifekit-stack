@@ -18,6 +18,40 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.6](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.5...v0.1.6) (2026-10-09)
+
+
+### Features
+
+* **host:** weekly Docker image and anonymous-volume prune that keeps :prev rollback images ([#308](https://github.com/lifekit-hq/lifekit-stack/issues/308)) ([b7a9654](https://github.com/lifekit-hq/lifekit-stack/commit/b7a96546a9696736c2aa86578f8a3aeb133b77d1))
+* **identity:** add Logto email-code sign-in over the Gmail SMTP path ([#293](https://github.com/lifekit-hq/lifekit-stack/issues/293)) ([95ed85a](https://github.com/lifekit-hq/lifekit-stack/commit/95ed85a3e13927c1fd36e29d12718e85481f84c9))
+* **identity:** add logto-admin set-sign-in-exp for branding, color and sign-in methods ([#288](https://github.com/lifekit-hq/lifekit-stack/issues/288)) ([7f65f14](https://github.com/lifekit-hq/lifekit-stack/commit/7f65f1480b2c56fd02799d617fd561798d31de32))
+* **identity:** logto-admin accepts SVG data URIs for sign-in images and sets the dark favicon ([#291](https://github.com/lifekit-hq/lifekit-stack/issues/291)) ([aea077f](https://github.com/lifekit-hq/lifekit-stack/commit/aea077f9f2892920883aba620b80e3d5ce5708bd))
+* **identity:** per-app Logto sign-in branding and no placeholder Terms/Privacy links ([#309](https://github.com/lifekit-hq/lifekit-stack/issues/309)) ([4d4d31a](https://github.com/lifekit-hq/lifekit-stack/commit/4d4d31ae41c22378d622b675f1efa27fefbb0778))
+* **kit-relay:** let the forced command act on a second allowlisted home ([#295](https://github.com/lifekit-hq/lifekit-stack/issues/295)) ([80a8c5e](https://github.com/lifekit-hq/lifekit-stack/commit/80a8c5e2de76c52fe68694a8a490caff30172bc5))
+* **kit:** log food from a photo with an itemized estimate the owner confirms first ([#302](https://github.com/lifekit-hq/lifekit-stack/issues/302)) ([44ad1c0](https://github.com/lifekit-hq/lifekit-stack/commit/44ad1c0ebe0477f34f02a01a4e40b4e16999a5ff))
+* **notify-relay:** typed decision contract with one push per decision id ([#290](https://github.com/lifekit-hq/lifekit-stack/issues/290)) ([bc0353a](https://github.com/lifekit-hq/lifekit-stack/commit/bc0353a081caa6d66408e00af1ff0546d2c71729))
+* **openclaw:** finance agent Telegram messages end with the app link ([#305](https://github.com/lifekit-hq/lifekit-stack/issues/305)) ([a850daa](https://github.com/lifekit-hq/lifekit-stack/commit/a850daa016f74c254ddb14053fd64872e57b8b0f))
+* **openclaw:** keep agent memory in the vault, allowlist routed plugins ([#300](https://github.com/lifekit-hq/lifekit-stack/issues/300)) ([f51d6c6](https://github.com/lifekit-hq/lifekit-stack/commit/f51d6c65ce8ec2370f8f9df70fb0d84ccffabde1))
+* **openclaw:** make kit the front door, retire health, social and learning ([#301](https://github.com/lifekit-hq/lifekit-stack/issues/301)) ([89f1751](https://github.com/lifekit-hq/lifekit-stack/commit/89f175192d689d088109f79a01da8e033ac58f7c))
+* **scripts:** compose, install and drift-check the Ledger persona from finance-sentry ([#297](https://github.com/lifekit-hq/lifekit-stack/issues/297)) ([6dde9f5](https://github.com/lifekit-hq/lifekit-stack/commit/6dde9f5cec14b9d6db02adcffb66a5a1252cdd1d))
+* **scripts:** publish board and report URLs for the dashboard fleet page ([#292](https://github.com/lifekit-hq/lifekit-stack/issues/292)) ([169bd02](https://github.com/lifekit-hq/lifekit-stack/commit/169bd0214bae29a545fd08ea5266fb29801e46f3))
+* **scripts:** publish every fleet home on the fleet page, each item tagged with its home ([#294](https://github.com/lifekit-hq/lifekit-stack/issues/294)) ([5dbcffd](https://github.com/lifekit-hq/lifekit-stack/commit/5dbcffd2243fdb4303ed877fd3cd78aa593f90fb))
+* **secrets:** add ANTHROPIC_API_KEY to the gateway secrets file ([#311](https://github.com/lifekit-hq/lifekit-stack/issues/311)) ([d7b4e20](https://github.com/lifekit-hq/lifekit-stack/commit/d7b4e20c8896187a1679ac1d2110bba2a5bae7fa))
+* **skills:** add youtube-transcript skill fetching captions through the owner's PC ([#310](https://github.com/lifekit-hq/lifekit-stack/issues/310)) ([12c1553](https://github.com/lifekit-hq/lifekit-stack/commit/12c1553c9f2865d35c87178a90cbe84824100a23))
+
+
+### Bug Fixes
+
+* **deploy:** give secrets reload 120s so a slow successful reload is not a failure ([#306](https://github.com/lifekit-hq/lifekit-stack/issues/306)) ([5b9544f](https://github.com/lifekit-hq/lifekit-stack/commit/5b9544fefeb05eade6464a484bd56665fc52be86))
+* **deploy:** pin the running OpenClaw image before the build so :prev survives the containerd store ([#299](https://github.com/lifekit-hq/lifekit-stack/issues/299)) ([8daac3b](https://github.com/lifekit-hq/lifekit-stack/commit/8daac3b65df2fcf77cd373d72947d3affca6ad9b))
+* **deploy:** recognise Docker port ranges when deriving the Grafana embed origin ([#303](https://github.com/lifekit-hq/lifekit-stack/issues/303)) ([5a29598](https://github.com/lifekit-hq/lifekit-stack/commit/5a29598781dddd60edddfbfa2c75412ca7cdfdd6))
+* **edge:** add an edge proof and signed-in email to the dashboard route ([#307](https://github.com/lifekit-hq/lifekit-stack/issues/307)) ([21537fc](https://github.com/lifekit-hq/lifekit-stack/commit/21537fcadb172ddec24b487820a4180d9add4c95))
+* **fleet-publisher:** count a published child home's decisions once ([#304](https://github.com/lifekit-hq/lifekit-stack/issues/304)) ([3e6c891](https://github.com/lifekit-hq/lifekit-stack/commit/3e6c891e8ff3068f65c5c52444b9dcf3fcfb2ff3))
+* **observability:** update finance-sentry memory alert selectors for project rename ([#312](https://github.com/lifekit-hq/lifekit-stack/issues/312)) ([131ec43](https://github.com/lifekit-hq/lifekit-stack/commit/131ec436ad16210b9dc569a69c1af1d5cbf36cc0))
+* **openclaw:** install nutrition-claw and life-state from the kit agent's skills ([#314](https://github.com/lifekit-hq/lifekit-stack/issues/314)) ([9248693](https://github.com/lifekit-hq/lifekit-stack/commit/9248693361c7e992b6053dee50d31d49f9653521))
+* **scripts:** skip gateway scratch dirs and tolerate vanished files in OpenClaw rehearsal copy ([#296](https://github.com/lifekit-hq/lifekit-stack/issues/296)) ([7a055cb](https://github.com/lifekit-hq/lifekit-stack/commit/7a055cb0693eab3377dc54381082291c41ea837a))
+
 ## [0.1.5](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.4...v0.1.5) (2026-10-05)
 
 
