@@ -126,6 +126,13 @@ def test_rules_only_reference_real_metrics():
             "gt",
             2 * 86400,
         ),
+        (
+            "finance-job-consecutive-failures",
+            "finance_job_consecutive_failures",
+            "warning",
+            "gt",
+            1,
+        ),
     ],
 )
 def test_new_rules(uid, metric, severity, op, limit):
@@ -342,6 +349,13 @@ def test_finance_job_age_rules_wait_an_hour_and_stay_quiet_without_data():
         assert rule["labels"]["service"] == "finance-sentry"
 
 
+def test_finance_job_failure_rule_waits_five_minutes_and_stays_quiet_without_data():
+    rule = RULES["finance-job-consecutive-failures"]
+    assert rule["for"] == "5m"
+    assert rule["noDataState"] == "OK"
+    assert rule["labels"]["service"] == "finance-sentry"
+
+
 PROMTOOL_IMAGE = "prom/prometheus:v2.54.1"
 
 
@@ -452,6 +466,33 @@ RETENTION = "finance_retention_last_run_age_seconds"
 )
 def test_finance_age_rules_fire_on_stale_or_absent_series(uid, series, fires):
     code, output = promtool_alerts(uid, series)
+    if fires:
+        assert code != 0 and "got:" in output, output
+    else:
+        assert code == 0, output
+
+
+FAILURES = "finance_job_consecutive_failures"
+
+
+@pytest.mark.parametrize(
+    ("series", "fires"),
+    [
+        ([], False),
+        ([(FAILURES + '{exported_job="BackupJob.RunAsync"}', 0)], False),
+        ([(FAILURES + '{exported_job="BackupJob.RunAsync"}', 1)], False),
+        ([(FAILURES + '{exported_job="BackupJob.RunAsync"}', 2)], True),
+        (
+            [
+                (FAILURES + '{exported_job="BackupJob.RunAsync"}', 0),
+                (FAILURES + '{exported_job="RiskCheckJob.ExecuteAsync"}', 3),
+            ],
+            True,
+        ),
+    ],
+)
+def test_finance_job_failure_rule_fires_at_two_consecutive_failures(series, fires):
+    code, output = promtool_alerts("finance-job-consecutive-failures", series)
     if fires:
         assert code != 0 and "got:" in output, output
     else:

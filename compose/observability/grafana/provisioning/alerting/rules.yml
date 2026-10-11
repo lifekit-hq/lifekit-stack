@@ -1466,7 +1466,8 @@ groups:
 
   # finance-sentry's backup and retention jobs export their own age gauges
   # (JobMetrics.cs); without these rules a silently stopped backup or purge
-  # on the finance app looks the same as "nothing happened".
+  # on the finance app looks the same as "nothing happened". The failure-streak
+  # rule covers every other scheduled job the same way.
   - orgId: 1
     name: finance-sentry-jobs
     folder: lifekit
@@ -1587,6 +1588,62 @@ groups:
             retention-purge / retention-downsample Hangfire job has stopped or is
             failing, so expired data is not being removed. Check the
             finance-sentry-api logs and the Hangfire dashboard.
+
+      - uid: finance-job-consecutive-failures
+        title: finance-sentry job keeps failing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Consecutive terminal failures of each scheduled Hangfire job since its
+              # last success (0 once it succeeds). The Hangfire job name arrives as
+              # exported_job: the metric's own job label collides with the scrape
+              # job label (finance-sentry-api), which Prometheus keeps under job.
+              # The API seeds every job's series from the persisted streak at
+              # startup, so a restart does not hide a streak that is still running.
+              expr: finance_job_consecutive_failures
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                # Two failures in a row: Observability:JobFailureAlertThreshold (2,
+                # appsettings.json) in finance-sentry, the threshold of the in-app
+                # alert this rule replaces. Keep the two in step.
+                - evaluator: {type: gt, params: [1]}
+        # The series is seeded at startup, so no data means the API or its scrape
+        # is down, which target-down already reports; a second page for the same
+        # outage would add nothing. Matches the sibling finance rules.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          service: finance-sentry
+          severity: warning
+        annotations:
+          summary: 'finance-sentry job {{ $labels.exported_job }} has failed {{ printf "%.0f" $values.B.Value }} times in a row'
+          description: >-
+            The Hangfire job {{ $labels.exported_job }} has
+            {{ printf "%.0f" $values.B.Value }} consecutive terminal failures
+            (finance_job_consecutive_failures; it resets to 0 on the next
+            success). Check the finance-sentry-api logs and the Hangfire dashboard
+            for the job's last exception.
 
   # ls-177 S1: the alerting system watching itself. Grafana and Prometheus
   # both now feed their own /metrics into Prometheus (prometheus.yml); these
