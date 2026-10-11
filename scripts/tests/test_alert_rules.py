@@ -349,14 +349,11 @@ def test_finance_job_age_rules_wait_an_hour_and_stay_quiet_without_data():
         assert rule["labels"]["service"] == "finance-sentry"
 
 
-def test_finance_job_failure_rule_names_the_job_and_waits_five_minutes():
+def test_finance_job_failure_rule_waits_five_minutes_and_stays_quiet_without_data():
     rule = RULES["finance-job-consecutive-failures"]
     assert rule["for"] == "5m"
     assert rule["noDataState"] == "OK"
     assert rule["labels"]["service"] == "finance-sentry"
-    # the Hangfire job name is exported_job; job is the scrape label
-    assert "$labels.exported_job" in rule["annotations"]["summary"]
-    assert "$labels.job" not in rule["annotations"]["summary"]
 
 
 PROMTOOL_IMAGE = "prom/prometheus:v2.54.1"

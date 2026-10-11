@@ -135,8 +135,9 @@ alarm that says devclaw is dead — the reason they were wired direct in #133. T
 (`source` `grafana`, `subject` = the rule name, `headline` = the rule's `summary`, `body` = its
 `description`) and a resolved one as a `good` message with no description and no remediation.
 On the resolved line the `subject` is whatever identifies the alert that cleared: the `name` label
-for the container rules, the `job` label for `scrape target is down` (the only rule that fires per
-scrape target), and the rule name for every other rule. Those two rule families are multi-series
+for the container rules, the `exported_job` label for the finance-sentry job-failure rule (one alert
+per Hangfire job), the `job` label for `scrape target is down` (the only rule that fires per
+scrape target), and the rule name for every other rule. Those three rule families are multi-series
 and the notification policy groups by `alertname`, so a rule-name subject would render two
 recoveries in one group as the same line; every other rule fires once, and its `job` label names
 the exporter that produced the series rather than what the alert is about.

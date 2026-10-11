@@ -31,9 +31,10 @@ contactPoints:
           # remediation, so a 3am "RESOLVED" never reads as a call to act. The
           # container rules are multi-series and policies.yml groups by
           # alertname, so the resolved subject is the instance that recovered:
-          # the `name` label for the container rules, `job` for target-down
-          # (the one rule that fires per scrape target), and the rule title for
-          # every other rule — on those `job` is the incidental scrape job of
+          # the `name` label for the container rules, `exported_job` for the
+          # finance-sentry job-failure rule (one alert per Hangfire job), `job`
+          # for target-down (the one rule that fires per scrape target), and
+          # the rule title for every other rule — on those `job` is the incidental scrape job of
           # whichever exporter produced the series, so it names the wrong thing
           # and collides across rules (all of node-exporter's would read
           # "node-exporter"). Without a subject two recoveries in one group
@@ -44,7 +45,7 @@ contactPoints:
             🔴 <b>grafana</b> · <b>{{ .Labels.alertname | html }}</b> — {{ .Annotations.summary | html }}
             {{ .Annotations.description | html }}
             {{ else -}}
-            🟢 <b>grafana</b> · <b>{{ if .Labels.name }}{{ .Labels.name | html }}{{ else if and (eq .Labels.alertname "scrape target is down") .Labels.job }}{{ .Labels.job | html }}{{ else }}{{ .Labels.alertname | html }}{{ end }}</b> — resolved
+            🟢 <b>grafana</b> · <b>{{ if .Labels.name }}{{ .Labels.name | html }}{{ else if .Labels.exported_job }}{{ .Labels.exported_job | html }}{{ else if and (eq .Labels.alertname "scrape target is down") .Labels.job }}{{ .Labels.job | html }}{{ else }}{{ .Labels.alertname | html }}{{ end }}</b> — resolved
             {{ end -}}
             {{ end }}
         disableResolveMessage: false
