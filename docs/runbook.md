@@ -875,8 +875,8 @@ root-owned forced command, not a second script:
 
 - **Sender:** the key's `command=` passes the sender as an argument,
   `command="/usr/local/libexec/kit-relay finance-sentry"`. The sender picks the
-  request-id prefix (`fs-`), the rate bucket (30 new `fs-` notes per rolling hour for the
-  whole prefix, counted apart from Kit's and the dashboard's) and the `receipts` view
+  request-id prefix (`fs-`), the rate bucket (30 new `fs-` notes per rolling hour, per home,
+  counted apart from Kit's and the dashboard's) and the `receipts` view
   (only `fs-` notes and their replies). Body limits are unchanged: 1 B to 32 KiB of UTF-8
   without NUL, refused whole otherwise (exit 65). Nothing the client sends picks the
   sender; Kit's and the dashboard's keys, prefixes and buckets are unchanged. Each note
@@ -971,8 +971,8 @@ printf 'restrict,command="/usr/local/libexec/kit-relay finance-sentry",from="172
 #### Home argument (answers for the main home)
 
 Both verbs take an optional last word, the home the verb acts on, so a dashboard answer
-to a call owned by the main home lands in that home's inbox. The same two keys and the
-same root-owned script serve it; there is no second key.
+to a call owned by the main home lands in that home's inbox. Every sender's key and the
+same root-owned script serve it; there is no extra key.
 
 - **Allowlist:** the installed copy pins at most two homes: `FM_HOME`, the default, and
   an optional `FM_HOME_ALT`. A client names one by the **last part of its path**
