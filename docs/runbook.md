@@ -674,12 +674,15 @@ An answer closes the entry. The contract is kit's `AGENTS.md`, section "Needs yo
 in subagent or ACP runs. So a decision that comes up in a Telegram DM, an A2A ask or a
 subagent is recorded, then handed to the main session with `sessions_send`.
 
-The daily `needs-you-digest` cron posts what is still open into that same chat.
+The daily `needs-you-digest` cron posts what is still open (the ledger, and the fleet's
+open decisions through the relay skill's `status`, see "Kit as the owner's line to
+firstmate") into that same chat.
 `scripts/ensure-needs-you-digest.sh` declares it and converges on re-run. It is a
 `current`-session agent turn bound to `agent:kit:main` with announce delivery: the
 reply is committed to the conversation's transcript, and that session has no external
-route, so nothing goes to Telegram. It replies `NO_REPLY` when the ledger is empty, so
-nothing is posted. A run that cannot read the ledger says so in the chat. A run that
+route, so nothing goes to Telegram. It replies `NO_REPLY` when the ledger and the
+fleet's open decisions are empty and the fleet status is fresh and valid, so nothing is
+posted. A run that cannot read the ledger says so in the chat. A run that
 fails outright raises a failure alert after one failure. The alert goes through kit's
 `default` Telegram account to `LIFEKIT_TELEGRAM_CHAT` from the host env file, the same
 route as the career weekly alert, because a failure alert needs an outbound
@@ -999,6 +1002,48 @@ same root-owned script serve it; there is no extra key.
   `relay 'receipts nowhere'` exits 64; `journalctl -t kit-relay --since -5min` shows both.
 - **Rollback:** re-run the installer without `FM_HOME_ALT`; a home word other than the
   default's name is then refused.
+
+#### Kit as the owner's line to firstmate (status, tasks, answers)
+
+Kit's `secondmate-relay` skill is also how the owner reaches the main firstmate without
+a terminal. It adds no key, verb or host file: the home argument above is already there
+and the status read is an HTTP GET Kit could always make.
+
+- **Client** (`skills/secondmate-relay/relay.sh`): `note <body-file> [<home>]` and
+  `replies [<cursor>] [<home>]` take `fm-vps` (the default, unchanged when omitted) or
+  `firstmate`; any other word exits 64 before `ssh` runs (the host re-checks it).
+  `status` runs `curl -fsS -m 10 http://lifekit-dashboard:8080/api/fleet` and prints the
+  body unchanged; a curl failure is its exit code and stderr. The URL is the fleet
+  page's own data over the `lifekit-shared` network, so the skill gates on `curl` too.
+- **Rules** (`SKILL.md`): status questions run `relay.sh status` and lead with "Status
+  is stale" (`generated_epoch` more than 5 minutes old) or "Status is invalid for
+  `<home>`" (a `homes[].valid` false); tasks and proposals go to `firstmate` with the
+  `task:`/`proposal:` prefix; an answer is `answer <id>: <his words>` sent only on his
+  explicit words, only for an id in `decisions_open` at send time, to that item's
+  `home_id`; a decision that would authorize a merge or a destructive, irreversible or
+  security-sensitive action first gets firstmate's reply and runs only on a relayed
+  `confirm <id>`; nothing is sent from a cron, a heartbeat or a turn he did not ask for;
+  a refused call is reported verbatim and not retried.
+- **Digest:** the 09:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
+  runs `relay.sh status` and posts the fleet's open decisions, active / queued / landed
+  today counts and the stale or invalid warning. It is silent only when the ledger and
+  `decisions_open` are empty and the status is fresh and valid. Re-run the script as
+  `lifekit` to converge the live row; a cron turn sends no note.
+- **Morning brief:** the 08:30 `today-brief` row is host state made by hand with kit,
+  not declared in git. `scripts/ensure-today-brief-fleet.sh` (as `lifekit`) inserts the
+  fleet step into its prompt at two fixed anchors and refuses, row untouched, when the
+  prompt no longer has them; a prompt already carrying the step is left alone.
+- **Kit's `AGENTS.md`** is live host state (`/srv/openclaw/config/agents/kit/workspace/`),
+  merged by hand like the "Needs you" section. Two lines move with this: the
+  host-work line says host work goes to firstmate through the captain inbox, "the main
+  home (`firstmate`)", and the Tools table's dashboard row reads
+  `lifekit-dashboard:8080` (not the old loopback port `127.0.0.1:18790`).
+- **Deploy:** `sudo -u lifekit /srv/lifekit-stack/scripts/ensure-secondmate-relay.sh`
+  (copies `SKILL.md` and `relay.sh`; no gateway restart). Verify from inside the gateway:
+  `docker exec "$G" sh "$S" status | head -c 200`, and one `note <file> firstmate`
+  shows `home=firstmate` in `journalctl -t kit-relay`.
+- **Rollback:** revert the skill and re-run the ensure script. Notes already sent stay
+  in the inbox they were sent to.
 
 ## Rolling back OpenClaw
 

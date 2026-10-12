@@ -73,6 +73,16 @@ printf '%s\\n' "$@" > "$SSH_TEST_DIR/argv"
 cat > "$SSH_TEST_DIR/stdin"
 """
 
+# `curl -fsS` as relay.sh status calls it: record argv, print a body that is
+# not valid JSON on purpose (the client must not parse or reformat it), and
+# exit with whatever the test asks for.
+FAKE_CURL = """#!/bin/sh
+printf '%s\\n' "$@" > "$CURL_TEST_DIR/argv"
+printf '%s' "$CURL_TEST_BODY"
+[ -z "$CURL_TEST_ERR" ] || printf '%s\\n' "$CURL_TEST_ERR" >&2
+exit "${CURL_TEST_EXIT:-0}"
+"""
+
 
 def write_exec(path: Path, text: str) -> Path:
     path.write_text(text)
@@ -774,7 +784,18 @@ def test_client_replies_with_and_without_cursor(recording_ssh):
     assert argv == ["-F", CONF, "relay", "receipts", "000000000003"]
 
 
-@pytest.mark.parametrize("args", [[], ["status"], ["note"], ["note", "/nonexistent"]])
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["bogus"],
+        ["note"],
+        ["note", "/nonexistent"],
+        ["status", "extra"],
+        ["replies", "000000000003", "firstmate", "extra"],
+        ["replies", "firstmate", "000000000003"],
+    ],
+)
 def test_client_refuses_bad_usage(recording_ssh, tmp_path, args):
     result, argv, _ = recording_ssh(*args)
     assert result.returncode == 64
@@ -786,6 +807,110 @@ def test_client_refuses_an_empty_body_file(recording_ssh, tmp_path):
     result, argv, _ = recording_ssh("note", str(tmp_path / "empty.txt"))
     assert result.returncode == 64
     assert argv is None
+
+
+@pytest.mark.parametrize("home", ["fm-vps", "firstmate"])
+def test_client_note_names_an_allowlisted_home(recording_ssh, tmp_path, home):
+    body = b"task: look at the backup job\n"
+    (tmp_path / "body.txt").write_bytes(body)
+    result, argv, sent = recording_ssh("note", str(tmp_path / "body.txt"), home)
+    assert result.returncode == 0, result.stderr
+    assert argv[:4] == ["-F", CONF, "relay", "note"]
+    assert argv[4].startswith("kit-") and argv[5:] == [home]
+    assert sent == body
+
+
+def test_client_note_without_a_home_sends_no_home_argument(recording_ssh, tmp_path):
+    (tmp_path / "body.txt").write_bytes(b"x\n")
+    result, argv, _ = recording_ssh("note", str(tmp_path / "body.txt"))
+    assert result.returncode == 0
+    assert len(argv) == 5  # note <rid>, so the host keeps its default home
+
+
+@pytest.mark.parametrize(
+    "home",
+    [
+        "other",
+        "FIRSTMATE",
+        "firstmat",
+        "firstmate2",
+        "../firstmate",
+        "firstmate;id",
+        "/home/denys/firstmate",
+        "home",
+    ],
+)
+def test_client_refuses_a_home_outside_the_allowlist(recording_ssh, tmp_path, home):
+    (tmp_path / "body.txt").write_bytes(b"x\n")
+    result, argv, _ = recording_ssh("note", str(tmp_path / "body.txt"), home)
+    assert result.returncode == 64
+    assert argv is None  # ssh never ran
+    assert "unknown home" in result.stderr
+    for args in (("replies", home), ("replies", "000000000003", home)):
+        result, argv, _ = recording_ssh(*args)
+        assert result.returncode == 64, args
+        assert argv is None
+
+
+def test_client_replies_name_a_home_with_and_without_cursor(recording_ssh):
+    _, argv, sent = recording_ssh("replies", "firstmate")
+    assert argv == ["-F", CONF, "relay", "receipts", "firstmate"]
+    assert sent == b""
+    _, argv, _ = recording_ssh("replies", "000000000003", "firstmate")
+    assert argv == ["-F", CONF, "relay", "receipts", "000000000003", "firstmate"]
+    _, argv, _ = recording_ssh("replies", "000000000003", "fm-vps")
+    assert argv == ["-F", CONF, "relay", "receipts", "000000000003", "fm-vps"]
+
+
+@pytest.fixture
+def recording_curl(tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    write_exec(bindir / "curl", FAKE_CURL)
+    write_exec(bindir / "ssh", FAKE_SSH_RECORD)
+
+    def run(body="", exit_code=0, err="", args=("status",)):
+        env = {
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "CURL_TEST_DIR": str(tmp_path),
+            "CURL_TEST_BODY": body,
+            "CURL_TEST_EXIT": str(exit_code),
+            "CURL_TEST_ERR": err,
+            "SSH_TEST_DIR": str(tmp_path),
+        }
+        result = subprocess.run(
+            ["sh", str(CLIENT), *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        argv = tmp_path / "argv"
+        return result, argv.read_text().splitlines() if argv.exists() else None
+
+    return run
+
+
+def test_client_status_reads_the_fleet_endpoint_and_prints_it_unchanged(recording_curl):
+    body = '{"b":1,\n  "a": [ "\u00e9" ] }  not reformatted\n\n'
+    result, argv = recording_curl(body=body)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == body
+    assert argv == ["-fsS", "-m", "10", "http://lifekit-dashboard:8080/api/fleet"]
+
+
+def test_client_status_propagates_a_curl_failure(recording_curl):
+    result, argv = recording_curl(
+        exit_code=22, err="curl: (22) The requested URL returned error: 503"
+    )
+    assert result.returncode == 22
+    assert result.stdout == ""
+    assert "503" in result.stderr
+
+
+def test_client_status_never_touches_ssh_or_the_inbox(recording_curl, tmp_path):
+    recording_curl(body="{}")
+    assert not (tmp_path / "stdin").exists()  # the fake ssh was not run
 
 
 def test_client_through_the_forced_command_sends_once(relay, tmp_path):
@@ -875,12 +1000,43 @@ def test_skill_passes_proposal_prefixes_through_verbatim():
     assert "keep it and send the whole text verbatim" in text
 
 
-def test_skill_frontmatter_names_its_folder_and_gates_on_ssh():
+def test_skill_frontmatter_names_its_folder_and_gates_on_ssh_and_curl():
     yaml = pytest.importorskip("yaml")
     _, front, _ = SKILL_MD.read_text().split("---\n", 2)
     meta = yaml.safe_load(front)
     assert meta["name"] == "secondmate-relay"
-    assert meta["metadata"]["openclaw"]["requires"]["bins"] == ["ssh"]
+    assert meta["metadata"]["openclaw"]["requires"]["bins"] == ["ssh", "curl"]
+
+
+def test_skill_states_the_firstmate_rules():
+    text = SKILL_MD.read_text()
+    for rule in (
+        "relay.sh status",
+        "more than 5 minutes",
+        "Status is stale",
+        "Status is invalid for",
+        "Tasks and proposals go to `firstmate`",
+        "must be in `decisions_open` now",
+        "`home_id`",
+        "answer <id>: <his words>",
+        "`confirm <id>`",
+        "Never send anything from a cron, a heartbeat",
+        "Never retry it silently",
+    ):
+        assert rule in text, rule
+
+
+def test_digest_prompt_reads_the_fleet_status_and_never_sends():
+    text = (REPO / "scripts/ensure-needs-you-digest.sh").read_text()
+    message = next(ln for ln in text.splitlines() if ln.startswith("MESSAGE="))
+    assert (
+        "sh /home/node/.openclaw/agents/kit/workspace/skills/secondmate-relay/relay.sh status"
+        in message
+    )
+    for part in ("decisions_open", "generated_epoch", "homes[].valid", "NO_REPLY"):
+        assert part in message, part
+    assert "send no relay note" in message
+    assert " note " not in message.replace("relay note", "")  # never runs the note verb
 
 
 def test_gateway_mounts_the_relay_key_read_only_and_names_the_host():

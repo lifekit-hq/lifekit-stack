@@ -2,7 +2,9 @@
 # ensure-needs-you-digest.sh — idempotently declare kit's daily needs-you
 # digest: one scheduled agent turn that posts the decisions still open in
 # kit's ledger (needs-you/open.json, defined in kit's AGENTS.md, "Needs you")
-# into kit's main Control UI / WebChat chat, and stays silent when none are.
+# and the fleet's open decisions and counts (secondmate-relay's `relay.sh
+# status`, the same /api/fleet the dashboard's fleet page reads) into kit's
+# main Control UI / WebChat chat, and stays silent when none are open.
 #
 # Why a script and not config: cron jobs live in the gateway's SQLite state,
 # not in openclaw.json — same split as the other ensure-*.sh scripts. This
@@ -19,18 +21,21 @@
 # reject announce delivery. Do not set --channel webchat; announce with the
 # default channel ("last") is what resolves to the conversation commit.
 #
-# Silence: the prompt replies NO_REPLY when nothing is open. That is the
-# runner's intentional-silence token, so a quiet day posts nothing.
+# Silence: the prompt replies NO_REPLY when nothing is open in the ledger or in
+# the fleet's decisions_open and the fleet status is fresh and valid. That is
+# the runner's intentional-silence token, so a quiet day posts nothing. The
+# fleet read is read-only: the turn sends no relay note (the skill's own rule:
+# a send answers an explicit request from the owner, never a cron).
 #
-# Failure: a run that cannot read the ledger says so in the chat. A run that
-# fails outright (model, provider, timeout, a failed transcript commit) is
-# counted by the scheduler, and the per-job failure alert below tells the
-# owner after the first failure. The alert cannot use the job's own route: a
-# failure alert needs an outbound channel, and the Control UI chat is not one.
-# So it goes through kit's `default` Telegram account to the owner chat, the
-# same route the career weekly cron uses for its failure alert
-# (docs/runbook.md). The owner chat id is read from the host env file and
-# never written to git.
+# Failure: a run that cannot read the ledger or the fleet status says so in
+# the chat. A run that fails outright (model, provider, timeout, a failed
+# transcript commit) is counted by the scheduler, and the per-job failure
+# alert below tells the owner after the first failure. The alert cannot use
+# the job's own route: a failure alert needs an outbound channel, and the
+# Control UI chat is not one. So it goes through kit's `default` Telegram
+# account to the owner chat, the same route the career weekly cron uses for
+# its failure alert (docs/runbook.md). The owner chat id is read from the host
+# env file and never written to git.
 #
 # Run on the VPS host as lifekit, from the repo checkout:
 #   /srv/lifekit-stack/scripts/ensure-needs-you-digest.sh
@@ -71,7 +76,7 @@ if [ -z "$ALERT_CHAT" ]; then
   exit 1
 fi
 
-MESSAGE="Daily needs-you digest. Read needs-you/open.json in your workspace and nothing else; do not edit it, do not call ask_user, sessions_send or message. If the file is missing or holds an empty array, reply exactly NO_REPLY. Otherwise reply with one short message: a first line '<N> decision(s) waiting on you', then one line per entry, oldest first: '<id> — <ask> (options: <options joined by ' / '>; since <opened>, from <origin>)', plus ' — <context>' when the entry has one. End with one line: 'Answer here: reply <id>: <choice>, or ask me to put one up as a card.' No preamble, no closing summary. If the file exists but cannot be read or is not a JSON array, reply with one line starting 'needs-you digest failed:' and the reason, so the owner sees it in this chat."
+MESSAGE="Daily needs-you digest. Two reads and nothing else; do not edit anything, do not call ask_user, sessions_send or message, and send no relay note. (1) Read needs-you/open.json in your workspace. (2) Run 'sh /home/node/.openclaw/agents/kit/workspace/skills/secondmate-relay/relay.sh status' and read the fleet JSON it prints. If the ledger is missing or holds an empty array, and the fleet's decisions_open is empty, and the status is neither stale (generated_epoch more than 5 minutes old) nor invalid (any homes[].valid false), reply exactly NO_REPLY. Otherwise reply with one short message, ledger part first when it has entries: a first line '<N> decision(s) waiting on you', then one line per entry, oldest first: '<id> — <ask> (options: <options joined by ' / '>; since <opened>, from <origin>)', plus ' — <context>' when the entry has one, then one line: 'Answer here: reply <id>: <choice>, or ask me to put one up as a card.' Fleet part: first, when it applies, the line 'Status is stale: generated <age> ago.' and one line 'Status is invalid for <home id>: <reason>.' per home whose valid is false; then 'Fleet: <counts.active_children> active, <counts.queued> queued, <n> landed today' where <n> counts the landed items whose completion.date is today; then one line per decisions_open item: '<home_id> / <id> — <summary>', and one line saying how many are not shown when counts.decisions_open is larger than the list. No preamble, no closing summary. If the ledger file exists but cannot be read or is not a JSON array, add one line starting 'needs-you digest failed:' and the reason. If the status command fails, add one line starting 'fleet status unavailable:' and the stderr line, and still post the ledger part. Either failure line makes the reply non-silent, so the owner sees it in this chat."
 
 # The gateway image has no jq, and once logging.consoleStyle=json is live the
 # CLI may interleave JSON log lines with its JSON result. So: scan the output
@@ -116,7 +121,7 @@ if [ -z "$job_id" ]; then
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
     --display-name "Needs-you digest" \
-    --description "Daily digest of the decisions still open in kit's needs-you ledger, posted into kit's main Control UI chat; silent when none are. Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)." \
+    --description "Daily digest of the decisions still open in kit's needs-you ledger and the fleet's open decisions, posted into kit's main Control UI chat; silent when none are. Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)." \
     --cron "$CRON_EXPR" --tz "$CRON_TZ" \
     --agent "$AGENT" --session current --session-key "$SESSION_KEY" \
     --message "$MESSAGE" \
@@ -141,4 +146,4 @@ docker exec "$GATEWAY" openclaw cron edit "$job_id" \
   >/dev/null
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT -> $SESSION_KEY (announce), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id   # delivery preview: announce -> current session"
-echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # NO_REPLY while the ledger is empty"
+echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # NO_REPLY only while the ledger and the fleet's decisions_open are empty"
