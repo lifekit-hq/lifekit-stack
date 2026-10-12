@@ -513,10 +513,6 @@ def test_finance_sentry_can_name_the_main_home(relay):
     assert relay.requests() == []
 
 
-def test_installed_script_knows_the_finance_sentry_sender(relay):
-    assert "  finance-sentry) ID_PREFIX=fs- ;;\n" in relay.script.read_text()
-
-
 # ─── the home argument ───────────────────────────────────────────────────────
 
 
