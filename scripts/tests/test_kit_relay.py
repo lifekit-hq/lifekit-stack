@@ -436,6 +436,87 @@ def test_installed_script_knows_the_dashboard_sender(relay):
     assert "  dashboard) ID_PREFIX=dash- ;;\n" in relay.script.read_text()
 
 
+# ─── the finance-sentry sender ───────────────────────────────────────────────
+
+FS = ("finance-sentry",)
+
+
+def test_finance_sentry_note_uses_the_fs_prefix(relay):
+    result = relay.run("note fs-report-42", b"something broke\n", FS)
+    assert result.returncode == 0, result.stderr
+    assert lines(result)[1]["outcome"] == "created"
+    assert relay.requests() == ["fs-report-42"]
+    assert "rid=fs-report-42" in relay.logged()
+
+
+@pytest.mark.parametrize(
+    ("sender", "rid", "must_match"),
+    [
+        (FS, "kit-1", "fs-"),
+        (FS, "dash-1", "fs-"),
+        ((), "fs-1", "kit-"),
+        (DASH, "fs-1", "dash-"),
+    ],
+)
+def test_finance_sentry_and_the_other_senders_refuse_each_others_prefix(
+    relay, sender, rid, must_match
+):
+    result = relay.run(f"note {rid}", b"body\n", sender)
+    assert result.returncode == 64
+    assert f"must match {must_match}" in result.stderr.decode()
+    assert relay.calls() == []
+
+
+def test_finance_sentry_rate_bucket_is_its_own(relay):
+    fill_requests(relay, 30, prefix="kit-old-")
+    fill_requests(relay, 30, prefix="dash-old-")
+    assert relay.run("note fs-new", b"body\n", FS).returncode == 0
+    fill_requests(relay, 30, prefix="fs-old-")
+    result = relay.run("note fs-new2", b"body\n", FS)
+    assert result.returncode == 75
+    assert "rate limit: 31 notes" in result.stderr.decode()
+    assert relay.run("note fs-old-3", b"body\n", FS).returncode == 0  # replay
+    assert (
+        relay.run("note kit-new", b"body\n").returncode == 75
+    )  # kit's bucket is full too
+
+
+def test_finance_sentry_refuses_a_bad_body_whole(relay):
+    assert relay.run("note fs-empty", b"", FS).returncode == 65
+    assert relay.run("note fs-big", b"x" * 32769, FS).returncode == 65
+    assert relay.requests() == []
+
+
+def test_finance_sentry_receipts_show_only_fs_notes(relay):
+    data = receipts_fixture()
+    data["pending"].append({"id": "p5", "request_id": "fs-report-1", "body": "f"})
+    data["handled"].append({"id": "hf", "request_id": "fs-report-2", "body": "f"})
+    data["replies"].append({"id": "hf", "at": "2026-10-12T00:00:00Z", "body": "ok"})
+    (relay.home / "receipts.json").write_text(json.dumps(data))
+    [out] = lines(relay.run("receipts", sender=FS))
+    assert [n["id"] for n in out["pending"]] == [
+        "p3",
+        "p5",
+    ]  # p3: the fixture's fs- note
+    assert [n["id"] for n in out["handled"]] == ["hf"]
+    assert [r["id"] for r in out["replies"]] == ["hf"]
+    [kit] = lines(relay.run("receipts"))
+    assert all(
+        n["id"] not in ("p3", "p5", "hf") for n in kit["pending"] + kit["handled"]
+    )
+
+
+def test_finance_sentry_can_name_the_main_home(relay):
+    result = relay.run("note fs-report-9 firstmate", b"body\n", FS)
+    assert result.returncode == 0, result.stderr
+    assert relay.requests(relay.main) == ["fs-report-9"]
+    assert relay.requests() == []
+
+
+def test_installed_script_knows_the_finance_sentry_sender(relay):
+    assert "  finance-sentry) ID_PREFIX=fs- ;;\n" in relay.script.read_text()
+
+
 # ─── the home argument ───────────────────────────────────────────────────────
 
 

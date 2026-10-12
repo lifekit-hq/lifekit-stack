@@ -16,10 +16,11 @@
 # default home. A client never supplies a path: an unknown name, a path or a
 # traversal is refused (exit 64) before anything is read or written.
 #
-# One script, two keys. authorized_keys names the sender as the command's
+# One script, three keys. authorized_keys names the sender as the command's
 # argument: no argument or "kit" is Kit's key (request ids kit-*); "dashboard"
-# is the dashboard's key (dash-*). Each sender has its own request-id prefix,
-# rate bucket and receipts view; nothing in the client's input picks the sender.
+# is the dashboard's key (dash-*); "finance-sentry" is finance-sentry's key
+# (fs-*). Each sender has its own request-id prefix, rate bucket and receipts
+# view; nothing in the client's input picks the sender.
 #
 # This is the repo copy: install-kit-relay.sh renders it with the homes
 # pinned below and installs it root-owned at
@@ -42,6 +43,7 @@ esac
 case "${1-kit}" in
   kit) ID_PREFIX=kit- ;;
   dashboard) ID_PREFIX=dash- ;;
+  finance-sentry) ID_PREFIX=fs- ;;
   *) printf 'kit-relay: unknown sender\n' >&2; exit 78 ;;
 esac
 readonly ID_PREFIX

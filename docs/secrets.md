@@ -199,6 +199,7 @@ file appears in one of the two inventory tables.
 | SSH host keys | regenerating is acceptable | update `known_hosts` |
 | Kit relay SSH key (`/srv/lifekit-secrets/kit-relay`) | per box, re-mintable; the forced command and `from=` limit it to the inbox | re-run the key steps in `docs/runbook.md`, "Kit's second-mate relay" |
 | Dashboard relay SSH key (`/srv/lifekit-secrets/dashboard-relay`) | per box, re-mintable; same forced command as Kit's key, run as sender `dashboard` (`dash-` ids, own rate bucket); `from=` limits it to the box | re-run the dashboard-sender steps in `docs/runbook.md`, "Kit's second-mate relay" |
+| finance-sentry relay SSH key (`/srv/lifekit-secrets/fs-relay`) | per box, re-mintable; same forced command as Kit's key, run as sender `finance-sentry` (`fs-` ids, own rate bucket); `from=` limits it to the box | re-run the finance-sentry-sender steps in `docs/runbook.md`, "Kit's second-mate relay" |
 | The GitHub App private key (`RELEASE_APP_PRIVATE_KEY`) | lives in GitHub, re-mintable | app settings |
 | finance-sentry's values | their one home is finance-sentry's `docker/.env.sops`, same operator keys (captain and firstmate), governed by that repo's own `.sops.yaml` | that repo |
 | devclaw's delivery secrets (`CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN`, `NODE_AUTH_TOKEN`) | GitHub Actions secrets of the devclaw repo; its deploy writes them | `gh secret set` in that repo |

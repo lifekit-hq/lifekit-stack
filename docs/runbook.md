@@ -867,6 +867,107 @@ authorized key on the same root-owned forced command, not a second script:
 - **Rollback:** delete that authorized_keys line and `sudo rm -r /srv/lifekit-secrets/dashboard-relay`.
   Kit's relay is untouched. The second mate answers a `dash-` note like a `kit-` one.
 
+#### finance-sentry sender (problem reports)
+
+finance-sentry's API saves a user's problem report and a Hangfire job forwards it to the
+second mate's inbox as `note fs-report-<id>`. It is a third authorized key on the same
+root-owned forced command, not a second script:
+
+- **Sender:** the key's `command=` passes the sender as an argument,
+  `command="/usr/local/libexec/kit-relay finance-sentry"`. The sender picks the
+  request-id prefix (`fs-`), the rate bucket (30 new `fs-` notes per rolling hour for the
+  whole prefix, counted apart from Kit's and the dashboard's) and the `receipts` view
+  (only `fs-` notes and their replies). Body limits are unchanged: 1 B to 32 KiB of UTF-8
+  without NUL, refused whole otherwise (exit 65). Nothing the client sends picks the
+  sender; Kit's and the dashboard's keys, prefixes and buckets are unchanged. Each note
+  and refusal is logged with tag `kit-relay`.
+- **Key:** `/srv/lifekit-secrets/fs-relay/` (`id_ed25519`, pinned `known_hosts`,
+  `ssh_config`, the same shape as `kit-relay/`), mounted read-only into finance-sentry's
+  API container at `/run/lifekit/fs-relay` (the mount, `extra_hosts: host-gateway` and
+  `openssh-client` live in finance-sentry). The body is the report text; the relay does
+  not interpret it. The relay has `receipts` only: it does not reply to the reporter.
+- **Operator step** (once per host; this PR adds nothing to a running container, and the
+  steps do nothing until finance-sentry's change has deployed and its Hangfire job
+  sends). Run as the admin account (`ADMIN_USER`, README "VPS users"), the account whose
+  `authorized_keys` takes the key. Step 1 must come first: an installed copy without the
+  `finance-sentry` arm exits 78 for this key.
+
+```bash
+ADMIN_USER=<admin account>
+FM_HOME=<the second mate's home, holding bin/fm-inbox.sh>
+FM_HOME_ALT=<the main home, only if the live install pins one; same as today>
+
+# 1. Reinstall the forced command (root). --print first to diff against the live copy;
+#    pass the same FM_HOME / FM_HOME_ALT the live copy was installed with.
+FM_HOME="$FM_HOME" FM_HOME_ALT="$FM_HOME_ALT" bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh --print \
+  | diff /usr/local/libexec/kit-relay - || true
+sudo FM_HOME="$FM_HOME" FM_HOME_ALT="$FM_HOME_ALT" bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh
+
+# 2. Key, pinned host key and client config. The key is a per-box credential, never
+#    committed (docs/secrets.md). It is generated as lifekit, then handed to the uid the
+#    API container runs as: `docker exec <finance-sentry api container> id -u`.
+API_UID=<uid the API container runs as>
+sudo install -d -o lifekit -g lifekit -m 0700 /srv/lifekit-secrets/fs-relay
+sudo -u lifekit ssh-keygen -t ed25519 -N '' -C fs-relay@finance-sentry-api \
+  -f /srv/lifekit-secrets/fs-relay/id_ed25519
+printf 'lifekit-vps %s\n' "$(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)" \
+  | sudo -u lifekit tee /srv/lifekit-secrets/fs-relay/known_hosts >/dev/null
+sudo -u lifekit tee /srv/lifekit-secrets/fs-relay/ssh_config >/dev/null <<EOF
+Host relay
+  HostName host.docker.internal
+  HostKeyAlias lifekit-vps
+  User ${ADMIN_USER}
+  IdentityFile /run/lifekit/fs-relay/id_ed25519
+  IdentitiesOnly yes
+  UserKnownHostsFile /run/lifekit/fs-relay/known_hosts
+  StrictHostKeyChecking yes
+  BatchMode yes
+  ConnectTimeout 10
+  ServerAliveInterval 10
+  ServerAliveCountMax 2
+  RequestTTY no
+  ForwardAgent no
+  ClearAllForwardings yes
+EOF
+sudo chown -R "$API_UID:$API_UID" /srv/lifekit-secrets/fs-relay
+sudo chmod 0400 /srv/lifekit-secrets/fs-relay/id_ed25519
+sudo chmod 0444 /srv/lifekit-secrets/fs-relay/known_hosts /srv/lifekit-secrets/fs-relay/ssh_config
+sudo chmod 0500 /srv/lifekit-secrets/fs-relay
+
+# 3. Authorize it for the admin account (append, never replace). The line is the
+#    template: same restrict / from= as Kit's and the dashboard's, only the argument differs.
+printf 'restrict,command="/usr/local/libexec/kit-relay finance-sentry",from="172.16.0.0/12" %s\n' \
+  "$(sudo cat /srv/lifekit-secrets/fs-relay/id_ed25519.pub)" >> ~/.ssh/authorized_keys
+```
+
+  The block is flush-left so the heredoc terminator in step 2 sits at column 0. The `from=`
+  range is the docker bridges, so a copied key is useless off the box.
+
+- **Verify one note end to end**, from inside finance-sentry's API container (or any ssh
+  with that key from a docker bridge address). `A` is the API container:
+
+  ```bash
+  A=<finance-sentry api container>
+  printf 'relay smoke test - ignore\n' \
+    | docker exec -i "$A" ssh -F /run/lifekit/fs-relay/ssh_config relay 'note fs-smoke-20261012'
+  # {"schema":"kit-relay-received.v1",...} then fm-inbox's JSON, outcome "created"
+  docker exec "$A" ssh -F /run/lifekit/fs-relay/ssh_config relay 'receipts'   # lists fs-smoke-20261012 as pending
+  docker exec "$A" ssh -F /run/lifekit/fs-relay/ssh_config relay 'note kit-x' </dev/null   # refused, exit 64
+  journalctl -t kit-relay --since -5min   # the note, and the refusal
+  ```
+
+  Then answer the smoke note from the second mate's home (`fm-inbox.sh reply <id> ...`,
+  then `drain --ack <id>`), so it does not stay in the inbox. Re-running the same
+  `note fs-smoke-...` is a replay of the same note, never a second one.
+
+- **Failures:** `Permission denied (publickey)` (line missing, `from=` mismatch, key perms)
+  and `Host key verification failed` need the operator; exit 78 `unknown sender` means
+  step 1 was not run; exit 75 is the hourly bucket; host or sshd down is `ssh` exit 255
+  and nothing was saved, so the same request id is safe to retry.
+- **Rollback:** delete that authorized_keys line and `sudo rm -r /srv/lifekit-secrets/fs-relay`.
+  The `finance-sentry` arm can stay in the installed copy (re-running step 1 without it is
+  not needed); Kit's and the dashboard's relays are untouched.
+
 #### Home argument (answers for the main home)
 
 Both verbs take an optional last word, the home the verb acts on, so a dashboard answer
