@@ -14,6 +14,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -71,6 +72,16 @@ os.execv(os.environ["KIT_RELAY_SCRIPT"], [os.environ["KIT_RELAY_SCRIPT"]])
 FAKE_SSH_RECORD = """#!/bin/sh
 printf '%s\\n' "$@" > "$SSH_TEST_DIR/argv"
 cat > "$SSH_TEST_DIR/stdin"
+"""
+
+# `curl -fsS` as relay.sh status calls it: record argv, print a body that is
+# not valid JSON on purpose (the client must not parse or reformat it), and
+# exit with whatever the test asks for.
+FAKE_CURL = """#!/bin/sh
+printf '%s\\n' "$@" > "$CURL_TEST_DIR/argv"
+printf '%s' "$CURL_TEST_BODY"
+[ -z "$CURL_TEST_ERR" ] || printf '%s\\n' "$CURL_TEST_ERR" >&2
+exit "${CURL_TEST_EXIT:-0}"
 """
 
 
@@ -774,7 +785,18 @@ def test_client_replies_with_and_without_cursor(recording_ssh):
     assert argv == ["-F", CONF, "relay", "receipts", "000000000003"]
 
 
-@pytest.mark.parametrize("args", [[], ["status"], ["note"], ["note", "/nonexistent"]])
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["bogus"],
+        ["note"],
+        ["note", "/nonexistent"],
+        ["status", "extra"],
+        ["replies", "000000000003", "firstmate", "extra"],
+        ["replies", "firstmate", "000000000003"],
+    ],
+)
 def test_client_refuses_bad_usage(recording_ssh, tmp_path, args):
     result, argv, _ = recording_ssh(*args)
     assert result.returncode == 64
@@ -786,6 +808,110 @@ def test_client_refuses_an_empty_body_file(recording_ssh, tmp_path):
     result, argv, _ = recording_ssh("note", str(tmp_path / "empty.txt"))
     assert result.returncode == 64
     assert argv is None
+
+
+@pytest.mark.parametrize("home", ["fm-vps", "firstmate"])
+def test_client_note_names_an_allowlisted_home(recording_ssh, tmp_path, home):
+    body = b"task: look at the backup job\n"
+    (tmp_path / "body.txt").write_bytes(body)
+    result, argv, sent = recording_ssh("note", str(tmp_path / "body.txt"), home)
+    assert result.returncode == 0, result.stderr
+    assert argv[:4] == ["-F", CONF, "relay", "note"]
+    assert argv[4].startswith("kit-") and argv[5:] == [home]
+    assert sent == body
+
+
+def test_client_note_without_a_home_sends_no_home_argument(recording_ssh, tmp_path):
+    (tmp_path / "body.txt").write_bytes(b"x\n")
+    result, argv, _ = recording_ssh("note", str(tmp_path / "body.txt"))
+    assert result.returncode == 0
+    assert len(argv) == 5  # note <rid>, so the host keeps its default home
+
+
+@pytest.mark.parametrize(
+    "home",
+    [
+        "other",
+        "FIRSTMATE",
+        "firstmat",
+        "firstmate2",
+        "../firstmate",
+        "firstmate;id",
+        "/home/denys/firstmate",
+        "home",
+    ],
+)
+def test_client_refuses_a_home_outside_the_allowlist(recording_ssh, tmp_path, home):
+    (tmp_path / "body.txt").write_bytes(b"x\n")
+    result, argv, _ = recording_ssh("note", str(tmp_path / "body.txt"), home)
+    assert result.returncode == 64
+    assert argv is None  # ssh never ran
+    assert "unknown home" in result.stderr
+    for args in (("replies", home), ("replies", "000000000003", home)):
+        result, argv, _ = recording_ssh(*args)
+        assert result.returncode == 64, args
+        assert argv is None
+
+
+def test_client_replies_name_a_home_with_and_without_cursor(recording_ssh):
+    _, argv, sent = recording_ssh("replies", "firstmate")
+    assert argv == ["-F", CONF, "relay", "receipts", "firstmate"]
+    assert sent == b""
+    _, argv, _ = recording_ssh("replies", "000000000003", "firstmate")
+    assert argv == ["-F", CONF, "relay", "receipts", "000000000003", "firstmate"]
+    _, argv, _ = recording_ssh("replies", "000000000003", "fm-vps")
+    assert argv == ["-F", CONF, "relay", "receipts", "000000000003", "fm-vps"]
+
+
+@pytest.fixture
+def recording_curl(tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    write_exec(bindir / "curl", FAKE_CURL)
+    write_exec(bindir / "ssh", FAKE_SSH_RECORD)
+
+    def run(body="", exit_code=0, err="", args=("status",)):
+        env = {
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "CURL_TEST_DIR": str(tmp_path),
+            "CURL_TEST_BODY": body,
+            "CURL_TEST_EXIT": str(exit_code),
+            "CURL_TEST_ERR": err,
+            "SSH_TEST_DIR": str(tmp_path),
+        }
+        result = subprocess.run(
+            ["sh", str(CLIENT), *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        argv = tmp_path / "argv"
+        return result, argv.read_text().splitlines() if argv.exists() else None
+
+    return run
+
+
+def test_client_status_reads_the_fleet_endpoint_and_prints_it_unchanged(recording_curl):
+    body = '{"b":1,\n  "a": [ "\u00e9" ] }  not reformatted\n\n'
+    result, argv = recording_curl(body=body)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == body
+    assert argv == ["-fsS", "-m", "10", "http://lifekit-dashboard:8080/api/fleet"]
+
+
+def test_client_status_propagates_a_curl_failure(recording_curl):
+    result, argv = recording_curl(
+        exit_code=22, err="curl: (22) The requested URL returned error: 503"
+    )
+    assert result.returncode == 22
+    assert result.stdout == ""
+    assert "503" in result.stderr
+
+
+def test_client_status_never_touches_ssh_or_the_inbox(recording_curl, tmp_path):
+    recording_curl(body="{}")
+    assert not (tmp_path / "stdin").exists()  # the fake ssh was not run
 
 
 def test_client_through_the_forced_command_sends_once(relay, tmp_path):
@@ -869,18 +995,95 @@ def test_ensure_needs_the_agent_workspace(tmp_path):
     assert "no workspace for agent 'kit'" in result.stderr
 
 
-def test_skill_passes_proposal_prefixes_through_verbatim():
-    text = SKILL_MD.read_text()
-    assert "`proposal:`" in text
-    assert "keep it and send the whole text verbatim" in text
-
-
-def test_skill_frontmatter_names_its_folder_and_gates_on_ssh():
+def test_skill_frontmatter_names_its_folder_and_gates_on_ssh_and_curl():
     yaml = pytest.importorskip("yaml")
     _, front, _ = SKILL_MD.read_text().split("---\n", 2)
     meta = yaml.safe_load(front)
     assert meta["name"] == "secondmate-relay"
-    assert meta["metadata"]["openclaw"]["requires"]["bins"] == ["ssh"]
+    assert meta["metadata"]["openclaw"]["requires"]["bins"] == ["ssh", "curl"]
+
+
+DIGEST = REPO / "scripts/ensure-needs-you-digest.sh"
+
+FAKE_CRON_DOCKER = r"""#!/usr/bin/env python3
+import json, os, pathlib, sys
+state = pathlib.Path(os.environ["FAKE_STATE"])
+args = sys.argv[1:]
+if args[0] == "ps":
+    print("gw123")
+    sys.exit(0)
+cmd = args[args.index("openclaw") + 1:]
+data = json.loads(state.read_text())
+if cmd[:2] == ["cron", "list"]:
+    print(json.dumps(data))
+    sys.exit(0)
+with (state.parent / "calls.jsonl").open("a") as f:
+    f.write(json.dumps(cmd) + "\n")
+if cmd[:2] == ["cron", "add"]:
+    data["jobs"].append({"id": "job1", "name": cmd[cmd.index("--name") + 1]})
+    state.write_text(json.dumps(data))
+elif cmd[:2] != ["cron", "edit"]:
+    sys.exit("unexpected: " + " ".join(cmd))
+"""
+
+
+def run_digest(tmp_path, jobs):
+    state = tmp_path / "state.json"
+    if not state.exists():
+        state.write_text(json.dumps({"jobs": jobs}))
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    write_exec(bindir / "docker", FAKE_CRON_DOCKER)
+    result = subprocess.run(
+        ["bash", str(DIGEST)],
+        env={
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "FAKE_STATE": str(state),
+            "NEEDS_YOU_ALERT_CHAT": "12345",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    calls = tmp_path / "calls.jsonl"
+    argvs = (
+        [json.loads(line) for line in calls.read_text().splitlines()]
+        if calls.exists()
+        else []
+    )
+    return result, argvs
+
+
+def message_of(argv):
+    return argv[argv.index("--message") + 1]
+
+
+def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
+    result, calls = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
+    assert result.returncode == 0, result.stderr
+    (edit,) = calls
+    assert edit[:3] == ["cron", "edit", "job1"]
+    message = message_of(edit)
+    status_cmd = (
+        "sh /home/node/.openclaw/agents/kit/workspace/skills/"
+        "secondmate-relay/relay.sh status"
+    )
+    assert status_cmd in message
+    # the prompt's only relay verb is the read-only one; a cron turn never sends
+    assert set(re.findall(r"relay\.sh (\w+)", message)) == {"status"}
+    assert "NO_REPLY" in message
+
+
+def test_digest_creates_a_missing_row_with_the_same_message(tmp_path):
+    result, calls = run_digest(tmp_path, [])
+    assert result.returncode == 0, result.stderr
+    add, edit = calls
+    assert add[:2] == ["cron", "add"]
+    assert add[add.index("--name") + 1] == "needs-you-digest"
+    assert edit[:3] == ["cron", "edit", "job1"]
+    assert message_of(add) == message_of(edit)
+    assert set(re.findall(r"relay\.sh (\w+)", message_of(add))) == {"status"}
 
 
 def test_gateway_mounts_the_relay_key_read_only_and_names_the_host():
