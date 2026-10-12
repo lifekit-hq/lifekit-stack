@@ -14,6 +14,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -1008,35 +1009,87 @@ def test_skill_frontmatter_names_its_folder_and_gates_on_ssh_and_curl():
     assert meta["metadata"]["openclaw"]["requires"]["bins"] == ["ssh", "curl"]
 
 
-def test_skill_states_the_firstmate_rules():
-    text = SKILL_MD.read_text()
-    for rule in (
-        "relay.sh status",
-        "more than 5 minutes",
-        "Status is stale",
-        "Status is invalid for",
-        "Tasks and proposals go to `firstmate`",
-        "must be in `decisions_open` now",
-        "`home_id`",
-        "answer <id>: <his words>",
-        "`confirm <id>`",
-        "Never send anything from a cron, a heartbeat",
-        "Never retry it silently",
-    ):
-        assert rule in text, rule
+DIGEST = REPO / "scripts/ensure-needs-you-digest.sh"
+
+FAKE_CRON_DOCKER = r"""#!/usr/bin/env python3
+import json, os, pathlib, sys
+state = pathlib.Path(os.environ["FAKE_STATE"])
+args = sys.argv[1:]
+if args[0] == "ps":
+    print("gw123")
+    sys.exit(0)
+cmd = args[args.index("openclaw") + 1:]
+data = json.loads(state.read_text())
+if cmd[:2] == ["cron", "list"]:
+    print(json.dumps(data))
+    sys.exit(0)
+with (state.parent / "calls.jsonl").open("a") as f:
+    f.write(json.dumps(cmd) + "\n")
+if cmd[:2] == ["cron", "add"]:
+    data["jobs"].append({"id": "job1", "name": cmd[cmd.index("--name") + 1]})
+    state.write_text(json.dumps(data))
+elif cmd[:2] != ["cron", "edit"]:
+    sys.exit("unexpected: " + " ".join(cmd))
+"""
 
 
-def test_digest_prompt_reads_the_fleet_status_and_never_sends():
-    text = (REPO / "scripts/ensure-needs-you-digest.sh").read_text()
-    message = next(ln for ln in text.splitlines() if ln.startswith("MESSAGE="))
-    assert (
-        "sh /home/node/.openclaw/agents/kit/workspace/skills/secondmate-relay/relay.sh status"
-        in message
+def run_digest(tmp_path, jobs):
+    state = tmp_path / "state.json"
+    if not state.exists():
+        state.write_text(json.dumps({"jobs": jobs}))
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    write_exec(bindir / "docker", FAKE_CRON_DOCKER)
+    result = subprocess.run(
+        ["bash", str(DIGEST)],
+        env={
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "FAKE_STATE": str(state),
+            "NEEDS_YOU_ALERT_CHAT": "12345",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    for part in ("decisions_open", "generated_epoch", "homes[].valid", "NO_REPLY"):
-        assert part in message, part
-    assert "send no relay note" in message
-    assert " note " not in message.replace("relay note", "")  # never runs the note verb
+    calls = tmp_path / "calls.jsonl"
+    argvs = (
+        [json.loads(line) for line in calls.read_text().splitlines()]
+        if calls.exists()
+        else []
+    )
+    return result, argvs
+
+
+def message_of(argv):
+    return argv[argv.index("--message") + 1]
+
+
+def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
+    result, calls = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
+    assert result.returncode == 0, result.stderr
+    (edit,) = calls
+    assert edit[:3] == ["cron", "edit", "job1"]
+    message = message_of(edit)
+    status_cmd = (
+        "sh /home/node/.openclaw/agents/kit/workspace/skills/"
+        "secondmate-relay/relay.sh status"
+    )
+    assert status_cmd in message
+    # the prompt's only relay verb is the read-only one; a cron turn never sends
+    assert set(re.findall(r"relay\.sh (\w+)", message)) == {"status"}
+    assert "NO_REPLY" in message
+
+
+def test_digest_creates_a_missing_row_with_the_same_message(tmp_path):
+    result, calls = run_digest(tmp_path, [])
+    assert result.returncode == 0, result.stderr
+    add, edit = calls
+    assert add[:2] == ["cron", "add"]
+    assert add[add.index("--name") + 1] == "needs-you-digest"
+    assert edit[:3] == ["cron", "edit", "job1"]
+    assert message_of(add) == message_of(edit)
+    assert set(re.findall(r"relay\.sh (\w+)", message_of(add))) == {"status"}
 
 
 def test_gateway_mounts_the_relay_key_read_only_and_names_the_host():

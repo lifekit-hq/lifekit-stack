@@ -834,7 +834,8 @@ journalctl -t kit-relay --since -5min
 `Permission denied (publickey)` (line removed, `from=` mismatch, key perms) and
 `Host key verification failed` (host key changed; update the pinned `known_hosts`) need
 the operator. fm-inbox exit 3 means saved but not announced; re-sending the same body
-re-announces it.
+(a same-day replay) re-announces it and never duplicates the note. Kit reports "Saved as
+note <id>, not yet announced." and re-sends only when the owner asks.
 
 **Rollback:** delete the authorized_keys line, `sudo rm -r /srv/lifekit-secrets/kit-relay`
 and `/usr/local/libexec/kit-relay`, re-apply kit's old skills list, and remove the skill
@@ -1022,8 +1023,11 @@ and the status read is an HTTP GET Kit could always make.
   explicit words, only for an id in `decisions_open` at send time, to that item's
   `home_id`; a decision that would authorize a merge or a destructive, irreversible or
   security-sensitive action first gets firstmate's reply and runs only on a relayed
-  `confirm <id>`; nothing is sent from a cron, a heartbeat or a turn he did not ask for;
-  a refused call is reported verbatim and not retried.
+  `confirm <id>`; an id missing from a capped `decisions_open` list is reported as "not in
+  the shown list", not "not open"; a reply cursor is passed only with the home it came
+  from; nothing is sent from a cron, a heartbeat or a turn he did not ask for; a refused
+  call is reported verbatim and not retried, and an exit 3 ("saved, not yet announced") is
+  reported as such and re-sent only when he asks.
 - **Digest:** the 09:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
   runs `relay.sh status` and posts the fleet's open decisions, active / queued / landed
   today counts and the stale or invalid warning. It is silent only when the ledger and

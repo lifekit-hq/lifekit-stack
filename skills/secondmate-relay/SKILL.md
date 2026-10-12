@@ -28,19 +28,20 @@ Two homes receive notes. `firstmate` is the main home; `fm-vps` is the second ma
 4. Stdout is two JSON lines: first `kit-relay-received.v1` (`bytes`, `sha256` of what the host got), then the note result (`outcome`, `id`, `announced`). Show the result in one line:
    - `created`, announced true → "Sent to firstmate as note <id>." (the second mate for `fm-vps`)
    - `replay` → "Already delivered today as note <id>; not sent twice. Reword it to send again."
-   - exit 3 → "Saved as note <id>, not yet announced." The note is durable; do not send it again.
+   - exit 3 → "Saved as note <id>, not yet announced." The note is durable. Do not retry it yourself; send the same body again (a same-day replay re-announces it, never a duplicate) only when he asks.
    - any other failure → "Not sent: <stderr line>." See failure rules below.
 
 ## Answers and confirms
 Only on his explicit words naming the decision (an id, or words that unambiguously name one item of `decisions_open`).
-1. Run `relay.sh status` again right before sending. The id must be in `decisions_open` now. If it is not, do not send; tell him the id is not open.
+1. Run `relay.sh status` again right before sending. The id must be in `decisions_open` now. If it is not, do not send. When `counts.decisions_open` is larger than the list, tell him the id is not in the shown list; otherwise tell him the id is not open.
 2. The note goes to that item's `home_id`: `sh {baseDir}/relay.sh note /tmp/secondmate-relay/body.txt <home_id>`.
 3. The body is `answer <id>: <his words>`, his words unchanged. Do not choose, complete or infer an answer he did not give.
 4. For a decision whose answer would authorize a merge, or a destructive, irreversible or security-sensitive action, the answer gets a reply from firstmate first, saying what it will do. It runs only on his `confirm <id>`, relayed the same way: body `confirm <id>`, to that item's `home_id`, again only on his explicit words. Never send a `confirm` he did not give.
-5. Show the result as in Send, and then the reply when it arrives (Replies).
+5. Show the result as in Send, and then the reply when it arrives (Replies), read from that item's `home_id`.
 
 ## Replies
-1. Run `sh {baseDir}/relay.sh replies firstmate`. For "new replies only", put the last `reply_cursor` you showed before the home: `replies <cursor> firstmate`. For the second mate, leave the home off.
+1. Run `sh {baseDir}/relay.sh replies firstmate`. For "new replies only", put the last `reply_cursor` you showed for that home before the home word: `replies <cursor> firstmate`. For the second mate, leave the home off.
+   A cursor belongs to the one home's inbox it came from: pass a cursor only with that same home, never across homes. With no cursor from that home, pass none.
 2. For each item in `replies`, show it as:
    `Reply to <id> (<at>):` then the `body` exactly as given, in a quote block.
 3. Then list `pending` note ids with their first line, as "waiting".
