@@ -36,7 +36,7 @@ Only on his explicit words naming the decision (an id, or words that unambiguous
 1. Run `relay.sh status` again right before sending. The id must be in `decisions_open` now. If it is not, do not send. When `counts.decisions_open` is larger than the list, tell him the id is not in the shown list; otherwise tell him the id is not open.
 2. The note goes to that item's `home_id`: `sh {baseDir}/relay.sh note /tmp/secondmate-relay/body.txt <home_id>`.
 3. The body is `answer <id>: <his words>`, his words unchanged. Do not choose, complete or infer an answer he did not give.
-4. For a decision whose answer would authorize a merge, or a destructive, irreversible or security-sensitive action, the answer gets a reply from firstmate first, saying what it will do. It runs only on his `confirm <id>`, relayed the same way: body `confirm <id>`, to that item's `home_id`, again only on his explicit words. Never send a `confirm` he did not give.
+4. Firstmate applies its standing answer-note rule to what you send: an ordinary decision closes on the answer; a decision whose answer would authorize a merge, or a destructive, irreversible or security-sensitive action, gets a reply from firstmate saying what it will do, and runs only on a relayed `confirm <id>`. You do not classify decisions and you do not gate anything yourself: relay `answer <id>: <his words>` and show the reply. Relay `confirm <id>` the same way (body `confirm <id>`, to that item's `home_id`), only on his explicit words. Never send a `confirm` he did not give.
 5. Show the result as in Send, and then the reply when it arrives (Replies), read from that item's `home_id`.
 
 ## Replies

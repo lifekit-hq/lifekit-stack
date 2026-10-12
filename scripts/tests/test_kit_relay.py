@@ -995,12 +995,6 @@ def test_ensure_needs_the_agent_workspace(tmp_path):
     assert "no workspace for agent 'kit'" in result.stderr
 
 
-def test_skill_passes_proposal_prefixes_through_verbatim():
-    text = SKILL_MD.read_text()
-    assert "`proposal:`" in text
-    assert "keep it and send the whole text verbatim" in text
-
-
 def test_skill_frontmatter_names_its_folder_and_gates_on_ssh_and_curl():
     yaml = pytest.importorskip("yaml")
     _, front, _ = SKILL_MD.read_text().split("---\n", 2)

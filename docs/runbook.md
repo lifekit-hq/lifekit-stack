@@ -1021,9 +1021,12 @@ and the status read is an HTTP GET Kit could always make.
   `<home>`" (a `homes[].valid` false); tasks and proposals go to `firstmate` with the
   `task:`/`proposal:` prefix; an answer is `answer <id>: <his words>` sent only on his
   explicit words, only for an id in `decisions_open` at send time, to that item's
-  `home_id`; a decision that would authorize a merge or a destructive, irreversible or
-  security-sensitive action first gets firstmate's reply and runs only on a relayed
-  `confirm <id>`; an id missing from a capped `decisions_open` list is reported as "not in
+  `home_id`; Kit does not classify decisions or gate anything: under each firstmate
+  home's standing answer-note rule an ordinary decision closes on the answer, while a
+  decision that would authorize a merge or a destructive, irreversible or
+  security-sensitive action gets firstmate's reply saying what it will do and runs only
+  on a relayed `confirm <id>` (a records rule applied by firstmate, not enforced by the
+  relay, the host forced command or this repo); an id missing from a capped `decisions_open` list is reported as "not in
   the shown list", not "not open"; a reply cursor is passed only with the home it came
   from; nothing is sent from a cron, a heartbeat or a turn he did not ask for; a refused
   call is reported verbatim and not retried, and an exit 3 ("saved, not yet announced") is
