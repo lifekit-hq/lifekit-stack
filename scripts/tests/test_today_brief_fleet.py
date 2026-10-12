@@ -108,7 +108,12 @@ def test_the_fleet_step_is_added_and_the_rest_of_the_prompt_is_kept(tmp_path):
         "6. Fleet: run `sh /home/node/.openclaw/agents/kit/workspace/skills/"
         "secondmate-relay/relay.sh status`" in message
     )
-    for part in ("decisions_open", "Status is stale", "Status is invalid for", "landed"):
+    for part in (
+        "decisions_open",
+        "Status is stale",
+        "Status is invalid for",
+        "landed",
+    ):
         assert part in message, part
     assert "send no relay note" in message
     # the step sits inside Gather, before the Message block; the original

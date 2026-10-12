@@ -67,6 +67,7 @@ fi
 # 2. Build the new message from the live one. Exit 10: already there, 11: an
 #    anchor is missing.
 status=0
+# shellcheck disable=SC2016 # the single quotes pass the python program verbatim; the backticks are literal
 wanted="$(printf '%s' "$jobs" | python3 -c '
 import json, sys
 
