@@ -723,8 +723,9 @@ HTTPS-origin setup, not with this job.
 
 ### Kit's second-mate relay
 
-Kit can send the owner's words to the VPS second mate's captain inbox and read the
-replies, over one SSH key whose only power is a forced command on the host. It is a
+Kit can send the owner's words to the VPS second mate's captain inbox (or, by home
+argument, the main firstmate's: "Kit as the owner's line to firstmate" below) and read
+the replies, over one SSH key whose only power is a forced command on the host. It is a
 pipe: kit copies the text into a file and runs one script; it never decides what to send.
 
 - **Host:** `scripts/kit-relay/kit-relay`, installed root-owned at
@@ -1026,10 +1027,11 @@ and the status read is an HTTP GET Kit could always make.
   decision that would authorize a merge or a destructive, irreversible or
   security-sensitive action gets firstmate's reply saying what it will do and runs only
   on a relayed `confirm <id>` (a records rule applied by firstmate, not enforced by the
-  relay, the host forced command or this repo); an id missing from a capped `decisions_open` list is reported as "not in
-  the shown list", not "not open"; a reply cursor is passed only with the home it came
-  from; nothing is sent from a cron, a heartbeat or a turn he did not ask for; a refused
-  call is reported verbatim and not retried, and an exit 3 ("saved, not yet announced") is
+  relay, the host forced command or this repo); an id missing from a capped
+  `decisions_open` list is reported as "not in the shown list", not "not open"; a reply
+  cursor is passed only with the home it came from; nothing is sent from a cron, a
+  heartbeat or a turn he did not ask for; a refused call is reported verbatim and not
+  retried, and an exit 3 ("saved, not yet announced") is
   reported as such and re-sent only when he asks.
 - **Digest:** the 09:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
   runs `relay.sh status` and posts the fleet's open decisions, active / queued / landed
