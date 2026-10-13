@@ -1480,7 +1480,13 @@ ledger's `needs-decision` line for the decision, else its hold age),
 (the oldest home's), and per home `fleet_home_summary_valid{home}` and
 `fleet_home_summary_generated_timestamp_seconds{home}`, plus
 `fleet_publisher_last_success_timestamp_seconds`. Grafana's `box` dashboard has
-a Fleet row for them.
+a Fleet row for them. It also copies each home's validated
+`data/fleet-metrics/daily.jsonl` rows into
+`/var/lib/lifekit-fleet/metrics/daily.jsonl`, one row per (date, home) with the
+last row winning (contract in `scripts/fleet-publisher/README.md`). Invalid rows
+are logged to the unit's journal and skipped. The new output appears only once the
+installed script is refreshed: re-run the install command below (it
+re-installs the script and units, idempotent).
 
 **Alerts:** *fleet summary is stale* fires when the oldest home summary's
 `generated_epoch` is over 15 minutes old (that home's watch loop died; the

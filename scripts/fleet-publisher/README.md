@@ -65,3 +65,29 @@ more than one home, aggregated. The fleet homes are only ever read (files,
   `report_url` is `null`. Reports that fail a check are skipped, never linked.
   Files are replaced one rename at a time, so a report the previous summary
   linked is never briefly absent.
+
+## Daily fleet metrics (`OUT_DIR/metrics/daily.jsonl`)
+
+Each home's `data/fleet-metrics/daily.jsonl` (schema `fleet-metrics-daily.v1`, one
+row per date per home, appended by that home's capture job) is validated and
+copied to `OUT_DIR/metrics/daily.jsonl`, world-readable, beside
+`home-summary.json`. The dashboard reads this file, never the home.
+
+- **Guards** match the reports': a regular file whose real path lies under the
+  home's `data/`, at most 4 MiB, free of credential patterns; otherwise the home
+  contributes nothing and the reason is logged.
+- **Validation** per row: the schema tag, `date` as `YYYY-MM-DD`, `home` equal to
+  the publishing home's id, `computed_at`, boolean `partial`/`backfilled`,
+  non-negative integer counts, a non-negative `stall_task_hours`, `asks_new`
+  (`t0`, `t1`, `t2`, `untiered`), `by_tier` (`runs`, `first_pass` per tier), and
+  number-or-null gauges. A bad row is skipped and counted on stderr; it never
+  stops the summary. Only the schema's fields are published; unknown ones are
+  dropped.
+- **One row per (date, home)**: the last valid row in file order wins, and it
+  replaces a row already published for that date, so a rerun or a final row
+  superseding a `partial` one never duplicates. Rows already published stay
+  until a newer row for their date replaces them, so history survives the source
+  being trimmed. The file is sorted by date, then home.
+- **Atomic and quiet**: temp file plus rename, only when the content changed. A
+  missing or wholly invalid source leaves the file as it was. A write failure is
+  logged and fails the run (the summary is already published).
