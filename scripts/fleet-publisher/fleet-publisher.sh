@@ -29,7 +29,9 @@
 # homes[] and published_epoch. A decision a home folds in from a child home
 # this run also publishes (its id is a secondmate id in the home's
 # data/secondmates.md whose "home:" path is a published home) is left out: the
-# child's own summary is authoritative, so the owner's wait is counted once.
+# child's own summary is authoritative, so the owner's wait is counted once:
+# the home's counts.decisions_open drops those items too, so it matches what is
+# listed. counts also gains queued_open, the queued items with no hold.
 # With one home every other field is its summary
 # unchanged; with more, generated_epoch, valid, reason and counts are
 # aggregated and the rest are the first home's.
@@ -92,6 +94,29 @@ for f in homes.jsonl published.jsonl metrics.jsonl reports.tsv; do : > "$work/$f
 # Everything below is read-only access to the fleet homes. A source that is
 # missing or fails only drops the field it feeds; it never fails the publish.
 tsv_to_object() { jq -Rn '[inputs | split("\t") | select(length == 2) | {(.[0]): .[1]}] | add // {}'; }
+
+# The counts a home publishes, as a jq function over its whole summary:
+# decisions_open loses the items this home folds in from a child home that is
+# also published (the list drops them below), so the count matches the listed
+# items instead of double-counting the child's own; queued_open is the queued
+# items nobody holds (no hold_kind and no hold_bucket), which counts.queued
+# includes. Both come from the capped lists, so a count beyond the cap is only
+# reduced by the folded items that are listed.
+read -r -d '' PUBLISHED_COUNTS <<'JQ' || true
+def published_counts($folded):
+  (.decisions_open // []) as $dec
+  | .queued as $queued
+  | .counts
+  | if type != "object" then .
+    else
+      (if (.decisions_open | type) == "number" then
+         .decisions_open = ([.decisions_open - ([$dec[] | select(.id as $i | $folded | index($i))] | length), 0] | max)
+       else . end)
+      | (if ($queued | type) == "array" then
+           .queued_open = ([$queued[] | select((.hold_kind // null) == null and (.hold_bucket // null) == null)] | length)
+         else . end)
+    end;
+JQ
 
 # publish_home <home dir> <home id> <summary> <ledger> <data dir> <captain-hold> <report root>
 # Writes the home's published summary, metrics and homes[] entry under $work
@@ -179,7 +204,7 @@ publish_home() {
 
   jq -c --slurpfile lavs "$work/lavish.json" --arg data "$data_dir" --arg hid "$id" \
     --slurpfile folded "$hw/folded.json" --slurpfile bound "$hw/bound.json" --slurpfile origins "$hw/origins.json" \
-    --slurpfile reports "$hw/reports.json" '
+    --slurpfile reports "$hw/reports.json" "$PUBLISHED_COUNTS"'
     ($lavs[0] // {}) as $lav
     | $bound[0] as $bound | $origins[0] as $origins | $reports[0] as $reports
     | def open_sessions:
@@ -195,14 +220,15 @@ publish_home() {
       | ([open_sessions[] | select($bound[seg] != null)
           | select(($bound[seg] == $id) or ($o != null and ($bound[seg] == $o or under(.; $o))))] | newest)
         // ([open_sessions[] | select(under(.; $id))] | newest);
-    .decisions_open |= map(select(.id as $i | $folded[0] | index($i) | not) | . + {board_url: board(.id)})
+    (if (.counts | type) == "object" then .counts = published_counts($folded[0]) else . end)
+    | .decisions_open |= map(select(.id as $i | $folded[0] | index($i) | not) | . + {board_url: board(.id)})
     | if (.landed | type) == "array" then .landed |= map(. + {report_url: ($reports[.id] // null)}) else . end
     # Every listed item names the home it came from, so an answer can go back there.
     | with_entries(if (.value | type) == "array"
         then .value |= map(if type == "object" then . + {home_id: $hid} else . end) else . end)' \
     "$summary_file" >> "$work/published.jsonl"
 
-  jq -c --slurpfile ledger "$hw/ledger.jsonl" --slurpfile folded "$hw/folded.json" --argjson now "$NOW" --arg hid "$id" --arg path "$home" '
+  jq -c --slurpfile ledger "$hw/ledger.jsonl" --slurpfile folded "$hw/folded.json" --argjson now "$NOW" --arg hid "$id" --arg path "$home" "$PUBLISHED_COUNTS"'
     def opened($d):
       [$ledger[] | select(.task == $d.id and .key != null and .key == $d.key and .state == "needs-decision") | .ts] | min;
     def age($d):
@@ -217,7 +243,8 @@ publish_home() {
          | select(.event == "task.status" and .ts >= ($now - 3600) and .ts <= $now
                   and (((.text // "") + " " + (.key // "")) | test("usage[ -]limit"; "i")))] | length)},
       {id: $hid, path: (if $path == "" then null else $path end), published: true, schema, generated_epoch,
-       valid, reason, state, counts}' "$summary_file" > "$hw/rows.jsonl"
+       valid, reason, state, counts: (if (.counts | type) == "object" then published_counts($folded[0]) else .counts end)}' \
+    "$summary_file" > "$hw/rows.jsonl"
   head -n 1 "$hw/rows.jsonl" >> "$work/metrics.jsonl"
   tail -n 1 "$hw/rows.jsonl" >> "$work/homes.jsonl"
 }

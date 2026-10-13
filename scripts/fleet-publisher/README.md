@@ -9,8 +9,9 @@ not to the source summaries. Operations (install, alerts, metrics) are in
 `docs/runbook.md` "Fleet publisher"; behaviour is pinned by
 `scripts/tests/test_fleet_publisher.py`.
 
-Every source field passes through unchanged; the fields below are added or, with
-more than one home, aggregated. The fleet homes are only ever read (files,
+Every source field passes through unchanged, except that `counts.decisions_open`
+no longer includes a child home's folded decisions (below); the fields below are
+added or, with more than one home, aggregated. The fleet homes are only ever read (files,
 `fm-captain-hold.sh binding`, `tasks-axi show`).
 
 | Where | Field | Meaning |
@@ -18,6 +19,7 @@ more than one home, aggregated. The fleet homes are only ever read (files,
 | top | `published_epoch` | Publish time |
 | top | `homes[]` | One entry per home, in `FM_HOMES` order: `id`, `path`, `published`, `valid`, `reason`, and for a published home its `schema`, `generated_epoch`, `state`, `counts` |
 | every item of every top-level list | `home_id` | The id of the home the item came from (`active_children`, `decisions_open`, `holds`, `queued`, `landed`, `endpoints`, `omitted`) |
+| `counts` (object, and each `homes[].counts`) | `queued_open` | The queued items with no hold: neither `hold_kind` nor `hold_bucket` set. `counts.queued` still includes held ones |
 | `decisions_open[]` | `board_url` | The open Lavish session for the decision, else `null` |
 | `landed[]` | `report_url` | The served copy of the item's finished `report.md`, else `null` |
 
@@ -34,9 +36,15 @@ more than one home, aggregated. The fleet homes are only ever read (files,
   secondmates as `- <id> - ... (home: <path>; ...)`. When that `home:` path is a home
   this run also publishes, the parent's `decisions_open` items whose `id` is that
   secondmate id (the parent folding its child's waits in) are left out of the lists,
-  `fleet_decisions_open` and the oldest-decision age: the child's own summary is
-  authoritative. Items naming a secondmate whose home is not published (or whose
-  summary is unreadable) are kept.
+  `counts.decisions_open` (the home's own and the summed one), `fleet_decisions_open`
+  and the oldest-decision age: the child's own summary is authoritative, and the
+  published count equals the listed items. A count beyond the list's cap loses only
+  the folded items that are listed. Items naming a secondmate whose home is not
+  published (or whose summary is unreadable) are kept.
+- **`queued_open`** is read from each home's `queued` list, so it is exact while that
+  list holds every queued item; if the cap cuts the list it counts the listed unheld
+  items (the live-held ones sort last, so they are cut first). A home with no `counts` object, or
+  no `queued` array, gets no `queued_open`.
 - **Unreadable home**: a home whose summary is missing, malformed, or matches a
   credential pattern is left out of the lists and listed in `homes[]` with
   `published: false`, `valid: false` and a `reason`; the rest still publish and
