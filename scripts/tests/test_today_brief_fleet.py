@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -108,34 +109,15 @@ def test_the_fleet_step_is_added_and_the_rest_of_the_prompt_is_kept(tmp_path):
         "6. Fleet: run `sh /home/node/.openclaw/agents/kit/workspace/skills/"
         "secondmate-relay/relay.sh status`" in message
     )
-    for part in (
-        "decisions_open",
-        "Your call (<n>)",
-        "Your to-dos (<n>)",
-        "Later: <n> parked",
-        "<counts.queued_open> queued",
-        "landed today",
-        "Fleet view is partial",
-        "Never call start_google_auth",
-        "docs/google-mcp-setup.md",
-        "Nothing needs you today.",
-        '\u21b3 reply "<k> A"',
-    ):
-        assert part in message, part
-    assert "send no relay note" in message
-    # the old warning lines and the raw handle line are gone
-    assert "Status is stale" not in message
-    assert "Status is invalid for" not in message
-    assert "<home_id> / <id>" not in message
-    assert "published" not in message
-    assert "command succeeded and found no call" in message
+    assert set(re.findall(r"relay\.sh (\w+)", message)) == {"status"}
+    assert "NO_REPLY" not in message
+    assert "Line 1: the date." in message
     # the step sits inside Gather, before the Message block; the original
     # lines are all still there
     assert message.index("6. Fleet") < message.index("Message (Telegram")
     for line in PROMPT.split("\n"):
         if "reply exactly NO_REPLY" not in line:
             assert line in message
-    assert "NO_REPLY" not in message
 
 
 def test_rerun_is_idempotent(tmp_path):

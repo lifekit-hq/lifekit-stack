@@ -99,7 +99,7 @@ EMPTY = "If calendar, mail, deadlines-within-7-days and non-bot PRs are all empt
 FLEET = (
     "After PRs waiting, add the Fleet section from step 6: the Your call and Your to-dos lists first, then the "
     "notes (this section is outside the 10-line limit). When the step 6 command succeeded and found no call "
-    "and no to-do it is the single line \"Nothing needs you today.\", never left out; when it failed, only "
+    "and no to-do it is the single line \"No fleet calls today.\", never left out; when it failed, only "
     "its \"Fleet status unavailable\" line."
 )
 # The text an earlier version of this script inserted. A row that carries

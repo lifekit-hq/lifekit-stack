@@ -79,8 +79,7 @@ refresh tokens that Google expires after 7 days, and the MCP then fails with
 `invalid_grant`. In the Cloud console open **Google Auth Platform → Audience**,
 choose **Publish app**, and confirm; the status reads *In production*. Ignore
 any prompt to submit the app for verification: an unverified app is fine for
-personal use (it is capped at 100 users). At sign-in Google shows "Google
-hasn't verified this app": choose **Advanced → Go to … (unsafe)**.
+personal use.
 
 Do this before step 6. A refresh token issued while the app was still in
 *Testing* keeps its 7-day life after you publish, so redo step 6 once the
@@ -248,5 +247,4 @@ errors about unrecognised tool names, try comma-separated instead
 token is dead. The usual cause is a consent screen still in *Testing*
 status, where Google expires refresh tokens after 7 days: check **Google Auth
 Platform → Audience**, choose **Publish app** if it says *Testing*, then
-repeat steps 6–7 to regenerate. Revoking the app's access in your Google
-account or changing the account password gives the same error.
+repeat steps 6–7 to regenerate.

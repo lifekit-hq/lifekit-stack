@@ -1048,7 +1048,9 @@ and the status read is an HTTP GET Kit could always make.
 - **Morning brief:** the 08:30 `today-brief` row is host state made by hand with kit,
   not declared in git. `scripts/ensure-today-brief-fleet.sh` (as `lifekit`) inserts the
   fleet step into its prompt at two fixed anchors and refuses, row untouched, when the
-  prompt no longer has them; a prompt already carrying the step is left alone.
+  prompt no longer has them; a prompt already carrying the step is left alone. An empty
+  fleet part reads "No fleet calls today." there, so it never contradicts the brief's
+  calendar, mail or PR sections.
 - **Kit's `AGENTS.md`** is live host state (`/srv/openclaw/config/agents/kit/workspace/`),
   merged by hand like the "Needs you" section. Two lines move with this: the
   host-work line says host work goes to firstmate through the captain inbox, "the main
