@@ -1092,6 +1092,9 @@ def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
     assert "Answer here: reply <id>" not in message
     # only the age of the view makes it partial, never an unpublished home
     assert "published" not in message
+    # the empty line is only for two successful reads; a failed read posts its failure line
+    assert "When both reads succeeded" in message
+    assert message.count("never the empty line") == 2
 
 
 def test_digest_creates_a_missing_row_with_the_same_message(tmp_path):

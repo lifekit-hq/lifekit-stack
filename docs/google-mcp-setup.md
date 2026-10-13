@@ -142,7 +142,7 @@ uvx workspace-mcp --transport streamable-http --single-user \
 
 On startup the server prints a `https://accounts.google.com/...` URL. Open it,
 sign in as `USER_GOOGLE_EMAIL`, click through the "this app isn't verified"
-warning (expected for Testing-status consent screens), and approve. The
+warning (expected: the app is In production but unverified after step 3), and approve. The
 callback writes the refresh token to:
 
 ```
