@@ -1022,7 +1022,7 @@ and the status read is an HTTP GET Kit could always make.
   format: "Your call" (numbered, options when the record names them, no ids), "Your
   to-dos" (verb first), then a "Later" count line (aged, dated and blocked holds, never
   listed) and a "Fleet" line (`counts.queued_open`, which leaves out held items); only
-  a view older than 30 minutes, or a home not published, adds "Fleet view is partial",
+  a view older than 30 minutes adds "Fleet view is partial",
   and "+N not shown" appears only when `counts.decisions_open` really exceeds the
   list. Kit never calls `start_google_auth` (its link redirects to localhost and leaves
   a pending sign-in); on a Google sign-in failure it says so once and points at

@@ -22,7 +22,7 @@ Two homes receive notes. `firstmate` is the main home; `fm-vps` is the second ma
       - `Later: <n> parked · <n> dated · <n> blocked`: count the `queued` items whose `hold_bucket` is `aged`, `dated` and `blocked`; leave out a zero part, and leave out the line when all are zero. Do not list them.
       - `Fleet: <counts.active_children> working · <counts.queued_open> queued · <n> landed today`, with <n> the landed items whose `completion.date` is today. `counts.queued_open` leaves out held items; if it is missing, leave out the queued figure.
       - `+<N> not shown`, only when `counts.decisions_open` is larger than the `decisions_open` list; <N> is the difference. The publisher keeps that count equal to the listed items, so a difference is a real cap.
-   6. Say "Fleet view is partial: last updated <age> ago." once, ahead of the notes, only when `generated_epoch` is more than 30 minutes old or a `homes` entry has `published` false. Never repeat a `homes[].reason`, and never say "invalid".
+   6. Say "Fleet view is partial: last updated <age> ago." once, ahead of the notes, only when `generated_epoch` is more than 30 minutes old. Never repeat a `homes[].reason`, and never say "invalid".
 3. Google: when Google mail or calendar fails with an expired or revoked sign-in, add the note "Google sign-in expired - mail and calendar skipped" once, and the to-do "Redo the Google sign-in on the PC (docs/google-mcp-setup.md, steps 6-7)". Never call `start_google_auth` and never show an auth URL: its link redirects to localhost, which a phone cannot open, and it leaves a pending sign-in behind.
 4. If the command fails, say the status page is unreachable and show the stderr line. Do not guess.
 

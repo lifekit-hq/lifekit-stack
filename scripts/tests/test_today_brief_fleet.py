@@ -127,6 +127,7 @@ def test_the_fleet_step_is_added_and_the_rest_of_the_prompt_is_kept(tmp_path):
     assert "Status is stale" not in message
     assert "Status is invalid for" not in message
     assert "<home_id> / <id>" not in message
+    assert "published" not in message
     # the step sits inside Gather, before the Message block; the original
     # lines are all still there
     assert message.index("6. Fleet") < message.index("Message (Telegram")

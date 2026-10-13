@@ -1090,6 +1090,8 @@ def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
     assert "<home_id> / <id>" not in message
     assert "decision(s) waiting on you" not in message
     assert "Answer here: reply <id>" not in message
+    # only the age of the view makes it partial, never an unpublished home
+    assert "published" not in message
 
 
 def test_digest_creates_a_missing_row_with_the_same_message(tmp_path):
@@ -1101,6 +1103,28 @@ def test_digest_creates_a_missing_row_with_the_same_message(tmp_path):
     assert edit[:3] == ["cron", "edit", "job1"]
     assert message_of(add) == message_of(edit)
     assert set(re.findall(r"relay\.sh (\w+)", message_of(add))) == {"status"}
+
+
+def test_digest_row_description_and_verify_hint_keep_their_quoted_phrase(tmp_path):
+    result, calls = run_digest(tmp_path, [])
+    assert result.returncode == 0, result.stderr
+    add = calls[0]
+    assert add[add.index("--description") + 1].endswith(
+        'says "Nothing needs you today." when none are. '
+        "Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)."
+    )
+    # every argument is a flag or the value of the flag before it: no stray words
+    switches = {"--announce", "--json"}
+    stray = [
+        arg
+        for prev, arg in zip(add[2:], add[3:], strict=False)
+        if not arg.startswith("--") and (prev in switches or not prev.startswith("--"))
+    ]
+    assert stray == []
+    assert (
+        'posts "Nothing needs you today." while the ledger and the fleet'
+        in result.stdout
+    )
 
 
 def test_gateway_mounts_the_relay_key_read_only_and_names_the_host():

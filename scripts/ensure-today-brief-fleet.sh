@@ -84,7 +84,7 @@ STEP = (
     "\"· <verb first>\" for each kept item that is his own action; when unsure, an item is a call. Never print "
     "a home_id or an id. Notes, each "
     "only when it applies: \"Fleet view is partial: last updated <age> ago.\" when generated_epoch is more than "
-    "30 minutes old or a homes entry has published false (never repeat a reason, never say invalid); "
+    "30 minutes old (never repeat a reason, never say invalid); "
     "\"Later: <n> parked · <n> dated · <n> blocked\" counting the queued items whose hold_bucket is aged, dated "
     "and blocked (leave out zero parts); \"Fleet: <counts.active_children> working · <counts.queued_open> queued "
     "· <n> landed today\" where <n> counts the landed items whose completion.date is today; \"+<N> not shown\" "
