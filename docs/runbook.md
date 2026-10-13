@@ -1020,11 +1020,10 @@ and the status read is an HTTP GET Kit could always make.
   page's own data over the `lifekit-shared` network, so the skill gates on `curl` too.
 - **Rules** (`SKILL.md`): status questions run `relay.sh status` and answer in one
   format: "Your call" (numbered, options when the record names them, no ids), "Your
-  to-dos" (verb first), then a "Later" count line (aged, dated and blocked holds, never
-  listed) and a "Fleet" line (`counts.queued_open`, which leaves out held items); only
-  a view older than 30 minutes adds "Fleet view is partial",
-  and "+N not shown" appears only when `counts.decisions_open` really exceeds the
-  list. Kit never calls `start_google_auth` (its link redirects to localhost and leaves
+  to-dos" (verb first), then a "Later" count line (parked, dated and blocked, counted from
+  `queued` and never listed) and a "Fleet" line (`counts.queued_open`, which leaves out
+  held items); only a view older than 30 minutes adds "Fleet view is partial", and
+  "+N not shown" appears only when `counts.decisions_open` really exceeds the list. Kit never calls `start_google_auth` (its link redirects to localhost and leaves
   a pending sign-in); on a Google sign-in failure it says so once and points at
   `docs/google-mcp-setup.md` steps 6-7. Tasks and proposals go to `firstmate` with the
   `task:`/`proposal:` prefix; an answer is `answer <id>: <his words>` sent only on his
@@ -1056,7 +1055,7 @@ and the status read is an HTTP GET Kit could always make.
   host-work line says host work goes to firstmate through the captain inbox, "the main
   home (`firstmate`)"; the Tools table's dashboard row reads `lifekit-dashboard:8080`
   (not the old loopback port `127.0.0.1:18790`); the plain-chat answer line also takes
-  `<n> <letter>` for entry `<n>` of the numbered list Kit last sent; and the daily
+  `<n> <letter>` for entry `<n>` of the numbered list Kit last sent; the daily
   digest line says it posts "Nothing needs you today." when nothing is open, not
   `NO_REPLY`; and the Google Workspace section's line that Kit never calls
   `start_google_auth` and, on a sign-in failure, says so once and points at
