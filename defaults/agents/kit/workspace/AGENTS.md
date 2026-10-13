@@ -155,7 +155,7 @@ tell Denys in one line that it is waiting in the app.
 
 **The daily digest** is a scheduled run (`needs-you-digest`) that posts into
 this main chat. It reads only `needs-you/open.json`, never edits it, and
-replies `NO_REPLY` when nothing is open, so a quiet day sends nothing.
+posts "Nothing needs you today." when nothing is open.
 
 ### Anything else
 

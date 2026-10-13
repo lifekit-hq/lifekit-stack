@@ -78,9 +78,11 @@ STEP = (
     "6. Fleet: run `" + STATUS + "` (read-only; send no relay note, never ask_user). "
     "From the JSON keep only the decisions_open items whose hold_bucket is live or absent. "
     "Calls first: \"Your call (<n>)\", then numbered lines \"<k>. <what is being decided, in plain words>\", "
-    "the options from the reason of the item on the line below (recommended first) only when the reason names "
-    "options, and the board_url when set. Then \"Your to-dos (<n>)\", one line \"· <verb first>\" for each kept "
-    "item that is his own action; when unsure, an item is a call. Never print a home_id or an id. Notes, each "
+    "the options from the reason of the item on the line below (lettered A, B, C in the order shown, recommended "
+    "first) only when the reason names options, then on an item with options the line \"↳ reply \"<k> A\"\" "
+    "with its own number and its first letter, and the board_url when set. Then \"Your to-dos (<n>)\", one line "
+    "\"· <verb first>\" for each kept item that is his own action; when unsure, an item is a call. Never print "
+    "a home_id or an id. Notes, each "
     "only when it applies: \"Fleet view is partial: last updated <age> ago.\" when generated_epoch is more than "
     "30 minutes old or a homes entry has published false (never repeat a reason, never say invalid); "
     "\"Later: <n> parked · <n> dated · <n> blocked\" counting the queued items whose hold_bucket is aged, dated "
@@ -95,10 +97,9 @@ STEP = (
 BEFORE = "\n\nMessage (Telegram"
 EMPTY = "If calendar, mail, deadlines-within-7-days and non-bot PRs are all empty, reply exactly NO_REPLY."
 FLEET = (
-    "After PRs waiting, add the Fleet section from step 6 when it has anything to say: the Your call and Your "
-    "to-dos lists first, then the notes (this section is outside the 10-line limit). If calendar, mail, "
-    "deadlines-within-7-days and non-bot PRs are all empty and step 6 found no call, no to-do and no partial-view "
-    "note, reply exactly NO_REPLY."
+    "After PRs waiting, add the Fleet section from step 6: the Your call and Your to-dos lists first, then the "
+    "notes (this section is outside the 10-line limit). With no call and no to-do it is the single line "
+    "\"Nothing needs you today.\", never left out."
 )
 # The text an earlier version of this script inserted. A row that carries
 # exactly it is upgraded in place; any other prompt with a fleet step is not

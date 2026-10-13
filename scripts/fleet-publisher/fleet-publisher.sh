@@ -113,7 +113,7 @@ def published_counts($folded):
          .decisions_open = ([.decisions_open - ([$dec[] | select(.id as $i | $folded | index($i))] | length), 0] | max)
        else . end)
       | (if ($queued | type) == "array" then
-           .queued_open = ([$queued[] | select((.hold_kind // null) == null and (.hold_bucket // null) == null)] | length)
+           .queued_open = ([$queued[] | select(type == "object" and (.hold_kind // null) == null and (.hold_bucket // null) == null)] | length)
          else . end)
     end;
 JQ

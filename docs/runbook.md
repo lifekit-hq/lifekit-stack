@@ -680,8 +680,10 @@ firstmate") into that same chat.
 `scripts/ensure-needs-you-digest.sh` declares it and converges on re-run. It is a
 `current`-session agent turn bound to `agent:kit:main` with announce delivery: the
 reply is committed to the conversation's transcript, and that session has no external
-route, so nothing goes to Telegram. It replies `NO_REPLY` when the ledger and the
-fleet shows no call and no to-do and its view is not partial, so nothing is posted. A run that cannot read the ledger says so in the chat. A run that
+route, so nothing goes to Telegram. It always posts: the date line, then the needs-you
+part in the relay skill's Status format, which is the single line "Nothing needs you
+today." when the ledger and the fleet show no call and no to-do. A run that cannot read
+the ledger says so in the chat. A run that
 fails outright raises a failure alert after one failure. The alert goes through kit's
 `default` Telegram account to `LIFEKIT_TELEGRAM_CHAT` from the host env file, the same
 route as the career weekly alert, because a failure alert needs an outbound
@@ -712,8 +714,8 @@ Operator steps, once per host. None of them restarts the gateway:
    `0 9 * * *` Europe/Dublin).
 
 **Verify:** `cron show <id>` previews delivery as `announce -> current session`.
-`cron run <id> --expect-final --json` against an empty ledger records the run as
-intentionally silent, and the main chat stays quiet. With one entry in `open.json`,
+`cron run <id> --expect-final --json` against an empty ledger posts "Nothing needs you
+today." under the date line. With one entry in `open.json`,
 the digest shows up in the Control UI chat without a refresh.
 
 **Rollback:** `openclaw cron rm <id>`. The ledger files are kit workspace state and
@@ -1039,9 +1041,9 @@ and the status read is an HTTP GET Kit could always make.
   retried, and an exit 3 ("saved, not yet announced") is
   reported as such and re-sent only when he asks.
 - **Digest:** the 09:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
-  runs `relay.sh status` and posts the fleet part in that same format. It is silent only
-  when the ledger is empty, the fleet shows no call and no to-do, and the view is not
-  partial. Re-run the script as
+  runs `relay.sh status` and posts the fleet part in that same format, under the date
+  line; it posts "Nothing needs you today." when nothing is open and is never silent.
+  Re-run the script as
   `lifekit` to converge the live row; a cron turn sends no note.
 - **Morning brief:** the 08:30 `today-brief` row is host state made by hand with kit,
   not declared in git. `scripts/ensure-today-brief-fleet.sh` (as `lifekit`) inserts the

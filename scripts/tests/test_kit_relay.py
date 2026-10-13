@@ -1072,9 +1072,13 @@ def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
     assert status_cmd in message
     # the prompt's only relay verb is the read-only one; a cron turn never sends
     assert set(re.findall(r"relay\.sh (\w+)", message)) == {"status"}
-    assert "NO_REPLY" in message
+    # never silent: a quiet day posts the date and "Nothing needs you today."
+    assert "NO_REPLY" not in message
     # the fleet part is the Status format: calls, to-dos, Later and Fleet lines
     for part in (
+        "the first line is the date",
+        "Nothing needs you today.",
+        '\u21b3 reply "<k> A"',
         "Your call (<n>)",
         "Your to-dos (<n>)",
         "Later: <n> parked",
@@ -1084,6 +1088,8 @@ def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
         assert part in message, part
     assert "Status is stale" not in message
     assert "<home_id> / <id>" not in message
+    assert "decision(s) waiting on you" not in message
+    assert "Answer here: reply <id>" not in message
 
 
 def test_digest_creates_a_missing_row_with_the_same_message(tmp_path):

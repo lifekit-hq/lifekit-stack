@@ -118,6 +118,8 @@ def test_the_fleet_step_is_added_and_the_rest_of_the_prompt_is_kept(tmp_path):
         "Fleet view is partial",
         "Never call start_google_auth",
         "docs/google-mcp-setup.md",
+        "Nothing needs you today.",
+        '\u21b3 reply "<k> A"',
     ):
         assert part in message, part
     assert "send no relay note" in message
@@ -131,7 +133,7 @@ def test_the_fleet_step_is_added_and_the_rest_of_the_prompt_is_kept(tmp_path):
     for line in PROMPT.split("\n"):
         if "reply exactly NO_REPLY" not in line:
             assert line in message
-    assert message.count("NO_REPLY") == 1
+    assert "NO_REPLY" not in message
 
 
 def test_rerun_is_idempotent(tmp_path):
@@ -209,6 +211,7 @@ def test_a_row_with_the_previous_step_is_upgraded_in_place(tmp_path):
     fresh = json.loads(fresh_state.read_text())["jobs"][1]["payload"]["message"]
     assert message == fresh
     assert "Status is stale" not in message
+    assert "NO_REPLY" not in message
     assert message.count("6. Fleet") == 1
     # and converged: another run changes nothing
     res, _ = run(tmp_path)

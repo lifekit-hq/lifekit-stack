@@ -881,6 +881,15 @@ def test_queued_open_counts_the_listed_items_when_the_list_is_capped(fleet):
     assert counts["queued_open"] == 3
 
 
+def test_a_non_object_queued_entry_does_not_abort_the_publish(fleet):
+    listed = [{"id": "q1"}, "stray", None, held("h1", "live")]
+    fleet.write(summary(queued=listed, counts={"queued": 4, "decisions_open": 0}))
+    assert fleet.run().returncode == 0
+    counts = fleet.published()["counts"]
+    assert counts["queued"] == 4
+    assert counts["queued_open"] == 1
+
+
 def test_a_summary_without_counts_or_queued_gets_no_new_counts(fleet):
     fleet.write(summary(queued=[{"id": "q"}]))
     assert fleet.run().returncode == 0
