@@ -110,12 +110,21 @@ def test_the_fleet_step_is_added_and_the_rest_of_the_prompt_is_kept(tmp_path):
     )
     for part in (
         "decisions_open",
-        "Status is stale",
-        "Status is invalid for",
-        "landed",
+        "Your call (<n>)",
+        "Your to-dos (<n>)",
+        "Later: <n> parked",
+        "<counts.queued_open> queued",
+        "landed today",
+        "Fleet view is partial",
+        "Never call start_google_auth",
+        "docs/google-mcp-setup.md",
     ):
         assert part in message, part
     assert "send no relay note" in message
+    # the old warning lines and the raw handle line are gone
+    assert "Status is stale" not in message
+    assert "Status is invalid for" not in message
+    assert "<home_id> / <id>" not in message
     # the step sits inside Gather, before the Message block; the original
     # lines are all still there
     assert message.index("6. Fleet") < message.index("Message (Telegram")
@@ -149,3 +158,68 @@ def test_missing_row_fails_without_editing(tmp_path):
     assert res.returncode == 1
     assert "no 'today-brief' automation row" in res.stderr
     assert edits(tmp_path) == []
+
+
+OLD_STEP = (
+    "6. Fleet: run `sh /home/node/.openclaw/agents/kit/workspace/skills/"
+    "secondmate-relay/relay.sh status` "
+    "(read-only; send no relay note, never ask_user). Keep: the line "
+    '"Status is stale: generated <age> ago." '
+    "when generated_epoch is more than 5 minutes old; one line "
+    '"Status is invalid for <home id>: <reason>." '
+    "per homes[] entry whose valid is false; counts.active_children, "
+    "counts.queued and the number of landed "
+    "items whose completion.date is today; each decisions_open item as "
+    '"<home_id> / <id> - <summary>" '
+    "(and how many are not shown when counts.decisions_open exceeds the list). "
+    "If the command fails, keep one "
+    'line "Fleet status unavailable: <stderr line>."'
+)
+OLD_FLEET = (
+    "After PRs waiting, add the Fleet section from step 6 when it has anything "
+    "to say: warnings first, then "
+    '"Fleet: N active, N queued, N landed today", then the open decisions, one '
+    "per line (this section is "
+    "outside the 10-line limit). If calendar, mail, deadlines-within-7-days "
+    "and non-bot PRs are all empty and "
+    "step 6 found no open decisions and no warning, reply exactly NO_REPLY."
+)
+
+
+def old_version_of(prompt: str) -> str:
+    """The prompt as the previous version of this script left it."""
+    return prompt.replace(
+        "\n\nMessage (Telegram", "\n" + OLD_STEP + "\n\nMessage (Telegram"
+    ).replace(
+        "If calendar, mail, deadlines-within-7-days and non-bot PRs are all empty, reply exactly NO_REPLY.",
+        OLD_FLEET,
+    )
+
+
+def test_a_row_with_the_previous_step_is_upgraded_in_place(tmp_path):
+    res, state = run(tmp_path, message=old_version_of(PROMPT))
+    assert res.returncode == 0, res.stderr
+    (cmd,) = edits(tmp_path)
+    message = json.loads(state.read_text())["jobs"][1]["payload"]["message"]
+    assert message == cmd[4]
+    # the same prompt a fresh row gets, and nothing of the old step left
+    fresh_dir = tmp_path / "fresh"
+    fresh_dir.mkdir()
+    _, fresh_state = run(fresh_dir)
+    fresh = json.loads(fresh_state.read_text())["jobs"][1]["payload"]["message"]
+    assert message == fresh
+    assert "Status is stale" not in message
+    assert message.count("6. Fleet") == 1
+    # and converged: another run changes nothing
+    res, _ = run(tmp_path)
+    assert res.returncode == 0 and "nothing to do" in res.stdout
+    assert len(edits(tmp_path)) == 1
+
+
+def test_a_hand_edited_fleet_step_is_left_untouched(tmp_path):
+    edited = old_version_of(PROMPT).replace("Keep: the line", "Keep: also the line")
+    res, state = run(tmp_path, message=edited)
+    assert res.returncode == 1
+    assert "left untouched" in res.stderr
+    assert edits(tmp_path) == []
+    assert json.loads(state.read_text())["jobs"][1]["payload"]["message"] == edited

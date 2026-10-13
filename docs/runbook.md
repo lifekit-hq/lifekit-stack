@@ -681,8 +681,7 @@ firstmate") into that same chat.
 `current`-session agent turn bound to `agent:kit:main` with announce delivery: the
 reply is committed to the conversation's transcript, and that session has no external
 route, so nothing goes to Telegram. It replies `NO_REPLY` when the ledger and the
-fleet's open decisions are empty and the fleet status is fresh and valid, so nothing is
-posted. A run that cannot read the ledger says so in the chat. A run that
+fleet shows no call and no to-do and its view is not partial, so nothing is posted. A run that cannot read the ledger says so in the chat. A run that
 fails outright raises a failure alert after one failure. The alert goes through kit's
 `default` Telegram account to `LIFEKIT_TELEGRAM_CHAT` from the host env file, the same
 route as the career weekly alert, because a failure alert needs an outbound
@@ -1017,9 +1016,15 @@ and the status read is an HTTP GET Kit could always make.
   `status` runs `curl -fsS -m 10 http://lifekit-dashboard:8080/api/fleet` and prints the
   body unchanged; a curl failure is its exit code and stderr. The URL is the fleet
   page's own data over the `lifekit-shared` network, so the skill gates on `curl` too.
-- **Rules** (`SKILL.md`): status questions run `relay.sh status` and lead with "Status
-  is stale" (`generated_epoch` more than 5 minutes old) or "Status is invalid for
-  `<home>`" (a `homes[].valid` false); tasks and proposals go to `firstmate` with the
+- **Rules** (`SKILL.md`): status questions run `relay.sh status` and answer in one
+  format: "Your call" (numbered, options when the record names them, no ids), "Your
+  to-dos" (verb first), then a "Later" count line (aged, dated and blocked holds, never
+  listed) and a "Fleet" line (`counts.queued_open`, which leaves out held items); only
+  a view older than 30 minutes, or a home not published, adds "Fleet view is partial",
+  and "+N not shown" appears only when `counts.decisions_open` really exceeds the
+  list. Kit never calls `start_google_auth` (its link redirects to localhost and leaves
+  a pending sign-in); on a Google sign-in failure it says so once and points at
+  `docs/google-mcp-setup.md` steps 6-7. Tasks and proposals go to `firstmate` with the
   `task:`/`proposal:` prefix; an answer is `answer <id>: <his words>` sent only on his
   explicit words, only for an id in `decisions_open` at send time, to that item's
   `home_id`; Kit does not classify decisions or gate anything: under each firstmate
@@ -1034,9 +1039,9 @@ and the status read is an HTTP GET Kit could always make.
   retried, and an exit 3 ("saved, not yet announced") is
   reported as such and re-sent only when he asks.
 - **Digest:** the 09:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
-  runs `relay.sh status` and posts the fleet's open decisions, active / queued / landed
-  today counts and the stale or invalid warning. It is silent only when the ledger and
-  `decisions_open` are empty and the status is fresh and valid. Re-run the script as
+  runs `relay.sh status` and posts the fleet part in that same format. It is silent only
+  when the ledger is empty, the fleet shows no call and no to-do, and the view is not
+  partial. Re-run the script as
   `lifekit` to converge the live row; a cron turn sends no note.
 - **Morning brief:** the 08:30 `today-brief` row is host state made by hand with kit,
   not declared in git. `scripts/ensure-today-brief-fleet.sh` (as `lifekit`) inserts the

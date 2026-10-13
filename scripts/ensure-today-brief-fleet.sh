@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ensure-today-brief-fleet.sh — idempotently add the fleet step to kit's
 # `today-brief` cron row (08:30, Telegram) payload.message: run the
-# secondmate-relay skill's `relay.sh status` and carry the fleet's open
-# decisions, active / queued / landed-today counts and the stale or invalid
-# warning into the brief.
+# secondmate-relay skill's `relay.sh status` and carry the fleet into the brief
+# in the skill's Status format (calls, then to-dos, then a Later and a Fleet
+# line), with the Google sign-in rule.
 #
 # Why a script and not config: the row is host state, created by hand with
 # kit (cron rows live in the gateway's SQLite store, not in git), and its
@@ -11,8 +11,9 @@
 # ensure-finance-pulse.sh owns the pulse checklist. It inserts one step and one
 # sentence at fixed anchors, and refuses (exit 1, row untouched) when an anchor
 # is missing, because a prompt that changed under it needs a human to place the
-# step. A prompt that already carries the step is left alone, so re-running
-# converges.
+# step. A prompt that already carries this version of the step is left alone,
+# so re-running converges; one that carries the exact text of the previous
+# version of the step (OLD_STEP, OLD_FLEET below) is upgraded in place.
 #
 # Run on the VPS host as lifekit, from the repo checkout, after
 # ensure-secondmate-relay.sh has installed the skill:
@@ -72,8 +73,38 @@ wanted="$(printf '%s' "$jobs" | python3 -c '
 import json, sys
 
 MARK = "secondmate-relay/relay.sh status"
+STATUS = "sh /home/node/.openclaw/agents/kit/workspace/skills/secondmate-relay/relay.sh status"
 STEP = (
-    "6. Fleet: run `sh /home/node/.openclaw/agents/kit/workspace/skills/secondmate-relay/relay.sh status` "
+    "6. Fleet: run `" + STATUS + "` (read-only; send no relay note, never ask_user). "
+    "From the JSON keep only the decisions_open items whose hold_bucket is live or absent. "
+    "Calls first: \"Your call (<n>)\", then numbered lines \"<k>. <what is being decided, in plain words>\", "
+    "the options from the reason of the item on the line below (recommended first) only when the reason names "
+    "options, and the board_url when set. Then \"Your to-dos (<n>)\", one line \"· <verb first>\" for each kept "
+    "item that is his own action; when unsure, an item is a call. Never print a home_id or an id. Notes, each "
+    "only when it applies: \"Fleet view is partial: last updated <age> ago.\" when generated_epoch is more than "
+    "30 minutes old or a homes entry has published false (never repeat a reason, never say invalid); "
+    "\"Later: <n> parked · <n> dated · <n> blocked\" counting the queued items whose hold_bucket is aged, dated "
+    "and blocked (leave out zero parts); \"Fleet: <counts.active_children> working · <counts.queued_open> queued "
+    "· <n> landed today\" where <n> counts the landed items whose completion.date is today; \"+<N> not shown\" "
+    "only when counts.decisions_open is larger than the decisions_open list. If the command fails, keep one line "
+    "\"Fleet status unavailable: <stderr line>.\" Never call start_google_auth and never show an auth URL: when "
+    "Google calendar or mail fails with an expired or revoked sign-in, say once \"Google sign-in expired - mail "
+    "and calendar skipped\" and add the to-do \"Redo the Google sign-in on the PC (docs/google-mcp-setup.md, "
+    "steps 6-7)\"."
+)
+BEFORE = "\n\nMessage (Telegram"
+EMPTY = "If calendar, mail, deadlines-within-7-days and non-bot PRs are all empty, reply exactly NO_REPLY."
+FLEET = (
+    "After PRs waiting, add the Fleet section from step 6 when it has anything to say: the Your call and Your "
+    "to-dos lists first, then the notes (this section is outside the 10-line limit). If calendar, mail, "
+    "deadlines-within-7-days and non-bot PRs are all empty and step 6 found no call, no to-do and no partial-view "
+    "note, reply exactly NO_REPLY."
+)
+# The text an earlier version of this script inserted. A row that carries
+# exactly it is upgraded in place; any other prompt with a fleet step is not
+# ours to rewrite.
+OLD_STEP = (
+    "6. Fleet: run `" + STATUS + "` "
     "(read-only; send no relay note, never ask_user). Keep: the line \"Status is stale: generated <age> ago.\" "
     "when generated_epoch is more than 5 minutes old; one line \"Status is invalid for <home id>: <reason>.\" "
     "per homes[] entry whose valid is false; counts.active_children, counts.queued and the number of landed "
@@ -81,9 +112,7 @@ STEP = (
     "(and how many are not shown when counts.decisions_open exceeds the list). If the command fails, keep one "
     "line \"Fleet status unavailable: <stderr line>.\""
 )
-BEFORE = "\n\nMessage (Telegram"
-EMPTY = "If calendar, mail, deadlines-within-7-days and non-bot PRs are all empty, reply exactly NO_REPLY."
-FLEET = (
+OLD_FLEET = (
     "After PRs waiting, add the Fleet section from step 6 when it has anything to say: warnings first, then "
     "\"Fleet: N active, N queued, N landed today\", then the open decisions, one per line (this section is "
     "outside the 10-line limit). If calendar, mail, deadlines-within-7-days and non-bot PRs are all empty and "
@@ -94,9 +123,12 @@ for job in json.load(sys.stdin)["jobs"]:
     if job.get("name") == sys.argv[1]:
         msg = (job.get("payload") or {}).get("message") or ""
         break
-if MARK in msg:
+if STEP in msg and FLEET in msg:
     sys.exit(10)
-if msg.count(BEFORE) != 1 or msg.count(EMPTY) != 1:
+if OLD_STEP in msg and OLD_FLEET in msg:
+    sys.stdout.write(msg.replace(OLD_STEP, STEP, 1).replace(OLD_FLEET, FLEET, 1))
+    sys.exit(0)
+if MARK in msg or msg.count(BEFORE) != 1 or msg.count(EMPTY) != 1:
     sys.exit(11)
 sys.stdout.write(msg.replace(BEFORE, "\n" + STEP + BEFORE, 1).replace(EMPTY, FLEET, 1))
 ' "$JOB_NAME")" || status=$?
