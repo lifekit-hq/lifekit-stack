@@ -2,10 +2,11 @@
 
 `fleet-publisher.sh` reads each fleet home's `state/home-summary.json`
 (schema `fm-secondmate-home-summary.v1`, read as-is) and writes one merged
-`OUT_DIR/home-summary.json` plus `OUT_DIR/reports/`. The homes are `FM_HOMES`, a
-space-separated list of absolute paths (default `FM_HOME` alone); a home's id is
-its directory's basename and must be unique. The dashboard binds to this output,
-not to the source summaries. Operations (install, alerts, metrics) are in
+`OUT_DIR/home-summary.json` plus `OUT_DIR/reports/` and, from the homes' daily
+fleet metrics, `OUT_DIR/metrics/daily.jsonl` (last section). The homes are
+`FM_HOMES`, a space-separated list of absolute paths (default `FM_HOME` alone); a
+home's id is its directory's basename and must be unique. The dashboard binds to
+this output, not to the source summaries. Operations (install, alerts, metrics) are in
 `docs/runbook.md` "Fleet publisher"; behaviour is pinned by
 `scripts/tests/test_fleet_publisher.py`.
 
