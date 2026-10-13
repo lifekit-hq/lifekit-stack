@@ -665,10 +665,19 @@ def test_daily_metrics_skip_invalid_rows_and_count_them(fleet, daily):
 
 
 def test_daily_metrics_keep_only_published_fields(fleet, daily):
-    daily.write(daily_row("2026-10-11", surprise="x", ask_answer_hours_median=0.5))
+    daily.write(
+        daily_row(
+            "2026-10-11",
+            surprise="x",
+            ask_answer_hours_median=0.5,
+            asks_new={"t0": 0, "t1": 1, "t2": 2, "untiered": 3, "note": "x"},
+            by_tier={"sonnet": {"runs": 3, "first_pass": 1, "note": "x"}},
+        )
+    )
     assert fleet.run().returncode == 0
     (row,) = daily.read()
     assert "surprise" not in row
+    assert row["asks_new"] == {"t0": 0, "t1": 1, "t2": 2, "untiered": 3}
     assert row["ask_answer_hours_median"] == 0.5
     assert row["by_tier"] == {"sonnet": {"runs": 3, "first_pass": 1}}
 

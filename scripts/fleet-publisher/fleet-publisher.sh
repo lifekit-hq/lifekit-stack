@@ -124,7 +124,7 @@ daily_rows() {
     | {schema, date, home, computed_at, partial, backfilled, runs, first_pass_runs, fix_rounds,
        merged_prs, weighted_tokens, stall_task_hours,
        asks_new: (.asks_new | {t0, t1, t2, untiered}), asks_avoidable,
-       ask_answer_hours_median, allowance_week_pct, five_hour_peak_pct, by_tier, peak_workers,
+       ask_answer_hours_median, allowance_week_pct, five_hour_peak_pct, by_tier: (.by_tier | map_values({runs, first_pass})), peak_workers,
        mem_available_min, swap_used_max, psi_some_max}'
 }
 
