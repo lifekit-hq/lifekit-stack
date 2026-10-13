@@ -153,7 +153,7 @@ message per decision id (replaced in place, cleared when answered): see
 ## Not a notification: in-app decisions
 
 This page governs messages pushed to the owner's Telegram. Kit's decision prompts
-(`ask_user` cards) and its daily needs-you digest are conversation instead: they are
+(`ask_user` cards) and its twice-daily needs-you digest (open decisions, fleet and mail) are conversation instead: they are
 committed into kit's own Control UI chat, and the app renders them. They never pass through
 the relay, and the envelope does not apply to them. The digest's failure alert is the
 OpenClaw cron alert, sent through kit's Telegram bot like the career weekly alert

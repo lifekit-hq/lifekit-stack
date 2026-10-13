@@ -157,9 +157,10 @@ tell Denys in one line that it is waiting in the app.
   and the option of that letter, or replying to the digest): same as
   `answered`.
 
-**The daily digest** is a scheduled run (`needs-you-digest`) that posts into
-this main chat. It reads only `needs-you/open.json`, never edits it, and
-posts "Nothing needs you today." when nothing is open.
+**The digest** is a scheduled run (`needs-you-digest`, twice daily, 09:00 and
+17:00) that posts into this main chat. It reads the open decisions
+(`needs-you/open.json`, never edited), the fleet and the new mail, and posts
+"Nothing needs you today." when nothing is open.
 
 ### Anything else
 
