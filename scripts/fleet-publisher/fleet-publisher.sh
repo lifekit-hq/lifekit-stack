@@ -35,6 +35,11 @@
 # With one home every other field is its summary
 # unchanged; with more, generated_epoch, valid, reason and counts are
 # aggregated and the rest are the first home's.
+# Also writes OUT_DIR/metrics/daily.jsonl: each home's
+# data/fleet-metrics/daily.jsonl rows (schema fleet-metrics-daily.v1), validated
+# and merged by (date, home) with the last row winning, so a rerun replaces a
+# day and never duplicates it. Invalid rows are skipped and counted on stderr;
+# a missing source leaves the output as it was.
 # The dashboard never reads Lavish or fleet-home state. Writes TEXTFILE_DIR/fleet.prom:
 #   fleet_workers{state}                          active children by state, all homes
 #   fleet_decisions_open                          open captain decisions, all homes
@@ -60,6 +65,8 @@ LAVISH_STATE="${LAVISH_STATE:-$HOME/.lavish-axi/state.json}"
 NOW="${FLEET_NOW:-$(date +%s)}"
 CREDENTIAL_RE='sk-ant-|gh[pousr]_[A-Za-z0-9]{20}|github_pat_|xox[abprs]-|tskey-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|bot[0-9]{6,}:[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ'
 SLUG_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+DAILY_SCHEMA='fleet-metrics-daily.v1'
+DAILY_MAX_BYTES=4194304
 
 read -r -a homes <<< "${FM_HOMES:-${FM_HOME:-}}"
 if ((${#homes[@]} == 0)); then
@@ -89,10 +96,40 @@ work="$(mktemp -d)"
 reports_tmp="$(mktemp -d "$OUT_DIR/.reports.XXXXXX")"
 trap 'rm -rf "$summary_tmp" "$prom_tmp" "$work" "$reports_tmp"' EXIT
 { [[ -r "$LAVISH_STATE" ]] && jq -c 'objects' "$LAVISH_STATE" 2> /dev/null; } > "$work/lavish.json" || true
-for f in homes.jsonl published.jsonl metrics.jsonl reports.tsv; do : > "$work/$f"; done
+for f in homes.jsonl published.jsonl metrics.jsonl reports.tsv daily-source.jsonl; do : > "$work/$f"; done
 
 # Everything below is read-only access to the fleet homes. A source that is
 # missing or fails only drops the field it feeds; it never fails the publish.
+# daily_rows <home id or "">: stdin is JSONL; prints each valid
+# fleet-metrics-daily.v1 row projected to the published fields. With a home id
+# the row's home must match it; "" accepts any well-formed home id. Counts are
+# non-negative integers; the nullable gauges may be null or absent.
+daily_rows() {
+  jq -cR --arg schema "$DAILY_SCHEMA" --arg slug "$SLUG_RE" --arg hid "$1" '
+    def count: type == "number" and . >= 0 and . == floor;
+    def amount: type == "number" and . >= 0;
+    def nullable: . == null or amount;
+    fromjson? | objects
+    | select(.schema == $schema
+        and (.date | type == "string" and test("^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"))
+        and (.home | type == "string" and test($slug) and ($hid == "" or . == $hid))
+        and (.computed_at | type == "string")
+        and (.partial | type == "boolean") and (.backfilled | type == "boolean")
+        and all(.runs, .first_pass_runs, .fix_rounds, .merged_prs, .weighted_tokens, .peak_workers,
+                .asks_avoidable; count)
+        and (.stall_task_hours | amount)
+        and (.asks_new | type == "object" and all(.t0, .t1, .t2, .untiered; count))
+        and all(.ask_answer_hours_median, .allowance_week_pct, .five_hour_peak_pct, .mem_available_min,
+                .swap_used_max, .psi_some_max; nullable)
+        and (.by_tier | type == "object"
+             and all(.[]; type == "object" and (.runs | count) and (.first_pass | count))))
+    | {schema, date, home, computed_at, partial, backfilled, runs, first_pass_runs, fix_rounds,
+       merged_prs, weighted_tokens, stall_task_hours,
+       asks_new: (.asks_new | {t0, t1, t2, untiered}), asks_avoidable,
+       ask_answer_hours_median, allowance_week_pct, five_hour_peak_pct, by_tier: (.by_tier | map_values({runs, first_pass})), peak_workers,
+       mem_available_min, swap_used_max, psi_some_max}'
+}
+
 tsv_to_object() { jq -Rn '[inputs | split("\t") | select(length == 2) | {(.[0]): .[1]}] | add // {}'; }
 
 # The counts a home publishes, as a jq function over its whole summary:
@@ -123,7 +160,7 @@ JQ
 # and copies its reports into $reports_tmp.
 publish_home() {
   local home="$1" id="$2" summary_file="$3" ledger_file="$4" data_dir="$5" hold="$6" report_root="$7"
-  local hw="$work/home-$id" seg origin out data_real src path rid
+  local hw="$work/home-$id" seg origin out data_real src path rid seen kept
   mkdir "$hw"
   # Secondmate ids whose home is another published home: their decisions are
   # that home's own, folded into this one by the parent.
@@ -201,6 +238,24 @@ publish_home() {
   done < <(jq -r '(.landed // [])[] | select((.report_path | type) == "string") | [.id, .report_path] | @tsv' "$summary_file")
   cat "$hw/reports.tsv" >> "$work/reports.tsv"
   tsv_to_object < "$hw/reports.tsv" > "$hw/reports.json"
+
+  # Daily fleet metrics: the home's data/fleet-metrics/daily.jsonl, read under
+  # the same guards as reports. Bad rows and an unusable file are skipped
+  # here, never fatal.
+  src="$(realpath -e "$data_dir/fleet-metrics/daily.jsonl" 2> /dev/null || true)"
+  if [[ -n "$data_real" && "$src" == "$data_real"/* && -f "$src" && -s "$src" ]]; then
+    if [[ $(stat -c %s "$src") -gt $DAILY_MAX_BYTES ]]; then
+      echo "fleet-publisher: $id: fleet-metrics/daily.jsonl is over $DAILY_MAX_BYTES bytes; not read" >&2
+    elif grep -Eq "$CREDENTIAL_RE" "$src"; then
+      echo "fleet-publisher: $id: fleet-metrics/daily.jsonl looks like it holds a credential; not read" >&2
+    else
+      daily_rows "$id" < "$src" > "$hw/daily.jsonl" || : > "$hw/daily.jsonl"
+      seen="$(grep -c '[^[:space:]]' "$src" || true)"
+      kept="$(wc -l < "$hw/daily.jsonl")"
+      ((seen == kept)) || echo "fleet-publisher: $id: skipped $((seen - kept)) invalid fleet-metrics/daily.jsonl row(s)" >&2
+      cat "$hw/daily.jsonl" >> "$work/daily-source.jsonl"
+    fi
+  fi
 
   jq -c --slurpfile lavs "$work/lavish.json" --arg data "$data_dir" --arg hid "$id" \
     --slurpfile folded "$hw/folded.json" --slurpfile bound "$hw/bound.json" --slurpfile origins "$hw/origins.json" \
@@ -360,4 +415,34 @@ else
 fi
 mv -f "$summary_tmp" "$OUT_DIR/home-summary.json"
 mv -f "$prom_tmp" "$TEXTFILE_DIR/fleet.prom"
+
+# Daily metrics: the rows already published plus this run's, one per (date,
+# home), the later row winning, sorted by date. Nothing read this run leaves the
+# file untouched. A failure here is logged, never fatal to the summary.
+publish_daily_metrics() {
+  local dir="$OUT_DIR/metrics" tmp
+  [[ -s "$work/daily-source.jsonl" ]] || return 0
+  install -d -m 755 "$dir" || return 1
+  tmp="$(mktemp "$dir/.daily.XXXXXX")" || return 1
+  {
+    if [[ -r "$dir/daily.jsonl" ]]; then daily_rows "" < "$dir/daily.jsonl" || true; fi
+    cat "$work/daily-source.jsonl"
+  } | jq -sc 'reduce .[] as $r ({}; .["\($r.date)|\($r.home)"] = $r) | [.[]] | sort_by([.date, .home])[]' > "$tmp" \
+    || { rm -f "$tmp"; return 1; }
+  if grep -Eq "$CREDENTIAL_RE" "$tmp"; then
+    rm -f "$tmp"
+    echo "fleet-publisher: the daily metrics look like they hold a credential; not publishing" >&2
+    return 1
+  fi
+  if cmp -s "$tmp" "$dir/daily.jsonl"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$dir/daily.jsonl" || { rm -f "$tmp"; return 1; }
+}
+if ! publish_daily_metrics; then
+  echo "fleet-publisher: daily metrics were not published" >&2
+  ((rc != 0)) || rc=1
+fi
 exit "$rc"

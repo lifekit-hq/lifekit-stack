@@ -553,6 +553,202 @@ def test_ordinary_token_talk_is_not_a_credential(fleet):
     assert fleet.run().returncode == 0
 
 
+def daily_row(date, home=None, **over):
+    row = {
+        "schema": "fleet-metrics-daily.v1",
+        "date": date,
+        "home": home,
+        "computed_at": f"{date}T23:59:00Z",
+        "partial": False,
+        "backfilled": False,
+        "runs": 10,
+        "first_pass_runs": 4,
+        "fix_rounds": 7,
+        "merged_prs": 3,
+        "weighted_tokens": 1000,
+        "stall_task_hours": 1.5,
+        "asks_new": {"t0": 0, "t1": 1, "t2": 2, "untiered": 3},
+        "asks_avoidable": 1,
+        "ask_answer_hours_median": None,
+        "allowance_week_pct": 19,
+        "five_hour_peak_pct": 8,
+        "by_tier": {"sonnet": {"runs": 3, "first_pass": 1}},
+        "peak_workers": 6,
+        "mem_available_min": 6278980,
+        "swap_used_max": 0,
+        "psi_some_max": 0.18,
+    }
+    return {**row, **over}
+
+
+@pytest.fixture
+def daily(fleet):
+    home = fleet.tmp.name
+    src = fleet.tmp / "data" / "fleet-metrics"
+    out = fleet.out / "metrics" / "daily.jsonl"
+
+    def write(*rows):
+        src.mkdir(exist_ok=True)
+        (src / "daily.jsonl").write_text(
+            "".join(
+                r
+                if isinstance(r, str)
+                else json.dumps({**r, "home": r["home"] or home}) + "\n"
+                for r in rows
+            )
+        )
+
+    def read():
+        return [json.loads(x) for x in out.read_text().splitlines()]
+
+    fleet.write(summary())
+    return type(
+        "Daily",
+        (),
+        {
+            "write": staticmethod(write),
+            "read": staticmethod(read),
+            "out": out,
+            "home": home,
+        },
+    )
+
+
+def test_daily_metrics_are_copied_sorted_by_date(fleet, daily):
+    daily.write(daily_row("2026-10-12"), daily_row("2026-10-11"))
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    assert [r["date"] for r in daily.read()] == ["2026-10-11", "2026-10-12"]
+    assert {r["home"] for r in daily.read()} == {daily.home}
+    assert daily.out.stat().st_mode & 0o777 == 0o644
+
+
+def test_daily_metrics_rerun_replaces_the_day_never_duplicates(fleet, daily):
+    daily.write(daily_row("2026-10-13", partial=True, runs=2))
+    assert fleet.run().returncode == 0
+    assert [(r["runs"], r["partial"]) for r in daily.read()] == [(2, True)]
+    # The capture appends: the later row for the date wins, in file order.
+    daily.write(
+        daily_row("2026-10-13", partial=True, runs=2),
+        daily_row("2026-10-13", runs=9),
+    )
+    assert fleet.run().returncode == 0
+    assert fleet.run().returncode == 0
+    assert [(r["runs"], r["partial"]) for r in daily.read()] == [(9, False)]
+
+
+def test_daily_metrics_history_outlives_the_source(fleet, daily):
+    daily.write(daily_row("2026-10-11"))
+    assert fleet.run().returncode == 0
+    daily.write(daily_row("2026-10-12"))
+    assert fleet.run().returncode == 0
+    assert [r["date"] for r in daily.read()] == ["2026-10-11", "2026-10-12"]
+
+
+def test_daily_metrics_skip_invalid_rows_and_count_them(fleet, daily):
+    daily.write(
+        daily_row("2026-10-10"),
+        daily_row("2026-10-11", schema="fleet-metrics-daily.v2"),
+        daily_row("2026-10-12", runs="ten"),
+        {**daily_row("2026-10-13"), "date": "13/10/2026"},
+        daily_row("2026-10-14", fix_rounds=-1),
+        daily_row("2026-10-15", asks_new={"t0": 1}),
+        daily_row("2026-10-16", home="someone-else"),
+        "not json at all\n",
+        daily_row("2026-10-17"),
+    )
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    assert [r["date"] for r in daily.read()] == ["2026-10-10", "2026-10-17"]
+    assert "skipped 7 invalid" in result.stderr
+    assert fleet.published()["valid"] is True
+
+
+def test_daily_metrics_keep_only_published_fields(fleet, daily):
+    daily.write(
+        daily_row(
+            "2026-10-11",
+            surprise="x",
+            ask_answer_hours_median=0.5,
+            asks_new={"t0": 0, "t1": 1, "t2": 2, "untiered": 3, "note": "x"},
+            by_tier={"sonnet": {"runs": 3, "first_pass": 1, "note": "x"}},
+        )
+    )
+    assert fleet.run().returncode == 0
+    (row,) = daily.read()
+    assert "surprise" not in row
+    assert row["asks_new"] == {"t0": 0, "t1": 1, "t2": 2, "untiered": 3}
+    assert row["ask_answer_hours_median"] == 0.5
+    assert row["by_tier"] == {"sonnet": {"runs": 3, "first_pass": 1}}
+
+
+def test_missing_daily_source_leaves_output_and_summary_alone(fleet, daily):
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    assert not daily.out.exists()
+    assert fleet.published()["published_epoch"] == NOW
+    daily.write(daily_row("2026-10-11"))
+    assert fleet.run().returncode == 0
+    before = daily.out.read_bytes()
+    (fleet.tmp / "data" / "fleet-metrics" / "daily.jsonl").unlink()
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    assert daily.out.read_bytes() == before
+    assert fleet.published()["valid"] is True
+
+
+def test_unreadable_daily_source_does_not_break_the_summary(fleet, daily):
+    daily.write(daily_row("2026-10-11"))
+    assert fleet.run().returncode == 0
+    before = daily.out.read_bytes()
+    daily.write("garbage\n", '{"schema": "fleet-metrics-daily.v1"}\n')
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    assert daily.out.read_bytes() == before
+    assert "skipped 2 invalid" in result.stderr
+
+
+def test_daily_source_outside_the_home_data_is_not_read(fleet, daily, tmp_path_factory):
+    elsewhere = tmp_path_factory.mktemp("elsewhere") / "daily.jsonl"
+    elsewhere.write_text(json.dumps(daily_row("2026-10-11", home=daily.home)) + "\n")
+    src = fleet.tmp / "data" / "fleet-metrics"
+    src.mkdir()
+    (src / "daily.jsonl").symlink_to(elsewhere)
+    assert fleet.run().returncode == 0
+    assert not daily.out.exists()
+
+
+def test_daily_source_with_a_credential_is_not_read(fleet, daily):
+    daily.write(daily_row("2026-10-11", note="sk-ant-api03-abcdef"))
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    assert not daily.out.exists()
+    assert "credential" in result.stderr
+
+
+def test_daily_write_is_atomic_and_leaves_no_temp_files(fleet, daily):
+    daily.write(daily_row("2026-10-11"))
+    assert fleet.run().returncode == 0
+    inode = daily.out.stat().st_ino
+    assert fleet.run().returncode == 0
+    assert daily.out.stat().st_ino == inode  # unchanged content is not rewritten
+    daily.write(daily_row("2026-10-11"), daily_row("2026-10-12"))
+    assert fleet.run().returncode == 0
+    assert daily.out.stat().st_ino != inode  # replaced by rename, never edited in place
+    assert [p.name for p in daily.out.parent.iterdir()] == ["daily.jsonl"]
+
+
+def test_a_failed_daily_write_is_logged_and_never_blocks_the_summary(fleet, daily):
+    # metrics/ cannot be created: something else holds its name.
+    (fleet.out / "metrics").write_text("in the way")
+    daily.write(daily_row("2026-10-11"))
+    result = fleet.run()
+    assert result.returncode != 0
+    assert "daily metrics were not published" in result.stderr
+    assert fleet.published()["published_epoch"] == NOW
+    assert fleet.metrics()["fleet_decisions_open"] == 0
+
+
 def test_needs_a_fleet_home(fleet):
     result = subprocess.run(
         ["bash", str(SCRIPT), str(fleet.out), str(fleet.prom)],
