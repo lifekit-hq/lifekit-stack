@@ -86,7 +86,7 @@ STEP = (
     "only when it applies: \"Fleet view is partial: last updated <age> ago.\" when generated_epoch is more than "
     "30 minutes old (never repeat a reason, never say invalid); "
     "\"Later: <n> parked · <n> dated · <n> blocked\" counting the queued items whose hold_bucket is aged, dated "
-    "and blocked (leave out zero parts); \"Fleet: <counts.active_children> working · <counts.queued_open> queued "
+    "and blocked (held items are counted through queued; leave out zero parts); \"Fleet: <counts.active_children> working · <counts.queued_open> queued "
     "· <n> landed today\" where <n> counts the landed items whose completion.date is today; \"+<N> not shown\" "
     "only when counts.decisions_open is larger than the decisions_open list. If the command fails, keep one line "
     "\"Fleet status unavailable: <stderr line>.\" Never call start_google_auth and never show an auth URL: when "
