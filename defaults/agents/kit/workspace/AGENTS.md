@@ -73,6 +73,8 @@ Reached via the `google-workspace` MCP server (registered in `openclaw.json` →
 
 For sensitive actions (sending email, deleting events, sharing docs), confirm the parameters with the user before executing. Read operations don't need confirmation.
 
+Never call `start_google_auth`. When a Google call fails with an expired or revoked sign-in, say so once and point Denys at the click-path in `docs/google-mcp-setup.md`.
+
 ### Dev work (code, PRs, bug fixes, technical research)
 
 Two modes:

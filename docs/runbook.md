@@ -1052,13 +1052,15 @@ and the status read is an HTTP GET Kit could always make.
   fleet part reads "No fleet calls today." there, so it never contradicts the brief's
   calendar, mail or PR sections.
 - **Kit's `AGENTS.md`** is live host state (`/srv/openclaw/config/agents/kit/workspace/`),
-  merged by hand like the "Needs you" section. Four lines move with this: the
+  merged by hand like the "Needs you" section. Five lines move with this: the
   host-work line says host work goes to firstmate through the captain inbox, "the main
   home (`firstmate`)"; the Tools table's dashboard row reads `lifekit-dashboard:8080`
   (not the old loopback port `127.0.0.1:18790`); the plain-chat answer line also takes
   `<n> <letter>` for entry `<n>` of the numbered list Kit last sent; and the daily
   digest line says it posts "Nothing needs you today." when nothing is open, not
-  `NO_REPLY`.
+  `NO_REPLY`; and the Google Workspace section's line that Kit never calls
+  `start_google_auth` and, on a sign-in failure, says so once and points at
+  `docs/google-mcp-setup.md`.
 - **Deploy:** `sudo -u lifekit /srv/lifekit-stack/scripts/ensure-secondmate-relay.sh`
   (copies `SKILL.md` and `relay.sh`; no gateway restart). Verify from inside the gateway:
   `docker exec "$G" sh "$S" status | head -c 200`, and one `note <file> firstmate`

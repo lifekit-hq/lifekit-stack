@@ -868,6 +868,32 @@ def test_queued_open_counts_only_items_nobody_holds(homes):
     assert len(got["queued"]) == 33  # the list itself is not filtered
 
 
+def test_queued_open_plus_the_later_buckets_accounts_for_every_queued_item(fleet):
+    queued = (
+        [{"id": f"q{n}", "hold_kind": None, "hold_bucket": None} for n in range(2)]
+        + [held("aged1", "aged"), held("dat1", "dated"), held("blk1", "blocked")]
+        + [held(f"ext{n}", None, "external") for n in range(2)]
+    )
+    fleet.write(summary(queued=queued, counts={"queued": 7, "decisions_open": 0}))
+    assert fleet.run().returncode == 0
+    got = fleet.published()
+    counts = got["counts"]
+    assert counts["queued_open"] == 2
+
+    def bucket(item):
+        if item["hold_bucket"] in ("dated", "blocked"):
+            return item["hold_bucket"]
+        if item["hold_bucket"] == "aged" or item["hold_kind"]:
+            return "parked"
+        return "open"
+
+    tally = {}
+    for item in got["queued"]:
+        tally[bucket(item)] = tally.get(bucket(item), 0) + 1
+    assert tally == {"open": 2, "parked": 3, "dated": 1, "blocked": 1}
+    assert sum(tally.values()) == counts["queued"]
+
+
 def test_queued_open_counts_the_listed_items_when_the_list_is_capped(fleet):
     # 25 queued, 20 listed (the held live ones sort last and are cut): the
     # listed unheld items are the count, not counts.queued minus listed holds.
