@@ -4,7 +4,7 @@
 # kit's ledger (needs-you/open.json, defined in kit's AGENTS.md, "Needs you")
 # and the fleet's open decisions and counts (secondmate-relay's `relay.sh
 # status`, the same /api/fleet the dashboard's fleet page reads) into kit's
-# main Control UI / WebChat chat, and stays silent when none are open.
+# main Control UI / WebChat chat; when none are open it posts "Nothing needs you today.".
 #
 # Why a script and not config: cron jobs live in the gateway's SQLite state,
 # not in openclaw.json — same split as the other ensure-*.sh scripts. This
@@ -21,11 +21,12 @@
 # reject announce delivery. Do not set --channel webchat; announce with the
 # default channel ("last") is what resolves to the conversation commit.
 #
-# Silence: the prompt replies NO_REPLY when nothing is open in the ledger or in
-# the fleet's decisions_open and the fleet status is fresh and valid. That is
-# the runner's intentional-silence token, so a quiet day posts nothing. The
-# fleet read is read-only: the turn sends no relay note (the skill's own rule:
-# a send answers an explicit request from the owner, never a cron).
+# Never silent: the prompt always posts, opening with the date line and the
+# needs-you part in the format of skills/secondmate-relay's Status rules
+# (condensed); when nothing is open that part is the single line "Nothing needs
+# you today.". The fleet read is read-only: the turn sends no relay note (the
+# skill's own rule: a send answers an explicit request from the owner, never a
+# cron).
 #
 # Failure: a run that cannot read the ledger or the fleet status says so in
 # the chat. A run that fails outright (model, provider, timeout, a failed
@@ -76,7 +77,7 @@ if [ -z "$ALERT_CHAT" ]; then
   exit 1
 fi
 
-MESSAGE="Daily needs-you digest. Two reads and nothing else; do not edit anything, do not call ask_user, sessions_send or message, and send no relay note. (1) Read needs-you/open.json in your workspace. (2) Run 'sh /home/node/.openclaw/agents/kit/workspace/skills/secondmate-relay/relay.sh status' and read the fleet JSON it prints. If the ledger is missing or holds an empty array, and the fleet's decisions_open is empty, and the status is neither stale (generated_epoch more than 5 minutes old) nor invalid (any homes[].valid false), reply exactly NO_REPLY. Otherwise reply with one short message, ledger part first when it has entries: a first line '<N> decision(s) waiting on you', then one line per entry, oldest first: '<id> — <ask> (options: <options joined by ' / '>; since <opened>, from <origin>)', plus ' — <context>' when the entry has one, then one line: 'Answer here: reply <id>: <choice>, or ask me to put one up as a card.' Fleet part: first, when it applies, the line 'Status is stale: generated <age> ago.' and one line 'Status is invalid for <home id>: <reason>.' per home whose valid is false; then 'Fleet: <counts.active_children> active, <counts.queued> queued, <n> landed today' where <n> counts the landed items whose completion.date is today; then one line per decisions_open item: '<home_id> / <id> — <summary>', and one line saying how many are not shown when counts.decisions_open is larger than the list. No preamble, no closing summary. If the ledger file exists but cannot be read or is not a JSON array, add one line starting 'needs-you digest failed:' and the reason. If the status command fails, add one line starting 'fleet status unavailable:' and the stderr line, and still post the ledger part. Either failure line makes the reply non-silent, so the owner sees it in this chat."
+MESSAGE="Daily needs-you digest. Two reads and nothing else; do not edit anything, do not call ask_user, sessions_send or message, and send no relay note. (1) Read needs-you/open.json in your workspace. (2) Run 'sh /home/node/.openclaw/agents/kit/workspace/skills/secondmate-relay/relay.sh status' and read the fleet JSON it prints. Reply with one short message, always: the first line is the date, e.g. 'Tue 13 Oct'. Then a line 'Your call (<n>)' with numbered lines '<k>. <what is being decided, in plain words>': the ledger entries first, oldest first (its ask, plus its context when it has one), then the fleet's decisions_open items whose hold_bucket is live or absent. Below an entry or item that names options, a line '<options, lettered A, B, C in the order shown, recommended first>', then the line '↳ reply \"<k> A\"' with its own number and its first letter, and the board_url when set. Then a line 'Your to-dos (<n>)' and one line '· <verb first>' for each kept fleet item that is his own action; when unsure, an item is a call. Never print a home_id or an id. Then, each only when it applies: 'Fleet view is partial: last updated <age> ago.' when generated_epoch is more than 30 minutes old (never repeat a reason, never say invalid); 'Later: <n> parked · <n> dated · <n> blocked' counting the queued items: parked is hold_bucket aged plus any item with a hold_kind and no hold_bucket, dated is hold_bucket dated, blocked is hold_bucket blocked (held items are counted through queued), leaving out zero parts; 'Fleet: <counts.active_children> working · <counts.queued_open> queued · <n> landed today' where <n> counts the landed items whose completion.date is today; and '+<N> not shown' only when counts.decisions_open is larger than the decisions_open list. When only one of the two lists is empty, leave that list out. When both reads succeeded (the ledger is readable or missing, the status command ran) and there is no call and no to-do, the needs-you part is the single line 'Nothing needs you today.' and is never left out. No preamble, no closing summary. If the ledger file exists but cannot be read or is not a JSON array, add one line starting 'needs-you digest failed:' and the reason, and never the empty line. If the status command fails, add one line starting 'fleet status unavailable:' and the stderr line, never the empty line, and still post the ledger part."
 
 # The gateway image has no jq, and once logging.consoleStyle=json is live the
 # CLI may interleave JSON log lines with its JSON result. So: scan the output
@@ -121,7 +122,7 @@ if [ -z "$job_id" ]; then
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
     --display-name "Needs-you digest" \
-    --description "Daily digest of the decisions still open in kit's needs-you ledger and the fleet's open decisions, posted into kit's main Control UI chat; silent when none are. Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)." \
+    --description "Daily digest of the decisions still open in kit's needs-you ledger and the fleet's open decisions, posted into kit's main Control UI chat; says \"Nothing needs you today.\" when none are. Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)." \
     --cron "$CRON_EXPR" --tz "$CRON_TZ" \
     --agent "$AGENT" --session current --session-key "$SESSION_KEY" \
     --message "$MESSAGE" \
@@ -146,4 +147,4 @@ docker exec "$GATEWAY" openclaw cron edit "$job_id" \
   >/dev/null
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT -> $SESSION_KEY (announce), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id   # delivery preview: announce -> current session"
-echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # NO_REPLY only while the ledger and the fleet's decisions_open are empty"
+echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # posts \"Nothing needs you today.\" while the ledger and the fleet's decisions_open are empty"

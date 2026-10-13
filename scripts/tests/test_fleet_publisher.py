@@ -699,7 +699,12 @@ def test_every_home_is_published_with_each_item_tagged_by_its_home(homes):
     assert got["generated_epoch"] == NOW - 90
     assert got["valid"] is False
     assert got["reason"] == "firstmate: item x is stale"
-    assert got["counts"] == {"active_children": 3, "holds": 4, "queued": 1}
+    assert got["counts"] == {
+        "active_children": 3,
+        "holds": 4,
+        "queued": 1,
+        "queued_open": 1,
+    }
     assert got["state"] == "ok"
     assert got["published_epoch"] == NOW
     assert [
@@ -754,6 +759,170 @@ def test_a_child_homes_decisions_folded_into_its_parent_count_once(homes):
     # Order of FM_HOMES does not matter: the parent first still drops them.
     assert homes.run(main, vps).returncode == 0
     assert homes.metrics()["fleet_decisions_open"] == 3
+
+
+def test_a_parents_counts_drop_the_folded_child_items_it_no_longer_lists(homes):
+    # The live case: 26 counted, 13 listed. The parent folds the child's 13
+    # waits into its own list and its own count; the publisher drops the
+    # copies from the list, so the count has to drop them too.
+    vps = make_home(
+        homes.tmp,
+        "fm-vps",
+        summary(
+            decisions_open=[decision(f"v{n}") for n in range(7)],
+            counts={"decisions_open": 7},
+        ),
+    )
+    main = make_home(
+        homes.tmp,
+        "firstmate",
+        summary(
+            decisions_open=[decision("kid", f"k{n}") for n in range(13)]
+            + [decision(f"m{n}") for n in range(6)],
+            counts={"decisions_open": 19},
+        ),
+    )
+    (main / "data/secondmates.md").write_text(
+        f"- kid - Second mate on this host. (home: {vps}; scope: all)\n"
+    )
+    result = homes.run(vps, main)
+    assert result.returncode == 0, result.stderr
+    got = homes.published()
+    assert len(got["decisions_open"]) == 13
+    assert got["counts"]["decisions_open"] == 13
+    assert [(h["id"], h["counts"]["decisions_open"]) for h in got["homes"]] == [
+        ("fm-vps", 7),
+        ("firstmate", 6),
+    ]
+    assert homes.metrics()["fleet_decisions_open"] == 13
+    # Parent first changes nothing.
+    assert homes.run(main, vps).returncode == 0
+    assert homes.published()["counts"]["decisions_open"] == 13
+
+
+def test_counts_that_cannot_go_below_zero_or_name_unlisted_items_stay_put(homes):
+    vps = make_home(homes.tmp, "fm-vps", summary(counts={"decisions_open": 0}))
+    main = make_home(
+        homes.tmp,
+        "firstmate",
+        # counts beyond the capped list (30 counted, 2 listed): only the listed
+        # folded item is subtracted. A count already below the listed folded
+        # items bottoms out at 0 rather than going negative.
+        summary(
+            decisions_open=[decision("kid"), decision("kid", "k2"), decision("own")],
+            counts={"decisions_open": 1},
+        ),
+    )
+    (main / "data/secondmates.md").write_text(
+        f"- kid - Mate. (home: {vps}; scope: x)\n"
+    )
+    assert homes.run(vps, main).returncode == 0
+    assert homes.published()["counts"]["decisions_open"] == 0
+    summ = json.loads((main / "state/home-summary.json").read_text())
+    summ["counts"] = {"decisions_open": 30}
+    (main / "state/home-summary.json").write_text(json.dumps(summ))
+    assert homes.run(vps, main).returncode == 0
+    assert homes.published()["counts"]["decisions_open"] == 28
+
+
+def held(id_, bucket=None, kind="captain"):
+    return {"id": id_, "hold_kind": kind, "hold_bucket": bucket}
+
+
+def test_queued_open_counts_only_items_nobody_holds(homes):
+    # The live case: 33 queued, 13 of them really queued, the other 20 held.
+    vps = make_home(
+        homes.tmp,
+        "fm-vps",
+        summary(
+            queued=[
+                {"id": f"q{n}", "hold_kind": None, "hold_bucket": None}
+                for n in range(6)
+            ]
+            + [held(f"live{n}", "live") for n in range(7)]
+            + [held("blk1", "blocked"), held("blk2", "blocked")]
+            + [held("dat1", "dated"), held("dat2", "dated")]
+            + [held(f"ext{n}", None, "external") for n in range(3)],
+            counts={"queued": 20},
+        ),
+    )
+    main = make_home(
+        homes.tmp,
+        "firstmate",
+        summary(
+            # items of an older summary carry no hold fields: not held
+            queued=[{"id": f"n{n}"} for n in range(7)]
+            + [held(f"mlive{n}", "live") for n in range(5)]
+            + [held("mdat", "dated")],
+            counts={"queued": 13},
+        ),
+    )
+    assert homes.run(vps, main).returncode == 0
+    got = homes.published()
+    assert got["counts"]["queued"] == 33
+    assert got["counts"]["queued_open"] == 13
+    assert [(h["id"], h["counts"]["queued_open"]) for h in got["homes"]] == [
+        ("fm-vps", 6),
+        ("firstmate", 7),
+    ]
+    assert len(got["queued"]) == 33  # the list itself is not filtered
+
+
+def test_queued_open_plus_the_later_buckets_accounts_for_every_queued_item(fleet):
+    queued = (
+        [{"id": f"q{n}", "hold_kind": None, "hold_bucket": None} for n in range(2)]
+        + [held("aged1", "aged"), held("dat1", "dated"), held("blk1", "blocked")]
+        + [held(f"ext{n}", None, "external") for n in range(2)]
+    )
+    fleet.write(summary(queued=queued, counts={"queued": 7, "decisions_open": 0}))
+    assert fleet.run().returncode == 0
+    got = fleet.published()
+    counts = got["counts"]
+    assert counts["queued_open"] == 2
+
+    def bucket(item):
+        if item["hold_bucket"] in ("dated", "blocked"):
+            return item["hold_bucket"]
+        if item["hold_bucket"] == "aged" or item["hold_kind"]:
+            return "parked"
+        return "open"
+
+    tally = {}
+    for item in got["queued"]:
+        tally[bucket(item)] = tally.get(bucket(item), 0) + 1
+    assert tally == {"open": 2, "parked": 3, "dated": 1, "blocked": 1}
+    assert sum(tally.values()) == counts["queued"]
+
+
+def test_queued_open_counts_the_listed_items_when_the_list_is_capped(fleet):
+    # 25 queued, 20 listed (the held live ones sort last and are cut): the
+    # listed unheld items are the count, not counts.queued minus listed holds.
+    listed = [{"id": f"q{n}"} for n in range(3)] + [
+        held(f"h{n}", "live") for n in range(17)
+    ]
+    fleet.write(summary(queued=listed, counts={"queued": 25, "decisions_open": 0}))
+    assert fleet.run().returncode == 0
+    counts = fleet.published()["counts"]
+    assert counts["queued"] == 25
+    assert counts["queued_open"] == 3
+
+
+def test_a_non_object_queued_entry_does_not_abort_the_publish(fleet):
+    listed = [{"id": "q1"}, "stray", None, held("h1", "live")]
+    fleet.write(summary(queued=listed, counts={"queued": 4, "decisions_open": 0}))
+    assert fleet.run().returncode == 0
+    counts = fleet.published()["counts"]
+    assert counts["queued"] == 4
+    assert counts["queued_open"] == 1
+
+
+def test_a_summary_without_counts_or_queued_gets_no_new_counts(fleet):
+    fleet.write(summary(queued=[{"id": "q"}]))
+    assert fleet.run().returncode == 0
+    assert "counts" not in fleet.published()
+    fleet.write(summary(counts={"decisions_open": 2}))
+    assert fleet.run().returncode == 0
+    assert fleet.published()["counts"] == {"decisions_open": 2}
 
 
 def test_a_parents_items_for_an_unpublished_child_are_kept(homes):

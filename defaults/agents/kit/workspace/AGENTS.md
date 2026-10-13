@@ -73,6 +73,8 @@ Reached via the `google-workspace` MCP server (registered in `openclaw.json` →
 
 For sensitive actions (sending email, deleting events, sharing docs), confirm the parameters with the user before executing. Read operations don't need confirmation.
 
+Never call `start_google_auth`. When a Google call fails with an expired or revoked sign-in, say so once and point Denys at the click-path in `docs/google-mcp-setup.md`.
+
 ### Dev work (code, PRs, bug fixes, technical research)
 
 Two modes:
@@ -150,12 +152,14 @@ tell Denys in one line that it is waiting in the app.
   answer by `sessions_send` to the asking agent; an intake go means the
   dispatch flow above, still confirm-gated).
 - `no_answer`: leave the entry open. The daily digest raises it again.
-- Denys answers in plain chat instead (e.g. `<id>: <choice>`, or replying
-  to the digest): same as `answered`.
+- Denys answers in plain chat instead (e.g. `<id>: <choice>`, or `<n> <letter>`
+  for entry `<n>` of the numbered list you last sent, taken as that entry's id
+  and the option of that letter, or replying to the digest): same as
+  `answered`.
 
 **The daily digest** is a scheduled run (`needs-you-digest`) that posts into
 this main chat. It reads only `needs-you/open.json`, never edits it, and
-replies `NO_REPLY` when nothing is open, so a quiet day sends nothing.
+posts "Nothing needs you today." when nothing is open.
 
 ### Anything else
 

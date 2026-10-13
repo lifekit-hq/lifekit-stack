@@ -680,9 +680,10 @@ firstmate") into that same chat.
 `scripts/ensure-needs-you-digest.sh` declares it and converges on re-run. It is a
 `current`-session agent turn bound to `agent:kit:main` with announce delivery: the
 reply is committed to the conversation's transcript, and that session has no external
-route, so nothing goes to Telegram. It replies `NO_REPLY` when the ledger and the
-fleet's open decisions are empty and the fleet status is fresh and valid, so nothing is
-posted. A run that cannot read the ledger says so in the chat. A run that
+route, so nothing goes to Telegram. It always posts: the date line, then the needs-you
+part in the relay skill's Status format, which is the single line "Nothing needs you
+today." when the ledger and the fleet show no call and no to-do. A run that cannot read
+the ledger says so in the chat. A run that
 fails outright raises a failure alert after one failure. The alert goes through kit's
 `default` Telegram account to `LIFEKIT_TELEGRAM_CHAT` from the host env file, the same
 route as the career weekly alert, because a failure alert needs an outbound
@@ -713,8 +714,8 @@ Operator steps, once per host. None of them restarts the gateway:
    `0 9 * * *` Europe/Dublin).
 
 **Verify:** `cron show <id>` previews delivery as `announce -> current session`.
-`cron run <id> --expect-final --json` against an empty ledger records the run as
-intentionally silent, and the main chat stays quiet. With one entry in `open.json`,
+`cron run <id> --expect-final --json` against an empty ledger posts "Nothing needs you
+today." under the date line. With one entry in `open.json`,
 the digest shows up in the Control UI chat without a refresh.
 
 **Rollback:** `openclaw cron rm <id>`. The ledger files are kit workspace state and
@@ -1017,9 +1018,14 @@ and the status read is an HTTP GET Kit could always make.
   `status` runs `curl -fsS -m 10 http://lifekit-dashboard:8080/api/fleet` and prints the
   body unchanged; a curl failure is its exit code and stderr. The URL is the fleet
   page's own data over the `lifekit-shared` network, so the skill gates on `curl` too.
-- **Rules** (`SKILL.md`): status questions run `relay.sh status` and lead with "Status
-  is stale" (`generated_epoch` more than 5 minutes old) or "Status is invalid for
-  `<home>`" (a `homes[].valid` false); tasks and proposals go to `firstmate` with the
+- **Rules** (`SKILL.md`): status questions run `relay.sh status` and answer in one
+  format: "Your call" (numbered, options when the record names them, no ids), "Your
+  to-dos" (verb first), then a "Later" count line (parked, dated and blocked, counted from
+  `queued` and never listed) and a "Fleet" line (`counts.queued_open`, which leaves out
+  held items); only a view older than 30 minutes adds "Fleet view is partial", and
+  "+N not shown" appears only when `counts.decisions_open` really exceeds the list. Kit never calls `start_google_auth` (its link redirects to localhost and leaves
+  a pending sign-in); on a Google sign-in failure it says so once and points at
+  `docs/google-mcp-setup.md` steps 6-7. Tasks and proposals go to `firstmate` with the
   `task:`/`proposal:` prefix; an answer is `answer <id>: <his words>` sent only on his
   explicit words, only for an id in `decisions_open` at send time, to that item's
   `home_id`; Kit does not classify decisions or gate anything: under each firstmate
@@ -1034,19 +1040,26 @@ and the status read is an HTTP GET Kit could always make.
   retried, and an exit 3 ("saved, not yet announced") is
   reported as such and re-sent only when he asks.
 - **Digest:** the 09:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
-  runs `relay.sh status` and posts the fleet's open decisions, active / queued / landed
-  today counts and the stale or invalid warning. It is silent only when the ledger and
-  `decisions_open` are empty and the status is fresh and valid. Re-run the script as
+  runs `relay.sh status` and posts the fleet part in that same format, under the date
+  line; it posts "Nothing needs you today." when nothing is open and is never silent.
+  Re-run the script as
   `lifekit` to converge the live row; a cron turn sends no note.
 - **Morning brief:** the 08:30 `today-brief` row is host state made by hand with kit,
   not declared in git. `scripts/ensure-today-brief-fleet.sh` (as `lifekit`) inserts the
   fleet step into its prompt at two fixed anchors and refuses, row untouched, when the
-  prompt no longer has them; a prompt already carrying the step is left alone.
+  prompt no longer has them; a prompt already carrying the step is left alone. An empty
+  fleet part reads "No fleet calls today." there, so it never contradicts the brief's
+  calendar, mail or PR sections.
 - **Kit's `AGENTS.md`** is live host state (`/srv/openclaw/config/agents/kit/workspace/`),
-  merged by hand like the "Needs you" section. Two lines move with this: the
+  merged by hand like the "Needs you" section. Five lines move with this: the
   host-work line says host work goes to firstmate through the captain inbox, "the main
-  home (`firstmate`)", and the Tools table's dashboard row reads
-  `lifekit-dashboard:8080` (not the old loopback port `127.0.0.1:18790`).
+  home (`firstmate`)"; the Tools table's dashboard row reads `lifekit-dashboard:8080`
+  (not the old loopback port `127.0.0.1:18790`); the plain-chat answer line also takes
+  `<n> <letter>` for entry `<n>` of the numbered list Kit last sent; the daily
+  digest line says it posts "Nothing needs you today." when nothing is open, not
+  `NO_REPLY`; and the Google Workspace section's line that Kit never calls
+  `start_google_auth` and, on a sign-in failure, says so once and points at
+  `docs/google-mcp-setup.md`.
 - **Deploy:** `sudo -u lifekit /srv/lifekit-stack/scripts/ensure-secondmate-relay.sh`
   (copies `SKILL.md` and `relay.sh`; no gateway restart). Verify from inside the gateway:
   `docker exec "$G" sh "$S" status | head -c 200`, and one `note <file> firstmate`

@@ -73,8 +73,17 @@ in a reviewed PR.
 - **Test users:** add the address you'll set as `USER_GOOGLE_EMAIL`. This is
   what lets you complete consent while the app is in *Testing* status.
 
-You do **not** need to publish the app. Testing-status consent screens issue
-refresh tokens that work for the test users you added.
+**Publish the app to *In production*.** An External app left in *Testing*
+status that asks for more than basic scopes (Gmail and Calendar are) gets
+refresh tokens that Google expires after 7 days, and the MCP then fails with
+`invalid_grant`. In the Cloud console open **Google Auth Platform → Audience**,
+choose **Publish app**, and confirm; the status reads *In production*. Ignore
+any prompt to submit the app for verification: an unverified app is fine for
+personal use.
+
+Do this before step 6. A refresh token issued while the app was still in
+*Testing* keeps its 7-day life after you publish, so redo step 6 once the
+status reads *In production*.
 
 ## 4. Create the OAuth client
 
@@ -132,7 +141,7 @@ uvx workspace-mcp --transport streamable-http --single-user \
 
 On startup the server prints a `https://accounts.google.com/...` URL. Open it,
 sign in as `USER_GOOGLE_EMAIL`, click through the "this app isn't verified"
-warning (expected for Testing-status consent screens), and approve. The
+warning (expected: the app is In production but unverified after step 3), and approve. The
 callback writes the refresh token to:
 
 ```
@@ -234,8 +243,8 @@ whitespace. The default in this stack is space-separated; if you see startup
 errors about unrecognised tool names, try comma-separated instead
 (`gmail,drive,calendar,docs,sheets,tasks`).
 
-**Token expired.**  Refresh tokens generally don't expire while the OAuth
-consent screen stays in *Testing* status — but Google's docs warn they can
-be revoked after 7 days for un-verified apps in some configurations. If
-the container starts logging `invalid_grant` errors, repeat steps 6–7 to
-regenerate.
+**Token expired.**  If the container logs `invalid_grant` errors, the refresh
+token is dead. The usual cause is a consent screen still in *Testing*
+status, where Google expires refresh tokens after 7 days: check **Google Auth
+Platform → Audience**, choose **Publish app** if it says *Testing*, then
+repeat steps 6–7 to regenerate.
