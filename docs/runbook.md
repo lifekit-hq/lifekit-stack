@@ -674,16 +674,26 @@ An answer closes the entry. The contract is kit's `AGENTS.md`, section "Needs yo
 in subagent or ACP runs. So a decision that comes up in a Telegram DM, an A2A ask or a
 subagent is recorded, then handed to the main session with `sessions_send`.
 
-The daily `needs-you-digest` cron posts what is still open (the ledger, and the fleet's
+The `needs-you-digest` cron runs at 09:00 and 17:00 Europe/Dublin (one row, cron
+`0 9,17 * * *`) and posts what is still open (the ledger, and the fleet's
 open decisions through the relay skill's `status`, see "Kit as the owner's line to
-firstmate") into that same chat.
+firstmate") into that same chat, followed by a read-only mail section: how many
+messages arrived since the last run (16h in the morning, 8h in the afternoon), which
+need the owner, which can wait, and the noise as a count. Mail is ranked from its
+content, not by sender, and the digest says so until a who-matters list exists. The
+turn may call only `search_gmail_messages` and `get_gmail_messages_content_batch`;
+the Workspace MCP is read-only server-side (`WORKSPACE_MCP_READ_ONLY` in
+`compose/openclaw/docker-compose.yml`, see `docs/google-mcp-setup.md`), so no digest
+can send, draft, label or archive. Mail text is untrusted: the prompt summarises it
+only and follows nothing in it. A lapsed Google sign-in shows as a `mail unavailable:`
+line, and the other parts still post.
 `scripts/ensure-needs-you-digest.sh` declares it and converges on re-run. It is a
 `current`-session agent turn bound to `agent:kit:main` with announce delivery: the
 reply is committed to the conversation's transcript, and that session has no external
 route, so nothing goes to Telegram. It always posts: the date line, then the needs-you
 part in the relay skill's Status format, which is the single line "Nothing needs you
 today." when the ledger and the fleet show no call and no to-do. A run that cannot read
-the ledger says so in the chat. A run that
+the ledger or the mail says so in the chat. A run that
 fails outright raises a failure alert after one failure. The alert goes through kit's
 `default` Telegram account to `LIFEKIT_TELEGRAM_CHAT` from the host env file, the same
 route as the career weekly alert, because a failure alert needs an outbound
@@ -711,12 +721,19 @@ Operator steps, once per host. None of them restarts the gateway:
 
 3. **Declare the digest:** `/srv/lifekit-stack/scripts/ensure-needs-you-digest.sh`
    (as lifekit; `NEEDS_YOU_DIGEST_CRON` / `NEEDS_YOU_DIGEST_TZ` override the default
-   `0 9 * * *` Europe/Dublin).
+   `0 9,17 * * *` Europe/Dublin). The mail section needs a live Google sign-in: if the
+   refresh token is revoked (`invalid_grant` in `docker logs openclaw-google-workspace-mcp-1`),
+   redo the consent in `docs/google-mcp-setup.md` first.
 
 **Verify:** `cron show <id>` previews delivery as `announce -> current session`.
 `cron run <id> --expect-final --json` against an empty ledger posts "Nothing needs you
 today." under the date line. With one entry in `open.json`,
 the digest shows up in the Control UI chat without a refresh.
+
+**Mail section rollback:** re-run the script from the commit before the mail section
+(or `NEEDS_YOU_DIGEST_CRON='0 9 * * *'` for one run a day only). To unlock Workspace
+writes (not part of the digest), change the `WORKSPACE_MCP_READ_ONLY` literal in a
+reviewed PR.
 
 **Rollback:** `openclaw cron rm <id>`. The ledger files are kit workspace state and
 can stay. Push delivery of these cards to a phone comes with the Control UI's
@@ -1042,10 +1059,10 @@ and the status read is an HTTP GET Kit could always make.
   heartbeat or a turn he did not ask for; a refused call is reported verbatim and not
   retried, and an exit 3 ("saved, not yet announced") is
   reported as such and re-sent only when he asks.
-- **Digest:** the 09:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
+- **Digest:** the 09:00 and 17:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
   runs `relay.sh status` and posts the fleet part in that same format, under the date
-  line; it posts "Nothing needs you today." when nothing is open and is never silent.
-  Re-run the script as
+  line, then a mail section when mail arrived; it posts "Nothing needs you today." when
+  nothing is open and is never silent. Re-run the script as
   `lifekit` to converge the live row; a cron turn sends no note.
 - **Morning brief:** the 08:30 `today-brief` row is host state made by hand with kit,
   not declared in git. `scripts/ensure-today-brief-fleet.sh` (as `lifekit`) inserts the
