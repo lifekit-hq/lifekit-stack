@@ -847,8 +847,10 @@ gives the gateway nothing.
 #### Dashboard sender (proposal box)
 
 The dashboard can queue a `proposal:` or `task:` note for the second mate while Claude
-quota is exhausted (Kit shares that login, so its relay cannot run then). It is a second
-authorized key on the same root-owned forced command, not a second script:
+quota is exhausted (Kit shares that login, so its relay cannot run then). The same key
+also carries the owner's `answer <id>: …` and `confirm <id>` notes to the owning home's
+captain inbox ([`decision-contract.md`](./decision-contract.md), "Answering a decision").
+It is a second authorized key on the same root-owned forced command, not a second script:
 
 - **Sender:** the key's `command=` passes the sender as an argument,
   `command="/usr/local/libexec/kit-relay dashboard"`; no argument is Kit's key. The
@@ -859,7 +861,8 @@ authorized key on the same root-owned forced command, not a second script:
 - **Key:** `/srv/lifekit-secrets/dashboard-relay/` (`id_ed25519`, pinned `known_hosts`,
   `ssh_config`, the same shape as `kit-relay/`), mounted read-only into the dashboard
   container at `/run/lifekit/dashboard-relay` (the mount lives in lifekit-dashboard). The
-  body starts with `proposal:` or `task:`; the relay does not interpret it.
+  body starts with `proposal:`, `task:`, `answer ` or `confirm `; the relay does not
+  interpret it.
 - **Operator step** (after the dashboard PR deploys; re-run step 1 above first so the
   installed copy knows the sender, then repeat step 2 with `dashboard-relay` in place of
   `kit-relay` and `-C dashboard-relay@dashboard`, and `IdentityFile` /
