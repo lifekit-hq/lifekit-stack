@@ -2261,7 +2261,7 @@ on the host:
 
 ```bash
 S=/srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py
-$S check     # exit 0 in sync; exit 1 prints DRIFT and a diff of live vs composed. Read-only.
+$S check     # exit 0 in sync; exit 1 prints DRIFT and a diff of live vs composed; exit 2 any other failure. Read-only.
 $S compose   # print the composed persona
 $S install   # write AGENTS.md (the old one is kept as AGENTS.md.pre-persona-install)
 ```
