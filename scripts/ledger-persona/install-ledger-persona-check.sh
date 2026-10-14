@@ -5,14 +5,17 @@
 #   sudo bash /srv/lifekit-stack/scripts/ledger-persona/install-ledger-persona-check.sh
 #
 # The unit runs drift-alert.py from the checkout (REPO_DIR, default the repo
-# this script sits in) as LIFEKIT_USER. Undo: docs/runbook.md "Ledger persona
-# drift alert". Tests set INSTALL_ROOT (a prefix for every installed path) and
-# SYSTEMCTL; an INSTALL_ROOT run needs no root.
+# this script sits in) as LIFEKIT_USER. It installs the units and reloads
+# systemd but does not enable the timer: the daily alert starts only with
+# ENABLE=1 (docs/runbook.md "Ledger persona drift alert" gives the order).
+# Undo: same section. Tests set INSTALL_ROOT (a prefix for every installed
+# path) and SYSTEMCTL; an INSTALL_ROOT run needs no root.
 
 set -euo pipefail
 
 LIFEKIT_USER="${LIFEKIT_USER:-lifekit}"
 INSTALL_ROOT="${INSTALL_ROOT:-}"
+ENABLE="${ENABLE:-}"
 SYSTEMCTL="${SYSTEMCTL:-systemctl}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$HERE/../.." && pwd)}"
@@ -28,4 +31,6 @@ sed -e "s|__LIFEKIT_USER__|${LIFEKIT_USER}|g" -e "s|__REPO_DIR__|${REPO_DIR}|g" 
   "$HERE/lifekit-ledger-persona-check.service" > "$UNIT_DIR/lifekit-ledger-persona-check.service"
 install -m 644 "$HERE/lifekit-ledger-persona-check.timer" "$UNIT_DIR/lifekit-ledger-persona-check.timer"
 "$SYSTEMCTL" daemon-reload
-"$SYSTEMCTL" enable --now lifekit-ledger-persona-check.timer
+if [[ "$ENABLE" == "1" ]]; then
+  "$SYSTEMCTL" enable --now lifekit-ledger-persona-check.timer
+fi

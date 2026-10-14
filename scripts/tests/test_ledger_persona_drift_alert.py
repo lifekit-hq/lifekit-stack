@@ -172,30 +172,43 @@ def test_check_exit_codes_separate_drift_from_error(source, ws):
     assert missing_source.returncode == 2
 
 
-def test_unit_runs_the_checkout_as_the_deploy_account():
-    unit = (DIR / "lifekit-ledger-persona-check.service").read_text()
-    assert "User=__LIFEKIT_USER__" in unit
-    assert "__REPO_DIR__/scripts/ledger-persona/drift-alert.py" in unit
-    assert "EnvironmentFile" not in unit
-    assert "/home/" not in unit
+def test_undecodable_live_file_is_an_error_not_drift(source, ws):
+    (ws / "AGENTS.md").write_bytes(b"\xff\xfe not utf-8\n")
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(DIR / "ledger-persona.py"),
+            "check",
+            "--workspace",
+            str(ws),
+            "--pin",
+            PIN,
+            "--source",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 2
+    assert "UnicodeDecodeError" in r.stderr
+    assert "DRIFT" not in r.stdout
 
 
-def test_timer_is_daily_and_named_for_the_unit_gauge():
-    # unit-gauge.sh reports every installed `lifekit-*.timer` as host_unit_*,
-    # which the "host systemd unit is down or failed" rule alerts on.
-    timer = (DIR / "lifekit-ledger-persona-check.timer").read_text()
-    assert "OnCalendar=*-*-*" in timer
-    assert "Persistent=true" in timer
-    gauge = (REPO / "scripts/unit-gauge/unit-gauge.sh").read_text()
-    assert "TIMER_GLOB='lifekit-*.timer'" in gauge
+def test_undecodable_live_file_fails_the_alert_without_posting(
+    source, ws, state, tmp_path
+):
+    (ws / "AGENTS.md").write_bytes(b"\xff\xfe not utf-8\n")
+    r = alert(source, ws, state, tmp_path)
+    assert r.returncode == 1 and "check failed" in r.stderr
+    assert not (state / "calls").exists()
 
 
-def test_installer_renders_units_under_install_root(tmp_path):
+def run_installer(tmp_path, **env):
     fake = tmp_path / "systemctl"
     fake.write_text('#!/usr/bin/env bash\necho "$*" >> "$STATE_DIR/calls"\n')
     fake.chmod(0o755)
     state = tmp_path / "state"
-    state.mkdir()
+    state.mkdir(exist_ok=True)
     root = tmp_path / "root"
     subprocess.run(
         ["bash", str(DIR / "install-ledger-persona-check.sh")],
@@ -206,22 +219,87 @@ def test_installer_renders_units_under_install_root(tmp_path):
             "STATE_DIR": str(state),
             "LIFEKIT_USER": "svc",
             "REPO_DIR": "/opt/stack",
+            **env,
         },
         check=True,
         capture_output=True,
     )
-    unit = (
-        root / "etc/systemd/system/lifekit-ledger-persona-check.service"
-    ).read_text()
-    assert "User=svc" in unit and "Group=svc" in unit
-    assert (
-        "ExecStart=/usr/bin/python3 /opt/stack/scripts/ledger-persona/drift-alert.py"
-        in unit
-    )
-    assert "__" not in unit
-    assert (root / "etc/systemd/system/lifekit-ledger-persona-check.timer").is_file()
     calls = (state / "calls").read_text().splitlines()
+    return root, calls
+
+
+def parse_unit(path: Path) -> dict[str, dict[str, str]]:
+    sections: dict[str, dict[str, str]] = {}
+    current: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = sections.setdefault(line[1:-1], {})
+        else:
+            key, _, value = line.partition("=")
+            current[key] = value
+    return sections
+
+
+def test_installer_renders_units_under_install_root(tmp_path):
+    root, calls = run_installer(tmp_path)
+    unit_dir = root / "etc/systemd/system"
+    service = parse_unit(unit_dir / "lifekit-ledger-persona-check.service")["Service"]
+    assert service["User"] == "svc" and service["Group"] == "svc"
+    assert service["ExecStart"] == (
+        "/usr/bin/python3 /opt/stack/scripts/ledger-persona/drift-alert.py"
+    )
+    timer = parse_unit(unit_dir / "lifekit-ledger-persona-check.timer")
+    assert timer["Timer"]["OnCalendar"].startswith("*-*-*")
+    assert timer["Install"]["WantedBy"] == "timers.target"
+    assert "__" not in (unit_dir / "lifekit-ledger-persona-check.service").read_text()
+    assert calls == ["daemon-reload"]
+
+
+def test_installer_enables_the_timer_only_when_asked(tmp_path):
+    _, calls = run_installer(tmp_path, ENABLE="1")
     assert calls == [
         "daemon-reload",
         "enable --now lifekit-ledger-persona-check.timer",
     ]
+
+
+FAKE_UNIT_SYSTEMCTL = """#!/usr/bin/env bash
+case "$1" in
+  list-unit-files)
+    case "${@: -1}" in
+      lifekit-*.timer) echo "lifekit-ledger-persona-check.timer enabled enabled" ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  show)
+    unit="${@: -1}"
+    case "$unit" in
+      lifekit-ledger-persona-check.timer)
+        printf 'LoadState=loaded\nActiveState=active\nResult=success\nUnitFileState=enabled\n' ;;
+      lifekit-ledger-persona-check.service)
+        printf 'LoadState=loaded\nActiveState=failed\nResult=exit-code\nUnitFileState=static\n' ;;
+      *) printf 'LoadState=not-found\nActiveState=inactive\nResult=success\nUnitFileState=\n' ;;
+    esac
+    ;;
+esac
+"""
+
+
+def test_unit_gauge_reports_a_failed_check_run(tmp_path):
+    fake = tmp_path / "systemctl"
+    fake.write_text(FAKE_UNIT_SYSTEMCTL)
+    fake.chmod(0o755)
+    out_dir = tmp_path / "textfile"
+    out_dir.mkdir()
+    subprocess.run(
+        ["bash", str(REPO / "scripts/unit-gauge/unit-gauge.sh"), str(out_dir)],
+        env={**os.environ, "SYSTEMCTL": str(fake)},
+        check=True,
+        capture_output=True,
+    )
+    prom = (out_dir / "host_unit.prom").read_text()
+    assert 'host_unit_failed{unit="lifekit-ledger-persona-check"} 1' in prom
+    assert 'host_unit_active{unit="lifekit-ledger-persona-check"} 1' in prom

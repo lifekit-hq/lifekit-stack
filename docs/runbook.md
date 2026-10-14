@@ -2305,14 +2305,29 @@ check` against `PIN`:
 No new secret and no container change: the envelope is POSTed from inside the
 notify-relay container with `docker exec` (the port is not published), and the
 unit runs the checkout in place, so a `PIN` bump applies with the deploy.
-`bootstrap-vps.sh` installs it; on a live box, once, as root:
+`bootstrap-vps.sh` installs the units but leaves the timer **disabled**: while
+the live file still carries edits that are not folded into finance-sentry, an
+enabled timer would alert every day. Order:
 
-```bash
-sudo bash /srv/lifekit-stack/scripts/ledger-persona/install-ledger-persona-check.sh
-systemctl list-timers lifekit-ledger-persona-check.timer
-```
+1. Fold the wanted live edits into finance-sentry `agent/ledger` by PR and merge it.
+2. Bump `PIN` here to the merge commit (PR) and let it deploy.
+3. Install the units (idempotent, does not enable), then apply the persona and
+   check it is green:
 
-Verify without waiting for 07:15 (a drift sends one real Telegram message):
+   ```bash
+   sudo bash /srv/lifekit-stack/scripts/ledger-persona/install-ledger-persona-check.sh
+   python3 /srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py install
+   python3 /srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py check
+   ```
+
+4. Enable the daily timer, as root:
+
+   ```bash
+   sudo ENABLE=1 bash /srv/lifekit-stack/scripts/ledger-persona/install-ledger-persona-check.sh
+   systemctl list-timers lifekit-ledger-persona-check.timer
+   ```
+
+Verify without waiting for 07:15 once enabled (a drift sends one real Telegram message):
 
 ```bash
 sudo systemctl start lifekit-ledger-persona-check.service

@@ -136,8 +136,8 @@ def main(argv: list[str] | None = None) -> int:
             print(exc.code, file=sys.stderr)
             return 2
         raise
-    except OSError as exc:
-        print(f"ledger persona: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"ledger persona: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
 
