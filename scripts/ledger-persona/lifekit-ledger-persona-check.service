@@ -1,0 +1,14 @@
+[Unit]
+Description=Alert when the live Ledger persona differs from the pinned finance-sentry version
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The deploy account: the only one that can read the finance agent's workspace
+# and the one whose gh login ledger-persona.py fetches with. The unit runs the
+# checkout in place, so a PIN bump takes effect with the next deploy without a
+# reinstall. install-ledger-persona-check.sh substitutes both placeholders.
+User=__LIFEKIT_USER__
+Group=__LIFEKIT_USER__
+ExecStart=/usr/bin/python3 __REPO_DIR__/scripts/ledger-persona/drift-alert.py
