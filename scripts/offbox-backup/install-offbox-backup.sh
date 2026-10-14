@@ -71,7 +71,8 @@ else
   python3 -I -c 'import sys, zipfile
 open(sys.argv[3], "wb").write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]))' \
     "$tmp/$zip" "${zip%.zip}/rclone" "$tmp/rclone"
-  install -D -m 755 "$tmp/rclone" "$INSTALL_ROOT$RCLONE_BIN"
+  install -D -m 755 "$tmp/rclone" "$INSTALL_ROOT$RCLONE_BIN.partial"
+  mv -f "$INSTALL_ROOT$RCLONE_BIN.partial" "$INSTALL_ROOT$RCLONE_BIN"
   echo "rclone $RCLONE_VERSION installed"
 fi
 

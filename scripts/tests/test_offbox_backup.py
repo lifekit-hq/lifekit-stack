@@ -609,7 +609,7 @@ def fake_release(tmp_path) -> tuple[Path, str]:
     return site, hashlib.sha256(zipped.read_bytes()).hexdigest()
 
 
-def install(tmp_path, site: Path, sha256: str | None = None):
+def install(tmp_path, site: Path, sha256: str | None = None, path: str | None = None):
     calls = tmp_path / "calls"
     fake_ctl = tmp_path / "systemctl"
     fake_ctl.write_text(f'#!/usr/bin/env bash\necho "$*" >> {calls}\n')
@@ -625,6 +625,8 @@ def install(tmp_path, site: Path, sha256: str | None = None):
     }
     if sha256 is not None:
         env["RCLONE_SHA256"] = sha256
+    if path is not None:
+        env["PATH"] = path
     return subprocess.run(
         ["bash", str(HERE / "install-offbox-backup.sh")],
         env=env,
@@ -676,3 +678,27 @@ def test_installer_reuses_an_rclone_already_in_place(tmp_path):
     res = install(tmp_path, site, sha256)
     assert res.returncode == 0, res.stderr
     assert "already in place" in res.stdout
+
+
+def test_an_interrupted_rclone_copy_leaves_nothing_at_the_pinned_path(tmp_path):
+    site, sha256 = fake_release(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_install = bin_dir / "install"
+    fake_install.write_text(
+        '#!/usr/bin/env bash\n'
+        'dest="${@: -1}"\n'
+        'mkdir -p "$(dirname "$dest")"\n'
+        'printf "trunc" > "$dest"\n'
+        "exit 1\n"
+    )
+    fake_install.chmod(0o755)
+    res = install(tmp_path, site, sha256, path=f"{bin_dir}:{os.environ['PATH']}")
+    assert res.returncode != 0
+    root = tmp_path / "root"
+    assert not (root / RCLONE_PIN.lstrip("/")).exists()
+    # the next run downloads and installs it properly
+    res = install(tmp_path, site, sha256)
+    assert res.returncode == 0, res.stderr
+    assert "installed" in res.stdout
+    assert (root / RCLONE_PIN.lstrip("/")).read_text().startswith("#!/bin/sh")

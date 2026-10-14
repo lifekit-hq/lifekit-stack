@@ -306,7 +306,8 @@ LIFEKIT_USER="$LIFEKIT_USER" bash "$REPO_DIR/scripts/identity-backup/install-ide
 # Nightly, as the deploy account: the identity dumps, a backstage pg_dump, the
 # OpenClaw secret key and runtime state, age-encrypted to the captain's key and
 # streamed to Cloudflare R2; a monthly restore check reports through
-# notify-relay. Installs age and rclone. Both log "not configured" and exit 0
+# notify-relay. age and zstd come from apt; rclone is a pinned,
+# sha256-checked download from rclone.org. Both log "not configured" and exit 0
 # until the OFFBOX_BACKUP_* values are in the env file; see
 # scripts/offbox-backup/ and docs/runbook.md "Off-box backup (R2)".
 
