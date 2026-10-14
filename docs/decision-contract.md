@@ -193,10 +193,13 @@ only `dash-` notes and their replies:
 
 - `pending[]` and `handled[]`: notes, each with `id`, `request_id`, `acknowledged`, `announced` and `reply`.
 - `replies[]`: each with `id` (the note id), `at`, `body` and `cursor`.
-- `reply_cursor`: pass it back as `after` to read only newer replies.
+- `reply_cursor`: pass it back as `after` to read only newer replies. `after` must be a cursor from a
+  receipts response for the same `homeId`.
 
 The UI matches `replies[].id` to the `id` it got back from the answer and shows the reply `body`
 verbatim. It offers **Confirm** only when the feed read that still lists the decision has
-`generated_epoch` later than the reply's `at`; otherwise it waits for the next feed read and shows
-no Confirm, so a feed that has not caught up with an ordinary close never prompts.
+`generated_epoch` later than the `at` of the latest reply to the owner's most recent note for that
+decision. `at` is an ISO-8601 UTC timestamp, which the UI parses to epoch seconds before comparing
+it with `generated_epoch`. Otherwise it waits for the next feed read and shows no Confirm, so a
+feed that has not caught up with an ordinary close never prompts.
 A `confirm` with nothing pending is harmless: firstmate replies saying so.
