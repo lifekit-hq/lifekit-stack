@@ -686,7 +686,7 @@ def test_an_interrupted_rclone_copy_leaves_nothing_at_the_pinned_path(tmp_path):
     bin_dir.mkdir()
     fake_install = bin_dir / "install"
     fake_install.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'dest="${@: -1}"\n'
         'mkdir -p "$(dirname "$dest")"\n'
         'printf "trunc" > "$dest"\n'
