@@ -107,7 +107,8 @@ identity header plus the edge proof). The existing `proposal` and `task` kinds a
 | --- | --- | --- |
 | `kind` | `"answer"` | `"confirm"` |
 | `decisionId` | required, the item's `id` (`[A-Za-z0-9][A-Za-z0-9._-]*`, at most 64) | required |
-| `homeId` | optional; when sent it must equal the item's `home_id` | optional, same rule |
+| `homeId` | required, the item's `home_id` | required |
+| `submissionId` | required, opaque, `[A-Za-z0-9-]{8,64}` (for example a UUID) | required |
 | `optionId` | the chosen option's `id`; exactly one of `optionId` or `text` | not allowed |
 | `text` | the owner's own words, trimmed, not empty | not allowed |
 
@@ -115,11 +116,12 @@ identity header plus the edge proof). The existing `proposal` and `task` kinds a
 
 The first failure answers. Nothing is sent to the host unless every check passes.
 
-1. `kind`, `decisionId` shape, and exactly one of `optionId`/`text` (none for `confirm`) -> else `400 invalid`.
+1. `kind`, `decisionId` shape, `homeId`, `submissionId` shape, and exactly one of `optionId`/`text`
+   (none for `confirm`) -> else `400 invalid`.
 2. The fleet feed is readable -> else `503 unavailable` (the backend does not guess the home).
-3. `decisionId` is in `decisions_open` now -> else `409 not-open` (unknown, already closed, or not yet published).
-4. `homeId`, when sent, equals the item's `home_id`, and that home is one the relay pins
-   (`fm-vps`, `firstmate`) -> else `400 invalid`.
+3. The (`homeId`, `decisionId`) pair is in `decisions_open` now, matched on the item's (`home_id`,
+   `id`) because ids are per home -> else `409 not-open` (unknown, already closed, or not yet published).
+4. `homeId` is one the relay pins (`fm-vps`, `firstmate`) -> else `400 invalid`.
 5. When `ask` is not null:
    - `optionId` must be one of `ask.options[].id`;
    - `text` is allowed only when `ask.free_text_allowed` is true.
@@ -136,20 +138,26 @@ The first failure answers. Nothing is sent to the host unless every check passes
 | answer, text | `answer <decisionId>: <text>` |
 | confirm | `confirm <decisionId>` |
 
-The backend runs `kit-relay note <rid> <home>`, where `<home>` is the item's `home_id`. The
+The backend runs `kit-relay note <rid> <home>`, where `<home>` is the request's `homeId`, which
+matched the item's `home_id`. The
 relay matches it only against its pinned homes. Firstmate's standing answer-note rule closes
 exactly that decision through `fm-captain-hold.sh answer`. If the id is unknown or already closed,
 it gets one reply saying so and nothing changes.
 
 ### Idempotency
 
-`rid = dash-<UTC yyyyMMdd>-<first 16 hex of sha256(body)>`. Resubmitting the same answer on the
-same UTC day replays the same note: `outcome: "replay"`, never a second note. When that note was
-saved but not announced (relay exit 3, `announced: false`), re-sending the same body re-announces
-it, so the UI can offer a retry of the same answer. The same answer on a later UTC day is a new note, and firstmate replies "unknown or closed id" when
-the first one already closed the decision. A different choice is a different body, so it is a new
-note. Firstmate then records the latest of the owner's words, the same as answering twice on the
-board.
+`rid = dash-<UTC yyyyMMdd>-<first 16 hex of sha256(body + "\n" + submissionId)>`, with the note
+body unchanged. The dashboard UI generates one `submissionId` per deliberate submit: each time the
+owner picks and sends it is a fresh id, and the same id is reused on automatic retries of that
+submit. This refines the plan report's `<prefix>-<UTC day>-<sha256(body)[:16]>` scheme so that a
+deliberate same-day re-answer is never swallowed as a replay.
+
+Retrying one submit on the same UTC day replays the same note: `outcome: "replay"`, never a second
+note. When that note was saved but not announced (relay exit 3, `announced: false`), retrying with
+the same `submissionId` re-announces it, so the UI can offer a retry of the same answer. A retry on
+a later UTC day is a new note, and firstmate replies "unknown or closed id" when the first one
+already closed the decision. Every deliberate submit is a new note, and firstmate handles them in
+order: A, then B, then A again on one day records three answers, the last being A.
 
 ### Response
 
@@ -159,7 +167,7 @@ appear in a response or a log line.
 
 | HTTP | `status` | Meaning |
 | --- | --- | --- |
-| 200 | `saved` | The note is in the inbox. `id` is the inbox note id and `outcome` is `created` or `replay`. `announced: false` means saved but the wake did not fire (relay exit 3): the next session start raises it, and re-sending the same body the same UTC day re-announces it without a second note. |
+| 200 | `saved` | The note is in the inbox. `id` is the inbox note id and `outcome` is `created` or `replay`. `announced: false` means saved but the wake did not fire (relay exit 3): the next session start raises it, and retrying the same `submissionId` the same UTC day re-announces it without a second note. |
 | 400 | `invalid` | A rule above failed. `problem` says which one, in plain words. |
 | 401 / 403 | `unauthorized` / `forbidden` | The request did not come through the edge sign-in. |
 | 409 | `not-open` | The decision is not open. The UI drops the card and refreshes the feed. |
