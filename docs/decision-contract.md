@@ -121,6 +121,7 @@ The first failure answers. Nothing is sent to the host unless every check passes
 2. The fleet feed is readable -> else `503 unavailable` (the backend does not guess the home).
 3. The (`homeId`, `decisionId`) pair is in `decisions_open` now, matched on the item's (`home_id`,
    `id`) because ids are per home -> else `409 not-open` (unknown, already closed, or not yet published).
+   More than one matching item -> `409 ambiguous`, nothing sent.
 4. `homeId` is one the relay pins (`fm-vps`, `firstmate`) -> else `400 invalid`.
 5. When `ask` is not null:
    - `optionId` must be one of `ask.options[].id`;
@@ -172,6 +173,7 @@ appear in a response or a log line.
 | 400 | `invalid` | A rule above failed. `problem` says which one, in plain words. |
 | 401 / 403 | `unauthorized` / `forbidden` | The request did not come through the edge sign-in. |
 | 409 | `not-open` | The decision is not open. The UI drops the card and refreshes the feed. |
+| 409 | `ambiguous` | More than one open item has that `homeId` and `decisionId`. Nothing was sent; the UI tells the owner to answer that decision on the board. |
 | 429 | `rate-limited` | The host bucket is full: 30 new `dash-` notes per rolling hour per home (relay exit 75). Nothing was saved. |
 | 502 | `error` | The relay refused or failed, or timed out after 20 s. Not confirmed saved; `problem` explains. |
 | 503 | `not-configured` / `unavailable` | The relay key or edge proof is not configured, or the fleet feed cannot be read. |
@@ -193,6 +195,8 @@ only `dash-` notes and their replies:
 - `replies[]`: each with `id` (the note id), `at`, `body` and `cursor`.
 - `reply_cursor`: pass it back as `after` to read only newer replies.
 
-The UI matches `replies[].id` to the `id` it got back from the answer, shows the reply `body`
-verbatim, and offers **Confirm** only while that decision is still in `decisions_open` after the
-reply. A `confirm` with nothing pending is harmless: firstmate replies saying so.
+The UI matches `replies[].id` to the `id` it got back from the answer and shows the reply `body`
+verbatim. It offers **Confirm** only when the feed read that still lists the decision has
+`generated_epoch` later than the reply's `at`; otherwise it waits for the next feed read and shows
+no Confirm, so a feed that has not caught up with an ordinary close never prompts.
+A `confirm` with nothing pending is harmless: firstmate replies saying so.
