@@ -19,6 +19,8 @@ PIECES = {
     "lifekit-fleet-publisher": REPO / "scripts/fleet-publisher",
     "lifekit-identity-backup": REPO / "scripts/identity-backup",
     "lifekit-ledger-persona-check": REPO / "scripts/ledger-persona",
+    "lifekit-offbox-backup": REPO / "scripts/offbox-backup",
+    "lifekit-offbox-verify": REPO / "scripts/offbox-backup",
 }
 
 

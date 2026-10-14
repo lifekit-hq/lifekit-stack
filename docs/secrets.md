@@ -118,6 +118,9 @@ this inventory sets it.
 | `PARKED_LOGTO_SMTP_APP_PASSWORD` | master | parked | the Logto email connector (SMTP over smtp.gmail.com): `logto-admin.py set-email-connector` reads it through `LOGTO_SMTP_PASSWORD` and Logto keeps its own copy in its database (`docs/runbook.md` "Email sign-in (Gmail SMTP)"). No compose service interpolates it, and the `PARKED_` prefix keeps the render from writing it to `stack.env`. Empty until the captain sets it; an empty value makes the command refuse. | captain (Google Account > Security > App passwords) | on exposure; revoke the app password in the Google Account | not recorded | `secrets/lifekit.env.sops` |
 | `EDGE_COOKIE_SECRET` | master | cookie-secret | edge `oauth2-proxy` (`OAUTH2_PROXY_COOKIE_SECRET`): encrypts and signs the sign-in gate's session cookie. | captain (`openssl rand -hex 16`) | on exposure; a change signs everyone out | 2026-10-05 (created) | `secrets/lifekit.env.sops` |
 | `RELAY_EDGE_PROOF` | master | edge-proof | edge `traefik` (`X-Lifekit-Edge-Proof`, the header its dashboard router adds, `compose/edge/traefik/dynamic.yml`). Pair: lifekit-dashboard `/srv/dashboard/.env` `RELAY_EDGE_PROOF`, which its relay endpoint checks so a request that skipped the edge is refused. | captain (`openssl rand -hex 32`) | on exposure | 2026-10-07 (created) | `secrets/lifekit.env.sops` |
+| `OFFBOX_BACKUP_R2_ACCESS_KEY_ID` | master | storage-key | the off-box backup host timers (`scripts/offbox-backup/`, `docs/runbook.md` "Off-box backup (R2)"), read from `stack.env` on each run into rclone's environment. Shared on purpose with finance-sentry's off-box backup (captain's call, 2026-10-14): pair finance-sentry `docker/.env.sops` `BACKUP_R2_ACCESS_KEY`, same bucket; this job writes only under `lifekit/`, finance-sentry only under `daily/` and `weekly/`. | captain (Cloudflare dashboard, R2 API tokens) | on exposure; a rotation changes both repos (secrets runbook, storage-key) | 2026-10-14 (copied from finance-sentry) | `secrets/lifekit.env.sops` |
+| `OFFBOX_BACKUP_R2_SECRET_ACCESS_KEY` | master | storage-key | as `OFFBOX_BACKUP_R2_ACCESS_KEY_ID`; pair finance-sentry `docker/.env.sops` `BACKUP_R2_SECRET_KEY`. | captain (Cloudflare dashboard, R2 API tokens) | with `OFFBOX_BACKUP_R2_ACCESS_KEY_ID` | 2026-10-14 (copied from finance-sentry) | `secrets/lifekit.env.sops` |
+| `OFFBOX_BACKUP_AGE_IDENTITY` | master | age-identity | the monthly off-box restore check, which decrypts with it; every set is also encrypted to the captain key, so losing it loses nothing. Public half `age1yahpxyfqdee0kl82d7yq892wvlynmjumrkr47evgzn62j8wznqks2gqnpl`, read from the identity at run time. | firstmate (`age-keygen` straight into `sops set`) | on exposure (secrets runbook, age-identity) | 2026-10-14 (created) | `secrets/lifekit.env.sops` |
 
 ## Inventory: settings carried in the master file
 
@@ -159,6 +162,8 @@ file appears in one of the two inventory tables.
 | `GRAFANA_OIDC_ONLY` | master | setting | `true` hides Grafana's password form (needs the three around it); unset is off |
 | `GRAFANA_OIDC_CLIENT_ID` | master | setting | client id of the Logto application for Grafana |
 | `EDGE_OIDC_CLIENT_ID` | master | setting | client id of the Logto application for the tailnet sign-in gate (edge `oauth2-proxy`); `scripts/deploy.sh` brings compose project `edge` up only when all three `EDGE_*` are set |
+| `OFFBOX_BACKUP_R2_ENDPOINT` | master | setting | off-box backup: the R2 account's S3 endpoint (`https://<account id>.r2.cloudflarestorage.com`; carries the account id); the same as finance-sentry `BACKUP_R2_ENDPOINT` |
+| `OFFBOX_BACKUP_R2_BUCKET` | master | setting | off-box backup: the R2 bucket its sets go to, under `lifekit/`; finance-sentry's bucket, shared (`BACKUP_R2_BUCKET` there) |
 | `GRAFANA_PORT` | master | setting | loopback port |
 | `PROMETHEUS_PORT` | master | setting | loopback port |
 | `LOKI_PORT` | master | setting | loopback port |
@@ -194,7 +199,7 @@ file appears in one of the two inventory tables.
 | Claude Code refreshing login (`/home/lifekit/.claude`), the Codex OAuth profile, the Google Workspace MCP refresh token | OAuth refresh material rotates on use; OpenClaw excludes OAuth profiles from SecretRefs | interactive login; `scripts/google-mcp-bootstrap.sh` |
 | Tailscale node state and auth keys | node identity is per machine; a stored auth key is a standing join credential. Key expiry for `lifekit-vps` is disabled in the admin console instead. | single-use key at rebuild |
 | GitHub Actions runner registrations | re-mintable, per registration | fresh registration token |
-| OpenClaw internal material (`config-journal-fingerprint.key`, device and pairing records, session SQLite) | runtime-minted state | off-box `openclaw backup` |
+| OpenClaw internal material (`config-journal-fingerprint.key`, device and pairing records, session SQLite) | runtime-minted state | the nightly off-box backup (`docs/runbook.md` "Off-box backup (R2)") |
 | ghcr job logins | job-scoped, must not persist (`scripts/deploy.sh` uses a private empty docker config) | none needed |
 | SSH host keys | regenerating is acceptable | update `known_hosts` |
 | Kit relay SSH key (`/srv/lifekit-secrets/kit-relay`) | per box, re-mintable; the forced command and `from=` limit it to the inbox | re-run the key steps in `docs/runbook.md`, "Kit's second-mate relay" |

@@ -2497,7 +2497,171 @@ vault runbook for owner detail.
 - `/srv/openclaw/workspace/` — workspace skills (recoverable from this repo, but having a local copy is faster)
 - `/srv/openclaw/backups/identity/` — nightly dumps of the identity provider's database (users, sign-in settings, OIDC clients and signing keys; [Identity provider (Logto)](#identity-provider-logto) has the restore)
 
-Snapshot these via your provider's backups or rsync to another box.
+On the maintainer's box the OpenClaw state, the secret key and the identity
+dumps go off-box nightly, encrypted, with the backstage database:
+[Off-box backup (R2)](#off-box-backup-r2). Snapshot the rest via your
+provider's backups or rsync to another box.
+
+### Off-box backup (R2)
+
+Everything above lives on the box's one disk. `lifekit-offbox-backup.timer`
+copies the four stores that had no other copy to Cloudflare R2 each night,
+encrypted with `age` before they leave the box, and
+`lifekit-offbox-verify.timer` proves once a month that the newest copy
+restores. Both run `scripts/offbox-backup/offbox_backup.py` from the checkout
+as `lifekit` (it owns the state, reads `stack.env` and is in the docker group).
+AWS is not involved.
+
+**What one set holds.** Nightly at 03:30 (server time, after the 02:45
+identity dump), one set under `lifekit/daily/<UTC stamp>/` in the bucket;
+Sunday's run goes to `lifekit/weekly/`:
+
+| Object | Store | Taken how |
+| --- | --- | --- |
+| `identity.sql.gz.age` | identity provider (Logto) | the newest dump `lifekit-identity-backup.timer` wrote; no second dump |
+| `backstage.dump.age` | backstage's Postgres | `pg_dump -Fc` through `docker exec` into compose project `backstage`'s `backstage-db`; skipped (and recorded) where backstage is not deployed |
+| `openclaw-secret-key.tar.age` | `/srv/openclaw/secret-key/` | tar piped into `age`: the key never touches disk in plaintext |
+| `openclaw-sqlite.tar.zst.age` | the state's `*.sqlite` databases | copied with SQLite's backup API (consistent while the gateway writes) into the unit's private `/tmp`, removed after |
+| `openclaw-state.tar.zst.age` | `/srv/openclaw/config/` | tar + zstd, minus the exclusions below |
+| `MANIFEST.json` | | written last: names, sizes and sha256 of the ciphertexts, the recipients, skipped stores. A set without it is incomplete and is deleted by the next run |
+
+The state archive leaves out what is regenerated or reinstalled:
+browser caches and model downloads, `tools/` (agent toolchains), `npm/` (the
+OpenClaw npm plugins: after a restore, reinstall each with `openclaw plugins
+install @openclaw/<id>@<core version>`, the trusted install the gateway needs),
+`cache/`, `tmp/`, `logs/`, `node_modules`, .NET build output, the archives of
+sessions already migrated into SQLite, codex `logs_*` databases, and
+pre-migration `.bak` copies. The full list is `STATE_EXCLUDES` in the script.
+The workspace and the vault are not in the set: the workspace is rebuilt from
+this repo, the vault has its own mirror (above).
+
+**Encryption.** Every object is encrypted to the captain's age key (the same
+identity as the master secrets file and finance-sentry) and, once
+`OFFBOX_BACKUP_AGE_IDENTITY` is set, to the on-box restore-check key too. The
+captain's key alone restores everything; the on-box key exists so the monthly
+check can decrypt without the captain's key ever being on a service account.
+
+**Size, retention, cost** (measured 2026-10-14): one set is about 0.31 GB
+(state 281 MB, SQLite 30 MB, identity 1.4 MB, backstage 32 KB), written in
+under a minute. Retention keeps the newest 7 complete daily and 4 complete
+weekly sets, about 3.4 GB, inside R2's 10 GB-month free tier even next to
+finance-sentry's backups on the same account; past it R2 charges $0.015 per
+GB-month (this retention: about $0.05 a month) and nothing for egress. Size it
+again with:
+
+```bash
+sudo -u lifekit python3 /srv/lifekit-stack/scripts/offbox-backup/offbox_backup.py estimate
+```
+
+**Shared bucket, own prefix.** The job uses finance-sentry's R2 bucket and
+key pair (captain's call, 2026-10-14: no new bucket or token to make, and he
+accepts that either job's credential can delete the other's objects). The
+values are copies of finance-sentry's `BACKUP_R2_*` in the master file
+(`docs/secrets.md`). The two jobs never overlap: finance-sentry writes, lists
+and prunes only `daily/` and `weekly/` at the bucket root (S3 `ListObjectsV2`
+with that prefix, then deletes only the keys it listed), and every remote path
+this job touches goes through `scoped()`, which refuses anything not strictly
+under `<bucket>/lifekit/`; its prune deletes only directories named like a set
+(`lifekit/<daily|weekly>/<UTC stamp>`). A prefix that is empty, nested, or
+`daily`/`weekly` stops the job before any call. `scripts/tests/test_offbox_backup.py`
+holds both sides.
+
+**Switching it on.** Until `stack.env` has the four R2 values, both timers run,
+log one `not configured (missing ...)` line and exit 0: nothing is uploaded,
+nothing alerts. The values and `OFFBOX_BACKUP_AGE_IDENTITY` are in the master
+file already (firstmate copied them sops-to-sops and minted the identity
+straight into it); on the live box, once:
+
+1. Render: `sudo bash scripts/secrets/render-stack-env.sh` (or with firstmate's
+   key: `sudo SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/firstmate.agekey" bash
+   scripts/secrets/render-stack-env.sh`). No redeploy: the timers read
+   `stack.env` on each run.
+2. Install the units (the deploy has no sudo; the installer also adds `age`,
+   `rclone` and `zstd`):
+
+   ```bash
+   sudo bash /srv/lifekit-stack/scripts/offbox-backup/install-offbox-backup.sh
+   systemctl list-timers 'lifekit-offbox-*'
+   ```
+
+3. First run by hand, then the restore check (it sends one Telegram message):
+
+   ```bash
+   sudo systemctl start lifekit-offbox-backup.service
+   journalctl -u lifekit-offbox-backup -n 20 --no-pager
+   sudo systemctl start lifekit-offbox-verify.service
+   journalctl -u lifekit-offbox-verify -n 20 --no-pager
+   ```
+
+**Failures.** A failed store deletes the set being written and fails the
+oneshot; a file `lifekit` cannot read counts as a failed store (tar exits
+non-zero), so one root-owned file under the state dir turns every night red
+until it is fixed. A listing error during retention also fails the oneshot and
+deletes nothing. `unit-gauge` reports `host_unit_failed{unit="lifekit-offbox-backup"}`
+and the "host systemd unit is down or failed" rule alerts, like the identity
+dump. Fix the cause, start the service again, and `sudo systemctl
+reset-failed lifekit-offbox-backup.service`.
+
+**The monthly restore check** (first Sunday, 05:00) fetches the newest complete
+set (it fails when that is older than 48 hours), checks each ciphertext
+against the manifest's sha256, decrypts with the on-box key and proves each
+store restores: the gzip and the `pg_dumpall` footer of the identity dump,
+`pg_restore --list` on the backstage dump in a throwaway `--network none`
+container, a tar listing of the state with `openclaw.json` in it, `PRAGMA
+quick_check` on every SQLite copy, and the secret key against the live one by
+hash only. The verdict goes to the owner through notify-relay: `good` with one
+line per store, or `act` naming what failed. A verdict the relay refuses fails
+the unit. Scratch lives in the unit's private `/tmp` and is removed.
+
+**Restoring by hand.** On any machine with `age`, `rclone` and the captain's
+key (`~/.config/sops/age/keys.txt` on the admin account, or KeePassXC), or on
+the box. Pick a set in the Cloudflare dashboard, or list them:
+
+```bash
+# the four values: sops decrypt --extract '["OFFBOX_BACKUP_R2_..."]' secrets/lifekit.env.sops
+export RCLONE_CONFIG_OFFBOX_TYPE=s3 RCLONE_CONFIG_OFFBOX_PROVIDER=Cloudflare \
+  RCLONE_CONFIG_OFFBOX_REGION=auto RCLONE_CONFIG_OFFBOX_NO_CHECK_BUCKET=true \
+  RCLONE_CONFIG_OFFBOX_ENDPOINT=<endpoint> RCLONE_CONFIG_OFFBOX_ACCESS_KEY_ID=<id> \
+  RCLONE_CONFIG_OFFBOX_SECRET_ACCESS_KEY=<secret>
+rclone lsf offbox:<bucket>/lifekit/daily/
+rclone copy offbox:<bucket>/lifekit/daily/<stamp> ./set
+cat set/MANIFEST.json; sha256sum set/*.age        # compare with the manifest
+K=~/.config/sops/age/keys.txt
+```
+
+- Identity: `age -d -i $K set/identity.sql.gz.age > identity-<stamp>.sql.gz`,
+  then the restore in [Identity provider (Logto)](#identity-provider-logto)
+  with that file.
+- Backstage, into a running `backstage-db` (stop the app first, start it after):
+
+  ```bash
+  docker stop backstage
+  age -d -i $K set/backstage.dump.age | docker exec -i backstage-db \
+    sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner'
+  docker start backstage
+  ```
+
+- Secret key, before the gateway starts:
+  `age -d -i $K set/openclaw-secret-key.tar.age | sudo -u lifekit tar -x -C /srv/openclaw/secret-key`
+- OpenClaw state, with the gateway stopped, the state first and the databases
+  over it (delete any `*.sqlite-wal`/`*.sqlite-shm` left beside them first):
+
+  ```bash
+  age -d -i $K set/openclaw-state.tar.zst.age | zstd -dc | sudo -u lifekit tar -x -C /srv/openclaw/config
+  age -d -i $K set/openclaw-sqlite.tar.zst.age | zstd -dc | sudo -u lifekit tar -x -C /srv/openclaw/config
+  ```
+
+  Then reinstall the npm plugins (above) and start the gateway with `bash scripts/deploy.sh`.
+
+**Undo:** `sudo systemctl disable --now lifekit-offbox-backup.timer
+lifekit-offbox-verify.timer && sudo rm
+/etc/systemd/system/lifekit-offbox-{backup,verify}.{service,timer} && sudo
+systemctl daemon-reload`, and remove the installer call from `bootstrap-vps.sh`
+in the same PR. The bucket keeps the sets until `lifekit/` is deleted:
+`rclone purge offbox:<bucket>/lifekit` with the environment above, never the
+bucket or its root (finance-sentry's backups live there). Drop the four
+`OFFBOX_BACKUP_R2_*` lines from the master file, not the token: finance-sentry
+still uses it.
 
 ## Pull-based alert-to-inbox polling
 
@@ -2673,8 +2837,9 @@ git fetch origin
 git reset --hard origin/main
 # OR rsync from a snapshot.
 
-# 4. Restore /srv/openclaw/secret-key/ from your private backup.
-#    Without this, you have to re-pair every channel.
+# 4. Restore /srv/openclaw/secret-key/, the OpenClaw state, the identity dump
+#    and the backstage database from the newest R2 set ("Off-box backup (R2)"
+#    above, restoring by hand). Without the secret key, you re-pair every channel.
 ```
 
 Total recovery time: ~30 minutes if your backups are current.

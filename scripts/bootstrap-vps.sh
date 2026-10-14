@@ -302,6 +302,17 @@ ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" FM_HOMES="${FM_HOMES:-}" bash "$
 say "Installing identity backup script + systemd units"
 LIFEKIT_USER="$LIFEKIT_USER" bash "$REPO_DIR/scripts/identity-backup/install-identity-backup.sh"
 
+# ─── Off-box backup timers ────────────────────────────────────────────────────
+# Nightly, as the deploy account: the identity dumps, a backstage pg_dump, the
+# OpenClaw secret key and runtime state, age-encrypted to the captain's key and
+# streamed to Cloudflare R2; a monthly restore check reports through
+# notify-relay. Installs age and rclone. Both log "not configured" and exit 0
+# until the OFFBOX_BACKUP_* values are in the env file; see
+# scripts/offbox-backup/ and docs/runbook.md "Off-box backup (R2)".
+
+say "Installing off-box backup systemd units"
+LIFEKIT_USER="$LIFEKIT_USER" bash "$REPO_DIR/scripts/offbox-backup/install-offbox-backup.sh"
+
 # ─── Ledger persona drift check timer ─────────────────────────────────────────
 # Daily, as the deploy account: compare the finance agent's live AGENTS.md with
 # finance-sentry's persona at the pin and alert through notify-relay when they
