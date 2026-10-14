@@ -2316,8 +2316,8 @@ enabled timer would alert every day. Order:
 
    ```bash
    sudo bash /srv/lifekit-stack/scripts/ledger-persona/install-ledger-persona-check.sh
-   python3 /srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py install
-   python3 /srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py check
+   sudo -u lifekit python3 /srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py install
+   sudo -u lifekit python3 /srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py check
    ```
 
 4. Enable the daily timer, as root:
