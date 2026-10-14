@@ -486,6 +486,33 @@ def test_verify_reports_a_decrypt_failure_when_age_exits_at_once(box):
     assert "no identity matched" in env["headline"]
 
 
+@pytest.mark.parametrize(
+    "name, garbage",
+    [
+        ("openclaw-secret-key.tar.age", b"not a tar archive"),
+        ("identity.sql.gz.age", b"\x1f\x8b\x08\x00truncated"),
+    ],
+)
+def test_verify_reports_a_corrupt_object_as_an_act_message(box, name, garbage):
+    assert box.run("backup").returncode == 0
+    obj = box.remote / "daily" / WEDNESDAY / name
+    data = b"FAKEAGE\n" + garbage
+    obj.write_bytes(data)
+    manifest_path = obj.parent / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    for o in manifest["objects"]:
+        if o["name"] == name:
+            o["bytes"], o["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+    res = box.run("verify", OFFBOX_BACKUP_NOW="2026-10-14T05-00-00Z")
+    assert res.returncode == 0, res.stderr
+    (env,) = box.posts()
+    assert env["level"] == "act" and name in env["headline"]
+    assert "could not read it" in env["headline"]
+    assert "Traceback" not in res.stderr
+    assert not list((box.root / "tmp").iterdir()), "scratch left behind"
+
+
 def test_an_undeployed_backstage_is_recorded_as_skipped(box):
     assert box.run("backup", FAKE_BACKSTAGE="absent").returncode == 0
     manifest = json.loads(

@@ -842,6 +842,12 @@ def check_object(cfg: Config, where: str, obj: dict, scratch: Path) -> str:
     dec = Decrypt(cfg, f"{where}/{obj['name']}", obj)
     try:
         result = check(cfg, dec.stdout, scratch)
+    except Exception as exc:
+        dec.close()  # a download or decryption failure is the real reason
+        raise Failed(
+            f"{obj['name']}: the restore check could not read it "
+            f"({type(exc).__name__}: {str(exc)[-200:]})"
+        ) from exc
     except BaseException:
         dec.abort()
         raise
