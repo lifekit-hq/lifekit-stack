@@ -49,6 +49,8 @@ if cmd == "rcat":
 elif cmd == "cat":
     sys.stdout.buffer.write(path.read_bytes())
 elif cmd == "lsf":
+    if os.environ.get("FAKE_RCLONE_LSF_FAIL") and path.name == os.environ["FAKE_RCLONE_LSF_FAIL"]:
+        sys.exit("lsf: 503 slow down")
     if not path.is_dir():
         sys.exit(3)
     for p in sorted(path.iterdir()):
@@ -355,6 +357,20 @@ def test_retention_keeps_seven_daily_and_drops_incomplete(box):
     assert kept[0] == "2026-10-03T03-30-00Z"
 
 
+def test_a_failed_set_listing_purges_nothing(box):
+    daily = box.remote / "daily"
+    stamps = [f"2026-10-0{day}T03-30-00Z" for day in range(1, 10)]
+    for stamp in stamps:
+        (daily / stamp).mkdir(parents=True)
+        (daily / stamp / "MANIFEST.json").write_text("{}")
+    res = box.run("backup", FAKE_RCLONE_LSF_FAIL=stamps[1])
+    assert res.returncode == 1
+    assert "retention failed" in res.stderr and "lsf" in res.stderr
+    log = (box.root / "rclone.log").read_text().splitlines()
+    assert not [c for c in log if c.startswith("purge")]
+    assert {p.name for p in daily.iterdir()} == {*stamps, WEDNESDAY}
+
+
 def test_every_remote_call_stays_under_the_prefix(box):
     for day in range(1, 10):  # more sets than retention keeps
         d = box.remote / "daily" / f"2026-10-0{day}T03-30-00Z"
@@ -511,6 +527,22 @@ def test_verify_reports_a_corrupt_object_as_an_act_message(box, name, garbage):
     assert "could not read it" in env["headline"]
     assert "Traceback" not in res.stderr
     assert not list((box.root / "tmp").iterdir()), "scratch left behind"
+
+
+def test_a_noisy_failing_stage_fails_promptly(box):
+    noisy = fake(
+        box.root,
+        "tar-noisy",
+        "import sys\n"
+        "for i in range(6000):\n"
+        "    sys.stderr.write('tar: ./f%d: Cannot open: Permission denied\\n' % i)\n"
+        "sys.stderr.flush()\n"
+        "sys.exit(2)",
+    )
+    res = box.run("backup", TAR=noisy)
+    assert res.returncode == 1
+    assert "Permission denied" in res.stderr
+    assert not (box.remote / "daily" / WEDNESDAY).exists()
 
 
 def test_an_undeployed_backstage_is_recorded_as_skipped(box):

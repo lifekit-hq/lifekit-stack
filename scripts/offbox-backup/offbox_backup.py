@@ -144,6 +144,7 @@ SQLITE_EXCLUDES = (
     "*.sqlite-shm",
     "*.sqlite-journal",
 )
+RCLONE_NOT_FOUND = 3  # rclone: directory not found
 TAR_OK = (0, 1)  # GNU tar: 1 = a file changed or vanished while it was read
 
 
@@ -281,7 +282,9 @@ def set_path(cfg: Config, kind: str, name: str) -> str:
     return scoped(cfg, f"{cfg.base}/{kind}/{name}")
 
 
-def rclone(cfg: Config, *args: str, check: bool = True) -> str:
+def rclone(
+    cfg: Config, *args: str, check: bool = True, missing_ok: bool = False
+) -> str:
     """args end with the remote path; purge takes only a whole set's path."""
     scoped(cfg, args[-1])
     if args[0] == "purge":
@@ -294,6 +297,8 @@ def rclone(cfg: Config, *args: str, check: bool = True) -> str:
         text=True,
         check=False,
     )
+    if missing_ok and res.returncode == RCLONE_NOT_FOUND:
+        return ""
     if check and res.returncode != 0:
         raise Failed(f"rclone {args[0]} failed: {res.stderr.strip()[-400:]}")
     return res.stdout
@@ -301,18 +306,37 @@ def rclone(cfg: Config, *args: str, check: bool = True) -> str:
 
 def list_sets(cfg: Config, kind: str) -> list[tuple[str, bool]]:
     """-> [(set name, complete)], oldest first."""
-    out = rclone(cfg, "lsf", "--dirs-only", f"{cfg.base}/{kind}/", check=False)
+    out = rclone(cfg, "lsf", "--dirs-only", f"{cfg.base}/{kind}/", missing_ok=True)
     sets = []
     # only directories named like a set; anything else is not ours to prune
     for name in sorted(
         n.rstrip("/") for n in out.split() if SET_RE.fullmatch(n.rstrip("/"))
     ):
-        files = rclone(cfg, "lsf", f"{set_path(cfg, kind, name)}/", check=False).split()
+        files = rclone(cfg, "lsf", f"{set_path(cfg, kind, name)}/").split()
         sets.append((name, MANIFEST in files))
     return sets
 
 
 # ─── pipelines ──────────────────────────────────────────────────────────────
+
+
+class Tail:
+    """Drains a stream on a thread so its writer never blocks on a full pipe,
+    keeping only the last `keep` bytes for an error message."""
+
+    def __init__(self, stream, keep: int = 400):
+        self.buf = b""
+        self.keep = keep
+        self.thread = threading.Thread(target=self._drain, args=(stream,), daemon=True)
+        self.thread.start()
+
+    def _drain(self, stream) -> None:
+        while chunk := stream.read(CHUNK):
+            self.buf = (self.buf + chunk)[-self.keep :]
+
+    def text(self) -> str:
+        self.thread.join()
+        return self.buf.decode(errors="replace").strip()
 
 
 def spawn(cmds: list[list[str]], stdin) -> list[subprocess.Popen]:
@@ -322,6 +346,7 @@ def spawn(cmds: list[list[str]], stdin) -> list[subprocess.Popen]:
         p = subprocess.Popen(
             cmd, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
+        p.err = Tail(p.stderr)
         if procs:
             procs[-1].stdout.close()  # only the next stage holds it now
         procs.append(p)
@@ -333,10 +358,10 @@ def finish(procs: list[subprocess.Popen], ok: dict[int, tuple[int, ...]]) -> Non
     """Wait for every stage; raise naming the first one that failed."""
     errors = []
     for i, p in enumerate(procs):
-        err = p.stderr.read().decode(errors="replace") if p.stderr else ""
+        err = p.err.text()
         rc = p.wait()
         if rc not in ok.get(i, (0,)):
-            errors.append(f"{Path(p.args[0]).name} exit {rc}: {err.strip()[-300:]}")
+            errors.append(f"{Path(p.args[0]).name} exit {rc}: {err}")
     if errors:
         raise Failed("; ".join(errors))
 
@@ -567,16 +592,20 @@ def upload(cfg: Config, source: dict, recipients, path: str) -> dict:
         stderr=subprocess.PIPE,
         env=cfg.rclone_env,
     )
+    rc_err = Tail(rc.stderr)
     try:
         n, sha = run_store(source, [age], rc.stdin)
     except BaseException:
         kill([rc])  # before closing stdin, so no truncated object is committed
-        rc.stdin.close()
+        try:
+            rc.stdin.close()
+        except OSError:
+            pass
         raise
     rc.stdin.close()
-    err = rc.stderr.read().decode(errors="replace")
+    err = rc_err.text()
     if rc.wait() != 0:
-        raise Failed(f"upload of {source['name']} failed: {err.strip()[-300:]}")
+        raise Failed(f"upload of {source['name']} failed: {err}")
     return {
         "name": source["name"],
         "store": source["store"],
@@ -713,6 +742,8 @@ class Decrypt:
         )
         os.close(rfd)
         self.stdout = self.age.stdout
+        self.cat_err = Tail(self.cat.stderr)
+        self.age_err = Tail(self.age.stderr)
         self.digest = hashlib.sha256()
         self.n = 0
         self.age_hung_up = False
@@ -740,17 +771,17 @@ class Decrypt:
         while self.stdout.read(CHUNK):
             pass
         self.feeder.join()
-        cat_err = self.cat.stderr.read().decode(errors="replace")
-        age_err = self.age.stderr.read().decode(errors="replace")
+        cat_err = self.cat_err.text()
+        age_err = self.age_err.text()
         name = self.obj["name"]
         if self.age_hung_up and self.age.wait() != 0:
-            raise Failed(f"{name}: age could not decrypt it: {age_err.strip()[-300:]}")
+            raise Failed(f"{name}: age could not decrypt it: {age_err}")
         if self.cat.wait() != 0:
-            raise Failed(f"{name}: download failed: {cat_err.strip()[-300:]}")
+            raise Failed(f"{name}: download failed: {cat_err}")
         if self.n != self.obj["bytes"] or self.digest.hexdigest() != self.obj["sha256"]:
             raise Failed(f"{name}: ciphertext does not match the manifest")
         if self.age.wait() != 0:
-            raise Failed(f"{name}: age could not decrypt it: {age_err.strip()[-300:]}")
+            raise Failed(f"{name}: age could not decrypt it: {age_err}")
 
 
 def check_identity(cfg: Config, plain, scratch: Path) -> str | None:
