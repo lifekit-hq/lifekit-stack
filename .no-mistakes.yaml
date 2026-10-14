@@ -14,6 +14,6 @@ commands:
     && .venv/bin/pre-commit run --all-files --show-diff-on-failure
   test: >-
     python3 -m venv .venv
-    && .venv/bin/pip install --quiet pytest
+    && .venv/bin/pip install --quiet -r requirements.txt
     && .venv/bin/python -m pytest -q
     compose/container-exporter/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests
