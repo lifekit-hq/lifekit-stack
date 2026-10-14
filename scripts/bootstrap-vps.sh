@@ -302,6 +302,17 @@ ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" FM_HOMES="${FM_HOMES:-}" bash "$
 say "Installing identity backup script + systemd units"
 LIFEKIT_USER="$LIFEKIT_USER" bash "$REPO_DIR/scripts/identity-backup/install-identity-backup.sh"
 
+# ─── Ledger persona drift check timer ─────────────────────────────────────────
+# Daily, as the deploy account: compare the finance agent's live AGENTS.md with
+# finance-sentry's persona at the pin and alert through notify-relay when they
+# differ; a failing check is reported by the unit gauge. Runs from the
+# checkout. Units are installed but the timer is left disabled: enabling it is
+# an operator step after the PIN is current; see scripts/ledger-persona/ and
+# docs/runbook.md "Ledger persona drift alert".
+
+say "Installing Ledger persona drift check systemd units"
+LIFEKIT_USER="$LIFEKIT_USER" bash "$REPO_DIR/scripts/ledger-persona/install-ledger-persona-check.sh"
+
 # ─── GitHub Actions self-hosted runner ────────────────────────────────────────
 
 if [[ -n "$RUNNER_REG_TOKEN" ]]; then

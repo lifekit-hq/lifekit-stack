@@ -2261,7 +2261,7 @@ on the host:
 
 ```bash
 S=/srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py
-$S check     # exit 0 in sync; exit 1 prints DRIFT and a diff of live vs composed. Read-only.
+$S check     # exit 0 in sync; exit 1 prints DRIFT and a diff of live vs composed; exit 2 any other failure. Read-only.
 $S compose   # print the composed persona
 $S install   # write AGENTS.md (the old one is kept as AGENTS.md.pre-persona-install)
 ```
@@ -2279,6 +2279,77 @@ First apply, once `check` shows no live-only change worth keeping (fold any
 back into finance-sentry first): run `check`, read the diff, then `install`.
 `--source DIR` composes from a local `agent/ledger` checkout instead of
 fetching, and `--workspace` at a scratch directory rehearses the whole flow.
+
+### Ledger persona drift alert
+
+Nobody edits the finance agent's `AGENTS.md` by hand, but three things did
+(2026-09-29 to 2026-10-09: an `openclaw doctor --fix` migration, a crewmate's
+sweep, Kit acting on a chat message). The rule is that agent instructions change
+only through the repo that owns them (Kit's `AGENTS.md` carries it: no live edit
+of another agent's persona; tell the owner and file an issue or PR in
+finance-sentry `agent/ledger`), and this timer is the backstop that notices when
+a live edit happens anyway. The file is not locked read-only: that would need a
+gateway restart and break upgrade migrations.
+
+`lifekit-ledger-persona-check.timer` runs `scripts/ledger-persona/drift-alert.py`
+daily at 07:15 (server time) as `lifekit`, the account that can read the finance
+workspace and holds the `gh` login the fetch uses. It runs `ledger-persona.py
+check` against `PIN`:
+
+| Outcome | What happens |
+| --- | --- |
+| live equals the pinned composition | silent, exit 0 |
+| live differs or is missing | one `act` envelope through notify-relay (the owner's Telegram, with the first diff lines collapsed), exit 0; reported again each day until fixed |
+| the check cannot run (fetch, unreadable file, bad pin) or the relay refuses the envelope | reason in the journal, exit 1: the service fails, `unit-gauge` reports `host_unit_failed{unit="lifekit-ledger-persona-check"}` and the existing "host systemd unit is down or failed" rule alerts after 10 minutes |
+
+No new secret and no container change: the envelope is POSTed from inside the
+notify-relay container with `docker exec` (the port is not published), and the
+unit runs the checkout in place, so a `PIN` bump applies with the deploy.
+`bootstrap-vps.sh` installs the units but leaves the timer **disabled**: while
+the live file still carries edits that are not folded into finance-sentry, an
+enabled timer would alert every day. Order:
+
+1. Fold the wanted live edits into finance-sentry `agent/ledger` by PR and merge it.
+2. Bump `PIN` here to the merge commit (PR) and let it deploy.
+3. Install the units (idempotent, does not enable), then apply the persona and
+   check it is green:
+
+   ```bash
+   sudo bash /srv/lifekit-stack/scripts/ledger-persona/install-ledger-persona-check.sh
+   sudo -u lifekit python3 /srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py install
+   sudo -u lifekit python3 /srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py check
+   ```
+
+4. Enable the daily timer, as root:
+
+   ```bash
+   sudo ENABLE=1 bash /srv/lifekit-stack/scripts/ledger-persona/install-ledger-persona-check.sh
+   systemctl list-timers lifekit-ledger-persona-check.timer
+   ```
+
+Verify without waiting for 07:15 once enabled (a drift sends one real Telegram message):
+
+```bash
+sudo systemctl start lifekit-ledger-persona-check.service
+journalctl -u lifekit-ledger-persona-check -n 20 --no-pager
+```
+
+When it alerts: read the diff with `ledger-persona.py check` (above). A change worth
+keeping goes into finance-sentry `agent/ledger` by PR, then the pin is bumped here
+and `install` applies it; an unwanted one is reverted by `install` at the current
+pin. A failed run stays reported until the next success; after fixing the cause,
+`sudo systemctl reset-failed lifekit-ledger-persona-check.service` clears it.
+
+**Undo:** `sudo systemctl disable --now lifekit-ledger-persona-check.timer && sudo
+rm /etc/systemd/system/lifekit-ledger-persona-check.{service,timer} && sudo
+systemctl daemon-reload`, and remove the installer call from `bootstrap-vps.sh` in
+the same PR so a re-bootstrap does not bring it back. Nothing else holds state.
+
+**Kit's rule reaches the live Kit workspace by hand**, like every
+`defaults/agents/*/workspace/` change (docs/openclaw-agent-design.md): merge the
+new "Never edit another agent's instructions" hard rule into
+`/srv/openclaw/config/agents/kit/workspace/AGENTS.md` as `lifekit`. No restart;
+Kit reads it on its next session.
 
 ## YouTube transcripts through the PC
 

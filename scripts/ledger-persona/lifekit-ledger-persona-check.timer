@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Ledger persona drift check daily
+
+[Timer]
+OnCalendar=*-*-* 07:15:00
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

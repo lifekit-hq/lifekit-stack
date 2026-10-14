@@ -11,6 +11,8 @@ them, and writes the result to <workspace>/AGENTS.md.
   check                exit 0 when the live AGENTS.md equals the composed
                        persona, 1 (with a unified diff summary) when it
                        differs or is missing. Read-only; never writes.
+                       Any other failure (fetch, unreadable file, bad pin)
+                       exits 2, so drift is never confused with an error.
   install              write the composed persona to the workspace (the old
                        file is kept as AGENTS.md.pre-persona-install). An
                        operator command: deploy.sh never runs it.
@@ -126,6 +128,20 @@ def install(workspace: Path, composed: str, allow_oversize: bool) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command; every failure that is not drift exits 2."""
+    try:
+        return run(argv)
+    except SystemExit as exc:
+        if isinstance(exc.code, str):
+            print(exc.code, file=sys.stderr)
+            return 2
+        raise
+    except Exception as exc:
+        print(f"ledger persona: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+
+
+def run(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("command", choices=("compose", "check", "install"))
     ap.add_argument(
