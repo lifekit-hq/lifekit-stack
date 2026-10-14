@@ -2594,7 +2594,10 @@ straight into it); on the live box, once:
    ```
 
 **Failures.** A failed store deletes the set being written and fails the
-oneshot; `unit-gauge` reports `host_unit_failed{unit="lifekit-offbox-backup"}`
+oneshot; a file `lifekit` cannot read counts as a failed store (tar exits
+non-zero), so one root-owned file under the state dir turns every night red
+until it is fixed. A listing error during retention also fails the oneshot and
+deletes nothing. `unit-gauge` reports `host_unit_failed{unit="lifekit-offbox-backup"}`
 and the "host systemd unit is down or failed" rule alerts, like the identity
 dump. Fix the cause, start the service again, and `sudo systemctl
 reset-failed lifekit-offbox-backup.service`.
