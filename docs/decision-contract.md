@@ -72,13 +72,17 @@ fleet home that owns the decision as one note, and firstmate closes the decision
 This section is the contract the dashboard backend and its tap-to-answer UI code against.
 
 **notify-relay is not on this path.** It only sends the push above and has no route to any
-inbox. The path is:
+inbox. The dashboard backend owns this endpoint, because putting it in notify-relay would need two
+new secrets plus a host change; this repo carries only the contract. The path is:
 
 browser -> edge sign-in (`edge/`) -> dashboard backend `POST /api/relay/note` -> ssh with the
 dashboard's relay key -> the `kit-relay` forced command (`dashboard` sender, `dash-` request ids)
 -> `fm-inbox.sh note` in the owning home (`docs/runbook.md` "Dashboard sender (proposal box)").
 
-No new secret or host change is involved: the installed `kit-relay` already pins both homes.
+As installed on 2026-10-14, the live `kit-relay` pins both homes (`fm-vps` as default, `firstmate`
+as the second pinned home) and has the `dashboard` sender arm, and the dashboard key's
+authorized_keys line is in place. `docs/runbook.md` "Kit's second-mate relay" (install with a second
+pinned home) and "Dashboard sender (proposal box)" (the dashboard key) set these up.
 
 ### Where the options come from
 
@@ -140,8 +144,9 @@ it gets one reply saying so and nothing changes.
 ### Idempotency
 
 `rid = dash-<UTC yyyyMMdd>-<first 16 hex of sha256(body)>`. Resubmitting the same answer on the
-same UTC day replays the same note: `outcome: "replay"`, no second note and no second wake. The
-same answer on a later UTC day is a new note, and firstmate replies "unknown or closed id" when
+same UTC day replays the same note: `outcome: "replay"`, never a second note. When that note was
+saved but not announced (relay exit 3, `announced: false`), re-sending the same body re-announces
+it, so the UI can offer a retry of the same answer. The same answer on a later UTC day is a new note, and firstmate replies "unknown or closed id" when
 the first one already closed the decision. A different choice is a different body, so it is a new
 note. Firstmate then records the latest of the owner's words, the same as answering twice on the
 board.
@@ -154,7 +159,7 @@ appear in a response or a log line.
 
 | HTTP | `status` | Meaning |
 | --- | --- | --- |
-| 200 | `saved` | The note is in the inbox. `id` is the inbox note id and `outcome` is `created` or `replay`. `announced: false` means saved but the wake did not fire (relay exit 3), and the next session start raises it. |
+| 200 | `saved` | The note is in the inbox. `id` is the inbox note id and `outcome` is `created` or `replay`. `announced: false` means saved but the wake did not fire (relay exit 3): the next session start raises it, and re-sending the same body the same UTC day re-announces it without a second note. |
 | 400 | `invalid` | A rule above failed. `problem` says which one, in plain words. |
 | 401 / 403 | `unauthorized` / `forbidden` | The request did not come through the edge sign-in. |
 | 409 | `not-open` | The decision is not open. The UI drops the card and refreshes the feed. |
