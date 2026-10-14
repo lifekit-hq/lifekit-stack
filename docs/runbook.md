@@ -2576,8 +2576,9 @@ straight into it); on the live box, once:
    key: `sudo SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/firstmate.agekey" bash
    scripts/secrets/render-stack-env.sh`). No redeploy: the timers read
    `stack.env` on each run.
-2. Install the units (the deploy has no sudo; the installer also adds `age`,
-   `rclone` and `zstd`):
+2. Install the units (the deploy has no sudo; the installer also adds `age`
+   and `zstd` from Debian and a pinned rclone from rclone.org, checked
+   against its sha256, at `/usr/local/lib/lifekit-offbox/rclone-<version>`):
 
    ```bash
    sudo bash /srv/lifekit-stack/scripts/offbox-backup/install-offbox-backup.sh
@@ -2592,6 +2593,15 @@ straight into it); on the live box, once:
    sudo systemctl start lifekit-offbox-verify.service
    journalctl -u lifekit-offbox-verify -n 20 --no-pager
    ```
+
+**Why not Debian's rclone.** trixie ships rclone 1.60.1, which reads the
+object back after each upload with a `HEAD ...?versionId=` request. R2 answers
+that with `501 Not Implemented`, so every upload is reported as failed
+although the object was written (the first live run on 2026-10-14 failed this
+way, and its failure path deleted the set). Upstream rclone does a plain
+`HEAD`. The units set `RCLONE` to the pinned binary; bump it in
+`install-offbox-backup.sh` (the version plus both zips' sums from that
+release's `SHA256SUMS`) and rerun the installer.
 
 **Failures.** A failed store deletes the set being written and fails the
 oneshot; a file `lifekit` cannot read counts as a failed store (tar exits
@@ -2615,7 +2625,10 @@ the unit. Scratch lives in the unit's private `/tmp` and is removed.
 
 **Restoring by hand.** On any machine with `age`, `rclone` and the captain's
 key (`~/.config/sops/age/keys.txt` on the admin account, or KeePassXC), or on
-the box. Pick a set in the Cloudflare dashboard, or list them:
+the box. Reading works with any rclone, Debian's included. Never add `-v` or
+`-vv` with this environment: rclone's debug log prints every
+`RCLONE_CONFIG_*` value, the secret key included. Pick a set in the
+Cloudflare dashboard, or list them:
 
 ```bash
 # the four values: sops decrypt --extract '["OFFBOX_BACKUP_R2_..."]' secrets/lifekit.env.sops
@@ -2656,8 +2669,9 @@ K=~/.config/sops/age/keys.txt
 **Undo:** `sudo systemctl disable --now lifekit-offbox-backup.timer
 lifekit-offbox-verify.timer && sudo rm
 /etc/systemd/system/lifekit-offbox-{backup,verify}.{service,timer} && sudo
-systemctl daemon-reload`, and remove the installer call from `bootstrap-vps.sh`
-in the same PR. The bucket keeps the sets until `lifekit/` is deleted:
+rm -r /usr/local/lib/lifekit-offbox && sudo systemctl daemon-reload`, and
+remove the installer call from `bootstrap-vps.sh` in the same PR. The bucket
+keeps the sets until `lifekit/` is deleted:
 `rclone purge offbox:<bucket>/lifekit` with the environment above, never the
 bucket or its root (finance-sentry's backups live there). Drop the four
 `OFFBOX_BACKUP_R2_*` lines from the master file, not the token: finance-sentry

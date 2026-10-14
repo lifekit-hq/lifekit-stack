@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -594,30 +595,110 @@ def test_captain_recipient_is_the_first_master_recipient():
     assert first == ob.CAPTAIN_RECIPIENT
 
 
-def test_installer_writes_both_units_and_enables_them(tmp_path):
+RCLONE_PIN = "/usr/local/lib/lifekit-offbox/rclone-v1.75.1"
+
+
+def fake_release(tmp_path) -> tuple[Path, str]:
+    """A local stand-in for downloads.rclone.org with one arm64 zip."""
+    site = tmp_path / "site"
+    (site / "v1.75.1").mkdir(parents=True)
+    zipped = site / "v1.75.1/rclone-v1.75.1-linux-arm64.zip"
+    with zipfile.ZipFile(zipped, "w") as z:
+        z.writestr("rclone-v1.75.1-linux-arm64/rclone", "#!/bin/sh\necho fake rclone\n")
+        z.writestr("rclone-v1.75.1-linux-arm64/README.txt", "not installed")
+    return site, hashlib.sha256(zipped.read_bytes()).hexdigest()
+
+
+def install(tmp_path, site: Path, sha256: str | None = None, path: str | None = None):
     calls = tmp_path / "calls"
     fake_ctl = tmp_path / "systemctl"
     fake_ctl.write_text(f'#!/usr/bin/env bash\necho "$*" >> {calls}\n')
     fake_ctl.chmod(0o755)
-    subprocess.run(
+    env = {
+        **os.environ,
+        "INSTALL_ROOT": str(tmp_path / "root"),
+        "SYSTEMCTL": str(fake_ctl),
+        "LIFEKIT_USER": "svc",
+        "REPO_DIR": "/srv/repo",
+        "RCLONE_BASE_URL": site.as_uri(),
+        "RCLONE_ARCH": "arm64",
+    }
+    if sha256 is not None:
+        env["RCLONE_SHA256"] = sha256
+    if path is not None:
+        env["PATH"] = path
+    return subprocess.run(
         ["bash", str(HERE / "install-offbox-backup.sh")],
-        env={
-            **os.environ,
-            "INSTALL_ROOT": str(tmp_path),
-            "SYSTEMCTL": str(fake_ctl),
-            "LIFEKIT_USER": "svc",
-            "REPO_DIR": "/srv/repo",
-        },
-        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
     )
-    units = tmp_path / "etc/systemd/system"
+
+
+def test_installer_writes_both_units_and_enables_them(tmp_path):
+    site, sha256 = fake_release(tmp_path)
+    res = install(tmp_path, site, sha256)
+    assert res.returncode == 0, res.stderr
+    root = tmp_path / "root"
+    rclone = root / RCLONE_PIN.lstrip("/")
+    assert subprocess.run([rclone], capture_output=True, text=True).stdout == (
+        "fake rclone\n"
+    )
+    units = root / "etc/systemd/system"
     for name in ("lifekit-offbox-backup", "lifekit-offbox-verify"):
         svc = (units / f"{name}.service").read_text()
         assert "User=svc" in svc and "/srv/repo/scripts/offbox-backup/" in svc
+        # the job runs the pinned rclone, not whatever rclone is on PATH
+        assert f"Environment=RCLONE={RCLONE_PIN}" in svc.splitlines()
         assert "__" not in svc
         assert (units / f"{name}.timer").is_file()
-    assert calls.read_text().splitlines() == [
+    assert (tmp_path / "calls").read_text().splitlines() == [
         "daemon-reload",
         "enable --now lifekit-offbox-backup.timer",
         "enable --now lifekit-offbox-verify.timer",
     ]
+
+
+def test_installer_refuses_an_rclone_zip_that_does_not_match_its_pin(tmp_path):
+    site, _ = fake_release(tmp_path)
+    res = install(tmp_path, site, "0" * 64)
+    assert res.returncode != 0
+    assert "does not match its pinned sha256" in res.stderr
+    root = tmp_path / "root"
+    assert not (root / RCLONE_PIN.lstrip("/")).exists()
+    assert not (root / "etc/systemd/system").exists()
+    assert not (tmp_path / "calls").exists()
+
+
+def test_installer_reuses_an_rclone_already_in_place(tmp_path):
+    site, sha256 = fake_release(tmp_path)
+    assert install(tmp_path, site, sha256).returncode == 0
+    # the release is gone: a second run must not need it
+    (site / "v1.75.1/rclone-v1.75.1-linux-arm64.zip").unlink()
+    res = install(tmp_path, site, sha256)
+    assert res.returncode == 0, res.stderr
+    assert "already in place" in res.stdout
+
+
+def test_an_interrupted_rclone_copy_leaves_nothing_at_the_pinned_path(tmp_path):
+    site, sha256 = fake_release(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_install = bin_dir / "install"
+    fake_install.write_text(
+        "#!/usr/bin/env bash\n"
+        'dest="${@: -1}"\n'
+        'mkdir -p "$(dirname "$dest")"\n'
+        'printf "trunc" > "$dest"\n'
+        "exit 1\n"
+    )
+    fake_install.chmod(0o755)
+    res = install(tmp_path, site, sha256, path=f"{bin_dir}:{os.environ['PATH']}")
+    assert res.returncode != 0
+    root = tmp_path / "root"
+    assert not (root / RCLONE_PIN.lstrip("/")).exists()
+    # the next run downloads and installs it properly
+    res = install(tmp_path, site, sha256)
+    assert res.returncode == 0, res.stderr
+    assert "installed" in res.stdout
+    assert (root / RCLONE_PIN.lstrip("/")).read_text().startswith("#!/bin/sh")

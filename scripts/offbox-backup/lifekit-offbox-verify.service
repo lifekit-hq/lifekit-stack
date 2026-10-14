@@ -13,4 +13,6 @@ PrivateTmp=yes
 Nice=10
 IOSchedulingClass=idle
 TimeoutStartSec=2h
+# the pinned rclone install-offbox-backup.sh puts there (not Debian's)
+Environment=RCLONE=__RCLONE_BIN__
 ExecStart=/usr/bin/python3 __REPO_DIR__/scripts/offbox-backup/offbox_backup.py verify
