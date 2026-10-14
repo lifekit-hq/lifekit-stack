@@ -1097,6 +1097,23 @@ def test_digest_mail_section_names_only_gmail_read_tools(tmp_path):
         assert write_tool not in message
 
 
+def test_digest_all_clear_line_yields_to_mail_that_needs_the_owner(tmp_path):
+    result, calls = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
+    assert result.returncode == 0, result.stderr
+    (edit,) = calls
+    message = message_of(edit)
+    all_clear = "'Nothing needs you today.'"
+    assert message.count(all_clear) == 1
+    at = message.index(all_clear)
+    # the delivered rule that introduces the all-clear line, up to its end
+    start = message.rindex(". ", 0, at) + 2
+    rule = message[start : message.index(". No preamble", at)]
+    # it yields to the Mail section: an empty ledger and fleet with mail that
+    # needs a reply never prints the line above the Mail line
+    assert "mail section lists a message that needs you" in rule
+    assert "line is left out" in rule
+
+
 def test_digest_creates_a_missing_row_with_the_same_message(tmp_path):
     result, calls = run_digest(tmp_path, [])
     assert result.returncode == 0, result.stderr

@@ -55,7 +55,7 @@ A binding matches a channel and optionally an account or peer; the most specific
 
 ### Decisions waiting on the owner
 
-Decisions go to the OpenClaw app, not Telegram. kit keeps the one ledger of open decisions in its workspace and asks each one with `ask_user` in its main Control UI chat. A decision that comes up anywhere else is recorded and handed to that chat. A digest of the open decisions, the fleet and the new mail posts there too, twice daily (09:00 and 17:00); when nothing is open it says "Nothing needs you today." See kit's `AGENTS.md` ("Needs you") and `docs/runbook.md` ("Kit's needs-you decisions and the daily digest").
+Decisions go to the OpenClaw app, not Telegram. kit keeps the one ledger of open decisions in its workspace and asks each one with `ask_user` in its main Control UI chat. A decision that comes up anywhere else is recorded and handed to that chat. A digest of the open decisions, the fleet and the new mail posts there too, twice daily (09:00 and 17:00); when nothing is open and no mail needs you it says "Nothing needs you today." See kit's `AGENTS.md` ("Needs you") and `docs/runbook.md` ("Kit's needs-you decisions and the daily digest").
 
 ### Workspaces and memory
 

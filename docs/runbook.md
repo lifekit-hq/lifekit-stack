@@ -692,7 +692,7 @@ line, and the other parts still post.
 reply is committed to the conversation's transcript, and that session has no external
 route, so nothing goes to Telegram. It always posts: the date line, then the needs-you
 part in the relay skill's Status format, which is the single line "Nothing needs you
-today." when the ledger and the fleet show no call and no to-do. A run that cannot read
+today." when the ledger and the fleet show no call and no to-do and no mail needs you. A run that cannot read
 the ledger or the mail says so in the chat. A run that
 fails outright raises a failure alert after one failure. The alert goes through kit's
 `default` Telegram account to `LIFEKIT_TELEGRAM_CHAT` from the host env file, the same
@@ -1062,7 +1062,7 @@ and the status read is an HTTP GET Kit could always make.
 - **Digest:** the 09:00 and 17:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
   runs `relay.sh status` and posts the fleet part in that same format, under the date
   line, then a mail section when mail arrived; it posts "Nothing needs you today." when
-  nothing is open and is never silent. Re-run the script as
+  nothing is open and no mail needs you, and is never silent. Re-run the script as
   `lifekit` to converge the live row; a cron turn sends no note.
 - **Morning brief:** the 08:30 `today-brief` row is host state made by hand with kit,
   not declared in git. `scripts/ensure-today-brief-fleet.sh` (as `lifekit`) inserts the

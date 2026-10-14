@@ -160,7 +160,7 @@ tell Denys in one line that it is waiting in the app.
 **The digest** is a scheduled run (`needs-you-digest`, twice daily, 09:00 and
 17:00) that posts into this main chat. It reads the open decisions
 (`needs-you/open.json`, never edited), the fleet and the new mail, and posts
-"Nothing needs you today." when nothing is open.
+"Nothing needs you today." when nothing is open and no mail needs you.
 
 ### Anything else
 
