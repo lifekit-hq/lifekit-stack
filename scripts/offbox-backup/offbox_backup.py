@@ -363,7 +363,6 @@ def produce(source: dict) -> tuple[list[list[str]], object]:
         tar = [
             TAR,
             "-c",
-            "--ignore-failed-read",
             "--warning=no-file-changed",
             "--warning=no-file-removed",
             *(f"--exclude={p}" for p in source.get("exclude", ())),
@@ -716,6 +715,7 @@ class Decrypt:
         self.stdout = self.age.stdout
         self.digest = hashlib.sha256()
         self.n = 0
+        self.age_hung_up = False
         self.feeder = threading.Thread(target=self._feed, daemon=True)
         self.feeder.start()
 
@@ -723,7 +723,8 @@ class Decrypt:
         try:
             self.n = pump(self.cat.stdout, self.age.stdin, self.digest)
         except BrokenPipeError:
-            pass
+            self.age_hung_up = True
+            self.cat.kill()  # age stopped reading: rclone would block on a full pipe
         finally:
             try:
                 self.age.stdin.close()
@@ -742,6 +743,8 @@ class Decrypt:
         cat_err = self.cat.stderr.read().decode(errors="replace")
         age_err = self.age.stderr.read().decode(errors="replace")
         name = self.obj["name"]
+        if self.age_hung_up and self.age.wait() != 0:
+            raise Failed(f"{name}: age could not decrypt it: {age_err.strip()[-300:]}")
         if self.cat.wait() != 0:
             raise Failed(f"{name}: download failed: {cat_err.strip()[-300:]}")
         if self.n != self.obj["bytes"] or self.digest.hexdigest() != self.obj["sha256"]:

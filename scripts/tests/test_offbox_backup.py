@@ -17,6 +17,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 HERE = REPO / "scripts/offbox-backup"
@@ -447,6 +448,44 @@ def test_a_failed_store_leaves_no_partial_set(box):
     assert not list((box.root / "tmp").iterdir()), "scratch left behind"
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_an_unreadable_state_file_fails_the_backup(box):
+    locked = box.state / "agents/kit/agent/locked.md"
+    locked.write_text("secret")
+    locked.chmod(0)
+    try:
+        res = box.run("backup")
+    finally:
+        locked.chmod(0o644)
+    assert res.returncode == 1
+    assert "Permission denied" in res.stderr
+    assert not (box.remote / "daily" / WEDNESDAY).exists()
+    assert not list((box.root / "tmp").iterdir()), "scratch left behind"
+
+
+def test_verify_reports_a_decrypt_failure_when_age_exits_at_once(box):
+    assert box.run("backup").returncode == 0
+    big = box.remote / "daily" / WEDNESDAY / "identity.sql.gz.age"
+    manifest_path = big.parent / "MANIFEST.json"
+    data = b"FAKEAGE\n" + os.urandom(4 * 1024 * 1024)
+    big.write_bytes(data)
+    manifest = json.loads(manifest_path.read_text())
+    for o in manifest["objects"]:
+        if o["name"] == big.name:
+            o["bytes"], o["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+    res = box.run(
+        "verify",
+        OFFBOX_BACKUP_NOW="2026-10-14T05-00-00Z",
+        AGE=fake(box.root, "age-exits", "import sys\nsys.exit('no identity matched')"),
+    )
+    assert res.returncode == 0, res.stderr
+    (env,) = box.posts()
+    assert env["level"] == "act"
+    assert "age could not decrypt it" in env["headline"]
+    assert "no identity matched" in env["headline"]
+
+
 def test_an_undeployed_backstage_is_recorded_as_skipped(box):
     assert box.run("backup", FAKE_BACKSTAGE="absent").returncode == 0
     manifest = json.loads(
@@ -490,9 +529,10 @@ def test_exclusions_follow_tar_semantics(rel, out):
 
 
 def test_captain_recipient_is_the_first_master_recipient():
-    text = (REPO / ".sops.yaml").read_text()
-    first = re.search(r"lifekit\\\.env\\\.sops\$\n\s+age: >-\n\s+(age1[a-z0-9]+)", text)
-    assert first and first.group(1) == ob.CAPTAIN_RECIPIENT
+    rules = yaml.safe_load((REPO / ".sops.yaml").read_text())["creation_rules"]
+    (master,) = [r for r in rules if "lifekit\\.env\\.sops" in r["path_regex"]]
+    first = master["age"].replace(" ", "").split(",")[0]
+    assert first == ob.CAPTAIN_RECIPIENT
 
 
 def test_installer_writes_both_units_and_enables_them(tmp_path):
