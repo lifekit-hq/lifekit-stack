@@ -128,7 +128,8 @@ The first failure answers. Nothing is sent to the host unless every check passes
 
    Otherwise `400 invalid`.
 6. When `ask` is null: `text` passes through, and `optionId` is `400 invalid` (no offered options to match).
-7. The note body is at most 32768 bytes of UTF-8 -> else `400 invalid`.
+7. The note body is at most 32768 bytes, has no NUL bytes and is valid UTF-8 (the relay refuses
+   either with exit 65) -> else `400 invalid`, with nothing sent.
 
 ### Note body and home
 
@@ -183,8 +184,10 @@ It acts only on a later `confirm <decisionId>`. An ordinary answer closes the de
 item leaves `decisions_open` within about a minute.
 
 The UI reads replies with `GET /api/relay/receipts?homeId=<home>[&after=<cursor>]` (edge-gated,
-`no-store`). This runs `kit-relay receipts [<cursor>] <home>` and returns its
-`kit-relay-receipts.v1` view, which holds only `dash-` notes and their replies:
+`no-store`). `homeId` is required and must be one the relay pins (`fm-vps`, `firstmate`),
+otherwise `400 invalid` with nothing sent (the relay exits 64). This runs
+`kit-relay receipts [<cursor>] <home>` and returns its `kit-relay-receipts.v1` view, which holds
+only `dash-` notes and their replies:
 
 - `pending[]` and `handled[]`: notes, each with `id`, `request_id`, `acknowledged`, `announced` and `reply`.
 - `replies[]`: each with `id` (the note id), `at`, `body` and `cursor`.
