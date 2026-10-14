@@ -1,10 +1,12 @@
-# Decision contract — the captain-facing decision push
+# Decision contract — the captain-facing decision push and its answer
 
 A decision that needs the owner reaches the phone as one typed payload, answerable from a review
 board. `notify-relay` builds it (`compose/notify-relay/decision.js`) and the dashboard decision page
 renders the same payload. The schema is [`decision-contract.schema.json`](../compose/notify-relay/decision-contract.schema.json);
 `compose/notify-relay/test/decision.test.js` keeps it equal to the code and is the executable form of
-this page (when they disagree, the tests win).
+this page (when they disagree, the tests win). How an answer travels back is
+[Answering a decision](#answering-a-decision-dashboard---captain-inbox), implemented in
+lifekit-dashboard rather than here.
 
 ## Payload (v1)
 
@@ -62,3 +64,119 @@ with the contract payload, `400` for invalid input, `502` when Telegram refused 
 
 The id → message mapping is in memory (the container is read-only). After a relay restart the next
 `POST /decision` for an id sends a fresh message, and a clear for a forgotten id is a no-op.
+
+## Answering a decision (dashboard -> captain inbox)
+
+The owner answers from a dashboard decision card. The answer reaches the captain inbox of the
+fleet home that owns the decision as one note, and firstmate closes the decision from that note.
+This section is the contract the dashboard backend and its tap-to-answer UI code against.
+
+**notify-relay is not on this path.** It only sends the push above and has no route to any
+inbox. The path is:
+
+browser -> edge sign-in (`edge/`) -> dashboard backend `POST /api/relay/note` -> ssh with the
+dashboard's relay key -> the `kit-relay` forced command (`dashboard` sender, `dash-` request ids)
+-> `fm-inbox.sh note` in the owning home (`docs/runbook.md` "Dashboard sender (proposal box)").
+
+No new secret or host change is involved: the installed `kit-relay` already pins both homes.
+
+### Where the options come from
+
+The source is the fleet feed (`GET /api/fleet`, `decisions_open[]`). Each item carries `id` and
+`home_id`. Once the producer publishes it, an item also carries `ask`:
+
+```json
+{ "question": "…", "options": [{ "id": "…", "label": "…", "recommended": true }],
+  "free_text_allowed": true, "link": "https://…" }
+```
+
+The recommended option comes first, there is at most one recommended option, and there are at
+most 6 options. `ask` is `null` when the call has none. The backend reads the item fresh on every
+request and never trusts options sent by the browser.
+
+### Request
+
+`POST /api/relay/note`, JSON. It is accepted only through the edge (`EdgeGate`: the oauth2-proxy
+identity header plus the edge proof). The existing `proposal` and `task` kinds are unchanged.
+
+| Field | Answer | Confirm |
+| --- | --- | --- |
+| `kind` | `"answer"` | `"confirm"` |
+| `decisionId` | required, the item's `id` (`[A-Za-z0-9][A-Za-z0-9._-]*`, at most 64) | required |
+| `homeId` | optional; when sent it must equal the item's `home_id` | optional, same rule |
+| `optionId` | the chosen option's `id`; exactly one of `optionId` or `text` | not allowed |
+| `text` | the owner's own words, trimmed, not empty | not allowed |
+
+### Validation, in order
+
+The first failure answers. Nothing is sent to the host unless every check passes.
+
+1. `kind`, `decisionId` shape, and exactly one of `optionId`/`text` (none for `confirm`) -> else `400 invalid`.
+2. The fleet feed is readable -> else `503 unavailable` (the backend does not guess the home).
+3. `decisionId` is in `decisions_open` now -> else `409 not-open` (unknown, already closed, or not yet published).
+4. `homeId`, when sent, equals the item's `home_id`, and that home is one the relay pins
+   (`fm-vps`, `firstmate`) -> else `400 invalid`.
+5. When `ask` is not null:
+   - `optionId` must be one of `ask.options[].id`;
+   - `text` is allowed only when `ask.free_text_allowed` is true.
+
+   Otherwise `400 invalid`.
+6. When `ask` is null: `text` passes through, and `optionId` is `400 invalid` (no offered options to match).
+7. The note body is at most 32768 bytes of UTF-8 -> else `400 invalid`.
+
+### Note body and home
+
+| Kind | Body (exact) |
+| --- | --- |
+| answer, option | `answer <decisionId>: <the option's label, as published>` |
+| answer, text | `answer <decisionId>: <text>` |
+| confirm | `confirm <decisionId>` |
+
+The backend runs `kit-relay note <rid> <home>`, where `<home>` is the item's `home_id`. The
+relay matches it only against its pinned homes. Firstmate's standing answer-note rule closes
+exactly that decision through `fm-captain-hold.sh answer`. If the id is unknown or already closed,
+it gets one reply saying so and nothing changes.
+
+### Idempotency
+
+`rid = dash-<UTC yyyyMMdd>-<first 16 hex of sha256(body)>`. Resubmitting the same answer on the
+same UTC day replays the same note: `outcome: "replay"`, no second note and no second wake. The
+same answer on a later UTC day is a new note, and firstmate replies "unknown or closed id" when
+the first one already closed the decision. A different choice is a different body, so it is a new
+note. Firstmate then records the latest of the owner's words, the same as answering twice on the
+board.
+
+### Response
+
+The response is always JSON `{ "status", "id", "outcome", "announced", "problem" }` with
+`Cache-Control: no-store`. The relay's stdout and stderr, the key path and the edge proof never
+appear in a response or a log line.
+
+| HTTP | `status` | Meaning |
+| --- | --- | --- |
+| 200 | `saved` | The note is in the inbox. `id` is the inbox note id and `outcome` is `created` or `replay`. `announced: false` means saved but the wake did not fire (relay exit 3), and the next session start raises it. |
+| 400 | `invalid` | A rule above failed. `problem` says which one, in plain words. |
+| 401 / 403 | `unauthorized` / `forbidden` | The request did not come through the edge sign-in. |
+| 409 | `not-open` | The decision is not open. The UI drops the card and refreshes the feed. |
+| 429 | `rate-limited` | The host bucket is full: 30 new `dash-` notes per rolling hour per home (relay exit 75). Nothing was saved. |
+| 502 | `error` | The relay refused or failed, or timed out after 20 s. Not confirmed saved; `problem` explains. |
+| 503 | `not-configured` / `unavailable` | The relay key or edge proof is not configured, or the fleet feed cannot be read. |
+
+### Confirm-first for risky calls
+
+Firstmate replies first when an answer would authorize a merge or a destructive, irreversible or
+security-sensitive action. The reply says what it is about to do, and the decision **stays open**.
+It acts only on a later `confirm <decisionId>`. An ordinary answer closes the decision, and the
+item leaves `decisions_open` within about a minute.
+
+The UI reads replies with `GET /api/relay/receipts?homeId=<home>[&after=<cursor>]` (edge-gated,
+`no-store`). This runs `kit-relay receipts [<cursor>] <home>` and returns its
+`kit-relay-receipts.v1` view, which holds only `dash-` notes and their replies:
+
+- `pending[]` and `handled[]`: notes, each with `id`, `request_id`, `acknowledged`, `announced` and `reply`.
+- `replies[]`: each with `id` (the note id), `at`, `body` and `cursor`.
+- `reply_cursor`: pass it back as `after` to read only newer replies.
+
+The UI matches `replies[].id` to the `id` it got back from the answer, shows the reply `body`
+verbatim, and offers **Confirm** only while that decision is still in `decisions_open` after the
+reply. A `confirm` with nothing pending is harmless: firstmate replies saying so.
