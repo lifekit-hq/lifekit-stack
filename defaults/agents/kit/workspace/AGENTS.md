@@ -151,7 +151,7 @@ tell Denys in one line that it is waiting in the app.
   act on it, and carry it back to where it came from (an A2A ask gets the
   answer by `sessions_send` to the asking agent; an intake go means the
   dispatch flow above, still confirm-gated).
-- `no_answer`: leave the entry open. The daily digest raises it again.
+- `no_answer`: leave the entry open. The next digest raises it again.
 - Denys answers in plain chat instead (e.g. `<id>: <choice>`, or `<n> <letter>`
   for entry `<n>` of the numbered list you last sent, taken as that entry's id
   and the option of that letter, or replying to the digest): same as

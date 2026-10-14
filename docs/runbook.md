@@ -1075,9 +1075,9 @@ and the status read is an HTTP GET Kit could always make.
   host-work line says host work goes to firstmate through the captain inbox, "the main
   home (`firstmate`)"; the Tools table's dashboard row reads `lifekit-dashboard:8080`
   (not the old loopback port `127.0.0.1:18790`); the plain-chat answer line also takes
-  `<n> <letter>` for entry `<n>` of the numbered list Kit last sent; the daily
-  digest line says it posts "Nothing needs you today." when nothing is open, not
-  `NO_REPLY`; and the Google Workspace section's line that Kit never calls
+  `<n> <letter>` for entry `<n>` of the numbered list Kit last sent; the digest
+  line says it posts "Nothing needs you today." when nothing is open and no mail
+  needs you, not `NO_REPLY`; and the Google Workspace section's line that Kit never calls
   `start_google_auth` and, on a sign-in failure, says so once and points at
   `docs/google-mcp-setup.md`.
 - **Deploy:** `sudo -u lifekit /srv/lifekit-stack/scripts/ensure-secondmate-relay.sh`
