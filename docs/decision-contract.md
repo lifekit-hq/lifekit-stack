@@ -117,8 +117,8 @@ identity header plus the edge proof). The existing `proposal` and `task` kinds a
 
 The first failure answers. Nothing is sent to the host unless every check passes.
 
-1. `kind`, `decisionId` shape, `homeId`, `submissionId` shape, and exactly one of `optionId`/`text`
-   (none for `confirm`) -> else `400 invalid`.
+1. `kind`, `decisionId` shape, `homeId` (one the relay pins: `fm-vps`, `firstmate`), `submissionId`
+   shape, and exactly one of `optionId`/`text` (none for `confirm`) -> else `400 invalid`.
 2. The fleet feed is readable -> else `503 unavailable` (the backend does not guess the home).
 3. The target home's `homes[]` entry is published, and its listed `decisions_open` items are not
    fewer than its `counts.decisions_open` -> else `503 unavailable`, nothing sent (the list may be
@@ -126,14 +126,13 @@ The first failure answers. Nothing is sent to the host unless every check passes
    The (`homeId`, `decisionId`) pair is in `decisions_open` now, matched on the item's (`home_id`,
    `id`) because ids are per home -> else `409 not-open` (unknown or already closed).
    More than one matching item -> `409 ambiguous`, nothing sent.
-4. `homeId` is one the relay pins (`fm-vps`, `firstmate`) -> else `400 invalid`.
-5. When `ask` is not null:
+4. When `ask` is not null:
    - `optionId` must be one of `ask.options[].id`;
    - `text` is allowed only when `ask.free_text_allowed` is true.
 
    Otherwise `400 invalid`.
-6. When `ask` is null: `text` passes through, and `optionId` is `400 invalid` (no offered options to match).
-7. The note body is at most 32768 bytes, has no NUL bytes and is valid UTF-8 (the relay refuses
+5. When `ask` is null: `text` passes through, and `optionId` is `400 invalid` (no offered options to match).
+6. The note body is at most 32768 bytes, has no NUL bytes and is valid UTF-8 (the relay refuses
    either with exit 65) -> else `400 invalid`, with nothing sent.
 
 ### Note body and home
@@ -198,7 +197,8 @@ The note and reply fields are firstmate's `fm-inbox.sh receipts` view, passed th
 
 - `pending[]` and `handled[]`: notes, each with `id`, `request_id`, `acknowledged`, `announced` and `reply`.
 - `replies[]`: each with `id` (the note id), `at`, `body` and `cursor`.
-- `reply_cursor`: pass it back as `after` to read only newer replies. `after` must be a cursor from a
+- `reply_cursor`: pass it back as `after` to read only newer replies. An empty `reply_cursor` means
+  no replies yet, and the UI then omits `after`. `after` must be a cursor from a
   receipts response for the same `homeId`.
 
 Statuses reuse the answer path's rows: `200` with the view; `400 invalid`; `401` / `403` from the
