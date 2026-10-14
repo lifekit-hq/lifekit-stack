@@ -247,4 +247,6 @@ errors about unrecognised tool names, try comma-separated instead
 token is dead. The usual cause is a consent screen still in *Testing*
 status, where Google expires refresh tokens after 7 days: check **Google Auth
 Platform → Audience**, choose **Publish app** if it says *Testing*, then
-repeat steps 6–7 to regenerate.
+repeat steps 6–7 to regenerate. Gmail tools then answer "ACTION REQUIRED: Google
+Authentication Needed" and Kit's needs-you digest shows `mail unavailable:` until the
+owner completes the consent in a browser.
