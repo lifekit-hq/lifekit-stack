@@ -69,7 +69,8 @@ The id → message mapping is in memory (the container is read-only). After a re
 
 The owner answers from a dashboard decision card. The answer reaches the captain inbox of the
 fleet home that owns the decision as one note, and firstmate closes the decision from that note.
-This section is the contract the dashboard backend and its tap-to-answer UI code against.
+This section is the contract the dashboard backend and its tap-to-answer UI code against. Detail it
+does not specify (exact UI copy, retry timing, rendering) is the dashboard implementation's choice.
 
 **notify-relay is not on this path.** It only sends the push above and has no route to any
 inbox. The dashboard backend owns this endpoint, because putting it in notify-relay would need two
@@ -119,8 +120,11 @@ The first failure answers. Nothing is sent to the host unless every check passes
 1. `kind`, `decisionId` shape, `homeId`, `submissionId` shape, and exactly one of `optionId`/`text`
    (none for `confirm`) -> else `400 invalid`.
 2. The fleet feed is readable -> else `503 unavailable` (the backend does not guess the home).
-3. The (`homeId`, `decisionId`) pair is in `decisions_open` now, matched on the item's (`home_id`,
-   `id`) because ids are per home -> else `409 not-open` (unknown, already closed, or not yet published).
+3. The target home's `homes[]` entry is published, and its listed `decisions_open` items are not
+   fewer than its `counts.decisions_open` -> else `503 unavailable`, nothing sent (the list may be
+   incomplete, so absence proves nothing).
+   The (`homeId`, `decisionId`) pair is in `decisions_open` now, matched on the item's (`home_id`,
+   `id`) because ids are per home -> else `409 not-open` (unknown or already closed).
    More than one matching item -> `409 ambiguous`, nothing sent.
 4. `homeId` is one the relay pins (`fm-vps`, `firstmate`) -> else `400 invalid`.
 5. When `ask` is not null:
@@ -172,11 +176,11 @@ appear in a response or a log line.
 | 200 | `saved` | The note is in the inbox. `id` is the inbox note id and `outcome` is `created` or `replay`. `announced: false` means saved but the wake did not fire (relay exit 3): the next session start raises it, and retrying the same `submissionId` the same UTC day re-announces it without a second note. |
 | 400 | `invalid` | A rule above failed. `problem` says which one, in plain words. |
 | 401 / 403 | `unauthorized` / `forbidden` | The request did not come through the edge sign-in. |
-| 409 | `not-open` | The decision is not open. The UI drops the card and refreshes the feed. |
+| 409 | `not-open` | The decision is not open: a published home with a complete list lacks the pair. The UI drops the card and refreshes the feed. |
 | 409 | `ambiguous` | More than one open item has that `homeId` and `decisionId`. Nothing was sent; the UI tells the owner to answer that decision on the board. |
 | 429 | `rate-limited` | The host bucket is full: 30 new `dash-` notes per rolling hour per home (relay exit 75). Nothing was saved. |
 | 502 | `error` | The relay refused or failed, or timed out after 20 s. Not confirmed saved; `problem` explains. |
-| 503 | `not-configured` / `unavailable` | The relay key or edge proof is not configured, or the fleet feed cannot be read. |
+| 503 | `not-configured` / `unavailable` | The relay key or edge proof is not configured, or the fleet feed cannot be read or cannot settle the decision (the home is unpublished or its list is incomplete). |
 
 ### Confirm-first for risky calls
 
@@ -199,7 +203,7 @@ The note and reply fields are firstmate's `fm-inbox.sh receipts` view, passed th
 
 Statuses reuse the answer path's rows: `200` with the view; `400 invalid`; `401` / `403` from the
 edge; `502 error` when the relay fails or its output is unreadable, which the UI shows as "replies
-unavailable", never as "no replies yet"; `503 unavailable` when the relay key is not configured.
+unavailable", never as "no replies yet"; `503 not-configured` when the relay key is not configured.
 
 The UI matches `replies[].id` to the `id` it got back from the answer and shows the reply `body`
 verbatim. It offers **Confirm** only when the feed read that still lists the decision has
