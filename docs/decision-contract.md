@@ -187,14 +187,19 @@ item leaves `decisions_open` within about a minute.
 
 The UI reads replies with `GET /api/relay/receipts?homeId=<home>[&after=<cursor>]` (edge-gated,
 `no-store`). `homeId` is required and must be one the relay pins (`fm-vps`, `firstmate`),
-otherwise `400 invalid` with nothing sent (the relay exits 64). This runs
-`kit-relay receipts [<cursor>] <home>` and returns its `kit-relay-receipts.v1` view, which holds
-only `dash-` notes and their replies:
+otherwise `400 invalid` with nothing sent (the relay exits 64). `after`, when sent, is exactly
+12 digits, else `400 invalid` with nothing sent. This runs `kit-relay receipts [<cursor>] <home>`
+and returns its `kit-relay-receipts.v1` view, which holds only `dash-` notes and their replies.
+The note and reply fields are firstmate's `fm-inbox.sh receipts` view, passed through by kit-relay:
 
 - `pending[]` and `handled[]`: notes, each with `id`, `request_id`, `acknowledged`, `announced` and `reply`.
 - `replies[]`: each with `id` (the note id), `at`, `body` and `cursor`.
 - `reply_cursor`: pass it back as `after` to read only newer replies. `after` must be a cursor from a
   receipts response for the same `homeId`.
+
+Statuses reuse the answer path's rows: `200` with the view; `400 invalid`; `401` / `403` from the
+edge; `502 error` when the relay fails or its output is unreadable, which the UI shows as "replies
+unavailable", never as "no replies yet"; `503 unavailable` when the relay key is not configured.
 
 The UI matches `replies[].id` to the `id` it got back from the answer and shows the reply `body`
 verbatim. It offers **Confirm** only when the feed read that still lists the decision has
