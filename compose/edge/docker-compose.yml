@@ -60,7 +60,7 @@ services:
 
   traefik:
     <<: *policy
-    image: traefik:v3.7.13
+    image: traefik:v3.7.14
     # Platform contract (scripts/platform-contract.py, docs/platform-contract.md):
     # `none`, the documented opt-out for platform components, as Logto. An
     # upstream image we configure, not a product; health is the compose
