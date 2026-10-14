@@ -1,0 +1,16 @@
+[Unit]
+Description=Monthly restore check of the newest off-box backup set
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Same account as the backup: it reads the on-box age key from the rendered
+# env file and compares the secret key with the live one by hash.
+User=__LIFEKIT_USER__
+Group=__LIFEKIT_USER__
+PrivateTmp=yes
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h
+ExecStart=/usr/bin/python3 __REPO_DIR__/scripts/offbox-backup/offbox_backup.py verify

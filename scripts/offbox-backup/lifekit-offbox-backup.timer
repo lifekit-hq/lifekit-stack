@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly encrypted off-box backup to Cloudflare R2
+
+[Timer]
+# After the identity dump (02:45 + up to 15m), so the set carries tonight's.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

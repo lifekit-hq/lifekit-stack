@@ -1,0 +1,19 @@
+[Unit]
+Description=Encrypted off-box backup to Cloudflare R2 (identity, backstage, OpenClaw key and state)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The deploy account: it owns the OpenClaw state and the identity dumps, can
+# read the rendered env file and is in the docker group. The unit runs the
+# checkout in place; install-offbox-backup.sh substitutes both placeholders.
+User=__LIFEKIT_USER__
+Group=__LIFEKIT_USER__
+# SQLite copies are the one plaintext on disk: this private /tmp, removed by
+# the script and again by systemd when the unit stops.
+PrivateTmp=yes
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=3h
+ExecStart=/usr/bin/python3 __REPO_DIR__/scripts/offbox-backup/offbox_backup.py backup
