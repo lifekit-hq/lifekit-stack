@@ -2669,8 +2669,9 @@ K=~/.config/sops/age/keys.txt
 **Undo:** `sudo systemctl disable --now lifekit-offbox-backup.timer
 lifekit-offbox-verify.timer && sudo rm
 /etc/systemd/system/lifekit-offbox-{backup,verify}.{service,timer} && sudo
-systemctl daemon-reload`, and remove the installer call from `bootstrap-vps.sh`
-in the same PR. The bucket keeps the sets until `lifekit/` is deleted:
+rm -r /usr/local/lib/lifekit-offbox && sudo systemctl daemon-reload`, and
+remove the installer call from `bootstrap-vps.sh` in the same PR. The bucket
+keeps the sets until `lifekit/` is deleted:
 `rclone purge offbox:<bucket>/lifekit` with the environment above, never the
 bucket or its root (finance-sentry's backups live there). Drop the four
 `OFFBOX_BACKUP_R2_*` lines from the master file, not the token: finance-sentry
