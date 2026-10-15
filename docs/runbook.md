@@ -140,7 +140,8 @@ file); rotating that token means recreating `prometheus` too. Check it with
 `logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
 `diagnostics-otel` plugin enables, `gateway.auth.rateLimit`, `memory.search`
 (`enabled` + `extraPaths`), `agents.defaults.heartbeat.every`, the inbound
-`hooks` block and the finance agent's heartbeat - live in
+`hooks` block, the finance agent's heartbeat and
+`skills.workshop.approvalPolicy` - live in
 `compose/openclaw-gateway/platform.patch.json`. On every OpenClaw deploy (see
 [Path-gated OpenClaw deploys](#path-gated-openclaw-deploys)) `deploy.sh`
 compares that file with the live config, applies it with
@@ -153,6 +154,16 @@ in that file, never in a PR body; objects merge and scalars replace
 (`openclaw config patch --help`), and the file is strict JSON so the deploy
 can read it with stdlib Python. Check new keys against the installed schema
 (`openclaw config schema`).
+
+#### Skill Workshop applies wait for the owner (`skills.workshop.approvalPolicy`)
+
+Unset, `skills.workshop.approvalPolicy` is `"auto"`: an agent that calls
+`apply`, `reject` or `quarantine` on its own Skill Workshop proposal goes ahead
+with no prompt, so an agent could rewrite its own skills. The platform file
+sets `"pending"` (the gateway's `docs/tools/skills-config.md`: "`pending`
+requires operator approval"), so an agent-initiated apply waits for the owner.
+`autonomous.mode` (off on this host) stays host state. `skills` keys reload as
+`none` in the gateway's reload plan: read at use, no restart.
 
 #### Vault search for every agent (`memory.search`, in the platform file since 2026-09-23)
 
@@ -407,8 +418,7 @@ rebuilt one.
          finance: {
            skills: [
              "github", "gh-issues", "summarize", "notion", "skill-creator",
-             "project-context", "thesis-tracker", "catalyst-calendar",
-             "idea-generation",
+             "thesis-tracker", "catalyst-calendar", "idea-generation",
            ],
          },
        },
@@ -2272,8 +2282,19 @@ persona over OpenClaw's `bootstrapMaxChars` (20,000 characters), because the
 agent would load it truncated; `--allow-oversize` overrides. The pin must be
 at or past finance-sentry's trim under that limit (#968; the composition is about
 19,300 characters at the 2026-10-14 pin, it was about 23,300 before the trim). Only `AGENTS.md` is
-managed: `USER.md` and the other workspace files stay host state. `install`
+written: `USER.md` and the other workspace files stay host state. `install`
 changes a file the agent reads on its next session and restarts nothing.
+
+finance-sentry's framework primer (served by its MCP server) is Ledger's only
+big-picture source, so `check` also fails when a retired copy is back in the
+workspace: a `RETIRED_PATHS` entry (`skills/project-context`,
+`repos/finance-sentry`) exists, or a line of `MEMORY.md`, `USER.md` or `SOUL.md`
+matches a `STALE_MARKERS` pattern (the old stack, Plaid, DevClaw, the wiki
+tools, the old repo location, the Kit relay). Each hit prints as a `stale:`
+line before the `AGENTS.md` diff. Those three files hold Ledger's own memory and
+the owner's facts, so they are scanned for known markers, never compared with
+canonical text: Ledger keeps writing its memory and only a reintroduced copy
+alerts. A new retired copy is a new entry in either list.
 
 First apply, once `check` shows no live-only change worth keeping (fold any
 back into finance-sentry first): run `check`, read the diff, then `install`.
@@ -2299,7 +2320,7 @@ check` against `PIN`:
 | Outcome | What happens |
 | --- | --- |
 | live equals the pinned composition | silent, exit 0 |
-| live differs or is missing | one `act` envelope through notify-relay (the owner's Telegram, with the first diff lines collapsed), exit 0; reported again each day until fixed |
+| live differs or is missing, or a retired big-picture copy is back | one `act` envelope through notify-relay (the owner's Telegram, with the `stale:` lines and the first diff lines collapsed), exit 0; reported again each day until fixed |
 | the check cannot run (fetch, unreadable file, bad pin) or the relay refuses the envelope | reason in the journal, exit 1: the service fails, `unit-gauge` reports `host_unit_failed{unit="lifekit-ledger-persona-check"}` and the existing "host systemd unit is down or failed" rule alerts after 10 minutes |
 
 No new secret and no container change: the envelope is POSTed from inside the
@@ -2337,7 +2358,9 @@ journalctl -u lifekit-ledger-persona-check -n 20 --no-pager
 When it alerts: read the diff with `ledger-persona.py check` (above). A change worth
 keeping goes into finance-sentry `agent/ledger` by PR, then the pin is bumped here
 and `install` applies it; an unwanted one is reverted by `install` at the current
-pin. A failed run stays reported until the next success; after fixing the cause,
+pin. A `stale:` line is fixed on the host, not in a repo: delete the retired
+path, or cut the matching text down to owner facts and a pointer to the
+finance-sentry primer. A failed run stays reported until the next success; after fixing the cause,
 `sudo systemctl reset-failed lifekit-ledger-persona-check.service` clears it.
 
 **Undo:** `sudo systemctl disable --now lifekit-ledger-persona-check.timer && sudo

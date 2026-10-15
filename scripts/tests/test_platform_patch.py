@@ -158,3 +158,9 @@ def test_google_workspace_mcp_is_read_only():
     # --tools in the start command makes the server ignore permissions; a
     # permissions key here would only suggest a guard that is not there.
     assert "WORKSPACE_MCP_PERMISSIONS" not in env
+
+
+def test_workshop_proposals_need_owner_approval():
+    # Unset, approvalPolicy is "auto": an agent applies its own Skill Workshop
+    # proposal with no prompt. "pending" holds the apply for the owner.
+    assert PATCH["skills"]["workshop"]["approvalPolicy"] == "pending"
