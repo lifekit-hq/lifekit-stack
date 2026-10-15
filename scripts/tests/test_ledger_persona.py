@@ -166,6 +166,6 @@ def test_stale_lines_come_before_the_diff(source, ws):
     (ws / "skills/project-context").mkdir(parents=True)
     r = run("check", "--source", str(source), "--workspace", str(ws))
     lines = r.stdout.splitlines()
-    assert r.returncode == 1 and "DRIFT" in lines[0] and "1 hits" in lines[0]
+    assert r.returncode == 1 and "DRIFT" in lines[0] and "1 hit)" in lines[0]
     assert lines[1].startswith("stale: skills/project-context")
     assert "+law one" in r.stdout
