@@ -77,11 +77,12 @@ from a read-only consent cannot send. Order matters:
 
 1. Make sure the OAuth app is **In production** (step 3). A token issued while it
    is in *Testing* expires after 7 days.
-2. Redo step 6 with the permissions flag shown there, sign in once, and copy the
-   new token (step 7).
-3. Only then deploy the wider compose config. The wider token works with the old
-   read-only config too, so the order "consent first, merge second" never leaves
-   mail unreadable.
+2. Merge the compose change. The existing read-only token keeps working: mail
+   stays readable, and a send is refused until the wider consent below is in.
+3. Redo step 6 with the permissions flag shown there, sign in once, and copy the
+   new token (step 7). Do this after the merge: the sign-in asks only for the
+   scopes the running config needs, so it requests `gmail.send` only once the
+   read-only flag is gone. Then check the granted scopes include `gmail.send`.
 
 ## 3. Configure the OAuth consent screen
 

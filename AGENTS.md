@@ -32,7 +32,7 @@ account (sudo); see README "VPS users".
 
 The live OpenClaw config (`/srv/openclaw/config/openclaw.json`) has two halves. Platform keys
 (logging, diagnostics, plugin enables, gateway auth rate limit, memory search, heartbeat, inbound
-hooks, each Telegram account's `botToken` - secrets there are `${VAR}` references resolved from
+hooks, Skill Workshop approval policy, each Telegram account's `botToken` - secrets there are `${VAR}` references resolved from
 the env file, or, `botToken` only, a SOPS exec SecretRef resolved live (docs/secrets.md) - never
 values) live in `compose/openclaw-gateway/platform.patch.json`: `deploy.sh` compares it with the
 live file, applies it with `openclaw config patch` only when a key differs, and recreates the

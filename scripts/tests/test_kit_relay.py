@@ -1022,12 +1022,20 @@ with (state.parent / "calls.jsonl").open("a") as f:
 if cmd[:2] == ["cron", "add"]:
     data["jobs"].append({"id": "job1", "name": cmd[cmd.index("--name") + 1]})
     state.write_text(json.dumps(data))
-elif cmd[:2] != ["cron", "edit"]:
+elif cmd[:2] == ["cron", "edit"]:
+    # what the live row reads back as after the edit
+    for job in data["jobs"]:
+        if job["id"] == cmd[2]:
+            job["delivery"] = {"mode": "announce"}
+            job["sessionKey"] = cmd[cmd.index("--session-key") + 1]
+            job.update(json.loads(os.environ.get("FAKE_ROW_OVERRIDE", "{}")))
+    state.write_text(json.dumps(data))
+else:
     sys.exit("unexpected: " + " ".join(cmd))
 """
 
 
-def run_digest(tmp_path, jobs):
+def run_digest(tmp_path, jobs, row_override=None):
     state = tmp_path / "state.json"
     if not state.exists():
         state.write_text(json.dumps({"jobs": jobs}))
@@ -1041,6 +1049,7 @@ def run_digest(tmp_path, jobs):
             "PATH": f"{bindir}:{os.environ['PATH']}",
             "FAKE_STATE": str(state),
             "NEEDS_YOU_ALERT_CHAT": "12345",
+            "FAKE_ROW_OVERRIDE": json.dumps(row_override or {}),
         },
         capture_output=True,
         text=True,
@@ -1074,6 +1083,28 @@ def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
     assert set(re.findall(r"relay\.sh (\w+)", message)) == {"status"}
     assert "NO_REPLY" not in message
     assert "the first line is the date" in message
+
+
+def test_digest_refuses_a_row_whose_delivery_could_reach_telegram(tmp_path):
+    for override in (
+        {"delivery": {"mode": "announce", "channel": "telegram", "to": "1"}},
+        {"delivery": {"mode": "none"}},
+        {"sessionKey": "agent:kit:telegram:direct:1"},
+        {"sessionKey": "agent:kit:main:telegram:direct:1"},
+    ):
+        sub = tmp_path / str(len(list(tmp_path.iterdir())))
+        sub.mkdir()
+        result, _ = run_digest(
+            sub, [{"id": "job1", "name": "needs-you-digest"}], row_override=override
+        )
+        assert result.returncode != 0
+        assert "could route outside the chat" in result.stderr
+
+
+def test_digest_accepts_the_in_chat_row_and_says_so(tmp_path):
+    result, _ = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
+    assert result.returncode == 0, result.stderr
+    assert "verified in-chat only" in result.stdout
 
 
 def test_digest_runs_twice_a_day_in_one_row(tmp_path):

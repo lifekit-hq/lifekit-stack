@@ -151,6 +151,12 @@ def test_retired_wiki_vault_mount_is_gone():
         assert not [m for m in volumes(service) if "/.openclaw/wiki" in m]
 
 
+def test_workshop_proposals_need_owner_approval():
+    # Unset, approvalPolicy is "auto": an agent applies its own Skill Workshop
+    # proposal with no prompt. "pending" holds the apply for the owner.
+    assert PATCH["skills"]["workshop"]["approvalPolicy"] == "pending"
+
+
 def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
     svc = compose_services()["google-workspace-mcp"]
     env = svc["environment"]

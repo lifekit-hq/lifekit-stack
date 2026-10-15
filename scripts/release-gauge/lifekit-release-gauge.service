@@ -1,0 +1,15 @@
+[Unit]
+Description=Export whether each repo's Weekly Release run left its release PR unmerged to node-exporter's textfile collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The admin account (README "VPS users"): it owns the textfile directory and
+# its gh login is the read-only GitHub access the gauge uses.
+# install-host-gauges.sh substitutes the placeholder at install time.
+User=__ADMIN_USER__
+ExecStart=/usr/local/bin/lifekit-release-gauge.sh /var/lib/node_exporter/textfile
+
+[Install]
+WantedBy=multi-user.target

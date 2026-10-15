@@ -18,6 +18,33 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.7](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.6...v0.1.7) (2026-10-15)
+
+
+### Features
+
+* **agents:** add a 75-word answer-shape block to the Kit and Career personas ([#332](https://github.com/lifekit-hq/lifekit-stack/issues/332)) ([76a5945](https://github.com/lifekit-hq/lifekit-stack/commit/76a5945f95bbf835688975e065df7d8468d43796))
+* **ledger-persona:** require owner approval for Workshop applies and flag retired big-picture copies ([#333](https://github.com/lifekit-hq/lifekit-stack/issues/333)) ([9bb4031](https://github.com/lifekit-hq/lifekit-stack/commit/9bb4031e1b75d8dbf6d5eec5fbac314d71d2a4ab))
+* **observability:** scrape backstage and add it to the resource budget ([#318](https://github.com/lifekit-hq/lifekit-stack/issues/318)) ([9a952c7](https://github.com/lifekit-hq/lifekit-stack/commit/9a952c75708bfa3065d7ac8d5323ff5864844231))
+* **scripts:** add daily Ledger persona drift alert ([#326](https://github.com/lifekit-hq/lifekit-stack/issues/326)) ([e1bd235](https://github.com/lifekit-hq/lifekit-stack/commit/e1bd235dcf8320af49fa1fea822d5fb28f94430f))
+* **scripts:** add finance-sentry sender to kit-relay ([#316](https://github.com/lifekit-hq/lifekit-stack/issues/316)) ([9b6b1e2](https://github.com/lifekit-hq/lifekit-stack/commit/9b6b1e2f1aa6f62690e8ac948a71fcca26b2bb2c))
+* **scripts:** add nightly age-encrypted off-box backup to Cloudflare R2 ([#329](https://github.com/lifekit-hq/lifekit-stack/issues/329)) ([fb4c77a](https://github.com/lifekit-hq/lifekit-stack/commit/fb4c77a769e9653a5a9cdaf6955daba7b0238aa4))
+* **scripts:** add read-only mail section and 17:00 run to the needs-you digest ([#325](https://github.com/lifekit-hq/lifekit-stack/issues/325)) ([70ad09f](https://github.com/lifekit-hq/lifekit-stack/commit/70ad09fe7e74b657248798bcad3d105d15a1d33b))
+* **scripts:** copy daily fleet metrics into metrics/daily.jsonl ([#323](https://github.com/lifekit-hq/lifekit-stack/issues/323)) ([5443583](https://github.com/lifekit-hq/lifekit-stack/commit/5443583ecc0bb21160ab4fb7e53a6c00b655d42b))
+* **scripts:** verify the needs-you digest cannot resolve to Telegram ([#334](https://github.com/lifekit-hq/lifekit-stack/issues/334)) ([6f66800](https://github.com/lifekit-hq/lifekit-stack/commit/6f66800e4af443281f3fe1bdb1e99c4fc872b51b))
+* **skills:** let Kit read fleet status and reach firstmate through the relay ([#321](https://github.com/lifekit-hq/lifekit-stack/issues/321)) ([767ce80](https://github.com/lifekit-hq/lifekit-stack/commit/767ce80b3cdc91ae7b912b33e2d47316b7823754))
+
+
+### Bug Fixes
+
+* **fleet-publisher:** report truthful open-decision counts and clearer Kit status format ([#322](https://github.com/lifekit-hq/lifekit-stack/issues/322)) ([a7e6071](https://github.com/lifekit-hq/lifekit-stack/commit/a7e60716ab939ef672b36eaf7f2d56939aa10791))
+* **scripts:** install pinned upstream rclone for the off-box R2 backup ([#330](https://github.com/lifekit-hq/lifekit-stack/issues/330)) ([95e19aa](https://github.com/lifekit-hq/lifekit-stack/commit/95e19aa209b5404acc8db834a8b56d9b1f786adc))
+
+
+### Documentation
+
+* **decision-contract:** specify dashboard answer and confirm flow to captain inbox ([#324](https://github.com/lifekit-hq/lifekit-stack/issues/324)) ([0d147d5](https://github.com/lifekit-hq/lifekit-stack/commit/0d147d56f82db6c966779fefc0d6eed5d7c4a89b))
+
 ## [0.1.6](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.5...v0.1.6) (2026-10-11)
 
 

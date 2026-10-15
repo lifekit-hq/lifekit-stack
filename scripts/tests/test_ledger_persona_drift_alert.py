@@ -303,3 +303,25 @@ def test_unit_gauge_reports_a_failed_check_run(tmp_path):
     prom = (out_dir / "host_unit.prom").read_text()
     assert 'host_unit_failed{unit="lifekit-ledger-persona-check"} 1' in prom
     assert 'host_unit_active{unit="lifekit-ledger-persona-check"} 1' in prom
+
+
+def test_stale_copy_alone_alerts_with_its_own_action(source, ws, state, tmp_path):
+    (ws / "AGENTS.md").write_text(IN_SYNC)
+    (ws / "repos/finance-sentry").mkdir(parents=True)
+    r = alert(source, ws, state, tmp_path)
+    assert r.returncode == 0, r.stderr
+    env = json.loads((state / "envelope.json").read_text())
+    assert "retired big-picture copy" in env["headline"]
+    assert "stale: repos/finance-sentry exists" in env["detail"]
+    assert "primer" in env["action"] and "PIN" not in env["action"]
+    assert "AGENTS.md" not in env["body"]
+
+
+def test_drift_and_stale_copy_carry_both_actions(source, ws, state, tmp_path):
+    (ws / "AGENTS.md").write_text("hand edited\n")
+    (ws / "SOUL.md").write_text("your reply goes back to Kit\n")
+    assert alert(source, ws, state, tmp_path).returncode == 0
+    env = json.loads((state / "envelope.json").read_text())
+    assert "DRIFT" in env["headline"] and "retired" in env["headline"]
+    assert "PIN" in env["action"] and "primer" in env["action"]
+    assert len(env["action"]) <= 400
