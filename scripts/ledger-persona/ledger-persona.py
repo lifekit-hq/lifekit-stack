@@ -225,7 +225,9 @@ def run(argv: list[str] | None = None) -> int:
             return 0
         heads = [f"DRIFT from finance-sentry@{pin[:7]}"] if d is not None else []
         if stale:
-            heads.append(f"retired big-picture copy back ({len(stale)} {'hit' if len(stale) == 1 else 'hits'})")
+            heads.append(
+                f"retired big-picture copy back ({len(stale)} {'hit' if len(stale) == 1 else 'hits'})"
+            )
         print("ledger persona: " + "; ".join(heads))
         for line in stale:
             print("stale: " + line)
