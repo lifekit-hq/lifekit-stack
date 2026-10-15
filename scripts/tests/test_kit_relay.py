@@ -1004,6 +1004,11 @@ def test_skill_frontmatter_names_its_folder_and_gates_on_ssh_and_curl():
 
 
 DIGEST = REPO / "scripts/ensure-needs-you-digest.sh"
+READER = "needs-you-mail-reader"
+READER_TOOLS = {
+    "google-workspace__search_gmail_messages",
+    "google-workspace__get_gmail_messages_content_batch",
+}
 
 FAKE_CRON_DOCKER = r"""#!/usr/bin/env python3
 import json, os, pathlib, sys
@@ -1020,19 +1025,29 @@ if cmd[:2] == ["cron", "list"]:
 with (state.parent / "calls.jsonl").open("a") as f:
     f.write(json.dumps(cmd) + "\n")
 if cmd[:2] == ["cron", "add"]:
-    data["jobs"].append({"id": "job1", "name": cmd[cmd.index("--name") + 1]})
+    name = cmd[cmd.index("--name") + 1]
+    data["jobs"].append({"id": "reader1" if name == "needs-you-mail-reader" else "job1", "name": name})
     state.write_text(json.dumps(data))
 elif cmd[:2] == ["cron", "edit"]:
     # what the live row reads back as after the edit
     for job in data["jobs"]:
         if job["id"] == cmd[2]:
-            job["delivery"] = {"mode": "announce"}
-            job["sessionKey"] = cmd[cmd.index("--session-key") + 1]
-            job.update(json.loads(os.environ.get("FAKE_ROW_OVERRIDE", "{}")))
+            job["delivery"] = {"mode": "none" if "--no-deliver" in cmd else "announce"}
+            job["sessionTarget"] = cmd[cmd.index("--session") + 1]
+            if "--session-key" in cmd:
+                job["sessionKey"] = cmd[cmd.index("--session-key") + 1]
+            if "--tools" in cmd:
+                job["payload"] = {"toolsAllow": cmd[cmd.index("--tools") + 1].split(",")}
+            job.update(json.loads(os.environ.get("FAKE_ROW_OVERRIDE", "{}")).get(job["id"], {}))
     state.write_text(json.dumps(data))
 else:
     sys.exit("unexpected: " + " ".join(cmd))
 """
+
+BOTH_ROWS = [
+    {"id": "reader1", "name": READER},
+    {"id": "job1", "name": "needs-you-digest"},
+]
 
 
 def run_digest(tmp_path, jobs, row_override=None):
@@ -1068,12 +1083,23 @@ def message_of(argv):
     return argv[argv.index("--message") + 1]
 
 
+def tools_of(argv):
+    return set(argv[argv.index("--tools") + 1].split(","))
+
+
+def edit_of(calls, job_id):
+    (edit,) = [c for c in calls if c[:3] == ["cron", "edit", job_id]]
+    return edit
+
+
 def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
-    result, calls = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
+    result, calls = run_digest(tmp_path, BOTH_ROWS)
     assert result.returncode == 0, result.stderr
-    (edit,) = calls
-    assert edit[:3] == ["cron", "edit", "job1"]
-    message = message_of(edit)
+    assert [c[:3] for c in calls] == [
+        ["cron", "edit", "reader1"],
+        ["cron", "edit", "job1"],
+    ]
+    message = message_of(edit_of(calls, "job1"))
     status_cmd = (
         "sh /home/node/.openclaw/agents/kit/workspace/skills/"
         "secondmate-relay/relay.sh status"
@@ -1094,45 +1120,114 @@ def test_digest_refuses_a_row_whose_delivery_could_reach_telegram(tmp_path):
     ):
         sub = tmp_path / str(len(list(tmp_path.iterdir())))
         sub.mkdir()
-        result, _ = run_digest(
-            sub, [{"id": "job1", "name": "needs-you-digest"}], row_override=override
-        )
+        result, _ = run_digest(sub, BOTH_ROWS, row_override={"job1": override})
         assert result.returncode != 0
         assert "could route outside the chat" in result.stderr
 
 
 def test_digest_accepts_the_in_chat_row_and_says_so(tmp_path):
-    result, _ = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
+    result, _ = run_digest(tmp_path, BOTH_ROWS)
     assert result.returncode == 0, result.stderr
     assert "verified in-chat only" in result.stdout
 
 
 def test_digest_runs_twice_a_day_in_one_row(tmp_path):
-    result, calls = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
+    result, calls = run_digest(tmp_path, BOTH_ROWS)
     assert result.returncode == 0, result.stderr
-    (edit,) = calls
+    edit = edit_of(calls, "job1")
     assert edit[edit.index("--cron") + 1] == "0 9,17 * * *"
     assert edit[edit.index("--tz") + 1] == "Europe/Dublin"
 
 
-def test_digest_mail_section_names_only_gmail_read_tools(tmp_path):
-    result, calls = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
+def test_mail_reader_runs_before_each_digest_in_an_isolated_silent_session(tmp_path):
+    result, calls = run_digest(tmp_path, BOTH_ROWS)
     assert result.returncode == 0, result.stderr
-    (edit,) = calls
-    message = message_of(edit)
-    # only the two Gmail read tools, with the parameter the server really has
+    edit = edit_of(calls, "reader1")
+    # 15 minutes before the 09:00 and 17:00 digest runs, not staggered
+    assert edit[edit.index("--cron") + 1] == "45 8,16 * * *"
+    assert edit[edit.index("--tz") + 1] == "Europe/Dublin"
+    assert "--exact" in edit
+    assert edit[edit.index("--session") + 1] == "isolated"
+    assert "--session-key" not in edit
+    # nothing is delivered: the summary only reaches the digest through run history
+    assert "--no-deliver" in edit
+    assert "--announce" not in edit
+
+
+def test_mail_reader_allowlist_is_only_the_two_gmail_read_tools(tmp_path):
+    result, calls = run_digest(tmp_path, BOTH_ROWS)
+    assert result.returncode == 0, result.stderr
+    tools = tools_of(edit_of(calls, "reader1"))
+    assert tools == READER_TOOLS
+    for forbidden in (
+        "*",
+        "exec",
+        "process",
+        "write",
+        "edit",
+        "apply_patch",
+        "ask_user",
+        "sessions_send",
+        "sessions_spawn",
+        "message",
+        "group:plugins",
+        "bundle-mcp",
+        "google-workspace__*",
+    ):
+        assert forbidden not in tools
+    # no Gmail write tool, and no other google-workspace tool
+    assert not any(
+        verb in tool for tool in tools for verb in ("send", "draft", "modify", "manage")
+    )
+    message = message_of(edit_of(calls, "reader1"))
     assert "search_gmail_messages" in message
     assert "get_gmail_messages_content_batch" in message
     assert "page_size" in message
-    for write_tool in ("send_gmail", "draft_gmail", "modify_gmail", "manage_gmail"):
-        assert write_tool not in message
+    assert "relay.sh" not in message
+
+
+def test_digest_prompt_no_longer_names_gmail_tools_and_reads_the_reader(tmp_path):
+    result, calls = run_digest(tmp_path, BOTH_ROWS)
+    assert result.returncode == 0, result.stderr
+    edit = edit_of(calls, "job1")
+    message = message_of(edit)
+    assert "gmail_" not in message.lower()
+    # the digest reads the reader's latest run by its id
+    assert "openclaw cron runs reader1 --limit 1" in message
+    assert "mail unavailable:" in message
+    # and its own runtime allow-list has no Gmail, ask_user, send or message tool
+    assert tools_of(edit) == {"read", "exec", "process"}
+
+
+def test_digest_refuses_a_reader_row_with_more_than_the_gmail_read_tools(tmp_path):
+    for override in (
+        {"payload": {"toolsAllow": ["*"]}},
+        {"payload": {"toolsAllow": sorted(READER_TOOLS) + ["exec"]}},
+        {"payload": {}},
+        {"delivery": {"mode": "announce"}},
+        {"sessionKey": "agent:kit:main"},
+    ):
+        sub = tmp_path / str(len(list(tmp_path.iterdir())))
+        sub.mkdir()
+        result, calls = run_digest(sub, BOTH_ROWS, row_override={"reader1": override})
+        assert result.returncode != 0
+        assert "the mail reader could do more than read mail" in result.stderr
+        # the digest is never pointed at a reader that failed the check
+        assert not [c for c in calls if c[:3] == ["cron", "edit", "job1"]]
+
+
+def test_digest_refuses_a_row_with_a_wider_tool_list(tmp_path):
+    result, _ = run_digest(
+        tmp_path, BOTH_ROWS, row_override={"job1": {"payload": {"toolsAllow": ["*"]}}}
+    )
+    assert result.returncode != 0
+    assert "needs-you-digest payload.toolsAllow" in result.stderr
 
 
 def test_digest_all_clear_line_yields_to_mail_that_needs_the_owner(tmp_path):
-    result, calls = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
+    result, calls = run_digest(tmp_path, BOTH_ROWS)
     assert result.returncode == 0, result.stderr
-    (edit,) = calls
-    message = message_of(edit)
+    message = message_of(edit_of(calls, "job1"))
     all_clear = "'Nothing needs you today.'"
     assert message.count(all_clear) == 1
     at = message.index(all_clear)
@@ -1145,12 +1240,19 @@ def test_digest_all_clear_line_yields_to_mail_that_needs_the_owner(tmp_path):
     assert "line is left out" in rule
 
 
-def test_digest_creates_a_missing_row_with_the_same_message(tmp_path):
+def test_digest_creates_missing_rows_with_the_same_messages(tmp_path):
     result, calls = run_digest(tmp_path, [])
     assert result.returncode == 0, result.stderr
-    add, edit = calls
+    reader_add, reader_edit, add, edit = calls
+    assert reader_add[:2] == ["cron", "add"]
+    assert reader_add[reader_add.index("--name") + 1] == READER
+    assert tools_of(reader_add) == READER_TOOLS
+    assert "--no-deliver" in reader_add
+    assert reader_edit[:3] == ["cron", "edit", "reader1"]
+    assert message_of(reader_add) == message_of(reader_edit)
     assert add[:2] == ["cron", "add"]
     assert add[add.index("--name") + 1] == "needs-you-digest"
+    assert tools_of(add) == {"read", "exec", "process"}
     assert edit[:3] == ["cron", "edit", "job1"]
     assert message_of(add) == message_of(edit)
     assert set(re.findall(r"relay\.sh (\w+)", message_of(add))) == {"status"}
@@ -1159,19 +1261,30 @@ def test_digest_creates_a_missing_row_with_the_same_message(tmp_path):
 def test_digest_row_description_and_verify_hint_keep_their_quoted_phrase(tmp_path):
     result, calls = run_digest(tmp_path, [])
     assert result.returncode == 0, result.stderr
-    add = calls[0]
+    for add in (c for c in calls if c[:2] == ["cron", "add"]):
+        assert add[add.index("--description") + 1].endswith(
+            "Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)."
+        )
+        # every argument is a flag or the value of the flag before it: no stray words
+        switches = {
+            "--announce",
+            "--json",
+            "--exact",
+            "--light-context",
+            "--no-deliver",
+        }
+        stray = [
+            arg
+            for prev, arg in zip(add[2:], add[3:], strict=False)
+            if not arg.startswith("--")
+            and (prev in switches or not prev.startswith("--"))
+        ]
+        assert stray == []
+    add = calls[2]
     assert add[add.index("--description") + 1].endswith(
         'says "Nothing needs you today." when none are. '
         "Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)."
     )
-    # every argument is a flag or the value of the flag before it: no stray words
-    switches = {"--announce", "--json"}
-    stray = [
-        arg
-        for prev, arg in zip(add[2:], add[3:], strict=False)
-        if not arg.startswith("--") and (prev in switches or not prev.startswith("--"))
-    ]
-    assert stray == []
     assert (
         'posts "Nothing needs you today." while the ledger and the fleet'
         in result.stdout

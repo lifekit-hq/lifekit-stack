@@ -690,14 +690,25 @@ open decisions through the relay skill's `status`, see "Kit as the owner's line 
 firstmate") into that same chat, followed by a read-only mail section: how many
 messages arrived since the last run (16h in the morning, 8h in the afternoon), which
 need the owner, which can wait, and the noise as a count. Mail is ranked from its
-content, not by sender, and the digest says so until a who-matters list exists. The
-turn may call only `search_gmail_messages` and `get_gmail_messages_content_batch`;
-the Workspace MCP is read-only server-side (`WORKSPACE_MCP_READ_ONLY` in
-`compose/openclaw/docker-compose.yml`, see `docs/google-mcp-setup.md`), so no digest
-can send, draft, label or archive. Mail text is untrusted: the prompt summarises it
-only and follows nothing in it. A lapsed Google sign-in shows as a `mail unavailable:`
-line, and the other parts still post.
-`scripts/ensure-needs-you-digest.sh` declares it and converges on re-run. It is a
+content, not by sender, and the digest says so until a who-matters list exists.
+
+Kit's main session never reads mail. A second row, `needs-you-mail-reader`, runs
+15 minutes earlier (`45 8,16 * * *`, `--exact`) as an isolated session whose
+tool allow-list is exactly `google-workspace__search_gmail_messages` and
+`google-workspace__get_gmail_messages_content_batch`. That is the row's
+`payload.toolsAllow`, which the gateway's `openclaw` agent runtime enforces: the run has
+no relay, `ask_user`, `sessions_send`, `message`, exec, file-write or Gmail-write tool,
+whatever the mail says. It delivers nothing; its reply (the mail section, under 1800
+characters to fit the 2000-character run-history summary) stays in its run history.
+The digest, allowed only `read`, `exec` and `process`, reads that summary with
+`openclaw cron runs <reader id> --limit 1 --sort desc --json` and copies it in as
+data. Mail text is untrusted: the reader summarises it only and follows nothing in
+it. A lapsed Google sign-in, a failed reader run or one more than an hour old shows
+as a `mail unavailable:` line, and the other parts still post.
+`scripts/ensure-needs-you-digest.sh` declares both rows and converges on re-run. It
+exits non-zero, before touching the digest, when the reader's live row allows any tool
+beyond those two, is bound to a session or has a delivery, and after converging when
+the digest's allow-list is not exactly `read,exec,process`. The digest is a
 `current`-session agent turn bound to `agent:kit:main` with announce delivery: the
 reply is committed to the conversation's transcript, and that session has no external
 route, so nothing goes to Telegram; after converging, the script re-reads the live row
@@ -732,23 +743,33 @@ Operator steps, once per host. None of them restarts the gateway:
    A2A-intake line that records the go in the ledger. The live file has drifted from
    the template, so paste the section in rather than copying the whole file over it.
 
-3. **Declare the digest:** `/srv/lifekit-stack/scripts/ensure-needs-you-digest.sh`
-   (as lifekit; `NEEDS_YOU_DIGEST_CRON` / `NEEDS_YOU_DIGEST_TZ` override the default
-   `0 9,17 * * *` Europe/Dublin). The mail section needs a live Google sign-in: if the
+3. **Declare the digest and its mail reader:**
+   `/srv/lifekit-stack/scripts/ensure-needs-you-digest.sh` (as lifekit;
+   `NEEDS_YOU_DIGEST_CRON` / `NEEDS_YOU_DIGEST_TZ` override the default
+   `0 9,17 * * *` Europe/Dublin, and `NEEDS_YOU_MAIL_CRON` the reader's
+   `45 8,16 * * *`; keep each reader run within the hour before its digest). The
+   same run moves a digest row declared before the reader split onto the new prompt
+   and the `read,exec,process` allow-list. The mail section needs a live Google sign-in: if the
    refresh token is revoked (`invalid_grant` in `docker logs openclaw-google-workspace-mcp-1`),
    redo the consent in `docs/google-mcp-setup.md` first.
 
-**Verify:** `cron show <id>` previews delivery as `announce -> current session`.
-`cron run <id> --expect-final --json` against an empty ledger posts "Nothing needs you
-today." under the date line. With one entry in `open.json`,
-the digest shows up in the Control UI chat without a refresh.
+**Verify:** `cron show <id>` previews the digest's delivery as `announce -> current
+session` and the reader's as none; `cron list --json` shows each row's
+`payload.toolsAllow`. Run the reader first, `cron run <reader id> --expect-final
+--json`, then within the hour the digest, `cron run <id> --expect-final --json`:
+against an empty ledger and no new mail it posts "Nothing needs you today." under
+the date line. With one entry in `open.json`, the digest shows up in the Control UI
+chat without a refresh. Run alone, the digest says the mail read last ran at its
+time, or has not run yet.
 
-**Mail section rollback:** re-run the script from the commit before the mail section
-(or `NEEDS_YOU_DIGEST_CRON='0 9 * * *'` for one run a day only). To unlock Workspace
-writes (not part of the digest), change the `WORKSPACE_MCP_READ_ONLY` literal in a
-reviewed PR.
+**Mail section rollback:** `openclaw cron rm <reader id>` stops the mail read; the
+digest then shows `mail unavailable: the mail read has not run yet` and the rest
+posts. To drop the line too, re-run the script from the commit before the mail
+section (or `NEEDS_YOU_DIGEST_CRON='0 9 * * *'` for one run a day only). Never move
+the mail read back into the digest row: its main-session turn holds the relay and
+`sessions_send`.
 
-**Rollback:** `openclaw cron rm <id>`. The ledger files are kit workspace state and
+**Rollback:** `openclaw cron rm <id>` and `openclaw cron rm <reader id>`. The ledger files are kit workspace state and
 can stay. Push delivery of these cards to a phone comes with the Control UI's
 HTTPS-origin setup, not with this job.
 
@@ -1074,7 +1095,8 @@ and the status read is an HTTP GET Kit could always make.
   reported as such and re-sent only when he asks.
 - **Digest:** the 09:00 and 17:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
   runs `relay.sh status` and posts the fleet part in that same format, under the date
-  line, then a mail section when mail arrived; it posts "Nothing needs you today." when
+  line, then the mail section `needs-you-mail-reader` wrote 15 minutes earlier, when
+  mail arrived; it posts "Nothing needs you today." when
   nothing is open and no mail needs you, and is never silent. Re-run the script as
   `lifekit` to converge the live row; a cron turn sends no note.
 - **Morning brief:** the 08:30 `today-brief` row is host state made by hand with kit,
