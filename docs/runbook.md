@@ -700,7 +700,10 @@ line, and the other parts still post.
 `scripts/ensure-needs-you-digest.sh` declares it and converges on re-run. It is a
 `current`-session agent turn bound to `agent:kit:main` with announce delivery: the
 reply is committed to the conversation's transcript, and that session has no external
-route, so nothing goes to Telegram. It always posts: the date line, then the needs-you
+route, so nothing goes to Telegram; after converging, the script re-reads the live row
+and exits non-zero if its delivery or session binding could route outside the chat
+(cadence policy: vault `domains/agent-behavior.md`, "Adopted workflow policies P1-P6").
+It always posts: the date line, then the needs-you
 part in the relay skill's Status format, which is the single line "Nothing needs you
 today." when the ledger and the fleet show no call and no to-do and no mail needs you. A run that cannot read
 the ledger or the mail says so in the chat. A run that

@@ -31,6 +31,14 @@
 # reject announce delivery. Do not set --channel webchat; announce with the
 # default channel ("last") is what resolves to the conversation commit.
 #
+# Never Telegram: the script does not trust that to stay an accident. After
+# converging it re-reads the live row and refuses to finish (exit 1, with the
+# offending field named) unless delivery is announce with the default channel
+# and no explicit target or account, and the row is bound to SESSION_KEY. A
+# row that could route externally fails the deploy instead of pinging the
+# owner. The cadence rule behind this is in the memory vault,
+# domains/agent-behavior.md, "Adopted workflow policies P1-P6" (P1).
+#
 # Never silent: the prompt always posts, opening with the date line and the
 # needs-you part in the format of skills/secondmate-relay's Status rules
 # (condensed); when nothing is open that part is the single line "Nothing needs
@@ -155,6 +163,32 @@ docker exec "$GATEWAY" openclaw cron edit "$job_id" \
   --failure-alert-mode announce --failure-alert-channel telegram \
   --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT" \
   >/dev/null
-echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT -> $SESSION_KEY (announce), failure alert after 1 via telegram:default"
+# 4. Fail closed if the live delivery could resolve to Telegram (header: "Never
+#    Telegram"). The failure alert is a separate field and is not checked here.
+jobs="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | pick_json jobs)" || {
+  echo "could not re-read the automation list from $GATEWAY to verify delivery" >&2; exit 1; }
+printf '%s' "$jobs" | python3 -c '
+import json, sys
+job_id, session_key = sys.argv[1], sys.argv[2]
+job = next((j for j in json.load(sys.stdin)["jobs"] if j.get("id") == job_id), None)
+if job is None:
+    sys.exit(f"verify: job {job_id} is not listed after converging")
+d = job.get("delivery") or {}
+bad = []
+if d.get("mode") != "announce":
+    bad.append("delivery.mode=" + repr(d.get("mode")) + ", want announce")
+if d.get("channel") not in (None, "", "last"):
+    bad.append("delivery.channel=" + repr(d.get("channel")) + ", want the default last")
+for key in ("to", "accountId"):
+    if d.get(key):
+        bad.append("delivery." + key + " is set, want none")
+bound = job.get("sessionKey") or job.get("sessionTarget") or ""
+if session_key not in str(bound):
+    bad.append("session binding " + repr(bound) + " is not " + session_key)
+if bad:
+    sys.exit("refusing: needs-you-digest delivery could route outside the chat: " + "; ".join(bad))
+' "$job_id" "$SESSION_KEY" >&2
+
+echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT -> $SESSION_KEY (announce, verified in-chat only), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id   # delivery preview: announce -> current session"
 echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # posts \"Nothing needs you today.\" while the ledger and the fleet's decisions_open are empty and no mail needs you"
