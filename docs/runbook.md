@@ -202,7 +202,7 @@ more than two dozen model-provider plugins that nothing here routes to.
 `plugins.allow` in the platform file lists the only plugin ids that load:
 
 - **The routed providers.**
-  - `anthropic`: every agent's model runs through its claude-cli backend.
+  - `anthropic`: every agent's model runs through the Anthropic provider.
   - `openai`: the openai auth profile.
   - `codex`: the agent runtime that `openai` runs on.
 - **The non-provider plugins the gateway already runs.** These include
