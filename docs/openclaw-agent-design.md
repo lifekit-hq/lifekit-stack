@@ -10,7 +10,7 @@ This page is the design, not a mirror of live state. The live fleet is host stat
 
 - **kit** is the front door and the general-purpose agent: the default and system agent, the catch-all for Telegram traffic nothing else claims, and the dispatcher for domain work that arrives there. Anything without a domain agent is kit's, including food and workouts (it runs the `nutrition-claw`, `workout-claw` and `life-state` CLIs itself, with targets read from the vault's `domains/health.md`) and dev work (which it hands to DevClaw through the intake doorway).
 - **Domain agents** each own one domain, with their own workspace, memory, sessions and, where the owner talks to them directly, their own Telegram bot. Since 2026-10-07: `finance`, `devclaw` and `career`.
-- **One gateway, one config.** Every agent runs in the same `openclaw-gateway` container on the `claude-cli` runtime, authenticated by the owner's Claude subscription. No API keys ([[pro-subscription-is-the-design]] in memory); a domain agent never brings a paid service with it.
+- **One gateway, one config.** Every agent runs in the same `openclaw-gateway` container on the `openclaw` agent runtime (`agentRuntime.id`), authenticated by the owner's Claude subscription. No API keys ([[pro-subscription-is-the-design]] in memory); a domain agent never brings a paid service with it.
 
 | Agent | Domain | How work reaches it |
 | --- | --- | --- |
@@ -55,7 +55,7 @@ A binding matches a channel and optionally an account or peer; the most specific
 
 ### Decisions waiting on the owner
 
-Decisions go to the OpenClaw app, not Telegram. kit keeps the one ledger of open decisions in its workspace and asks each one with `ask_user` in its main Control UI chat. A decision that comes up anywhere else is recorded and handed to that chat. A digest of the open decisions, the fleet and the new mail posts there too, twice daily (09:00 and 17:00); when nothing is open and no mail needs you it says "Nothing needs you today." See kit's `AGENTS.md` ("Needs you") and `docs/runbook.md` ("Kit's needs-you decisions and the daily digest").
+Decisions go to the OpenClaw app, not Telegram. kit keeps the one ledger of open decisions in its workspace and asks each one with `ask_user` in its main Control UI chat. A decision that comes up anywhere else is recorded and handed to that chat. A digest of the open decisions, the fleet and the new mail posts there too, twice daily (09:00 and 17:00); the mail is read beforehand by a separate isolated cron run allowed only the two Gmail read tools, and the digest copies its summary; when nothing is open and no mail needs you it says "Nothing needs you today." See kit's `AGENTS.md` ("Needs you") and `docs/runbook.md` ("Kit's needs-you decisions and the daily digest").
 
 ### Workspaces and memory
 
@@ -86,7 +86,7 @@ The first v2 design was a multi-agent modular monolith: an orchestrator dispatch
 The current shape does not repeat that design:
 
 - **Routing is the gateway's job, not the model's.** Work reaches a domain agent through a binding or an explicit kit subagent call, not through an orchestrator deciding to delegate.
-- **The separation that holds is workspace, memory, sessions and channel.** Treat per-agent tool policy (including `tools.exec.mode`) as advisory under `claude-cli` until it is re-verified; it is not an isolation boundary. The hard rules in each `AGENTS.md` and the owner's review of drafts are.
+- **The separation that holds is workspace, memory, sessions and channel.** Treat per-agent tool policy (including `tools.exec.mode`) as advisory under `claude-cli` until it is re-verified; it is not an isolation boundary. Under the `openclaw` runtime the agents use now, a cron job's own tool allow-list (`--tools`, stored as `payload.toolsAllow`) is enforced per run; the needs-you mail reader relies on it. The hard rules in each `AGENTS.md` and the owner's review of drafts are.
 - **Domain agents that act outward stay drafts-only.** `career` never posts, messages or submits on the owner's behalf.
 
 ---

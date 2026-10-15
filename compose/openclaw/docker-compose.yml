@@ -191,7 +191,8 @@ services:
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/finance/memory:/home/node/.openclaw/agents/finance/workspace/memory
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/devclaw/memory:/home/node/.openclaw/agents/devclaw/workspace/memory
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
-      # Claude CLI home for the claude-cli runtime: its session files land in
+      # Claude CLI home, used if an agent runs the claude-cli runtime (the live
+      # agents run agentRuntime.id "openclaw"): session files land in
       # .claude/projects (scripts/quota-share reads them). Anthropic auth does
       # not come from a login stored here: every agent's anthropic:setup-token
       # profile resolves CLAUDE_OAUTH_TOKEN through the sops SecretRef
