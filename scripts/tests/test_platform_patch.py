@@ -151,10 +151,38 @@ def test_retired_wiki_vault_mount_is_gone():
         assert not [m for m in volumes(service) if "/.openclaw/wiki" in m]
 
 
-def test_google_workspace_mcp_is_read_only():
-    env = compose_services()["google-workspace-mcp"]["environment"]
-    # A literal, so widening it is a reviewed compose change, not an env edit.
-    assert env["WORKSPACE_MCP_READ_ONLY"] == "true"
-    # --tools in the start command makes the server ignore permissions; a
-    # permissions key here would only suggest a guard that is not there.
-    assert "WORKSPACE_MCP_PERMISSIONS" not in env
+def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
+    svc = compose_services()["google-workspace-mcp"]
+    env = svc["environment"]
+    # A non-empty TOOLS puts --tools in the start command, and the server then
+    # runs in full mode and ignores permissions. It must stay an empty literal.
+    assert env["TOOLS"] == ""
+    # --read-only / --tools are mutually exclusive with permissions; neither
+    # key may come back alongside it.
+    assert "WORKSPACE_MCP_READ_ONLY" not in env
+    assert "WORKSPACE_MCP_TOOLS" not in env
+    # Literals, so widening the consent is a reviewed compose change, not an
+    # env-file edit.
+    assert env["WORKSPACE_MCP_PERMISSIONS"] == (
+        "gmail:send drive:readonly calendar:readonly "
+        "docs:readonly sheets:readonly tasks:readonly"
+    )
+    # The other write tools that gmail:send pulls in (cumulative levels).
+    assert env["WORKSPACE_MCP_DISABLED_TOOLS"].split(",") == [
+        "draft_gmail_message",
+        "manage_gmail_label",
+        "modify_gmail_message_labels",
+        "batch_modify_gmail_message_labels",
+    ]
+    # 2.x binds loopback by default; the gateway reaches it over the network.
+    assert env["WORKSPACE_MCP_HOST"] == "0.0.0.0"
+    assert env["WORKSPACE_MCP_SESSION_IDLE_TIMEOUT"] == "0"
+    for key in (
+        "TOOLS",
+        "WORKSPACE_MCP_PERMISSIONS",
+        "WORKSPACE_MCP_DISABLED_TOOLS",
+        "WORKSPACE_MCP_HOST",
+        "WORKSPACE_MCP_SESSION_IDLE_TIMEOUT",
+    ):
+        assert "${" not in str(env[key])
+    assert svc["image"] == "ghcr.io/taylorwilsdon/google_workspace_mcp:2.1.0"

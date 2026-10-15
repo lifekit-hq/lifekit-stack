@@ -153,7 +153,7 @@ file appears in one of the two inventory tables.
 | `NOTIFY_DASHBOARD_BASE_URL` | master | setting | notify-relay: origin of the dashboard links in owner notifications (non-secret) |
 | `TELEGRAM_OWNER_USER_ID` | master | setting | the owner's Telegram user id (personal id) |
 | `USER_GOOGLE_EMAIL` | master | setting | the Google account of the workspace MCP (personal) |
-| `WORKSPACE_MCP_TOOLS` | master | setting | google-workspace-mcp tool list |
+| `WORKSPACE_MCP_TOOLS` | master | setting | google-workspace-mcp tool list; no longer read (the tool surface is compose literals), safe to delete |
 | `GRAFANA_ADMIN_USER` | master | setting | Grafana admin login name |
 | `GRAFANA_ROOT_URL` | master | setting | Grafana public root URL (tailnet name) |
 | `IDENTITY_ENDPOINT` | master | setting | Logto's public URL, the issuer base (tailnet name); optional, deploy derives it |

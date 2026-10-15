@@ -37,8 +37,8 @@ something memorable (e.g. `lifekit-workspace-mcp`). Select it.
 ## 2. Enable the workspace APIs
 
 For each service you intend to use, enable the API in **APIs & Services →
-Library**. The default `WORKSPACE_MCP_TOOLS=gmail drive calendar docs sheets tasks`
-needs these six:
+Library**. The compose file's tool surface (Gmail, Drive, Calendar, Docs, Sheets,
+Tasks) needs these six:
 
 - [Gmail API](https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com)
 - [Drive API](https://console.cloud.google.com/flows/enableapi?apiid=drive.googleapis.com)
@@ -47,19 +47,41 @@ needs these six:
 - [Sheets API](https://console.cloud.google.com/flows/enableapi?apiid=sheets.googleapis.com)
 - [Tasks API](https://console.cloud.google.com/flows/enableapi?apiid=tasks.googleapis.com)
 
-(Add Slides / Forms / Chat / People / Custom Search later if you broaden
-`WORKSPACE_MCP_TOOLS`.)
+(Add Slides / Forms / Chat / People / Custom Search later if you broaden the
+permissions.)
 
-The compose service also sets `WORKSPACE_MCP_READ_ONLY: "true"`. In
-read-only mode the server drops every tool that needs a write scope (Gmail
-send and draft, label and filter changes, every create, update and share), and
-`tools/list` shrinks from 76 tools to 35 at 1.21.0. This is the guard that
+The compose service sets the tool surface with literals, not env values:
+`WORKSPACE_MCP_PERMISSIONS` is `gmail:send` plus `readonly` for Drive, Calendar,
+Docs, Sheets and Tasks, and `WORKSPACE_MCP_DISABLED_TOOLS` removes the other
+write tools that `gmail:send` pulls in (`draft_gmail_message`,
+`manage_gmail_label`, `modify_gmail_message_labels`,
+`batch_modify_gmail_message_labels`). The server then lists 36 tools at 2.1.0 and
+the ONLY one that writes anywhere is `send_gmail_message`. This is the guard that
 binds: per-agent tool allow and deny lists are not enforced under the
-claude-cli runtime. The start command passes `--tools`, so the server ignores
-`WORKSPACE_MCP_PERMISSIONS`. The read-only flag needs no new consent, because
-the existing refresh token's scopes are a superset of the read-only ones. To
-allow writes again, change the literal in `compose/openclaw/docker-compose.yml`
-in a reviewed PR.
+claude-cli runtime. `TOOLS` stays an empty literal: a non-empty value puts
+`--tools` on the start command and the server then ignores permissions
+(full mode); `WORKSPACE_MCP_TOOLS` is no longer read. Every call is logged and
+pings the owner through the `agent-mail-sent` Grafana alert
+(`compose/observability/grafana/provisioning/alerting/rules-agent-mail.yml`).
+To change the surface, change the literals in `compose/openclaw/docker-compose.yml`
+in a reviewed PR. When upstream ships `WORKSPACE_ALLOWED_RECIPIENTS`
+([taylorwilsdon/google_workspace_mcp#1078](https://github.com/taylorwilsdon/google_workspace_mcp/pull/1078),
+unmerged at 2.1.0), set it so a send can only reach a listed address.
+
+### Widening the consent
+
+Sending needs `gmail.send`, and the Gmail tools that stay registered at the
+`gmail:send` level also need `gmail.modify`, `gmail.compose` and `gmail.labels`,
+so the token must be issued by a consent that includes all of them; the token
+from a read-only consent cannot send. Order matters:
+
+1. Make sure the OAuth app is **In production** (step 3). A token issued while it
+   is in *Testing* expires after 7 days.
+2. Redo step 6 with the permissions flag shown there, sign in once, and copy the
+   new token (step 7).
+3. Only then deploy the wider compose config. The wider token works with the old
+   read-only config too, so the order "consent first, merge second" never leaves
+   mail unreadable.
 
 ## 3. Configure the OAuth consent screen
 
@@ -119,8 +141,10 @@ The entries to add:
 GOOGLE_OAUTH_CLIENT_ID=<paste>
 GOOGLE_OAUTH_CLIENT_SECRET=<paste>
 USER_GOOGLE_EMAIL=you@example.com
-WORKSPACE_MCP_TOOLS=gmail drive calendar docs sheets tasks
 ```
+
+The tool surface is not an env value; it is pinned in
+`compose/openclaw/docker-compose.yml`.
 
 ## 6. Run the OAuth consent flow on your PC
 
@@ -136,7 +160,8 @@ export GOOGLE_OAUTH_CLIENT_SECRET=...
 export USER_GOOGLE_EMAIL=you@example.com
 export OAUTHLIB_INSECURE_TRANSPORT=1   # needed for http://localhost callback
 uvx workspace-mcp --transport streamable-http --single-user \
-    --tools gmail drive calendar docs sheets tasks
+    --permissions gmail:send drive:readonly calendar:readonly \
+    docs:readonly sheets:readonly tasks:readonly
 ```
 
 On startup the server prints a `https://accounts.google.com/...` URL. Open it,
@@ -237,11 +262,11 @@ You should see tools prefixed `gmail_`, `drive_`, `calendar_`, etc. If the
 list is empty, the gateway didn't load the new `mcp.servers` entry —
 double-check the JSON edit in step 9 and restart `openclaw-gateway`.
 
-**`WORKSPACE_MCP_TOOLS` parsing issue.**  The upstream README documents this
-var as comma-separated, but the published Docker image's CMD splits on
-whitespace. The default in this stack is space-separated; if you see startup
-errors about unrecognised tool names, try comma-separated instead
-(`gmail,drive,calendar,docs,sheets,tasks`).
+**Tool list wrong or server in full mode.**  `WORKSPACE_MCP_PERMISSIONS` is
+space-separated (`service:level`), `WORKSPACE_MCP_DISABLED_TOOLS` is
+comma-separated. The container log at INFO level shows one
+`Block list: disabling tool '<name>'` line per disabled tool; a banner saying
+`Mode: Full` means `TOOLS` is non-empty or `WORKSPACE_MCP_TOOLS` leaked back in.
 
 **Token expired.**  If the container logs `invalid_grant` errors, the refresh
 token is dead. The usual cause is a consent screen still in *Testing*

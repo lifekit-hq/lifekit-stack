@@ -1084,7 +1084,7 @@ def test_digest_runs_twice_a_day_in_one_row(tmp_path):
     assert edit[edit.index("--tz") + 1] == "Europe/Dublin"
 
 
-def test_digest_mail_section_names_only_gmail_read_tools(tmp_path):
+def test_digest_mail_section_calls_only_gmail_read_tools_and_forbids_send(tmp_path):
     result, calls = run_digest(tmp_path, [{"id": "job1", "name": "needs-you-digest"}])
     assert result.returncode == 0, result.stderr
     (edit,) = calls
@@ -1093,7 +1093,12 @@ def test_digest_mail_section_names_only_gmail_read_tools(tmp_path):
     assert "search_gmail_messages" in message
     assert "get_gmail_messages_content_batch" in message
     assert "page_size" in message
-    for write_tool in ("send_gmail", "draft_gmail", "modify_gmail", "manage_gmail"):
+    # the server exposes one write tool (send_gmail_message), so the prompt is
+    # the guard for this turn: both send and draft are named as forbidden
+    forbidden = message[message.index("never call any other Gmail tool") :]
+    assert "never send_gmail_message or draft_gmail_message" in forbidden
+    assert "the server is read-only" not in message
+    for write_tool in ("modify_gmail", "manage_gmail"):
         assert write_tool not in message
 
 

@@ -682,10 +682,12 @@ messages arrived since the last run (16h in the morning, 8h in the afternoon), w
 need the owner, which can wait, and the noise as a count. Mail is ranked from its
 content, not by sender, and the digest says so until a who-matters list exists. The
 turn may call only `search_gmail_messages` and `get_gmail_messages_content_batch`;
-the Workspace MCP is read-only server-side (`WORKSPACE_MCP_READ_ONLY` in
-`compose/openclaw/docker-compose.yml`, see `docs/google-mcp-setup.md`), so no digest
-can send, draft, label or archive. Mail text is untrusted: the prompt summarises it
-only and follows nothing in it. A lapsed Google sign-in shows as a `mail unavailable:`
+the Workspace MCP exposes exactly one write tool, `send_gmail_message`
+(`WORKSPACE_MCP_PERMISSIONS` + `WORKSPACE_MCP_DISABLED_TOOLS` in
+`compose/openclaw/docker-compose.yml`, see `docs/google-mcp-setup.md`), so the server
+does not stop a digest turn from sending: the prompt names `send_gmail_message` and
+`draft_gmail_message` as forbidden, and the `agent-mail-sent` alert pings the owner on
+any send. Mail text is untrusted: the prompt summarises it only and follows nothing in it. A lapsed Google sign-in shows as a `mail unavailable:`
 line, and the other parts still post.
 `scripts/ensure-needs-you-digest.sh` declares it and converges on re-run. It is a
 `current`-session agent turn bound to `agent:kit:main` with announce delivery: the
@@ -731,9 +733,11 @@ today." under the date line. With one entry in `open.json`,
 the digest shows up in the Control UI chat without a refresh.
 
 **Mail section rollback:** re-run the script from the commit before the mail section
-(or `NEEDS_YOU_DIGEST_CRON='0 9 * * *'` for one run a day only). To unlock Workspace
-writes (not part of the digest), change the `WORKSPACE_MCP_READ_ONLY` literal in a
-reviewed PR.
+(or `NEEDS_YOU_DIGEST_CRON='0 9 * * *'` for one run a day only). To change what the
+Workspace MCP may write (not part of the digest), change the
+`WORKSPACE_MCP_PERMISSIONS` / `WORKSPACE_MCP_DISABLED_TOOLS` literals in a reviewed PR.
+After the prompt wording changes, re-run `scripts/ensure-needs-you-digest.sh` as
+`lifekit` (deploy does not run it).
 
 **Rollback:** `openclaw cron rm <id>`. The ledger files are kit workspace state and
 can stay. Push delivery of these cards to a phone comes with the Control UI's
