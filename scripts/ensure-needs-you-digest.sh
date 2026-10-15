@@ -183,7 +183,7 @@ for key in ("to", "accountId"):
     if d.get(key):
         bad.append("delivery." + key + " is set, want none")
 bound = job.get("sessionKey") or job.get("sessionTarget") or ""
-if session_key not in str(bound):
+if str(bound) not in (session_key, "session:" + session_key):
     bad.append("session binding " + repr(bound) + " is not " + session_key)
 if bad:
     sys.exit("refusing: needs-you-digest delivery could route outside the chat: " + "; ".join(bad))

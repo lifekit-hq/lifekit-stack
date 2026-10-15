@@ -1090,6 +1090,7 @@ def test_digest_refuses_a_row_whose_delivery_could_reach_telegram(tmp_path):
         {"delivery": {"mode": "announce", "channel": "telegram", "to": "1"}},
         {"delivery": {"mode": "none"}},
         {"sessionKey": "agent:kit:telegram:direct:1"},
+        {"sessionKey": "agent:kit:main:telegram:direct:1"},
     ):
         sub = tmp_path / str(len(list(tmp_path.iterdir())))
         sub.mkdir()
