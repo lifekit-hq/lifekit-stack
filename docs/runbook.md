@@ -1592,6 +1592,43 @@ cat /var/lib/node_exporter/textfile/host_unit.prom
 The merge's deploy reloads Grafana provisioning, which loads the alert rule;
 until the timer is installed the rule sees no data and stays quiet.
 
+## Weekly release gauge
+
+Each lifekit-hq repo's `.github/workflows/weekly-release.yml` (finance-sentry, lifekit-stack,
+lifekit-dashboard, devclaw; cron Mondays 00:07 UTC plus `workflow_dispatch`) merges the open
+`autorelease: pending` Release Please PR after `gh pr checks --watch --fail-fast`. A failing or
+missing check ends the run red with the PR still open; no pending PR is a green no-op. Those runs
+are on GitHub-hosted runners that cannot reach the box, so the box reads GitHub instead.
+
+`scripts/release-gauge/lifekit-release-gauge.sh` runs every 5 minutes from
+`lifekit-release-gauge.timer` as the admin account, on that account's existing `gh` login
+(read-only; no new token). Per repo it reads the latest completed Weekly Release run and, when that
+run did not succeed, the open pending release PR, and writes
+`weekly_release_blocked{repo,pr_url,run_url}` into the textfile directory
+(`weekly_release.prom`): 1 when the run did not succeed and the PR it should have merged (one
+created before the run started) is still open, else 0 with empty URLs. `RELEASE_REPOS` overrides
+the repo list. Any read failure (an expired `gh` login, GitHub down) exits nonzero without
+rewriting the file, so *host systemd unit is down or failed* and then *textfile metrics are
+stale* report it instead of a blocked release reading as healthy.
+
+The *Weekly Release stopped without merging* alert (`weekly-release-not-merged`, `rules.yml`)
+fires warning per repo while the gauge reads 1; the message names the repo, the release PR and the
+run. Fix the PR's checks (the run log names the cause), then
+`gh workflow run weekly-release.yml -R <owner/repo>`; the alert resolves once a run succeeds or the
+PR is merged. The default notification policy repeats a still-firing alert every 4h.
+
+**Operator step (live install):** the installer writes `/etc/systemd/system`, so a merge does not
+install the timer. Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/host-gauge/install-host-gauges.sh
+systemctl list-timers 'lifekit-release-gauge*'
+cat /var/lib/node_exporter/textfile/weekly_release.prom
+```
+
+The merge's deploy reloads Grafana provisioning, which loads the alert rule; until the timer is
+installed the rule sees no data and stays quiet.
+
 ## Runner restart drop-ins
 
 `svc.sh` installs every `actions.runner.*` unit with `Restart=no`, so a crashed

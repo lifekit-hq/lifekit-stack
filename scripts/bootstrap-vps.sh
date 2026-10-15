@@ -274,13 +274,15 @@ install -m 644 "$REPO_DIR/scripts/quota-gauge/claude-quota-share-gauge.timer" \
 systemctl daemon-reload
 systemctl enable --now claude-quota-share-gauge.timer
 
-# ─── Host gauge timers (host-group memory, /tmp usage, unit state) ────────────
+# ─── Host gauge timers (host-group memory, /tmp usage, unit state, releases) ──
 # Same shape as the quota gauge, every 5 minutes into the same textfile
 # directory. host-group-gauge reports RAM and swap for the operator sessions,
 # CI runners and OS groups of docs/resource-budget.md; tmp-usage-gauge reports
 # /tmp size and free bytes (it used to be an operator crontab line);
 # unit-gauge reports active/failed state of the CI runners, tailscaled, the
-# other allowlisted host services and the lifekit timers.
+# other allowlisted host services and the lifekit timers; lifekit-release-gauge
+# reports a Weekly Release run that left its release PR unmerged, read with
+# ADMIN_USER's gh login.
 
 say "Installing host gauge scripts + systemd units"
 ADMIN_USER="$ADMIN_USER" bash "$REPO_DIR/scripts/host-gauge/install-host-gauges.sh"
