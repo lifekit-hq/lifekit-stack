@@ -17,10 +17,13 @@
 # the message itself is in the mailbox's Sent folder.
 #
 # Window 2m, evaluated every 1m: every call is seen by at least one
-# evaluation, and the alert resolves on its own so the next send notifies
-# again (a send inside the group-interval of the previous ping is delayed by
-# it, not dropped). noDataState OK: no log lines in the window is the normal
-# state, not an alarm.
+# evaluation. The one aggregate instance fires while any send is inside the
+# window; the count in the message is the value at the evaluation that opened
+# the alert. Further sends in the same firing episode do not notify again
+# before the 4h repeat (policies.yml.tmpl), and the resolved ping comes about
+# 2 minutes after the last send, so read the ping as "at least N" and check
+# the Sent folder for the full list. noDataState OK: no log lines in the
+# window is the normal state, not an alarm.
 apiVersion: 1
 
 groups:
@@ -69,7 +72,7 @@ groups:
         annotations:
           summary: "an agent sent an email"
           description: >-
-            The google-workspace MCP's send_gmail_message tool was called.
-            Check the mailbox's Sent folder for what went out. Calls are in
+            Agents sent {{ printf "%.0f" $values.B.Value }} email(s) in the
+            last 2 minutes. Check the mailbox's Sent folder for what went out. Calls are in
             the container log: `docker logs --since 1h
             openclaw-google-workspace-mcp-1 | grep send_gmail_message`.

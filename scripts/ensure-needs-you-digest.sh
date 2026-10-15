@@ -18,7 +18,7 @@
 # forbidden. Tool allowlists are not enforced under the claude-cli runtime;
 # the prompt text is the guard for this turn, backed by the agent-mail-sent
 # alert (compose/observability/grafana/provisioning/alerting/
-# rules-agent-mail.yml) that pings the owner on every send.
+# rules-agent-mail.yml) that pings the owner on a send (the count of sends in the window, no contents).
 #
 # Why a script and not config: cron jobs live in the gateway's SQLite state,
 # not in openclaw.json — same split as the other ensure-*.sh scripts. This

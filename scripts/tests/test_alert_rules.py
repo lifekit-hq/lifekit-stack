@@ -757,9 +757,13 @@ def test_agent_mail_rule_pings_on_send_with_a_generic_message():
     assert MAIL_RULE["for"] == "0s"
     assert threshold(MAIL_RULE) == ("gt", 0)
     assert MAIL_RULE["labels"]["service"] == "google-workspace-mcp"
-    # Nothing from the log line is templated into the owner's message.
-    text = MAIL_RULE["annotations"]["summary"] + MAIL_RULE["annotations"]["description"]
-    assert "{{" not in text
+    # Only the call count is templated into the owner's message, never the log line.
+    assert "{{" not in MAIL_RULE["annotations"]["summary"]
+    description = MAIL_RULE["annotations"]["description"]
+    assert "$labels" not in description
+    assert re.findall(r"\{\{.*?\}\}", description) == [
+        '{{ printf "%.0f" $values.B.Value }}'
+    ]
     (query,) = [d for d in MAIL_RULE["data"] if d["datasourceUid"] == "loki"]
     assert query["model"]["instant"] is True
     assert query["model"]["queryType"] == "instant"
