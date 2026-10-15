@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Daily Ledger persona drift alert: run `ledger-persona.py check` against the
-pin and tell the owner when the live AGENTS.md differs from the repo version.
+pin and tell the owner when the live AGENTS.md differs from the repo version
+or a retired big-picture copy is back in the finance workspace.
 
 Run by lifekit-ledger-persona-check.timer as the deploy account, the only one
 that can read the finance workspace (docs/runbook.md "Ledger persona drift
@@ -47,24 +48,40 @@ ACTION = (
     "fold the change into finance-sentry agent/ledger (or revert the live file), "
     "bump scripts/ledger-persona/PIN, then ledger-persona.py install"
 )
+STALE_ACTION = (
+    "delete the retired path, or cut the stale text down to owner facts and a "
+    "pointer to the finance-sentry primer"
+)
 
 
 def envelope(check_stdout: str) -> dict:
     lines = check_stdout.strip().splitlines() or ["live AGENTS.md differs"]
     head = lines[0].removeprefix("ledger persona: ")
     detail = "\n".join(lines[1 : 1 + DETAIL_LINES])
+    stale = any(line.startswith("stale: ") for line in lines[1:])
+    persona = not stale or "DRIFT" in lines[0]
+    body, action = [], []
+    if persona:
+        body.append(
+            "The finance agent's live AGENTS.md is not what finance-sentry "
+            "agent/ledger composes at the pinned commit. Agent instructions "
+            "change through the repo, not live."
+        )
+        action.append(ACTION)
+    if stale:
+        body.append(
+            "A retired big-picture copy is back in the finance workspace; "
+            "finance-sentry's primer is Ledger's only big-picture source."
+        )
+        action.append(STALE_ACTION)
     return {
         "level": "act",
         "source": "host",
         "subject": "ledger-persona",
         "headline": f"Ledger persona drifted: {head}"[:780],
-        "body": (
-            "The finance agent's live AGENTS.md is not what finance-sentry "
-            "agent/ledger composes at the pinned commit. Agent instructions "
-            "change through the repo, not live."
-        ),
+        "body": " ".join(body),
         "detail": detail,
-        "action": ACTION,
+        "action": "; ".join(action),
     }
 
 
