@@ -41,7 +41,10 @@ groups:
             datasourceUid: loki
             model:
               refId: A
-              expr: 'sum(count_over_time({service_name="docker"} |~ "\\[send_gmail_message\\] (Invoked\\. Email: |Forwarding message .)" [2m]))'
+              expr: >-
+                sum(count_over_time({service_name="docker"}
+                |~ "\\[send_gmail_message\\] (Invoked\\. Email: |Forwarding message .)"
+                [2m]))
               queryType: instant
               instant: true
               editorMode: code
