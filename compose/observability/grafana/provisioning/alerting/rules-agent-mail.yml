@@ -8,7 +8,9 @@
 # `send_gmail_message` is the only write tool the server exposes
 # (compose/openclaw/docker-compose.yml google-workspace-mcp). The server logs
 # every call BEFORE the Gmail API is hit, so this fires on the invocation, not
-# on delivery, and also on the "Forwarding message" path of the same tool:
+# on delivery. A plain send logs the Invoked line; a forward logs only the
+# Forwarding line (it returns before the Invoked line), so each call matches
+# exactly once:
 #   [GMAIL] [send_gmail_message] Invoked. Email: '<account>', subject_len=N, Attachments: M
 #   [send_gmail_message] Forwarding message '<id>' for '<account>'
 # The match is anchored on `] Invoked. Email: ` / `] Forwarding message ` so

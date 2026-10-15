@@ -773,6 +773,7 @@ SEND_LINE = (
     "[GMAIL] \x1b[32m[send_gmail_message] Invoked. Email: 'someone@example.invalid', "
     "subject_len=13, Attachments: 0\x1b[0m\n"
 )
+# A forward logs only this line (it returns before the Invoked line): one match per call.
 FORWARD_LINE = (
     "[send_gmail_message] Forwarding message 'abc123' for 'someone@example.invalid'"
 )

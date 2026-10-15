@@ -102,7 +102,12 @@ refresh tokens that Google expires after 7 days, and the MCP then fails with
 `invalid_grant`. In the Cloud console open **Google Auth Platform → Audience**,
 choose **Publish app**, and confirm; the status reads *In production*. Ignore
 any prompt to submit the app for verification: an unverified app is fine for
-personal use.
+personal use. LifeKit's OAuth app is In production and unverified on purpose and
+will not be submitted for verification, so its refresh tokens do not expire after
+7 days. Google's unverified-app warning on the consent screen is expected (choose
+**Advanced**, then continue), and Google verification-failure notices can be
+ignored. The privacy policy URL is
+<https://github.com/lifekit-hq/.github/blob/main/PRIVACY.md>.
 
 Do this before step 6. A refresh token issued while the app was still in
 *Testing* keeps its 7-day life after you publish, so redo step 6 once the
