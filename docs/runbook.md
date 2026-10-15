@@ -2321,7 +2321,7 @@ override with `--workspace DIR` or `LEDGER_WORKSPACE`. `install` refuses a
 persona over OpenClaw's `bootstrapMaxChars` (20,000 characters), because the
 agent would load it truncated; `--allow-oversize` overrides. The pin must be
 at or past finance-sentry's trim under that limit (#968; the composition is about
-19,300 characters at the 2026-10-14 pin, it was about 23,300 before the trim). Only `AGENTS.md` is
+19,800 characters at the 2026-10-15 pin, it was about 23,300 before the trim). Only `AGENTS.md` is
 written: `USER.md` and the other workspace files stay host state. `install`
 changes a file the agent reads on its next session and restarts nothing.
 
