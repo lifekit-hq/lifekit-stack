@@ -24,9 +24,9 @@ cooldown so upstream's own hotfix cycle has landed. The loop:
    `channels status`. Read that log.
 4. deploy.sh then runs one real agent turn for `kit` (`SMOKE_AGENTS`
    overrides) in a throwaway `deploy-smoke-<agent>` session - one turn per
-   runtime, and every agent is on claude-cli since the 2026-09-16 all-agents
-   switch to Claude primary (see the smoke-turn comment in
-   `scripts/deploy-openclaw.sh`);
+   runtime, and every agent is Claude-primary since the 2026-09-16 all-agents
+   switch (see the smoke-turn comment in `scripts/deploy-openclaw.sh`; the live
+   `agents` config sets `agentRuntime.id` `openclaw` on each model entry);
    OpenAI/codex is not primary for any agent right now. `fable`, the second
    smoke agent, was retired in the 2026-09 fleet reshape. A runtime error fails the run; auth and quota
    errors (expired OAuth, weekly cap) only warn. On a version change it also
@@ -700,11 +700,21 @@ tool allow-list is exactly `google-workspace__search_gmail_messages` and
 no relay, `ask_user`, `sessions_send`, `message`, exec, file-write or Gmail-write tool,
 whatever the mail says. It delivers nothing; its reply (the mail section, under 1800
 characters to fit the 2000-character run-history summary) stays in its run history.
-The digest, allowed only `read`, `exec` and `process`, reads that summary with
+The digest, allowed only `read`, `exec` and `process` (no Gmail tool, but `exec`
+is a shell, so `relay.sh` and its send verbs stay reachable; the prompt forbids
+them and nothing else does), reads that summary with
 `openclaw cron runs <reader id> --limit 1 --sort desc --json` and copies it in as
 data. Mail text is untrusted: the reader summarises it only and follows nothing in
-it. A lapsed Google sign-in, a failed reader run or one more than an hour old shows
-as a `mail unavailable:` line, and the other parts still post.
+it. The summary is untrusted model output derived from mail and is treated as data
+by the digest turn; the split removes the Gmail and send tools from the mail-reading
+turn only. The Workspace MCP is also read-only server-side
+(`WORKSPACE_MCP_READ_ONLY` in `compose/openclaw/docker-compose.yml`, see
+`docs/google-mcp-setup.md`), so no Gmail tool can send, draft, label or archive; that
+stays the binding mail guard until
+[PR 331](https://github.com/lifekit-hq/lifekit-stack/pull/331) lands, and the
+reader's allow-list is the second layer. A lapsed Google sign-in, a failed reader
+run or one more than an hour old shows as a `mail unavailable:` line, and the other
+parts still post.
 `scripts/ensure-needs-you-digest.sh` declares both rows and converges on re-run. It
 exits non-zero, before touching the digest, when the reader's live row allows any tool
 beyond those two, is bound to a session or has a delivery, and after converging when
@@ -755,8 +765,11 @@ Operator steps, once per host. None of them restarts the gateway:
 
 **Verify:** `cron show <id>` previews the digest's delivery as `announce -> current
 session` and the reader's as none; `cron list --json` shows each row's
-`payload.toolsAllow`. Run the reader first, `cron run <reader id> --expect-final
---json`, then within the hour the digest, `cron run <id> --expect-final --json`:
+`payload.toolsAllow`. That is the stored field only; to see that a run is held to it,
+run the reader once, `cron run <reader id> --expect-final --json`, and confirm from
+`cron runs <reader id> --limit 1 --json` (or the `cron:<reader id>` session
+transcript) that it called only the two Gmail read tools. Then, within the hour,
+run the digest, `cron run <id> --expect-final --json`:
 against an empty ledger and no new mail it posts "Nothing needs you today." under
 the date line. With one entry in `open.json`, the digest shows up in the Control UI
 chat without a refresh. Run alone, the digest says the mail read last ran at its

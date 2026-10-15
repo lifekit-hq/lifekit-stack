@@ -17,9 +17,13 @@
 # The reader has no delivery; its final reply (the mail section, at most 2000
 # characters, the run-history summary cap) stays in its run history. The
 # digest reads that summary with `openclaw cron runs` and copies it in, so
-# only the reader's summary reaches kit's main session, never a mail body. The
-# digest's own allow-list is read, exec and process, so it cannot call a Gmail
-# tool either. After converging, the script re-reads both rows and exits 1
+# only the reader's summary reaches kit's main session, never a mail body.
+# The digest turn keeps exec, and through it relay.sh, whose send verbs the
+# prompt tells it not to use: no tool allow-list stops that, and the reader's
+# summary is untrusted model output derived from mail, copied in as data. The
+# split removes the Gmail and send tools from the mail-reading turn only; the
+# digest's allow-list (read, exec, process) has no Gmail tool. After
+# converging, the script re-reads both rows and exits 1
 # unless the reader's allow-list is exactly READER_TOOLS with no delivery and
 # the digest's is exactly DIGEST_TOOLS. The google-workspace MCP's own
 # permissions are the server's business (compose/openclaw/docker-compose.yml);
@@ -98,7 +102,8 @@ SESSION_KEY="agent:${AGENT}:main"
 CRON_EXPR="${NEEDS_YOU_DIGEST_CRON:-0 9,17 * * *}"
 CRON_TZ="${NEEDS_YOU_DIGEST_TZ:-Europe/Dublin}"
 # The digest reads the ledger (read) and runs two read-only commands (exec,
-# process); nothing else, so no Gmail, ask_user, sessions_send or message tool.
+# process); no Gmail, ask_user, sessions_send or message tool. exec is a
+# shell, so relay.sh's send verbs stay reachable; only the prompt forbids them.
 DIGEST_TOOLS="read,exec,process"
 READER_NAME=needs-you-mail-reader
 READER_CRON="${NEEDS_YOU_MAIL_CRON:-45 8,16 * * *}"

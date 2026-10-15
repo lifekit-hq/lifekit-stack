@@ -54,8 +54,8 @@ The compose service also sets `WORKSPACE_MCP_READ_ONLY: "true"`. In
 read-only mode the server drops every tool that needs a write scope (Gmail
 send and draft, label and filter changes, every create, update and share), and
 `tools/list` shrinks from 76 tools to 35 at 1.21.0. This is the guard that
-binds: per-agent tool allow and deny lists are not enforced under the
-claude-cli runtime. The start command passes `--tools`, so the server ignores
+binds today: per-agent tool lists are config, and only a cron job's own
+`toolsAllow` is enforced per run. The start command passes `--tools`, so the server ignores
 `WORKSPACE_MCP_PERMISSIONS`. The read-only flag needs no new consent, because
 the existing refresh token's scopes are a superset of the read-only ones. To
 allow writes again, change the literal in `compose/openclaw/docker-compose.yml`
