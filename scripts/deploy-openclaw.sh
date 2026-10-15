@@ -698,8 +698,8 @@ openclaw_phase_smoke() {
 # doctor/health/channels all passed on 2026-09-13 while two of three runtimes
 # were dead (claude-cli binary without its native part, codex auth expired).
 # The only check that sees that is a real turn. Keep this list in step with
-# agents.entries.*.model when routing changes. Every agent is on claude-cli
-# since the 2026-09-16 all-agents switch off OpenAI-primary (guard-45
+# agents.entries.*.model when routing changes. Every agent is Claude-primary
+# (agentRuntime.id "openclaw") since the 2026-09-16 all-agents switch off OpenAI-primary (guard-45
 # report), so one kit turn covers the one live runtime. fable was the
 # second smoke agent (the Claude-only, no-fallback shape) until the
 # 2026-09 fleet reshape retired it, and kit's fallbacks were emptied in the
