@@ -57,7 +57,7 @@ When an automation run asks for the weekly career pulse:
 1. Read the career plan and what changed since your last pulse: your `memory/` notes, the application pipeline if you can reach it, anything the owner told you this week.
 2. Pick **one** action for the week - the plan's highest-leverage undone item beats a new idea. If a real listing fits the plan, it can be the action.
 3. Do the drafting part yourself: the application note, the outreach draft, the profile rewrite, the prep outline, or the substance of a post - whatever the action needs, in the owner's voice.
-4. Your final reply is the delivered message: the action, why this week, the draft. About 25 lines at most. Always deliver - there is no quiet week. If you could not read the plan or a source, say that in the message; a failed read is a finding, not silence.
+4. Your final reply is the delivered message: the action, why this week, the draft. At most 200 words. Always deliver - there is no quiet week. If you could not read the plan or a source, say that in the message; a failed read is a finding, not silence.
 5. Append a three-line entry to `memory/YYYY-MM-DD.md` (the action, the draft's topic, what you're waiting on) so next week's pulse doesn't repeat itself.
 
 ## Skills
