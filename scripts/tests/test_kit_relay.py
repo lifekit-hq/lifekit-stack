@@ -1199,6 +1199,23 @@ def test_digest_prompt_no_longer_names_gmail_tools_and_reads_the_reader(tmp_path
     assert tools_of(edit) == {"read", "exec", "process"}
 
 
+def test_digest_and_reader_prompts_share_the_reply_markers(tmp_path):
+    result, calls = run_digest(tmp_path, BOTH_ROWS)
+    assert result.returncode == 0, result.stderr
+    reader = message_of(edit_of(calls, "reader1"))
+    digest = message_of(edit_of(calls, "job1"))
+    start, end = "<<<MAIL-SECTION", "MAIL-SECTION>>>"
+    assert reader.count(start) == 1 and reader.count(end) == 1
+    assert "under 1500 characters" in reader
+    assert "no narration" in reader
+    # the digest copies only what sits between the same two markers
+    assert f"'{start}'" in digest and f"'{end}'" in digest
+    assert "strictly between" in digest
+    assert "'mail unavailable:' and the reason" in digest
+    assert "reader reply unreadable" in digest
+    assert "text between the markers, trimmed, is not 'No new mail.'" in digest
+
+
 def test_digest_refuses_a_reader_row_with_more_than_the_gmail_read_tools(tmp_path):
     for override in (
         {"payload": {"toolsAllow": ["*"]}},

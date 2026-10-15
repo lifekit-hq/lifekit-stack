@@ -382,9 +382,9 @@ services:
       # `WORKSPACE_MCP_TOOLS` name (per upstream env reference) for forward-compat.
       WORKSPACE_MCP_TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
       TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
-      # Read-only: per-agent tool lists are config and only a cron job's own
-      # toolsAllow is enforced per run, so this server-side flag is the Gmail
-      # guard that binds for every agent (no send, no write tools). The start command
+      # Read-only: this server-side flag binds for every agent and session
+      # regardless of any tool allow-list (a cron job's toolsAllow narrows only
+      # that job's runs): no send, no write tools. The start command
       # passes --tools, so WORKSPACE_MCP_PERMISSIONS would be ignored; this env
       # flag is the working switch at 1.21.0. Literal, not ${...}: widening it
       # is a reviewed change here, never an env-file edit.

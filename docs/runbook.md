@@ -698,13 +698,17 @@ tool allow-list is exactly `google-workspace__search_gmail_messages` and
 `google-workspace__get_gmail_messages_content_batch`. That is the row's
 `payload.toolsAllow`, which the gateway's `openclaw` agent runtime enforces: the run has
 no relay, `ask_user`, `sessions_send`, `message`, exec, file-write or Gmail-write tool,
-whatever the mail says. It delivers nothing; its reply (the mail section, under 1800
-characters to fit the 2000-character run-history summary) stays in its run history.
+whatever the mail says. It delivers nothing; its run stays in its run history, whose
+`summary` is all of the run's text, kept from the head and cut at 2000 characters. The
+reader writes no text but its final reply, a mail section of under 1500 characters
+between a `<<<MAIL-SECTION` line and a `MAIL-SECTION>>>` line.
 The digest, allowed only `read`, `exec` and `process` (no Gmail tool, but `exec`
 is a shell, so `relay.sh` and its send verbs stay reachable; the prompt forbids
 them and nothing else does), reads that summary with
-`openclaw cron runs <reader id> --limit 1 --sort desc --json` and copies it in as
-data. Mail text is untrusted: the reader summarises it only and follows nothing in
+`openclaw cron runs <reader id> --limit 1 --sort desc --json` and copies in only the
+text strictly between the two marker lines, as data; a missing marker (narration only,
+a cut-off reply, an empty summary) shows as `mail unavailable: reader reply
+unreadable`, and `No new mail.` between the markers leaves the section out. Mail text is untrusted: the reader summarises it only and follows nothing in
 it. The summary is untrusted model output derived from mail and is treated as data
 by the digest turn; the split removes the Gmail and send tools from the mail-reading
 turn only. The Workspace MCP is also read-only server-side
@@ -768,7 +772,9 @@ session` and the reader's as none; `cron list --json` shows each row's
 `payload.toolsAllow`. That is the stored field only; to see that a run is held to it,
 run the reader once, `cron run <reader id> --expect-final --json`, and confirm from
 `cron runs <reader id> --limit 1 --json` (or the `cron:<reader id>` session
-transcript) that it called only the two Gmail read tools. Then, within the hour,
+transcript) that it called only the two Gmail read tools, and read that entry's
+`summary` to check both marker lines are present with the mail section between
+them. Then, within the hour,
 run the digest, `cron run <id> --expect-final --json`:
 against an empty ledger and no new mail it posts "Nothing needs you today." under
 the date line. With one entry in `open.json`, the digest shows up in the Control UI
