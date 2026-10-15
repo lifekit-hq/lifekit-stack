@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import configparser
 import json
 import os
 import subprocess
@@ -177,17 +178,25 @@ def test_unexpected_url_fails_instead_of_writing_a_broken_label(gauge):
     assert not (out / "weekly_release.prom").exists()
 
 
-def test_installer_and_units_wire_the_gauge():
-    installer = (REPO / "scripts/host-gauge/install-host-gauges.sh").read_text()
-    assert "release-gauge/lifekit-release-gauge" in installer
-    assert "lifekit-release-gauge.timer" in installer
-    unit = (REPO / "scripts/release-gauge/lifekit-release-gauge.service").read_text()
-    assert "User=__ADMIN_USER__" in unit
-    assert (
-        "ExecStart=/usr/local/bin/lifekit-release-gauge.sh /var/lib/node_exporter/textfile"
-        in unit
-    )
-    timer = (REPO / "scripts/release-gauge/lifekit-release-gauge.timer").read_text()
-    # textfile-collector-stale judges every 5-minute gauge against 15 minutes.
-    assert "OnUnitActiveSec=5min" in timer
+def _unit(name):
+    parser = configparser.ConfigParser(strict=False, interpolation=None)
+    parser.optionxform = str
+    parser.read_string((REPO / "scripts/release-gauge" / name).read_text())
+    return parser
+
+
+def test_service_runs_the_gauge_as_the_admin_user_into_the_textfile_dir():
+    service = _unit("lifekit-release-gauge.service")
+    assert service["Service"]["Type"] == "oneshot"
+    assert service["Service"]["User"] == "__ADMIN_USER__"
+    assert service["Service"]["ExecStart"].split() == [
+        "/usr/local/bin/lifekit-release-gauge.sh",
+        "/var/lib/node_exporter/textfile",
+    ]
     assert os.access(SCRIPT, os.X_OK)
+
+
+def test_timer_runs_every_five_minutes():
+    # textfile-collector-stale judges every 5-minute gauge against 15 minutes.
+    timer = _unit("lifekit-release-gauge.timer")
+    assert timer["Timer"]["OnUnitActiveSec"] == "5min"

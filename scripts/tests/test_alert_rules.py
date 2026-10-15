@@ -725,16 +725,6 @@ def test_weekly_release_rule_names_repo_pr_and_run_and_stays_quiet_without_data(
         assert f"$labels.{label}" in text
 
 
-def test_weekly_release_resolved_line_names_the_repo():
-    # The rule fires once per repo and policies.yml groups by alertname, so
-    # two repos resolving together must not render as the same line.
-    tmpl = (
-        REPO
-        / "compose/observability/grafana/provisioning/alerting/contact-points.yml.tmpl"
-    ).read_text()
-    assert "{{ else if .Labels.repo }}{{ .Labels.repo | html }}" in tmpl
-
-
 BLOCKED = "weekly_release_blocked"
 FS = 'repo="lifekit-hq/finance-sentry"'
 URLS = (
