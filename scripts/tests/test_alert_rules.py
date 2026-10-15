@@ -133,6 +133,7 @@ def test_rules_only_reference_real_metrics():
             "gt",
             1,
         ),
+        ("weekly-release-not-merged", "weekly_release_blocked", "warning", "gt", 0),
     ],
 )
 def test_new_rules(uid, metric, severity, op, limit):
@@ -709,6 +710,47 @@ def test_textfile_staleness_is_per_file_cadence(file, eval_time, fires):
         )
     ]
     code, output = promtool_expr_alerts(f"({expr}) > {limit}", series, eval_time)
+    if fires:
+        assert code != 0 and "got:" in output, output
+    else:
+        assert code == 0, output
+
+
+def test_weekly_release_rule_names_repo_pr_and_run_and_stays_quiet_without_data():
+    rule = RULES["weekly-release-not-merged"]
+    assert rule["for"] == "0s"
+    assert rule["noDataState"] == "OK"
+    text = rule["annotations"]["summary"] + rule["annotations"]["description"]
+    for label in ("repo", "pr_url", "run_url"):
+        assert f"$labels.{label}" in text
+
+
+BLOCKED = "weekly_release_blocked"
+FS = 'repo="lifekit-hq/finance-sentry"'
+URLS = (
+    'pr_url="https://github.com/lifekit-hq/finance-sentry/pull/9",'
+    'run_url="https://github.com/lifekit-hq/finance-sentry/actions/runs/1"'
+)
+EMPTY = 'pr_url="",run_url=""'
+
+
+@pytest.mark.parametrize(
+    ("series", "fires"),
+    [
+        ([], False),
+        ([(BLOCKED + "{" + FS + "," + EMPTY + "}", 0)], False),
+        ([(BLOCKED + "{" + FS + "," + URLS + "}", 1)], True),
+        (
+            [
+                (BLOCKED + '{repo="lifekit-hq/devclaw",' + EMPTY + "}", 0),
+                (BLOCKED + "{" + FS + "," + URLS + "}", 1),
+            ],
+            True,
+        ),
+    ],
+)
+def test_weekly_release_rule_fires_only_on_a_blocked_repo(series, fires):
+    code, output = promtool_alerts("weekly-release-not-merged", series)
     if fires:
         assert code != 0 and "got:" in output, output
     else:

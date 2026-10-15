@@ -620,7 +620,7 @@ groups:
             model:
               refId: A
               # Age of each textfile-collector file; every gauge that writes one (the quota
-              # gauge, the /tmp usage gauge, the host-group gauge) rewrites it every 5 minutes, so 15 minutes is
+              # gauge, the /tmp usage gauge, the host-group gauge, the release gauge) rewrites it every 5 minutes, so 15 minutes is
               # three missed runs. The hourly quota-share file is the exception: its age
               # has 6600s taken off, so the same 900 threshold means three missed hourly runs.
               expr: >-
@@ -656,7 +656,7 @@ groups:
           summary: "textfile metric file {{ $labels.file }} has not been updated for over 15 minutes"
           description: >-
             node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. Every gauge
-            that writes into the textfile directory (the quota, /tmp usage, host-group and unit gauges' systemd
+            that writes into the textfile directory (the quota, /tmp usage, host-group, unit and release gauges' systemd
             timers) refreshes its file every 5 minutes (the quota-share gauge
             hourly, judged against 2 hours), so its timer or script has stopped and rules
             reading that file are seeing stale values. `systemctl --failed`, the gauge unit's journal, and
@@ -1949,3 +1949,67 @@ groups:
             minutes: Prometheus could not hand a notification to a
             configured Alertmanager receiver. Check the Prometheus container
             logs for the delivery error.
+
+  # The weekly-release.yml job in each lifekit-hq repo merges the pending
+  # Release Please PR only once its checks pass; a failing or missing check
+  # ends the run red with nothing merged, on a GitHub-hosted runner the box
+  # never hears from. scripts/release-gauge reads each repo's latest Weekly
+  # Release run and pending PR through the admin account's gh login every
+  # 5 minutes and writes weekly_release_blocked through the textfile collector.
+  - orgId: 1
+    name: releases
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: weekly-release-not-merged
+        title: Weekly Release stopped without merging
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 1 per repo whose latest completed Weekly Release run did not
+              # succeed while the release PR it should have merged is still
+              # open; pr_url and run_url label it. A successful run (merged, or
+              # the "no pending release PR" no-op) is 0.
+              expr: weekly_release_blocked
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # A gauge that stopped writing is textfile-collector-stale's job, a
+        # failed gauge run host-unit-down-or-failed's; boxes without the
+        # gauge have no series.
+        noDataState: OK
+        execErrState: Error
+        # The gauge only reports completed runs, so the state cannot flap.
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.repo }} Weekly Release stopped without merging the release PR"
+          description: >-
+            The latest Weekly Release run {{ $labels.run_url }} did not succeed and
+            the release PR {{ $labels.pr_url }} is still open, so nothing was
+            released. weekly-release.yml aborts before the merge when a check on
+            the PR fails or never reports (`gh pr checks --watch --fail-fast`);
+            the run log names the cause. Fix the PR's checks, then
+            `gh workflow run weekly-release.yml -R {{ $labels.repo }}`. This
+            resolves once a run succeeds or the PR is merged.
