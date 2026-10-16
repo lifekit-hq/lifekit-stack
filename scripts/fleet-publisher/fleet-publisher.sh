@@ -40,6 +40,14 @@
 # and merged by (date, home) with the last row winning, so a rerun replaces a
 # day and never duplicates it. Invalid rows are skipped and counted on stderr;
 # a missing source leaves the output as it was.
+# Items also gain started_at (active_children: the home ledger's latest
+# task.dispatched), landed_at (landed: its task.merged, else task.cleaned_up)
+# and priority (queued: the backlog line's "(priority: N)"); decisions_open
+# items the snapshot gives no ask gain the validated data/<id>/ask.json.
+# A remote home (the PC) appears in homes[] from the first home's cached
+# secondmate summary as state and last-seen only. OUT_DIR/metrics also gets
+# quota.jsonl and quota-snapshot.json: percentages and reset times only, never
+# an account identifier (contract in README.md).
 # The dashboard never reads Lavish or fleet-home state. Writes TEXTFILE_DIR/fleet.prom:
 #   fleet_workers{state}                          active children by state, all homes
 #   fleet_decisions_open                          open captain decisions, all homes
@@ -67,6 +75,9 @@ CREDENTIAL_RE='sk-ant-|gh[pousr]_[A-Za-z0-9]{20}|github_pat_|xox[abprs]-|tskey-|
 SLUG_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 DAILY_SCHEMA='fleet-metrics-daily.v1'
 DAILY_MAX_BYTES=4194304
+ASK_MAX_BYTES=65536
+PC_HOME_ID="${PC_HOME_ID:-pc}"
+PC_STALE_SECONDS="${PC_STALE_SECONDS:-1200}"
 
 read -r -a homes <<< "${FM_HOMES:-${FM_HOME:-}}"
 if ((${#homes[@]} == 0)); then
@@ -96,7 +107,7 @@ work="$(mktemp -d)"
 reports_tmp="$(mktemp -d "$OUT_DIR/.reports.XXXXXX")"
 trap 'rm -rf "$summary_tmp" "$prom_tmp" "$work" "$reports_tmp"' EXIT
 { [[ -r "$LAVISH_STATE" ]] && jq -c 'objects' "$LAVISH_STATE" 2> /dev/null; } > "$work/lavish.json" || true
-for f in homes.jsonl published.jsonl metrics.jsonl reports.tsv daily-source.jsonl; do : > "$work/$f"; done
+for f in homes.jsonl published.jsonl metrics.jsonl reports.tsv daily-source.jsonl quota-source.jsonl; do : > "$work/$f"; done
 
 # Everything below is read-only access to the fleet homes. A source that is
 # missing or fails only drops the field it feeds; it never fails the publish.
@@ -128,6 +139,29 @@ daily_rows() {
        asks_new: (.asks_new | {t0, t1, t2, untiered}), asks_avoidable,
        ask_answer_hours_median, allowance_week_pct, five_hour_peak_pct, by_tier: (.by_tier | map_values({runs, first_pass})), peak_workers,
        mem_available_min, swap_used_max, psi_some_max}'
+}
+
+# quota_rows <slot map "key=slot ...">: stdin is quota.jsonl; prints each usable
+# row reduced to percentages, reset times and a slot number. The account key is
+# looked up in the slot map, else numbered by order of first appearance, and is
+# never printed; free-text fields (error, source_tool) are dropped.
+quota_rows() {
+  jq -cRs --arg map "$1" '
+    def pct: if . == null then null elif type == "number" and . >= 0 and . <= 100 then . else error("pct") end;
+    def window: if type != "object" then null
+      else {percent_used: (.percent_used | pct),
+            resets_at: (.resets_at | if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9:]+)$") then . else null end)} end;
+    ($map | split(" ") | map(select(contains("=")) | split("=") | {(.[0]): (.[1] | tonumber? // null)}) | add // {}) as $given
+    | [split("\n")[] | fromjson? | objects | select(.ts | type == "number")] as $rows
+    | (reduce ($rows | sort_by(.ts)[] | .account_key | strings | select(. != "")) as $k ([]; if index($k) == null then . + [$k] else . end)) as $order
+    | $rows[]
+    | (.account_key // "") as $k
+    | try ({ts: (.ts | floor),
+            slot: (if $k == "" then null else ($given[$k] // ($order | index($k) + 1)) end),
+            plan: (.plan | if type == "string" and test("^[a-z0-9_-]{1,16}$") then . else null end),
+            status: (.status | if type == "string" and test("^[a-z_]{1,32}$") then . else null end),
+            ok: (.ok == true),
+            five_hour: (.five_hour | window), seven_day: (.seven_day | window), fable_week: (.fable_week | window)}) catch empty'
 }
 
 tsv_to_object() { jq -Rn '[inputs | split("\t") | select(length == 2) | {(.[0]): .[1]}] | add // {}'; }
@@ -172,6 +206,56 @@ publish_home() {
   # The ledger is megabytes: hand it to jq as files, never as arguments.
   : > "$hw/ledger.jsonl"
   [[ -r "$ledger_file" ]] && jq -cR 'fromjson? | objects' "$ledger_file" > "$hw/ledger.jsonl"
+
+  # Start and land times from the ledger: the latest dispatch of each task, and
+  # its merge (else its cleanup) as the landing.
+  jq -n 'reduce (inputs | select((.task | type) == "string" and (.ts | type) == "number"
+                                 and (.event == "task.dispatched" or .event == "task.merged" or .event == "task.cleaned_up"))) as $e
+      ({started: {}, merged: {}, cleaned: {}};
+       if $e.event == "task.dispatched" then .started[$e.task] = ([.started[$e.task], $e.ts] | max)
+       elif $e.event == "task.merged" then .merged[$e.task] = ([.merged[$e.task], $e.ts] | max)
+       else .cleaned[$e.task] = ([.cleaned[$e.task], $e.ts] | max) end)
+      | {started, landed: (.cleaned + .merged)}' "$hw/ledger.jsonl" > "$hw/times.json" 2> /dev/null \
+    || echo '{"started":{},"landed":{}}' > "$hw/times.json"
+
+  # Backlog priority per task id: the "(priority: N)" on its "- [ ] <id> - ..." line.
+  jq -Rn '[inputs
+      | capture("^- \\[.\\] (?<id>[A-Za-z0-9][A-Za-z0-9._-]*) - .*\\(priority: (?<p>[0-9]+)\\)")?
+      | {(.id): (.p | tonumber)}] | add // {}' "$data_dir/backlog.md" > "$hw/priority.json" 2> /dev/null \
+    || echo '{}' > "$hw/priority.json"
+
+  # Structured asks: data/<decision id>/ask.json, read under the guards the
+  # reports use, for the decisions the snapshot gives no ask. One that fails a
+  # check is skipped and logged, never fatal.
+  : > "$hw/asks.tsv"
+  data_real="$(realpath -e "$data_dir" 2> /dev/null || true)"
+  while IFS= read -r rid; do
+    [[ "$rid" =~ $SLUG_RE && "$rid" != *..* && -n "$data_real" ]] || continue
+    src="$(realpath -e "$data_dir/$rid/ask.json" 2> /dev/null)" || continue
+    [[ "$src" == "$data_real"/* && -f "$src" && -s "$src" ]] || continue
+    if [[ $(stat -c %s "$src") -gt $ASK_MAX_BYTES ]]; then
+      echo "fleet-publisher: $id: $rid/ask.json is over $ASK_MAX_BYTES bytes; not read" >&2
+    elif grep -Eq "$CREDENTIAL_RE" "$src"; then
+      echo "fleet-publisher: $id: $rid/ask.json looks like it holds a credential; not read" >&2
+    elif out="$(jq -c --arg slug "$SLUG_RE" '
+        select(type == "object"
+          and (.question | type == "string" and length > 0 and length <= 2000)
+          and (.options | type == "array" and length <= 6
+               and all(.[]; type == "object" and (.id | type == "string" and test($slug) and length <= 64)
+                            and (.label | type == "string" and length > 0 and length <= 200)
+                            and ((.recommended // false) | type == "boolean"))
+               and ([.[] | select(.recommended == true)] | length <= 1)
+               and (length == 0 or ([.[] | select(.recommended == true)] | length) == 0 or .[0].recommended == true))
+          and (.free_text_allowed | type == "boolean")
+          and ((.link // null) | . == null or (type == "string" and test("^https://[^ ]+$") and length <= 500)))
+        | {question, options: [.options[] | {id, label, recommended: (.recommended // false)}],
+           free_text_allowed, link: (.link // null)}' "$src" 2> /dev/null)" && [[ -n "$out" ]]; then
+      printf '%s\t%s\n' "$rid" "$out" >> "$hw/asks.tsv"
+    else
+      echo "fleet-publisher: $id: $rid/ask.json is not a valid ask; not read" >&2
+    fi
+  done < <(jq -r '(.decisions_open // [])[] | select(.ask == null) | .id | strings' "$summary_file")
+  jq -Rn '[inputs | split("\t") | select(length == 2) | {(.[0]): (.[1] | fromjson)}] | add // {}' < "$hw/asks.tsv" > "$hw/asks.json"
 
   # Open Lavish sessions this home's captain-hold binding feeds: session -> origin.
   # Source id convention: lavish-<last segment of the session url>. The CLI
@@ -257,11 +341,25 @@ publish_home() {
     fi
   fi
 
+  # Quota history: the home's data/fleet-metrics/quota.jsonl under the same
+  # guards, sanitised when it is published.
+  src="$(realpath -e "$data_dir/fleet-metrics/quota.jsonl" 2> /dev/null || true)"
+  if [[ -n "$data_real" && "$src" == "$data_real"/* && -f "$src" && -s "$src" ]]; then
+    if [[ $(stat -c %s "$src") -gt $DAILY_MAX_BYTES ]]; then
+      echo "fleet-publisher: $id: fleet-metrics/quota.jsonl is over $DAILY_MAX_BYTES bytes; not read" >&2
+    else
+      cat "$src" >> "$work/quota-source.jsonl"
+      [[ -z "$(tail -c1 "$src")" ]] || echo >> "$work/quota-source.jsonl"
+    fi
+  fi
+
   jq -c --slurpfile lavs "$work/lavish.json" --arg data "$data_dir" --arg hid "$id" \
     --slurpfile folded "$hw/folded.json" --slurpfile bound "$hw/bound.json" --slurpfile origins "$hw/origins.json" \
-    --slurpfile reports "$hw/reports.json" "$PUBLISHED_COUNTS"'
+    --slurpfile reports "$hw/reports.json" --slurpfile times "$hw/times.json" --slurpfile prio "$hw/priority.json" \
+    --slurpfile asks "$hw/asks.json" "$PUBLISHED_COUNTS"'
     ($lavs[0] // {}) as $lav
     | $bound[0] as $bound | $origins[0] as $origins | $reports[0] as $reports
+    | $times[0] as $times | $prio[0] as $prio | $asks[0] as $asks
     | def open_sessions:
       [($lav.sessions // {}) | to_entries[] | .value
        | select(.status != "ended" and (.file | type == "string") and (.url | type == "string"))];
@@ -276,8 +374,14 @@ publish_home() {
           | select(($bound[seg] == $id) or ($o != null and ($bound[seg] == $o or under(.; $o))))] | newest)
         // ([open_sessions[] | select(under(.; $id))] | newest);
     (if (.counts | type) == "object" then .counts = published_counts($folded[0]) else . end)
-    | .decisions_open |= map(select(.id as $i | $folded[0] | index($i) | not) | . + {board_url: board(.id)})
-    | if (.landed | type) == "array" then .landed |= map(. + {report_url: ($reports[.id] // null)}) else . end
+    | .decisions_open |= map(select(.id as $i | $folded[0] | index($i) | not) | . + {board_url: board(.id)}
+        | if (.ask == null) and ($asks[.id] // null) != null then . + {ask: $asks[.id]} else . end)
+    | if (.active_children | type) == "array" then .active_children |= map(
+        if type == "object" and ($times.started[.id // ""] // null) != null then . + {started_at: $times.started[.id]} else . end) else . end
+    | if (.queued | type) == "array" then .queued |= map(
+        if type == "object" and ($prio[.id // ""] // null) != null then . + {priority: $prio[.id]} else . end) else . end
+    | if (.landed | type) == "array" then .landed |= map(. + {report_url: ($reports[.id] // null)}
+        | if type == "object" and ($times.landed[.id // ""] // null) != null then . + {landed_at: $times.landed[.id]} else . end) else . end
     # Every listed item names the home it came from, so an answer can go back there.
     | with_entries(if (.value | type) == "array"
         then .value |= map(if type == "object" then . + {home_id: $hid} else . end) else . end)' \
@@ -356,9 +460,39 @@ for i in "${!homes[@]}"; do
 done
 [[ -s "$work/published.jsonl" ]] || exit "$rc"
 
+# A remote home (the PC) is not a fleet home this host owns: the first home
+# caches its secondmate summary, and only its state and last-seen time are
+# published. It is appended to homes[] after the aggregation, so it never
+# changes the fleet's valid, reason, counts or generated_epoch, and it is
+# "off" rather than an error when its cache is missing, stale or unreadable.
+# PC_SUMMARY_FILE names the cache file; unset, the only *.json in the first
+# home's state/secondmate-summary-cache/ is used.
+publish_remote_home() {
+  local file="${PC_SUMMARY_FILE:-}" cache="${homes[0]:+${homes[0]}/state/secondmate-summary-cache}" found=()
+  echo '[]' > "$work/remote.json"
+  [[ " ${ids[*]} " != *" $PC_HOME_ID "* && "$PC_HOME_ID" =~ $SLUG_RE ]] || return 0
+  if [[ -z "$file" && -n "$cache" && -d "$cache" ]]; then
+    found=("$cache"/*.json)
+    [[ ${#found[@]} -eq 1 && -f "${found[0]}" ]] && file="${found[0]}"
+  fi
+  [[ -n "$file" ]] || return 0
+  jq -n --arg id "$PC_HOME_ID" --argjson now "$NOW" --argjson stale "$PC_STALE_SECONDS" --slurpfile s <(
+    if [[ -r "$file" ]] && ! grep -Eq "$CREDENTIAL_RE" "$file"; then jq -c 'objects' "$file" 2> /dev/null || true; fi
+  ) '
+    ($s[0] // {}) as $s
+    | (if ($s.schema // "" | startswith("fm-secondmate-home-summary.")) and ($s.generated_epoch | type) == "number"
+       then $s.generated_epoch else null end) as $seen
+    | [{id: $id, path: null, published: true, remote: true, valid: true, reason: null,
+        last_seen_epoch: $seen,
+        state: (if $seen == null or ($now - $seen) > $stale then "off"
+                elif ((($s.counts.active_children // ($s.active_children | length? // 0)) // 0) > 0) then "working"
+                else "idle" end)}]' > "$work/remote.json" || echo '[]' > "$work/remote.json"
+}
+publish_remote_home
+
 # One home: its summary as-is. More: the lists concatenated, and the fields
 # that describe the whole fleet aggregated over every home.
-jq -s --slurpfile homes "$work/homes.jsonl" --argjson now "$NOW" '
+jq -s --slurpfile homes "$work/homes.jsonl" --slurpfile remote "$work/remote.json" --argjson now "$NOW" '
   . as $parts
   | if ($homes | length) == 1 then $parts[0]
     else ([$parts[] | to_entries[] | select(.value | type == "array") | .key] | unique) as $lists
@@ -373,7 +507,7 @@ jq -s --slurpfile homes "$work/homes.jsonl" --argjson now "$NOW" '
             ({}; .[$e.key] += $e.value)
         else . end
     end
-  | .homes = $homes | .published_epoch = $now' "$work/published.jsonl" > "$summary_tmp"
+  | .homes = ($homes + $remote[0]) | .published_epoch = $now' "$work/published.jsonl" > "$summary_tmp"
 grep -Eq "$CREDENTIAL_RE" "$summary_tmp" && {
   echo "fleet-publisher: the published summary looks like it holds a credential; not publishing" >&2
   exit 3
@@ -390,8 +524,8 @@ jq -rn --slurpfile m "$work/metrics.jsonl" --slurpfile s "$summary_tmp" --argjso
     "fleet_usage_limit_events_1h \([$m[].usage] | add)",
     "fleet_summary_valid \(if $s.valid == true then 1 else 0 end)",
     "fleet_summary_generated_timestamp_seconds \($s.generated_epoch)",
-    ($s.homes[] | "fleet_home_summary_valid{home=\"\(.id)\"} \(if .valid == true then 1 else 0 end)"),
-    ($s.homes[] | select(.published) | "fleet_home_summary_generated_timestamp_seconds{home=\"\(.id)\"} \(.generated_epoch)"),
+    ($s.homes[] | select(.remote != true) | "fleet_home_summary_valid{home=\"\(.id)\"} \(if .valid == true then 1 else 0 end)"),
+    ($s.homes[] | select(.published and .remote != true) | "fleet_home_summary_generated_timestamp_seconds{home=\"\(.id)\"} \(.generated_epoch)"),
     "fleet_publisher_last_success_timestamp_seconds \($now)"' > "$prom_tmp"
 
 chmod 644 "$summary_tmp" "$prom_tmp"
@@ -443,6 +577,64 @@ publish_daily_metrics() {
 }
 if ! publish_daily_metrics; then
   echo "fleet-publisher: daily metrics were not published" >&2
+  ((rc != 0)) || rc=1
+fi
+# Quota history and snapshot, beside the daily metrics. Percentages, reset
+# times and a slot number only: no account key, email, plan detail or error
+# text. QUOTA_SLOT_MAP ("<account key>=<slot> ...", host config) pins slot
+# numbers; a key not in it is numbered by order of first appearance. The
+# snapshot is the quota gauge's textfile (QUOTA_PROM, default
+# TEXTFILE_DIR/claude_quota.prom), which already holds numbers only.
+publish_quota() {
+  local dir="$OUT_DIR/metrics" tmp seen prom="${QUOTA_PROM:-$TEXTFILE_DIR/claude_quota.prom}"
+  if [[ -s "$work/quota-source.jsonl" ]]; then
+    install -d -m 755 "$dir" || return 1
+    tmp="$(mktemp "$dir/.quota.XXXXXX")" || return 1
+    {
+      if [[ -r "$dir/quota.jsonl" ]]; then jq -c 'objects | select(.ts | type == "number")' "$dir/quota.jsonl" 2> /dev/null || true; fi
+      quota_rows "${QUOTA_SLOT_MAP:-}" < "$work/quota-source.jsonl"
+    } | jq -sc 'reduce .[] as $r ({}; .["\($r.ts)|\($r.slot)"] = $r) | [.[]] | sort_by([.ts, (.slot // 0)])[]' > "$tmp" \
+      || { rm -f "$tmp"; return 1; }
+    if grep -Eq "$CREDENTIAL_RE" "$tmp"; then
+      rm -f "$tmp"
+      echo "fleet-publisher: the quota history looks like it holds a credential; not publishing" >&2
+      return 1
+    fi
+    if [[ ! -s "$tmp" ]] || cmp -s "$tmp" "$dir/quota.jsonl"; then
+      rm -f "$tmp"
+    else
+      chmod 644 "$tmp"
+      mv -f "$tmp" "$dir/quota.jsonl" || { rm -f "$tmp"; return 1; }
+    fi
+  fi
+  [[ -r "$prom" ]] || return 0
+  install -d -m 755 "$dir" || return 1
+  tmp="$(mktemp "$dir/.quota-snapshot.XXXXXX")" || return 1
+  seen="$(stat -c %Y "$prom")"
+  jq -Rn --argjson seen "$seen" '
+    [inputs
+     | capture("^claude_quota_(?<name>[a-z_]+)(\\{(?<label>[a-z_]+)=\"(?<value>[A-Za-z0-9_:.-]*)\"\\})? (?<n>[0-9.eE+-]+)$")?
+     | . + {n: (.n | tonumber)}] as $m
+    | def plain($n): [$m[] | select(.name == $n and .label == null) | .n] | first;
+      def tag($n; $label): [$m[] | select(.name == $n and .label == $label) | .value] | first;
+      ([$m[] | select(.label == "window" and .name != "limiting_window")] | group_by(.value)
+       | map({key: .[0].value,
+              value: (map({key: .name, value: .n}) | from_entries
+                      | {percent_remaining, burn_multiple, reserve_percent_points, resets_at: .resets_at_seconds})})
+       | from_entries) as $windows
+    | {schema: "fleet-quota-snapshot.v1", generated_epoch: $seen, windows: $windows,
+       runway_seconds: plain("runway_seconds"), projected_exhausted_at: plain("projected_exhausted_at_seconds"),
+       runway_status: tag("runway_status"; "status"), limiting_window: tag("limiting_window"; "window")}' < "$prom" > "$tmp" \
+    || { rm -f "$tmp"; return 1; }
+  if cmp -s "$tmp" "$dir/quota-snapshot.json"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$dir/quota-snapshot.json" || { rm -f "$tmp"; return 1; }
+}
+if ! publish_quota; then
+  echo "fleet-publisher: quota metrics were not published" >&2
   ((rc != 0)) || rc=1
 fi
 exit "$rc"
