@@ -141,27 +141,64 @@ daily_rows() {
        mem_available_min, swap_used_max, psi_some_max}'
 }
 
-# quota_rows <slot map "key=slot ...">: stdin is quota.jsonl; prints each usable
-# row reduced to percentages, reset times and a slot number. The account key is
-# looked up in the slot map, else numbered by order of first appearance, and is
-# never printed; free-text fields (error, source_tool) are dropped.
+# quota_rows <slot map file>: stdin is quota.jsonl; prints each usable row
+# reduced to percentages, reset times and a slot number. The file holds
+# "<account key>=<slot>" entries; the key is looked up there and never printed,
+# a row whose key has no slot is skipped, and every other field is dropped.
 quota_rows() {
-  jq -cRs --arg map "$1" '
+  jq -cRs --rawfile map "$1" '
     def pct: if . == null then null elif type == "number" and . >= 0 and . <= 100 then . else error("pct") end;
-    def window: if type != "object" then null
-      else {percent_used: (.percent_used | pct),
-            resets_at: (.resets_at | if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9:]+)$") then . else null end)} end;
-    ($map | split(" ") | map(select(contains("=")) | split("=") | {(.[0]): (.[1] | tonumber? // null)}) | add // {}) as $given
-    | [split("\n")[] | fromjson? | objects | select(.ts | type == "number")] as $rows
-    | (reduce ($rows | sort_by(.ts)[] | .account_key | strings | select(. != "")) as $k ([]; if index($k) == null then . + [$k] else . end)) as $order
-    | $rows[]
+    def window: (if type == "object" then . else {} end)
+      | {percent_used: (.percent_used | pct),
+         resets_at: (.resets_at | if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9:]+)$") then . else null end)};
+    ($map | split("\\s+"; null) | map(select(contains("=")) | split("=") | {(.[0]): (.[1] | tonumber? // null)}) | add // {}) as $given
+    | [split("\n")[] | fromjson? | objects | select(.ts | type == "number")][]
     | (.account_key // "") as $k
     | try ({ts: (.ts | floor),
-            slot: (if $k == "" then null else ($given[$k] // ($order | index($k) + 1)) end),
-            plan: (.plan | if type == "string" and test("^[a-z0-9_-]{1,16}$") then . else null end),
-            status: (.status | if type == "string" and test("^[a-z_]{1,32}$") then . else null end),
-            ok: (.ok == true),
+            slot: (if $k == "" then null else ($given[$k] // error("slot")) end),
             five_hour: (.five_hour | window), seven_day: (.seven_day | window), fable_week: (.fable_week | window)}) catch empty'
+}
+
+# assign_quota_slots <map file>: writes the slot map quota_rows reads. Each
+# account key in the quota source gets the next free slot the first time it is
+# seen, recorded by the key's sha256 in a ledger under the publisher's own state
+# directory (FLEET_STATE_DIR, else STATE_DIRECTORY, else
+# ~/.local/state/lifekit-fleet-publisher), never under OUT_DIR, and never
+# reassigned. QUOTA_SLOT_MAP ("<account key>=<slot> ...") pins keys and wins.
+assign_quota_slots() {
+  local state="${FLEET_STATE_DIR:-${STATE_DIRECTORY:-$HOME/.local/state/lifekit-fleet-publisher}}"
+  local ledger="$state/quota-slots" next=1 key hash pin h s
+  local -A known=() pinned=()
+  if [[ -r "$ledger" ]]; then
+    while read -r h s; do
+      [[ "$h" =~ ^[0-9a-f]{64}$ && "$s" =~ ^[0-9]+$ ]] || continue
+      known[$h]="$s"
+      ((s < next)) || next=$((s + 1))
+    done < "$ledger"
+  fi
+  for pin in ${QUOTA_SLOT_MAP:-}; do
+    [[ "$pin" =~ ^([^=]+)=([0-9]+)$ ]] || continue
+    pinned[${BASH_REMATCH[1]}]="${BASH_REMATCH[2]}"
+    ((BASH_REMATCH[2] < next)) || next=$((BASH_REMATCH[2] + 1))
+  done
+  : > "$1"
+  while read -r key; do
+    [[ -n "$key" && -z "${pinned[$key]-}" ]] || continue
+    hash="$(printf %s "$key" | sha256sum)"
+    hash="${hash%% *}"
+    if [[ -z "${known[$hash]-}" ]]; then
+      install -d -m 700 "$state" || return 1
+      known[$hash]="$next"
+      printf '%s %s\n' "$hash" "$next" >> "$ledger" || return 1
+      chmod 600 "$ledger" || return 1
+      next=$((next + 1))
+    fi
+    printf '%s=%s\n' "$key" "${known[$hash]}" >> "$1"
+  done < <(jq -Rrs '
+    [split("\n")[] | fromjson? | objects | select(.ts | type == "number")] | sort_by(.ts)
+    | reduce (.[].account_key | strings | select(test("^[A-Za-z0-9._:-]+$"))) as $k ([]; if index($k) == null then . + [$k] else . end)
+    | .[]' "$work/quota-source.jsonl")
+  for key in "${!pinned[@]}"; do printf '%s=%s\n' "$key" "${pinned[$key]}" >> "$1"; done
 }
 
 tsv_to_object() { jq -Rn '[inputs | split("\t") | select(length == 2) | {(.[0]): .[1]}] | add // {}'; }
@@ -581,18 +618,18 @@ if ! publish_daily_metrics; then
 fi
 # Quota history and snapshot, beside the daily metrics. Percentages, reset
 # times and a slot number only: no account key, email, plan detail or error
-# text. QUOTA_SLOT_MAP ("<account key>=<slot> ...", host config) pins slot
-# numbers; a key not in it is numbered by order of first appearance. The
+# text. Slot numbers are stable (assign_quota_slots). The
 # snapshot is the quota gauge's textfile (QUOTA_PROM, default
 # TEXTFILE_DIR/claude_quota.prom), which already holds numbers only.
 publish_quota() {
   local dir="$OUT_DIR/metrics" tmp seen prom="${QUOTA_PROM:-$TEXTFILE_DIR/claude_quota.prom}"
   if [[ -s "$work/quota-source.jsonl" ]]; then
     install -d -m 755 "$dir" || return 1
+    assign_quota_slots "$work/quota-slots" || return 1
     tmp="$(mktemp "$dir/.quota.XXXXXX")" || return 1
     {
       if [[ -r "$dir/quota.jsonl" ]]; then jq -c 'objects | select(.ts | type == "number")' "$dir/quota.jsonl" 2> /dev/null || true; fi
-      quota_rows "${QUOTA_SLOT_MAP:-}" < "$work/quota-source.jsonl"
+      quota_rows "$work/quota-slots" < "$work/quota-source.jsonl"
     } | jq -sc 'reduce .[] as $r ({}; .["\($r.ts)|\($r.slot)"] = $r) | [.[]] | sort_by([.ts, (.slot // 0)])[]' > "$tmp" \
       || { rm -f "$tmp"; return 1; }
     if grep -Eq "$CREDENTIAL_RE" "$tmp"; then

@@ -83,6 +83,7 @@ def fleet(tmp_path):
                 "DATA_DIR": str(tmp_path / "data"),
                 "LAVISH_STATE": str(tmp_path / "lavish.json"),
                 "FLEET_NOW": str(NOW),
+                "FLEET_STATE_DIR": str(tmp_path / "state"),
                 **env,
             },
             capture_output=True,
@@ -798,6 +799,7 @@ def homes(tmp_path):
                 "FM_HOMES": " ".join(str(d) for d in dirs),
                 "LAVISH_STATE": str(tmp_path / "lavish.json"),
                 "FLEET_NOW": str(NOW),
+                "FLEET_STATE_DIR": str(tmp_path / "state"),
                 **env,
             },
             capture_output=True,
@@ -1627,19 +1629,15 @@ def test_quota_history_is_sanitised_to_percentages_resets_and_slot(fleet):
     rows = read_quota(fleet)
     # Numbered by first appearance in time order, whatever the file order.
     assert [(r["ts"], r["slot"]) for r in rows] == [(1, 1), (2, 2), (3, None)]
-    assert set(rows[0]) == {
-        "ts",
-        "slot",
-        "plan",
-        "status",
-        "ok",
-        "five_hour",
-        "seven_day",
-        "fable_week",
-    }
+    assert set(rows[0]) == {"ts", "slot", "five_hour", "seven_day", "fable_week"}
     text = (fleet.out / "metrics" / "quota.jsonl").read_text()
     for leak in ("e00c3368", "bbbb2222", "account_key", "rate limited", "quota-axi"):
         assert leak not in text
+    # The slot ledger is private, host-side, and holds hashes, never keys.
+    ledger = fleet.tmp / "state" / "quota-slots"
+    assert ledger.stat().st_mode & 0o777 == 0o600
+    assert "e00c3368" not in ledger.read_text()
+    assert not list(fleet.out.rglob("quota-slots"))
     assert (fleet.out / "metrics" / "quota.jsonl").stat().st_mode & 0o777 == 0o644
 
 
@@ -1648,6 +1646,45 @@ def test_quota_slot_map_pins_slot_numbers(fleet):
     write_quota(fleet, quota_row(1, key="aaaa1111"), quota_row(2, key="bbbb2222"))
     assert fleet.run(QUOTA_SLOT_MAP="bbbb2222=1 aaaa1111=4").returncode == 0
     assert [(r["ts"], r["slot"]) for r in read_quota(fleet)] == [(1, 4), (2, 1)]
+
+
+def test_quota_slots_stay_with_their_account_when_the_source_changes(fleet):
+    fleet.write(summary())
+    write_quota(fleet, quota_row(1, key="aaaa1111"), quota_row(2, key="bbbb2222"))
+    assert fleet.run().returncode == 0
+    # The first account's rows leave the source and a new account shows up first.
+    write_quota(
+        fleet,
+        quota_row(3, key="cccc3333"),
+        quota_row(4, key="bbbb2222"),
+        quota_row(5, key="aaaa1111"),
+    )
+    assert fleet.run().returncode == 0
+    assert [(r["ts"], r["slot"]) for r in read_quota(fleet)] == [
+        (1, 1),
+        (2, 2),
+        (3, 3),
+        (4, 2),
+        (5, 1),
+    ]
+
+
+def test_quota_slot_map_wins_over_the_ledger_and_is_not_recycled(fleet):
+    fleet.write(summary())
+    write_quota(fleet, quota_row(1, key="aaaa1111"))
+    assert fleet.run().returncode == 0
+    write_quota(fleet, quota_row(2, key="aaaa1111"), quota_row(3, key="bbbb2222"))
+    assert fleet.run(QUOTA_SLOT_MAP="aaaa1111=7").returncode == 0
+    assert [(r["ts"], r["slot"]) for r in read_quota(fleet)] == [(1, 1), (2, 7), (3, 8)]
+
+
+def test_unreadable_quota_sample_is_a_null_percentage(fleet):
+    fleet.write(summary())
+    write_quota(fleet, quota_row(1, five_hour=None, seven_day=None, fable_week=None))
+    assert fleet.run().returncode == 0
+    (row,) = read_quota(fleet)
+    for w in ("five_hour", "seven_day", "fable_week"):
+        assert row[w] == {"percent_used": None, "resets_at": None}
 
 
 def test_quota_history_survives_the_source_and_never_duplicates(fleet):

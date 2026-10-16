@@ -135,11 +135,15 @@ email, plan detail, source tool or error text ever leaves the host.
 - **`quota.jsonl`**: each home's `data/fleet-metrics/quota.jsonl` (hourly
   `quota-axi` samples), under the daily metrics' guards (regular file under the
   home's `data/`, at most 4 MiB), reduced to
-  `{ts, slot, plan, status, ok, five_hour, seven_day, fable_week}` where each
-  window is `{percent_used, resets_at}` (`resets_at` an ISO time). `slot` is the
-  row's account key looked up in `QUOTA_SLOT_MAP` (`"<key>=<slot> ..."`, host
-  config), else its number by order of first appearance in the source; `null`
-  for a row with no key. A row with a non-integer `ts` or a percentage outside
+  `{ts, slot, five_hour, seven_day, fable_week}` where each window is
+  `{percent_used, resets_at}` (`resets_at` an ISO time; both `null` for an
+  unreadable sample). `slot` is stable: the account key's slot in
+  `QUOTA_SLOT_MAP` (`"<key>=<slot> ..."`, host config) if pinned there, else the
+  next free slot the first time the key is seen, kept in a private slot ledger
+  (`quota-slots`, sha256 of the key to slot, mode 600) under the publisher's
+  state directory (`FLEET_STATE_DIR`, else `STATE_DIRECTORY`, else
+  `~/.local/state/lifekit-fleet-publisher`), never under `OUT_DIR`, and never
+  reassigned; `null` for a row with no key. A row with a non-integer `ts` or a percentage outside
   0-100 is skipped. One row per (`ts`, `slot`), the later winning, sorted by
   `ts`; rows already published stay when the source is trimmed. The file is
   rewritten only when its content changed. A source with a credential pattern
