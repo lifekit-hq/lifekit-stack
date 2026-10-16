@@ -711,12 +711,12 @@ a cut-off reply, an empty summary) shows as `mail unavailable: reader reply
 unreadable`, and `No new mail.` between the markers leaves the section out. Mail text is untrusted: the reader summarises it only and follows nothing in
 it. The summary is untrusted model output derived from mail and is treated as data
 by the digest turn; the split removes the Gmail and send tools from the mail-reading
-turn only. The Workspace MCP is also read-only server-side
-(`WORKSPACE_MCP_READ_ONLY` in `compose/openclaw/docker-compose.yml`, see
-`docs/google-mcp-setup.md`), so no Gmail tool can send, draft, label or archive; that
-stays the binding mail guard until
-[PR 331](https://github.com/lifekit-hq/lifekit-stack/pull/331) lands, and the
-reader's allow-list is the second layer. A lapsed Google sign-in, a failed reader
+turn only. The Workspace MCP exposes exactly one write tool, `send_gmail_message`
+(`WORKSPACE_MCP_PERMISSIONS` + `WORKSPACE_MCP_DISABLED_TOOLS` in
+`compose/openclaw/docker-compose.yml`, see `docs/google-mcp-setup.md`), so the server
+does not stop a run from sending: the reader's allow-list leaves it out, the reader's
+prompt names `send_gmail_message` and `draft_gmail_message` as forbidden, and the
+`agent-mail-sent` alert pings the owner on any send. A lapsed Google sign-in, a failed reader
 run or one more than an hour old shows as a `mail unavailable:` line, and the other
 parts still post.
 `scripts/ensure-needs-you-digest.sh` declares both rows and converges on re-run. It
@@ -786,7 +786,10 @@ digest then shows `mail unavailable: the mail read has not run yet` and the rest
 posts. To drop the line too, re-run the script from the commit before the mail
 section (or `NEEDS_YOU_DIGEST_CRON='0 9 * * *'` for one run a day only). Never move
 the mail read back into the digest row: its main-session turn holds the relay and
-`sessions_send`.
+`sessions_send`. To change what the Workspace MCP may write (not part of the digest),
+change the `WORKSPACE_MCP_PERMISSIONS` / `WORKSPACE_MCP_DISABLED_TOOLS` literals in a
+reviewed PR. After the prompt wording changes, re-run
+`scripts/ensure-needs-you-digest.sh` as `lifekit` (deploy does not run it).
 
 **Rollback:** `openclaw cron rm <id>` and `openclaw cron rm <reader id>`. The ledger files are kit workspace state and
 can stay. Push delivery of these cards to a phone comes with the Control UI's

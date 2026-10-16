@@ -1,0 +1,83 @@
+# Provisioned alert rule: an agent sent an email through the google-workspace
+# MCP. Same delivery as rules.yml (policies.yml -> Telegram contact point).
+#
+# Why a separate file: rules.yml is the Prometheus-query rule set that
+# scripts/alert-inbox/poll_alerts.py models and tests parse warning-free; this
+# is the one rule that reads logs (Loki), so it lives next to it.
+#
+# `send_gmail_message` is the only write tool the server exposes
+# (compose/openclaw/docker-compose.yml google-workspace-mcp). The server logs
+# every call BEFORE the Gmail API is hit, so this fires on the invocation, not
+# on delivery. A plain send logs the Invoked line; a forward logs only the
+# Forwarding line (it returns before the Invoked line), so each call matches
+# exactly once:
+#   [GMAIL] [send_gmail_message] Invoked. Email: '<account>', subject_len=N, Attachments: M
+#   [send_gmail_message] Forwarding message '<id>' for '<account>'
+# The match is anchored on `] Invoked. Email: ` / `] Forwarding message ` so
+# Loki's own query log (which holds the escaped query text) cannot match it.
+# Nothing from the log line is forwarded: the alert says THAT a send happened,
+# the message itself is in the mailbox's Sent folder.
+#
+# Window 2m, evaluated every 1m: every call is seen by at least one
+# evaluation. The one aggregate instance fires while any send is inside the
+# window; the count in the message is the value at the evaluation that opened
+# the alert. Further sends in the same firing episode do not notify again
+# before the 4h repeat (policies.yml.tmpl), and the resolved ping comes about
+# 2 minutes after the last send, so read the ping as "at least N" and check
+# the Sent folder for the full list. noDataState OK: no log lines in the
+# window is the normal state, not an alarm.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: agent-mail
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: agent-mail-sent
+        title: agent sent an email
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              expr: >-
+                sum(count_over_time({service_name="docker"}
+                |~ "\\[send_gmail_message\\] (Invoked\\. Email: |Forwarding message .)"
+                [2m]))
+              queryType: instant
+              instant: true
+              editorMode: code
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: google-workspace-mcp
+          severity: warning
+        annotations:
+          summary: "an agent sent an email"
+          description: >-
+            Agents sent {{ printf "%.0f" $values.B.Value }} email(s) in the
+            last 2 minutes. Check the mailbox's Sent folder for what went out. Calls are in
+            the container log: `docker logs --since 1h
+            openclaw-google-workspace-mcp-1 | grep send_gmail_message`.

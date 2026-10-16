@@ -364,7 +364,7 @@ services:
     # taylorwilsdon/google_workspace_mcp — single-user, streamable-http on :8000.
     # OpenClaw gateway reaches it via service DNS at http://google-workspace-mcp:8000/mcp/.
     # Pin to a release tag; bump intentionally. See docs/google-mcp-setup.md.
-    image: ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0
+    image: ghcr.io/taylorwilsdon/google_workspace_mcp:2.1.0
     labels:
       lifekit.contract: "none"  # upstream image we do not change, not a product
     deploy:
@@ -378,18 +378,37 @@ services:
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       # Single-user mode: identity of the Google account that owns the refresh token.
       USER_GOOGLE_EMAIL: ${USER_GOOGLE_EMAIL:-}
-      # Service selection. Default mirrors the README, space- or comma-separated both work.
-      # Upstream Dockerfile reads `TOOLS`; we expose the same value under the documented
-      # `WORKSPACE_MCP_TOOLS` name (per upstream env reference) for forward-compat.
-      WORKSPACE_MCP_TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
-      TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
-      # Read-only: this server-side flag binds for every agent and session
-      # regardless of any tool allow-list (a cron job's toolsAllow narrows only
-      # that job's runs): no send, no write tools. The start command
-      # passes --tools, so WORKSPACE_MCP_PERMISSIONS would be ignored; this env
-      # flag is the working switch at 1.21.0. Literal, not ${...}: widening it
-      # is a reviewed change here, never an env-file edit.
-      WORKSPACE_MCP_READ_ONLY: "true"
+      # Per-agent tool allow/deny is not enforced under the claude-cli runtime,
+      # so the literals below are the only Workspace guard that binds, for every
+      # agent on the gateway. Literals, not ${...}: widening them is a reviewed
+      # change here, never an env-file edit.
+      # TOOLS must stay empty: the image CMD turns a non-empty value into
+      # --tools, and then the server IGNORES WORKSPACE_MCP_PERMISSIONS and runs
+      # every write tool of every service. WORKSPACE_MCP_TOOLS must stay unset:
+      # env tools + env permissions is a startup error. Services are selected by
+      # the permission list itself.
+      TOOLS: ""
+      # gmail:send is cumulative (readonly + organize + drafts + send); every
+      # other service stays at readonly. Needs the one-time gmail:send consent
+      # (docs/google-mcp-setup.md, "Widening the consent"); the token works with
+      # the older read-only config too.
+      WORKSPACE_MCP_PERMISSIONS: "gmail:send drive:readonly calendar:readonly docs:readonly sheets:readonly tasks:readonly"
+      # The server's ONLY write tool is send_gmail_message: the rest of what
+      # the gmail:send level exposes (draft, labels, modify, batch modify) is
+      # blocked by name, and block wins over the permission list. A send is
+      # logged as `[send_gmail_message] Invoked.`, which the `agent-mail-sent`
+      # alert (grafana provisioning/alerting/rules-agent-mail.yml) pages on.
+      # Once upstream ships the recipient allowlist (WORKSPACE_ALLOWED_RECIPIENTS,
+      # taylorwilsdon/google_workspace_mcp#1078, unmerged at 2.1.0), set it here
+      # as a literal too: until then a prompt-injected agent can send anywhere.
+      WORKSPACE_MCP_DISABLED_TOOLS: "draft_gmail_message,manage_gmail_label,modify_gmail_message_labels,batch_modify_gmail_message_labels"
+      # 2.x binds 127.0.0.1 by default for the legacy (non-OAuth 2.1) HTTP
+      # mode; the gateway reaches us over the compose network, so bind all
+      # interfaces. Still internal-only: no `ports:` mapping below.
+      WORKSPACE_MCP_HOST: "0.0.0.0"
+      # 2.x expires idle streamable-HTTP sessions after 61 min; 0 keeps the 1.x
+      # no-expiry behaviour for the gateway's long-lived MCP session.
+      WORKSPACE_MCP_SESSION_IDLE_TIMEOUT: "0"
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # Refresh-token store. Upstream image runs as non-root user `app`, so the
@@ -397,8 +416,9 @@ services:
       # NOT /root/... Document the divergence in docs/google-mcp-setup.md.
       # Host dir is created by scripts/google-mcp-bootstrap.sh.
       - /srv/google-workspace-mcp/credentials:/home/app/.google_workspace_mcp/credentials
-    # No read_only: the upstream start command (`uv run`) writes /app/uv.lock
-    # and its cache under /home/app at every start.
+    # No read_only: left off on purpose. 2.x starts /app/.venv/bin/python
+    # directly (no `uv run` writing /app/uv.lock any more), so it may be
+    # possible; verify that on its own, not as part of a scope change.
     # Internal-only — gateway reaches us via the compose network DNS name.
     # No `ports:` mapping: do not publish to the host.
     expose:

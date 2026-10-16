@@ -755,3 +755,74 @@ def test_weekly_release_rule_fires_only_on_a_blocked_repo(series, fires):
         assert code != 0 and "got:" in output, output
     else:
         assert code == 0, output
+
+
+# --- agent-mail: the Loki rule that pings on every send_gmail_message call ---
+
+MAIL_DOC = yaml.safe_load(
+    (
+        REPO
+        / "compose/observability/grafana/provisioning/alerting/rules-agent-mail.yml"
+    ).read_text()
+)
+MAIL_RULE = MAIL_DOC["groups"][0]["rules"][0]
+
+# Captured from a throwaway ghcr.io/taylorwilsdon/google_workspace_mcp:2.1.0
+# container (ANSI colour codes included) and the same tool's forward path.
+SEND_LINE = (
+    "[GMAIL] \x1b[32m[send_gmail_message] Invoked. Email: 'someone@example.invalid', "
+    "subject_len=13, Attachments: 0\x1b[0m\n"
+)
+# A forward logs only this line (it returns before the Invoked line): one match per call.
+FORWARD_LINE = (
+    "[send_gmail_message] Forwarding message 'abc123' for 'someone@example.invalid'"
+)
+READ_LINES = [
+    "[GMAIL] \x1b[32m[search_gmail_messages] Invoked. Email: 'someone@example.invalid'\x1b[0m",
+    "[GMAIL] [get_gmail_message_content] Invoked. Email: 'someone@example.invalid'",
+    "[REGISTRY] Block list: disabling tool 'draft_gmail_message'",
+    'level=info msg="executing query" query="{service_name=\\"docker\\"} |~ \\"\\\\[send_gmail_message\\\\] (Invoked\\\\. Email: |Forwarding message .)\\""',
+]
+
+
+def mail_pattern() -> re.Pattern[str]:
+    (query,) = [d for d in MAIL_RULE["data"] if d["datasourceUid"] == "loki"]
+    expr = query["model"]["expr"]
+    # LogQL double-quoted string: \\ is one backslash. RE2 and re agree here.
+    (raw,) = re.findall(r'\|~ "((?:[^"\\]|\\.)*)"', expr)
+    return re.compile(raw.replace("\\\\", "\\"))
+
+
+def test_agent_mail_rule_pings_on_send_with_a_generic_message():
+    assert MAIL_RULE["uid"] == "agent-mail-sent"
+    assert MAIL_RULE["annotations"]["summary"] == "an agent sent an email"
+    assert MAIL_RULE["noDataState"] == "OK"
+    assert MAIL_RULE["for"] == "0s"
+    assert threshold(MAIL_RULE) == ("gt", 0)
+    assert MAIL_RULE["labels"]["service"] == "google-workspace-mcp"
+    # Only the call count is templated into the owner's message, never the log line.
+    assert "{{" not in MAIL_RULE["annotations"]["summary"]
+    description = MAIL_RULE["annotations"]["description"]
+    assert "$labels" not in description
+    assert re.findall(r"\{\{.*?\}\}", description) == [
+        '{{ printf "%.0f" $values.B.Value }}'
+    ]
+    (query,) = [d for d in MAIL_RULE["data"] if d["datasourceUid"] == "loki"]
+    assert query["model"]["instant"] is True
+    assert query["model"]["queryType"] == "instant"
+
+
+def test_agent_mail_rule_window_is_not_shorter_than_its_interval():
+    (query,) = [d for d in MAIL_RULE["data"] if d["datasourceUid"] == "loki"]
+    (win,) = re.findall(r"\[(\d+)m\]\)\)$", query["model"]["expr"])
+    interval = MAIL_DOC["groups"][0]["interval"]
+    assert interval.endswith("m")
+    assert int(win) >= int(interval[:-1])
+
+
+def test_agent_mail_pattern_matches_send_and_forward_only():
+    pat = mail_pattern()
+    assert pat.search(SEND_LINE)
+    assert pat.search(FORWARD_LINE)
+    for line in READ_LINES:
+        assert not pat.search(line), line

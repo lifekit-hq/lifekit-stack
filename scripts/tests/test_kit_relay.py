@@ -1183,6 +1183,9 @@ def test_mail_reader_allowlist_is_only_the_two_gmail_read_tools(tmp_path):
     assert "search_gmail_messages" in message
     assert "get_gmail_messages_content_batch" in message
     assert "page_size" in message
+    # the server exposes one write tool (send_gmail_message): send and draft
+    # are named as forbidden in the prompt of the only run that has Gmail
+    assert "never send_gmail_message or draft_gmail_message" in message
     assert "relay.sh" not in message
 
 
