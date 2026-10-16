@@ -143,7 +143,8 @@ email, plan detail, source tool or error text ever leaves the host.
   (`quota-slots`, sha256 of the key to slot, mode 600) under the publisher's
   state directory (`FLEET_STATE_DIR`, else `STATE_DIRECTORY`, else
   `~/.local/state/lifekit-fleet-publisher`), never under `OUT_DIR`, and never
-  reassigned; `null` for a row with no key. A row with a non-integer `ts` or a percentage outside
+  reassigned; `null` for a row with no key, and a row whose key has no slot
+  (characters outside `A-Za-z0-9._:-`) is skipped. A row with a non-integer `ts` or a percentage outside
   0-100 is skipped. One row per (`ts`, `slot`), the later winning, sorted by
   `ts`; rows already published stay when the source is trimmed. The file is
   rewritten only when its content changed. A source with a credential pattern
