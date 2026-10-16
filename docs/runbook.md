@@ -1574,7 +1574,11 @@ a Fleet row for them. It also copies each home's validated
 `data/fleet-metrics/daily.jsonl` rows into
 `/var/lib/lifekit-fleet/metrics/daily.jsonl`, one row per (date, home) with the
 last row winning (contract in `scripts/fleet-publisher/README.md`). Invalid rows
-are logged to the unit's journal and skipped. The new output appears only once the
+are logged to the unit's journal and skipped. The same run publishes the PC's
+state and last-seen time (from the first home's cached secondmate summary),
+per-item `started_at`, `landed_at`, `priority` and `ask` fields, and sanitised
+`metrics/quota.jsonl` / `metrics/quota-snapshot.json` (contract in the README).
+The new output appears only once the
 installed script is refreshed: re-run the install command below (it
 re-installs the script and units, idempotent).
 

@@ -83,6 +83,7 @@ def fleet(tmp_path):
                 "DATA_DIR": str(tmp_path / "data"),
                 "LAVISH_STATE": str(tmp_path / "lavish.json"),
                 "FLEET_NOW": str(NOW),
+                "FLEET_STATE_DIR": str(tmp_path / "state"),
                 **env,
             },
             capture_output=True,
@@ -798,6 +799,7 @@ def homes(tmp_path):
                 "FM_HOMES": " ".join(str(d) for d in dirs),
                 "LAVISH_STATE": str(tmp_path / "lavish.json"),
                 "FLEET_NOW": str(NOW),
+                "FLEET_STATE_DIR": str(tmp_path / "state"),
                 **env,
             },
             capture_output=True,
@@ -1372,3 +1374,378 @@ def test_installer_skips_without_a_fleet_home():
     )
     assert result.returncode == 0
     assert "skipping" in result.stderr
+
+
+# --- started_at / landed_at / priority / ask sidecar -------------------------
+
+
+def test_items_gain_start_land_times_and_backlog_priority(fleet):
+    fleet.write(
+        summary(
+            active_children=[{"id": "a", "state": "working"}, {"id": "z"}],
+            landed=[{"id": "m"}, {"id": "c"}, {"id": "n"}],
+            queued=[{"id": "q1"}, {"id": "q2"}],
+        ),
+        ledger=[
+            {"ts": 100, "event": "task.dispatched", "task": "a"},
+            {"ts": 150, "event": "task.dispatched", "task": "a"},
+            {"ts": 120, "event": "task.dispatched", "task": "m"},
+            {"ts": 300, "event": "task.merged", "task": "m"},
+            {"ts": 400, "event": "task.cleaned_up", "task": "m"},
+            {"ts": 500, "event": "task.cleaned_up", "task": "c"},
+        ],
+    )
+    (fleet.tmp / "data" / "backlog.md").write_text(
+        "# Backlog\n\n## In flight\n"
+        "- [ ] q1 - First thing (repo: x) (kind: ship) (priority: 2) (since 2026-10-01)\n"
+        "  (priority: 9) is not on an item line\n"
+        "- [ ] q2 - No priority here (repo: x)\n"
+    )
+    assert fleet.run().returncode == 0
+    got = fleet.published()
+    assert [c.get("started_at") for c in got["active_children"]] == [150, None]
+    assert [x.get("landed_at") for x in got["landed"]] == [300, 500, None]
+    assert [q.get("priority") for q in got["queued"]] == [2, None]
+
+
+def valid_ask(**extra):
+    return {
+        "question": "Ship it?",
+        "options": [
+            {"id": "yes", "label": "Yes", "recommended": True},
+            {"id": "no", "label": "No"},
+        ],
+        "free_text_allowed": True,
+        **extra,
+    }
+
+
+def ask_dir(fleet, id_):
+    d = fleet.tmp / "data" / id_
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def test_ask_sidecar_fills_a_decision_without_an_ask(fleet):
+    own = {"question": "From snapshot", "options": [], "free_text_allowed": True}
+    fleet.write(
+        summary(
+            decisions_open=[decision("d1"), decision("d2", ask=own), decision("d3")]
+        )
+    )
+    (ask_dir(fleet, "d1") / "ask.json").write_text(json.dumps(valid_ask()))
+    (ask_dir(fleet, "d2") / "ask.json").write_text(json.dumps(valid_ask()))
+    assert fleet.run().returncode == 0, fleet.run().stderr
+    d1, d2, d3 = fleet.published()["decisions_open"]
+    assert d1["ask"] == {**valid_ask(), "link": None} | {
+        "options": [
+            {"id": "yes", "label": "Yes", "recommended": True},
+            {"id": "no", "label": "No", "recommended": False},
+        ]
+    }
+    assert d2["ask"] == own  # the snapshot's own ask wins
+    assert "ask" not in d3
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "not json",
+        json.dumps(valid_ask(options=[{"id": "a", "label": "A"}] * 7)),
+        json.dumps(
+            valid_ask(
+                options=[
+                    {"id": "a", "label": "A"},
+                    {"id": "b", "label": "B", "recommended": True},
+                ]
+            )
+        ),
+        json.dumps(valid_ask(question="")),
+        json.dumps(valid_ask(link="http://insecure.example")),
+        json.dumps(valid_ask(note="sk-ant-" + "x" * 20)),
+        json.dumps(valid_ask(free_text_allowed="yes")),
+    ],
+)
+def test_invalid_ask_sidecar_is_skipped_not_fatal(fleet, bad):
+    fleet.write(summary(decisions_open=[decision("d1")]))
+    (ask_dir(fleet, "d1") / "ask.json").write_text(bad)
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    assert "ask" not in fleet.published()["decisions_open"][0]
+    assert "ask.json" in result.stderr
+
+
+def test_ask_sidecar_outside_the_data_dir_is_not_read(fleet, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("elsewhere") / "ask.json"
+    outside.write_text(json.dumps(valid_ask()))
+    fleet.write(summary(decisions_open=[decision("d1")]))
+    (ask_dir(fleet, "d1") / "ask.json").symlink_to(outside)
+    assert fleet.run().returncode == 0
+    assert "ask" not in fleet.published()["decisions_open"][0]
+
+
+# --- PC home -------------------------------------------------------------
+
+
+def pc_cache(fleet, **overrides):
+    cache = fleet.tmp / "state" / "secondmate-summary-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    body = summary(
+        **{
+            "generated_epoch": NOW - 60,
+            "state": "no_active_work",
+            "active_children": [],
+            "counts": {"active_children": 0, "landed": 10},
+            "landed": [{"id": f"l{i}"} for i in range(10)],
+            **overrides,
+        }
+    )
+    (cache / "61ab.json").write_text(json.dumps(body))
+    return cache
+
+
+def pc_entry(fleet):
+    return [h for h in fleet.published()["homes"] if h["id"] == "pc"]
+
+
+def test_pc_home_shows_state_and_last_seen_only(fleet):
+    fleet.write(summary())
+    pc_cache(fleet)
+    result = fleet.run(FM_HOMES=str(fleet.tmp))
+    assert result.returncode == 0, result.stderr
+    got = fleet.published()
+    assert pc_entry(fleet) == [
+        {
+            "id": "pc",
+            "path": None,
+            "published": True,
+            "remote": True,
+            "valid": True,
+            "reason": None,
+            "last_seen_epoch": NOW - 60,
+            "state": "idle",
+        }
+    ]
+    # No count, no list items, and the fleet's own fields are untouched.
+    assert "counts" not in pc_entry(fleet)[0]
+    assert all(
+        x["home_id"] != "pc" for x in got["active_children"] + got.get("landed", [])
+    )
+    assert got["valid"] is True and got["generated_epoch"] == NOW - 30
+    assert 'home="pc"' not in (fleet.prom / "fleet.prom").read_text()
+
+
+def test_pc_home_is_working_when_it_has_active_children(fleet):
+    fleet.write(summary())
+    cache = pc_cache(fleet)
+    f = cache / "61ab.json"
+    body = json.loads(f.read_text())
+    body["counts"]["active_children"] = 2
+    f.write_text(json.dumps(body))
+    assert fleet.run(FM_HOMES=str(fleet.tmp)).returncode == 0
+    assert pc_entry(fleet)[0]["state"] == "working"
+
+
+def test_stale_pc_summary_is_off_never_an_error(fleet):
+    fleet.write(summary())
+    pc_cache(fleet, generated_epoch=NOW - 99_999)
+    result = fleet.run(FM_HOMES=str(fleet.tmp))
+    assert result.returncode == 0, result.stderr
+    got = fleet.published()
+    assert pc_entry(fleet)[0]["state"] == "off"
+    assert pc_entry(fleet)[0]["last_seen_epoch"] == NOW - 99_999
+    assert got["valid"] is True and got.get("reason") is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["not json", json.dumps({"schema": "other"}), "sk-ant-" + "x" * 30],
+)
+def test_unreadable_pc_summary_is_off_without_a_last_seen(fleet, content):
+    fleet.write(summary())
+    cache = fleet.tmp / "state" / "secondmate-summary-cache"
+    cache.mkdir(parents=True)
+    (cache / "x.json").write_text(content)
+    result = fleet.run(FM_HOMES=str(fleet.tmp))
+    assert result.returncode == 0, result.stderr
+    assert pc_entry(fleet)[0]["state"] == "off"
+    assert pc_entry(fleet)[0]["last_seen_epoch"] is None
+    assert "sk-ant" not in (fleet.out / "home-summary.json").read_text()
+
+
+def test_no_pc_cache_means_no_pc_entry(fleet):
+    fleet.write(summary())
+    assert fleet.run(FM_HOMES=str(fleet.tmp)).returncode == 0
+    assert pc_entry(fleet) == []
+
+
+# --- quota history and snapshot ------------------------------------------
+
+
+def quota_row(ts, key="e00c3368", used=10, **extra):
+    return {
+        "v": 1,
+        "ts": ts,
+        "at": "2026-10-16T18:07:02Z",
+        "source_tool": "quota-axi --provider claude --full --json",
+        "provider": "claude",
+        "plan": "max",
+        "account_key": key,
+        "source": "oauth",
+        "status": "fresh",
+        "stale": False,
+        "refreshed_at": "2026-10-16T18:07:04.106Z",
+        "error": None,
+        "five_hour": {"percent_used": used, "resets_at": "2026-10-16T23:10:00+00:00"},
+        "seven_day": {"percent_used": 75, "resets_at": "2026-10-19T06:00:00+00:00"},
+        "fable_week": {"percent_used": 3, "resets_at": "2026-10-19T06:00:00+00:00"},
+        "ok": True,
+        **extra,
+    }
+
+
+def write_quota(fleet, *rows):
+    src = fleet.tmp / "data" / "fleet-metrics"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "quota.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def read_quota(fleet):
+    f = fleet.out / "metrics" / "quota.jsonl"
+    return [json.loads(x) for x in f.read_text().splitlines()]
+
+
+def test_quota_history_is_sanitised_to_percentages_resets_and_slot(fleet):
+    fleet.write(summary())
+    write_quota(
+        fleet,
+        quota_row(2, key="bbbb2222", error="Claude quota endpoint rate limited"),
+        quota_row(1),
+        quota_row(3, key=""),
+        {"ts": "bad"},
+    )
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    rows = read_quota(fleet)
+    # Numbered by first appearance in time order, whatever the file order.
+    assert [(r["ts"], r["slot"]) for r in rows] == [(1, 1), (2, 2), (3, None)]
+    assert set(rows[0]) == {"ts", "slot", "five_hour", "seven_day", "fable_week"}
+    text = (fleet.out / "metrics" / "quota.jsonl").read_text()
+    for leak in ("e00c3368", "bbbb2222", "account_key", "rate limited", "quota-axi"):
+        assert leak not in text
+    # The slot ledger is private, host-side, and holds hashes, never keys.
+    ledger = fleet.tmp / "state" / "quota-slots"
+    assert ledger.stat().st_mode & 0o777 == 0o600
+    assert "e00c3368" not in ledger.read_text()
+    assert not list(fleet.out.rglob("quota-slots"))
+    assert (fleet.out / "metrics" / "quota.jsonl").stat().st_mode & 0o777 == 0o644
+
+
+def test_quota_slot_map_pins_slot_numbers(fleet):
+    fleet.write(summary())
+    write_quota(fleet, quota_row(1, key="aaaa1111"), quota_row(2, key="bbbb2222"))
+    assert fleet.run(QUOTA_SLOT_MAP="bbbb2222=1 aaaa1111=4").returncode == 0
+    assert [(r["ts"], r["slot"]) for r in read_quota(fleet)] == [(1, 4), (2, 1)]
+
+
+def test_quota_slots_stay_with_their_account_when_the_source_changes(fleet):
+    fleet.write(summary())
+    write_quota(fleet, quota_row(1, key="aaaa1111"), quota_row(2, key="bbbb2222"))
+    assert fleet.run().returncode == 0
+    # The first account's rows leave the source and a new account shows up first.
+    write_quota(
+        fleet,
+        quota_row(3, key="cccc3333"),
+        quota_row(4, key="bbbb2222"),
+        quota_row(5, key="aaaa1111"),
+    )
+    assert fleet.run().returncode == 0
+    assert [(r["ts"], r["slot"]) for r in read_quota(fleet)] == [
+        (1, 1),
+        (2, 2),
+        (3, 3),
+        (4, 2),
+        (5, 1),
+    ]
+
+
+def test_quota_slot_map_wins_over_the_ledger_and_is_not_recycled(fleet):
+    fleet.write(summary())
+    write_quota(fleet, quota_row(1, key="aaaa1111"))
+    assert fleet.run().returncode == 0
+    write_quota(fleet, quota_row(2, key="aaaa1111"), quota_row(3, key="bbbb2222"))
+    assert fleet.run(QUOTA_SLOT_MAP="aaaa1111=7").returncode == 0
+    assert [(r["ts"], r["slot"]) for r in read_quota(fleet)] == [(1, 1), (2, 7), (3, 8)]
+
+
+def test_unreadable_quota_sample_is_a_null_percentage(fleet):
+    fleet.write(summary())
+    write_quota(fleet, quota_row(1, five_hour=None, seven_day=None, fable_week=None))
+    assert fleet.run().returncode == 0
+    (row,) = read_quota(fleet)
+    for w in ("five_hour", "seven_day", "fable_week"):
+        assert row[w] == {"percent_used": None, "resets_at": None}
+
+
+def test_quota_history_survives_the_source_and_never_duplicates(fleet):
+    fleet.write(summary())
+    write_quota(fleet, quota_row(1), quota_row(2))
+    assert fleet.run().returncode == 0
+    write_quota(fleet, quota_row(2, used=50), quota_row(3))
+    assert fleet.run().returncode == 0
+    rows = read_quota(fleet)
+    assert [r["ts"] for r in rows] == [1, 2, 3]
+    assert rows[1]["five_hour"]["percent_used"] == 50
+
+
+def test_quota_rows_with_out_of_range_percentages_are_dropped(fleet):
+    fleet.write(summary())
+    write_quota(fleet, quota_row(1, used=250), quota_row(2))
+    assert fleet.run().returncode == 0
+    assert [r["ts"] for r in read_quota(fleet)] == [2]
+
+
+def test_missing_quota_source_publishes_no_quota_files(fleet):
+    fleet.write(summary())
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    assert not (fleet.out / "metrics" / "quota.jsonl").exists()
+    assert not (fleet.out / "metrics" / "quota-snapshot.json").exists()
+
+
+GAUGE = """claude_quota_percent_remaining{window="five_hour"} 91
+claude_quota_burn_multiple{window="five_hour"} 0.268
+claude_quota_reserve_percent_points{window="five_hour"} 24.5802
+claude_quota_resets_at_seconds{window="five_hour"} 1792192200
+claude_quota_percent_remaining{window="seven_day"} 24
+claude_quota_burn_multiple{window="seven_day"} 1.1624
+claude_quota_reserve_percent_points{window="seven_day"} -10.6157
+claude_quota_resets_at_seconds{window="seven_day"} 1792389600
+claude_quota_percent_remaining{window="model:fable"} 97
+claude_quota_runway_seconds 124877
+claude_quota_projected_exhausted_at_seconds 1792305121
+claude_quota_runway_status{status="projected_exhaustion"} 1
+claude_quota_limiting_window{window="seven_day"} 1
+"""
+
+
+def test_quota_snapshot_comes_from_the_gauge_textfile(fleet):
+    fleet.write(summary())
+    (fleet.prom / "claude_quota.prom").write_text(GAUGE)
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    snap = json.loads((fleet.out / "metrics" / "quota-snapshot.json").read_text())
+    assert snap["schema"] == "fleet-quota-snapshot.v1"
+    assert snap["windows"]["five_hour"] == {
+        "percent_remaining": 91,
+        "burn_multiple": 0.268,
+        "reserve_percent_points": 24.5802,
+        "resets_at": 1792192200,
+    }
+    assert snap["windows"]["seven_day"]["reserve_percent_points"] == -10.6157
+    assert snap["windows"]["model:fable"]["percent_remaining"] == 97
+    assert snap["runway_seconds"] == 124877
+    assert snap["projected_exhausted_at"] == 1792305121
+    assert snap["runway_status"] == "projected_exhaustion"
+    assert snap["limiting_window"] == "seven_day"
+    assert isinstance(snap["generated_epoch"], int)

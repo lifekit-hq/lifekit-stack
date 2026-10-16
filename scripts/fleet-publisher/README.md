@@ -3,7 +3,7 @@
 `fleet-publisher.sh` reads each fleet home's `state/home-summary.json`
 (schema `fm-secondmate-home-summary.v1`, read as-is) and writes one merged
 `OUT_DIR/home-summary.json` plus `OUT_DIR/reports/` and, from the homes' daily
-fleet metrics, `OUT_DIR/metrics/daily.jsonl` (last section). The homes are
+fleet metrics, `OUT_DIR/metrics/daily.jsonl`, plus the sanitised quota copies (last sections). The homes are
 `FM_HOMES`, a space-separated list of absolute paths (default `FM_HOME` alone); a
 home's id is its directory's basename and must be unique. The dashboard binds to
 this output, not to the source summaries. Operations (install, alerts, metrics) are in
@@ -23,6 +23,10 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
 | `counts` (object, and each `homes[].counts`) | `queued_open` | The queued items with no hold: neither `hold_kind` nor `hold_bucket` set. `counts.queued` still includes held ones |
 | `decisions_open[]` | `board_url` | The open Lavish session for the decision, else `null` |
 | `landed[]` | `report_url` | The served copy of the item's finished `report.md`, else `null` |
+| `active_children[]` | `started_at` | Epoch of the task's latest `task.dispatched` in the home's ledger; absent when the ledger has none |
+| `landed[]` | `landed_at` | Epoch of the task's latest `task.merged` in the ledger, else its latest `task.cleaned_up`; absent when neither exists |
+| `queued[]` | `priority` | The number in the item's `(priority: N)` on its `- [ ] <id> - ...` line in the home's `data/backlog.md`; absent when the line has none |
+| `decisions_open[]` | `ask` | The validated `data/<id>/ask.json` when the snapshot's own item has no `ask` (below) |
 
 - **One home** (today's single `FM_HOME`): the output is that home's summary with
   the fields above added; nothing else changes.
@@ -75,6 +79,28 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
   Files are replaced one rename at a time, so a report the previous summary
   linked is never briefly absent.
 
+- **`ask`**: read only for a decision whose snapshot item has no `ask` (the
+  snapshot's own wins). The file must be a regular file whose real path lies
+  under the home's `data/`, at most 64 KiB, free of credential patterns, and
+  the contract's shape (`docs/decision-contract.md` "Where the options come
+  from"): a non-empty `question`, at most 6 `options` (`id` slug, `label`,
+  at most one `recommended`, and it first), boolean `free_text_allowed`, and
+  an optional `https://` `link`. It is published normalised (`recommended`
+  always a boolean, `link` `null` when absent). An invalid file is logged and
+  skipped; the decision then carries no `ask`, as before.
+- **The PC (remote home).** The first home caches the PC's secondmate summary in
+  `state/secondmate-summary-cache/`; `PC_SUMMARY_FILE` names the file, else the
+  only `*.json` there is used (none, or several, means no PC entry). `homes[]`
+  gains one entry appended after the aggregation:
+  `{id: "pc" (PC_HOME_ID), path: null, published: true, remote: true, valid: true, reason: null, last_seen_epoch, state}`.
+  `state` is `working` (the summary has active children), `idle`, or `off`
+  (older than `PC_STALE_SECONDS`, default 1200, or missing, unreadable, not a
+  home summary, or credential-bearing; then `last_seen_epoch` is the summary's
+  time, or `null`). It carries no counts and contributes no list items. It never
+  affects the fleet's `valid`, `reason`, `counts` or `generated_epoch`, never
+  fails the run, and is left out of the `fleet_home_summary_*` metrics: a PC
+  that is off is normal.
+
 ## Daily fleet metrics (`OUT_DIR/metrics/daily.jsonl`)
 
 Each home's `data/fleet-metrics/daily.jsonl` (schema `fleet-metrics-daily.v1`, one
@@ -100,3 +126,34 @@ copied to `OUT_DIR/metrics/daily.jsonl`, world-readable, beside
 - **Atomic and quiet**: temp file plus rename, only when the content changed. A
   missing or wholly invalid source leaves the file as it was. A write failure is
   logged and fails the run (the summary is already published).
+
+## Quota history and snapshot (`OUT_DIR/metrics/quota.jsonl`, `quota-snapshot.json`)
+
+Both files are percentages, reset times and slot numbers only: no account key,
+email, plan detail, source tool or error text ever leaves the host.
+
+- **`quota.jsonl`**: each home's `data/fleet-metrics/quota.jsonl` (hourly
+  `quota-axi` samples), under the daily metrics' guards (regular file under the
+  home's `data/`, at most 4 MiB), reduced to
+  `{ts, slot, five_hour, seven_day, fable_week}` where each window is
+  `{percent_used, resets_at}` (`resets_at` an ISO time; both `null` for an
+  unreadable sample). `slot` is stable: the account key's slot in
+  `QUOTA_SLOT_MAP` (`"<key>=<slot> ..."`, host config) if pinned there, else the
+  next free slot the first time the key is seen, kept in a private slot ledger
+  (`quota-slots`, sha256 of the key to slot, mode 600) under the publisher's
+  state directory (`FLEET_STATE_DIR`, else `STATE_DIRECTORY`, else
+  `~/.local/state/lifekit-fleet-publisher`), never under `OUT_DIR`, and never
+  reassigned; `null` for a row with no key, and a row whose key has no slot
+  (characters outside `A-Za-z0-9._:-`) is skipped. A row with a non-integer `ts` or a percentage outside
+  0-100 is skipped. One row per (`ts`, `slot`), the later winning, sorted by
+  `ts`; rows already published stay when the source is trimmed. The file is
+  rewritten only when its content changed. A source with a credential pattern
+  is not published.
+- **`quota-snapshot.json`**: the quota gauge's textfile
+  (`QUOTA_PROM`, default `TEXTFILE_DIR/claude_quota.prom`) as
+  `{schema: "fleet-quota-snapshot.v1", generated_epoch (the file's mtime), windows: {<window id>: {percent_remaining, burn_multiple, reserve_percent_points, resets_at (epoch)}}, runway_seconds, projected_exhausted_at (epoch), runway_status, limiting_window}`.
+  The gauge's source is `quota-axi`'s one active account, so the snapshot has no
+  slot. Absent when the gauge file is missing.
+- A failed write is logged and fails the run; missing sources leave the files as
+  they were. The dashboard backend's `backend/infra.json` needs entries for the
+  two new files before it can serve them.
