@@ -120,6 +120,15 @@ LOGGING_SH = """#!/bin/sh
 echo "%s" >> "$DOCKER_CALL_LOG"
 """
 
+# Stands in for scripts/ledger-persona/ledger-persona.py: logs the command it
+# was given and exits with $LEDGER_<COMMAND>_EXIT (default 0).
+LEDGER_PERSONA_PY = """import os, sys
+cmd = sys.argv[1]
+open(os.environ["DOCKER_CALL_LOG"], "a").write("ledger-" + cmd + "\\n")
+print("ledger persona: stub " + cmd)
+sys.exit(int(os.environ.get("LEDGER_" + cmd.upper() + "_EXIT", "0")))
+"""
+
 PHASES = ["prepare", "modules", "build", "up", "configure", "post_up", "smoke"]
 
 # Platform steps and OpenClaw phases in the order deploy.sh ran them before the
@@ -145,6 +154,8 @@ DEPLOY_ORDER = [
     "compose-ps",
     "openclaw:smoke",
     "contract-enforce",
+    "ledger-install",
+    "ledger-check",
     "builder-gc",
     "tmp-scratch",
 ]
@@ -198,7 +209,7 @@ def stub(path: Path, body: str) -> None:
 
 
 def marker(line: str) -> str | None:
-    if line.startswith(("openclaw:", "contract-")) or line in {
+    if line.startswith(("openclaw:", "contract-", "ledger-")) or line in {
         "embed-origin",
         "render-heartbeat",
         "builder-gc",
@@ -245,6 +256,7 @@ def full_deploy(
     stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
     stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
     stub(fake / "scripts/tmp-scratch-policy.sh", LOGGING_SH % "tmp-scratch")
+    stub(fake / "scripts/ledger-persona/ledger-persona.py", LEDGER_PERSONA_PY)
     stub(
         fake / "scripts/platform-contract.py",
         "import os, sys\n"
@@ -321,6 +333,39 @@ def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
         f"-f {fake}/compose/edge/docker-compose.yml config --format json"
     ]
     assert "(0/3); project edge not brought up" in r.stderr
+
+
+@pytest.mark.parametrize(
+    ("install_exit", "check_exit", "ok", "ran", "message"),
+    [
+        (0, 0, True, ["ledger-install", "ledger-check"], None),
+        # Drift or a retired copy that install cannot clear: loud, not red.
+        (0, 1, True, ["ledger-install", "ledger-check"], "still reports drift"),
+        (0, 2, False, ["ledger-install", "ledger-check"], "the check could not run"),
+        # A failed install skips the check and fails the deploy.
+        (2, 0, False, ["ledger-install"], "install failed"),
+    ],
+)
+def test_ledger_persona_is_installed_then_checked_on_every_deploy(
+    env, tmp_path, install_exit, check_exit, ok, ran, message
+):
+    r, trace, _ = full_deploy(
+        {
+            **env,
+            "LEDGER_INSTALL_EXIT": str(install_exit),
+            "LEDGER_CHECK_EXIT": str(check_exit),
+        },
+        tmp_path,
+    )
+    assert [t for t in trace if t.startswith("ledger-")] == ran
+    # The rest of the deploy still ran either way.
+    assert "builder-gc" in trace
+    assert (r.returncode == 0) is ok, r.stdout + r.stderr
+    assert ("✓ deploy complete." in r.stdout) is ok
+    if message:
+        assert message in r.stderr
+    else:
+        assert "ledger persona:" not in r.stderr
 
 
 def test_identity_oidc_network_is_created_before_the_platform_up(env, tmp_path):
@@ -1062,6 +1107,7 @@ def run_gated_deploy(env, tmp_path, mode, touched):
     stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
     stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
     stub(fake / "scripts/tmp-scratch-policy.sh", LOGGING_SH % "tmp-scratch")
+    stub(fake / "scripts/ledger-persona/ledger-persona.py", LEDGER_PERSONA_PY)
     stub(
         fake / "scripts/platform-contract.py",
         "import os, sys\n"

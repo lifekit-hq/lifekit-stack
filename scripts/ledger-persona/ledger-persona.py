@@ -22,8 +22,9 @@ byte, and nothing here writes them.
                        Any other failure (fetch, unreadable file, bad pin)
                        exits 2, so drift is never confused with an error.
   install              write the composed persona to the workspace (the old
-                       file is kept as AGENTS.md.pre-persona-install). An
-                       operator command: deploy.sh never runs it.
+                       file is kept as AGENTS.md.pre-persona-install).
+                       Idempotent; deploy.sh runs it, then `check`, on every
+                       deploy.
 
 Options: --workspace DIR (default $LEDGER_WORKSPACE or the finance agent's
 workspace), --pin REF (default: the PIN file), --source DIR (read a local

@@ -455,6 +455,33 @@ python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" 
   --enforce "${IDENTITY_PROJECT}" --enforce "${EDGE_PROJECT}" \
   || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT}, ${IDENTITY_PROJECT} or ${EDGE_PROJECT} containers fail it (table above)"
 
+# ─── Ledger persona: install the pinned finance-sentry persona, then check ──
+#
+# scripts/ledger-persona/ledger-persona.py composes the finance agent's
+# AGENTS.md from the finance-sentry commit in scripts/ledger-persona/PIN. It
+# runs as this account (lifekit, no sudo, gh's existing login) on every
+# deploy: `install` is idempotent ("unchanged" when the file already matches),
+# so a PIN bump or a hand edit is corrected without an operator step. A failed
+# install (exit != 0: fetch, pin, oversize or workspace error) goes red after
+# the rest of the deploy, like the contract above - the deploy exists to leave
+# the persona in sync and did not. `check` then verifies it: exit 1 can only
+# be a retired big-picture copy in host-state files (the deploy does not own
+# those), so it prints in red and never fails the deploy; exit 2 (the check
+# itself could not run) fails it.
+say "ledger persona: install, then check"
+LEDGER_PERSONA="${REPO_DIR}/scripts/ledger-persona/ledger-persona.py"
+if python3 "${LEDGER_PERSONA}" install; then
+  LEDGER_CHECK_STATUS=0
+  python3 "${LEDGER_PERSONA}" check || LEDGER_CHECK_STATUS=$?
+  case "${LEDGER_CHECK_STATUS}" in
+    0) ;;
+    1) printf '\033[1;31m✗ ledger persona: installed, but the check still reports drift or a retired big-picture copy (lines above); clear the stale files per docs/runbook.md "Ledger persona from finance-sentry"\033[0m\n' >&2 ;;
+    *) fail_later "ledger persona: the check could not run (exit ${LEDGER_CHECK_STATUS}, output above)" ;;
+  esac
+else
+  fail_later "ledger persona: install failed (output above); the live persona is not the pinned one"
+fi
+
 # ─── Docker builder cache cap: host fact the repo owns, report-only ──────────
 #
 # scripts/docker-builder-gc.sh carries the cap (builder.gc in daemon.json),

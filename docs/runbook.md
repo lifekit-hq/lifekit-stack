@@ -2350,8 +2350,17 @@ through `gh api` on the contents API with gh's existing login; no secret is
 added), joins them with a `---` rule, and writes the result to the finance
 agent's workspace `AGENTS.md`. Bump the pin by a PR that edits `PIN`.
 
-Nothing here runs on deploy; the install is an operator command, as `lifekit`
-on the host:
+Every deploy runs `install` and then `check` as `lifekit` (no sudo; a step near
+the end of `scripts/deploy.sh`), so a merged `PIN` bump reaches the live persona
+without a manual step. `install` is idempotent: when `AGENTS.md` already equals
+the composed persona it reports `unchanged` and writes nothing. A failed
+`install` (exit 2: fetch, pin, oversize or workspace error) skips the `check`
+and turns the deploy red once the rest of it has run; a `check` that cannot run
+(exit 2) does the same. A `check` exit 1 after a successful install can only be a
+retired big-picture copy in host-state files, which the deploy does not own: it
+prints a red line and leaves the deploy green. The drift-alert timer below stays
+an operator install (it needs root). The same commands by hand, as `lifekit` on
+the host:
 
 ```bash
 S=/srv/lifekit-stack/scripts/ledger-persona/ledger-persona.py
@@ -2380,8 +2389,10 @@ the owner's facts, so they are scanned for known markers, never compared with
 canonical text: Ledger keeps writing its memory and only a reintroduced copy
 alerts. A new retired copy is a new entry in either list.
 
-First apply, once `check` shows no live-only change worth keeping (fold any
-back into finance-sentry first): run `check`, read the diff, then `install`.
+A deploy overwrites a live edit of `AGENTS.md` (the old file is kept as
+`AGENTS.md.pre-persona-install`), so fold any live-only change worth keeping into
+finance-sentry before merging. To preview what a deploy will write, run `check`
+and read the diff.
 `--source DIR` composes from a local `agent/ledger` checkout instead of
 fetching, and `--workspace` at a scratch directory rehearses the whole flow.
 
