@@ -18,6 +18,33 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.8](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.7...v0.1.8) (2026-10-17)
+
+
+### Features
+
+* **compose:** enable Gmail send for the google-workspace MCP ([#331](https://github.com/lifekit-hq/lifekit-stack/issues/331)) ([6c7573a](https://github.com/lifekit-hq/lifekit-stack/commit/6c7573a608aa3c1eb9bddfd231feb014f140b77f))
+* **ledger-persona:** bump pin to finance-sentry dbd3d003 ([#337](https://github.com/lifekit-hq/lifekit-stack/issues/337)) ([c02c1c6](https://github.com/lifekit-hq/lifekit-stack/commit/c02c1c6dcfea7225ea919f778568adbd8a96d0a2))
+* **observability:** alert when a Weekly Release run leaves the release PR unmerged ([#335](https://github.com/lifekit-hq/lifekit-stack/issues/335)) ([1c6cc9a](https://github.com/lifekit-hq/lifekit-stack/commit/1c6cc9a074cf3c7732b9a7d603f112038d4ddc4b))
+* **people:** add people-serve JSON API service for the dashboard People page ([#345](https://github.com/lifekit-hq/lifekit-stack/issues/345)) ([45429f4](https://github.com/lifekit-hq/lifekit-stack/commit/45429f4e6c164a0b77beab6078eac4eae2b7a25b))
+* **scripts:** add people revoke and drift alerts to people status ([#344](https://github.com/lifekit-hq/lifekit-stack/issues/344)) ([e4eebc2](https://github.com/lifekit-hq/lifekit-stack/commit/e4eebc2c7e2a2440130d55bfb349b5d1e333ec7c))
+* **scripts:** install and check the Ledger persona after each deploy ([#339](https://github.com/lifekit-hq/lifekit-stack/issues/339)) ([3a26c72](https://github.com/lifekit-hq/lifekit-stack/commit/3a26c723b0832d7d748ff149d25e8b8fe67ca2d7))
+* **scripts:** invite a person into Logto with one role per right ([#341](https://github.com/lifekit-hq/lifekit-stack/issues/341)) ([85eda71](https://github.com/lifekit-hq/lifekit-stack/commit/85eda716ac40ced88dfaeffbf339eeb82cdba164))
+* **scripts:** publish PC status, item times, priority, asks and sanitised quota from fleet-publisher ([#340](https://github.com/lifekit-hq/lifekit-stack/issues/340)) ([dfb4ec2](https://github.com/lifekit-hq/lifekit-stack/commit/dfb4ec297417c2c2dad44017a94d4600dd52bd77))
+* **scripts:** put invited people in tailnet groups and sync them from Logto roles ([#342](https://github.com/lifekit-hq/lifekit-stack/issues/342)) ([540a4b1](https://github.com/lifekit-hq/lifekit-stack/commit/540a4b1cc77a9be1622297b5b6810d0cf7ec73e5))
+* **scripts:** send the people invite email with --send / --resend ([#343](https://github.com/lifekit-hq/lifekit-stack/issues/343)) ([9373786](https://github.com/lifekit-hq/lifekit-stack/commit/9373786e8f5cfb84126cfa778c6670ec933a956d))
+
+
+### Bug Fixes
+
+* **scripts:** people invite only unsuspends a user people revoke suspended ([#346](https://github.com/lifekit-hq/lifekit-stack/issues/346)) ([8c2cd3d](https://github.com/lifekit-hq/lifekit-stack/commit/8c2cd3d0b3affee1f749a93ad9a91223ca6bc9c5))
+* **scripts:** read the needs-you digest's mail in a separate tool-restricted run ([#338](https://github.com/lifekit-hq/lifekit-stack/issues/338)) ([2063601](https://github.com/lifekit-hq/lifekit-stack/commit/2063601ded0e7d42c8ebad504e237add714bbc5e))
+
+
+### Documentation
+
+* **google-mcp:** reword the consent-widening step as a one-time rollout step ([#347](https://github.com/lifekit-hq/lifekit-stack/issues/347)) ([94ae4d1](https://github.com/lifekit-hq/lifekit-stack/commit/94ae4d135bff4d403df4e745b0976712b8a9d57a))
+
 ## [0.1.7](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.6...v0.1.7) (2026-10-15)
 
 
