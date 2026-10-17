@@ -2215,6 +2215,64 @@ Tests: `scripts/tests/test_people_tailnet.py` against fake Logto and Tailscale
 APIs (ETag conflict, idempotent sync, the never-ports refusal, the missing
 token path). The live API is not part of any test or CI step.
 
+### People: revoke and drift alerts
+
+`people.py revoke <email> [--right <id>]... [--dry-run] [--suspend-tailnet-user]`
+takes access away. The tailnet half runs first, because it is the network cut:
+the email leaves `group:<right>` for each right (every right without `--right`)
+through the same marker-block, validate and `If-Match` path as `sync`. Then the
+Logto role for each right is removed, and the Logto user is **suspended** when no
+product role remains and no platform role (`admin`) is held. Each Logto write
+lands in the `logto-admin.py` ledger with undo data, plus a closing
+`people-revoke` entry. Re-running finds nothing to do; `--dry-run` prints
+`would ...` lines and writes nothing. A tailnet failure does not stop the Logto
+half; revoke then exits 1 with "run revoke again", and the re-run finishes it.
+A policy with a never-grant drift never blocks a revoke. Inviting a revoked
+person again unsuspends them.
+
+```bash
+sops exec-env <people>.sops 'python3 scripts/people/people.py revoke <email> --dry-run'
+sops exec-env <people>.sops 'python3 scripts/people/people.py revoke <email>'
+```
+
+The Tailscale user and devices are never deleted. `--suspend-tailnet-user` (all
+rights only) also suspends the Tailscale user, which stops their devices; it is
+reversible in the admin console and needs the OAuth client's `users` write
+scope (the client in [People: the tailnet half](#people-the-tailnet-half) has
+read only), so add that scope before using the flag. Without it the network cut
+is the group removal alone, which also takes the person off every product port.
+
+`people.py status --notify` posts what `status` finds to notify-relay
+(`docs/message-format.md`), so drift reaches the owner without anyone running
+`status`:
+
+- one `act` envelope (source `people`, subject `drift`) listing every drift line:
+  a Logto user with no product role, a role without its group or the reverse, a
+  right with no grant, a policy with no `tests`, a tailnet member no Logto user
+  matches. No drift, no message.
+- one `wait` envelope (subject `tailnet-token`) when `TAILSCALE_USER_TOKEN`
+  expires within 14 days, has expired, is revoked, or its expiry cannot be read.
+  The expiry comes from the token's own key record (`GET .../keys/<id>` with the
+  token itself), so a tailnet with no token set checks nothing. Fix: generate a
+  new token for `<people>.sops`, or remove the line when no invite is pending.
+
+It posts through `scripts/ledger-persona/drift-alert.py`'s transport (`docker
+exec` into the notify-relay container), so it must run as the account that can
+use docker on the box. A relay that refuses the envelope exits 1. A timer
+re-reports unresolved drift on every run. **Operator step, not installed by the
+repo**: schedule it, for example a daily systemd timer whose service runs
+
+```text
+sops exec-env <people>.sops 'python3 /srv/lifekit-stack/scripts/people/people.py status --notify'
+```
+
+then check one run with `systemctl start` and the journal. Confirm live, before
+relying on the token warning, that a user-owned API token can read its own key
+record; if Tailscale answers 403 the warning reads "cannot check
+TAILSCALE_USER_TOKEN" instead of a date. Tests:
+`scripts/tests/test_people_revoke.py` against fake Logto, Tailscale and
+notify-relay (a docker stand-in); nothing runs against the live services.
+
 ### Sending the invite email
 
 `people.py invite <email> --right <id> --send` mails the one invite email

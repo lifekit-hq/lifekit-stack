@@ -37,7 +37,7 @@ HOST = "box.example.ts.net"
 CLIENT_ID = "ts-client-id-0123"
 CLIENT_SECRET = "tskey-client-secret-value-abcdef"
 TS_TOKEN = "ts-access-token-value-qrstuv"
-USER_TOKEN = "tskey-api-user-token-value-wxyz"
+USER_TOKEN = "tskey-api-k123CNTRL-user-token-value-wxyz"
 INVITE_URL = "https://login.tailscale.example/uinv/abc123"
 
 POLICY = """\
@@ -83,6 +83,10 @@ class FakeTailscale:
         self.requests: list[tuple[str, str, bytes]] = []
         self.user_token_ok = True
         self.users_status = 200
+        # the user token's own key record (GET .../keys/<id>)
+        self.key: dict = {"id": "k123", "expires": "2099-01-01T00:00:00Z"}
+        self.key_status = 200
+        self.suspended: list[str] = []
 
     @property
     def etag(self) -> str:
@@ -127,8 +131,22 @@ def ts_handler(fake: FakeTailscale):
                 if auth != f"Bearer {USER_TOKEN}" or not fake.user_token_ok:
                     return self.reply(401, {"message": "token expired"})
                 return self.reply(200, [{"id": "i1", "inviteUrl": INVITE_URL}])
+            if "/keys/" in path:
+                if auth != f"Bearer {USER_TOKEN}":
+                    return self.reply(401, {"message": "bad token"})
+                if path.rsplit("/", 1)[1] != "k123CNTRL":
+                    return self.reply(404, {"message": "no such key"})
+                return self.reply(fake.key_status, fake.key)
             if auth != f"Bearer {TS_TOKEN}":
                 return self.reply(401, {"message": "unauthorized"})
+            if path.endswith("/suspend") and method == "POST":
+                uid = path.split("/")[-2]
+                user = next((u for u in fake.users if u.get("id") == uid), None)
+                if user is None:
+                    return self.reply(404, {"message": "no such user"})
+                user["status"] = "suspended"
+                fake.suspended.append(uid)
+                return self.reply(200, {})
             if path.endswith("/users"):
                 if fake.users_status != 200:
                     return self.reply(fake.users_status, {"message": "scope"})
