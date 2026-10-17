@@ -10,9 +10,9 @@ You now have access to {{ products_title }}. Setup takes a few minutes on your p
 
 3. Turn the VPN on. In the Tailscale settings make sure "Use Tailscale DNS" is on, or the pages below will just hang.
 
-4. Open {{ open_what }}:
+4. Open {{ open_what }} (add it to your home screen for one-tap access):
 {{ products }}
 
 5. Sign in with Google using {{ email }}, the same address this email went to. If you are offered a passkey, adding one is optional.
 
-If you do not see "{{ short_host }}" in the Tailscale app, reply to this email.
+Troubleshooting: in the Tailscale app you should see "{{ short_host }}". If it is missing, or a page will not load, reply to this email.

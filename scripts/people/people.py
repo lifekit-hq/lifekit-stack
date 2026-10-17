@@ -2,13 +2,13 @@
 """People: invite someone and see who has what (Logto and tailnet halves).
 
     people.py invite EMAIL --right ID [--right ID]... [--host HOST]
-                    [--invite-url URL] [--no-tailnet]
+                    [--invite-url URL] [--no-tailnet] [--send | --resend]
     people.py status [EMAIL]
     people.py sync [--dry-run]
 
 invite makes sure the Logto user exists (primary email, no password: they sign
 in with Google or an emailed code) and holds one Logto role per right, then
-prints the invite email for the owner to send. It never sends mail. Every write
+prints the invite email. It sends mail only with --send or --resend (below). Every write
 goes through scripts/identity/logto-admin.py, so it lands in that script's
 ledger with its undo data; invite is idempotent and refuses an unknown right id
 before any write. An email needs the host the products are served on, so HOST
@@ -23,6 +23,16 @@ and, when the email is not yet a tailnet member, creates a user invite for the
 email's link with TAILSCALE_USER_TOKEN, or says to create the link in the admin
 console and paste it (--invite-url) when that token is missing or rejected.
 An unconfigured tailnet is reported and skipped, never an error.
+
+--send also mails that email to the invitee through Gmail SMTP
+(scripts/people/mailer.py: PEOPLE_SMTP_USER, PEOPLE_SMTP_PASSWORD from the
+environment). Without the app password it prints the draft and a "mail not
+configured" line and exits 0; an email that would still carry the invite-link
+placeholder is not sent either. --resend re-sends it for someone already
+invited: it writes nothing to Logto or the policy, requires the Logto user to
+hold each given right, mints a fresh tailnet invite link when the email is not
+yet a tailnet member (or takes --invite-url), and mails it. A failed send
+exits 1 after everything else was done.
 
 status shows each user's Logto roles and suspended flag, and drift: a user
 holding no product role from the catalog (platform roles such as admin are
@@ -54,6 +64,7 @@ import os
 import sys
 from pathlib import Path
 
+import mailer
 import tailnet
 
 HERE = Path(__file__).resolve().parent
@@ -187,14 +198,20 @@ def tailnet_add(ts, cat: dict, email: str, rids: list[str]) -> list[str]:
     return joined
 
 
-def tailnet_invite(ts, cat: dict, email: str, rids: list[str], url: str | None):
-    """The tailnet half of invite. Returns (invite url or None, already a member)."""
-    joined = tailnet_add(ts, cat, email, rids)
-    for rid in rids:
-        admin.say(
-            f"tailnet {group_of(rid)}: "
-            + ("added" if group_of(rid) in joined else "already a member")
-        )
+def tailnet_invite(
+    ts, cat: dict, email: str, rids: list[str], url: str | None, groups: bool = True
+):
+    """The tailnet half of invite. Returns (invite url or None, already a member).
+
+    groups=False (resend) leaves the policy alone and only handles the link.
+    """
+    if groups:
+        joined = tailnet_add(ts, cat, email, rids)
+        for rid in rids:
+            admin.say(
+                f"tailnet {group_of(rid)}: "
+                + ("added" if group_of(rid) in joined else "already a member")
+            )
     try:
         member = ts.member(email)
     except tailnet.TailnetError as err:
@@ -238,8 +255,27 @@ def cmd_invite(api, ledger, args, cat: dict) -> None:
     if ts is not None and not ts.configured:
         admin.say(NOT_CONFIGURED)
         ts = None
+    if args.resend:
+        resend_check(api, email, rights)
+    else:
+        if ts is not None:
+            check_policy(ts.policy()[0], cat)  # refuse a bad policy before any write
+        invite_writes(api, ledger, email, rights)
+    url, member = args.invite_url, False
     if ts is not None:
-        check_policy(ts.policy()[0], cat)  # refuse a bad policy before any write
+        url, member = tailnet_invite(
+            ts, cat, email, [i for i, _ in rights], url, groups=not args.resend
+        )
+    text = render_email(email, rights, host, url, member)
+    if args.send or args.resend:
+        deliver(email, text, placeholder=not url and not member)
+    else:
+        admin.say("")
+        admin.say("--- invite email (draft; send it yourself) ---")
+        admin.say(text)
+
+
+def invite_writes(api, ledger, email: str, rights: list[tuple[str, dict]]) -> None:
     user, n = admin.ensure_user(api, ledger, email)
     admin.say(
         f"user {user['id']}: " + ("exists" if n is None else f"created, ledger #{n}")
@@ -255,12 +291,45 @@ def cmd_invite(api, ledger, args, cat: dict) -> None:
             f"right {rid}: role {r['role']} "
             + ("already held" if n is None else f"assigned, ledger #{n}")
         )
-    url, member = args.invite_url, False
-    if ts is not None:
-        url, member = tailnet_invite(ts, cat, email, [i for i, _ in rights], url)
-    admin.say("")
-    admin.say("--- invite email (draft; send it yourself) ---")
-    admin.say(render_email(email, rights, host, url, member))
+
+
+def resend_check(api, email: str, rights: list[tuple[str, dict]]) -> None:
+    """A resend is for an existing invite: the user and each role must be there."""
+    user = admin.find_user(api, email)
+    held = {r["name"] for r in api.list_all(f"/api/users/{user['id']}/roles")}
+    missing = [rid for rid, r in rights if r["role"] not in held]
+    if missing:
+        raise AdminError(
+            f"{email} does not hold {', '.join(missing)}: run invite (without "
+            "--resend) first"
+        )
+    admin.say(f"user {user['id']}: exists with the requested rights, nothing written")
+
+
+def deliver(email: str, text: str, placeholder: bool) -> None:
+    """Mail the rendered email, or fall back to printing the draft."""
+    cfg = mailer.settings()
+
+    def draft(why: str) -> None:
+        admin.say("")
+        admin.say("--- invite email (draft; send it yourself) ---")
+        admin.say(text)
+        admin.say(why)
+
+    if cfg is None:
+        draft(
+            "mail not configured (set PEOPLE_SMTP_USER and PEOPLE_SMTP_PASSWORD, "
+            'docs/runbook.md "Sending the invite email"): not sent'
+        )
+    elif placeholder:
+        draft(
+            "no tailnet invite link yet (pass --invite-url <link>): not sent, "
+            "the email would carry a placeholder"
+        )
+    else:
+        subject, body = mailer.split_message(text)
+        mailer.send(cfg, email, subject, body)
+        admin.say(f"invite email sent to {email} from {cfg['user']}")
 
 
 def desired_groups(api, cat: dict) -> dict[str, list[str]]:
@@ -468,7 +537,7 @@ def parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
     i = sub.add_parser(
-        "invite", help="ensure the Logto user and roles, print the email"
+        "invite", help="ensure the Logto user and roles, print or send the email"
     )
     i.add_argument("email")
     i.add_argument("--right", action="append", required=True, metavar="ID")
@@ -476,6 +545,15 @@ def parser() -> argparse.ArgumentParser:
     i.add_argument("--invite-url", help="the Tailscale invite link for the email")
     i.add_argument(
         "--no-tailnet", action="store_true", help="skip the tailnet step (Logto only)"
+    )
+    mail = i.add_mutually_exclusive_group()
+    mail.add_argument(
+        "--send", action="store_true", help="mail the email (draft if mail is unset)"
+    )
+    mail.add_argument(
+        "--resend",
+        action="store_true",
+        help="re-send for an existing invite; writes nothing to Logto or the policy",
     )
     s = sub.add_parser("status", help="Logto roles, suspended flag and drift")
     s.add_argument("email", nargs="?")
@@ -512,7 +590,7 @@ def main(argv: list[str] | None = None) -> int:
         {"invite": cmd_invite, "status": cmd_status, "sync": cmd_sync}[args.cmd](
             api, ledger, args, cat
         )
-    except (AdminError, tailnet.TailnetError) as err:
+    except (AdminError, tailnet.TailnetError, mailer.MailError) as err:
         print(f"people: {err}", file=sys.stderr)
         return 1
     return 0
