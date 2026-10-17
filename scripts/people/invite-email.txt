@@ -1,0 +1,18 @@
+Subject: You're invited to {{ products_title }}
+
+Hi,
+
+You now have access to {{ products_title }}. Setup takes a few minutes on your phone or computer.
+
+1. Install Tailscale (App Store or Google Play, or tailscale.com/download) if you do not have it.
+
+2. {{ invite_step }}
+
+3. Turn the VPN on. In the Tailscale settings make sure "Use Tailscale DNS" is on, or the pages below will just hang.
+
+4. Open {{ open_what }}:
+{{ products }}
+
+5. Sign in with Google using {{ email }}, the same address this email went to. If you are offered a passkey, adding one is optional.
+
+If you do not see "{{ short_host }}" in the Tailscale app, reply to this email.

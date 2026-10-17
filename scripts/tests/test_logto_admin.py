@@ -227,9 +227,23 @@ def handler_for(fake: FakeLogto):
                             ids.remove(parts[2])
                     return self.reply(204)
             if parts[:2] == ["api", "users"]:
+                if len(parts) == 2 and method == "POST":
+                    if any(
+                        u["primaryEmail"] == data["primaryEmail"] for u in fake.users
+                    ):
+                        return self.reply(
+                            422, {"code": "user.email_already_in_use", "message": "x"}
+                        )
+                    user = {"id": fake.next_id("nu"), **data}
+                    fake.users.append(user)
+                    return self.reply(201, user)
                 if len(parts) == 2:
                     return self.page(fake.users, query)
                 uid = parts[2]
+                if len(parts) == 3 and method == "DELETE":
+                    fake.users = [u for u in fake.users if u["id"] != uid]
+                    fake.user_roles.pop(uid, None)
+                    return self.reply(204)
                 have = fake.user_roles.setdefault(uid, [])
                 if method == "GET":
                     return self.page([r for r in fake.roles if r["id"] in have], query)
@@ -977,3 +991,24 @@ def test_bootstrap_project_override_and_env_out_guard(bootstrap, tmp_path):
     log = bootstrap.log.read_text()
     assert "label=com.docker.compose.project=logto-rehearsal" in log
     assert "exec" not in log
+
+
+def test_create_user_is_get_or_create_and_undoable(logto):
+    first = logto("create-user", "New.Person@Example.com", "--name", "New")
+    assert first.returncode == 0, first.stderr
+    assert "created" in first.stdout
+    made = logto.fake.users[-1]
+    assert made["primaryEmail"] == "new.person@example.com"
+    assert made["name"] == "New"
+    assert "password" not in made
+    second = logto("create-user", "new.person@example.com")
+    assert "exists" in second.stdout
+    assert len(logto.fake.users) == 3
+    entries = ledger_entries(logto)
+    assert [e["action"] for e in entries] == ["create-user"]
+    assert entries[0]["undo"] == {
+        "method": "DELETE",
+        "path": f"/api/users/{made['id']}",
+    }
+    assert logto("undo").returncode == 0
+    assert all(u["id"] != made["id"] for u in logto.fake.users)

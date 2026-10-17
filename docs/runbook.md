@@ -2026,6 +2026,7 @@ as soon as the transaction commits.
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py token-check'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-role admin'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py assign-role <email> admin'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py create-user <email> [--name <text>]'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-app "<name>" \
   --redirect-uri <uri> --post-logout-uri <uri> --secret-file ~/<name>.secret'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-redirects <app> \
@@ -2034,7 +2035,9 @@ sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-sign-in-e
   --sign-in-identifiers email username --primary-color <#hex> --logo-url <url>'
 ```
 
-`assign-role` takes a user id, primary email or username. `ensure-app`
+`assign-role` takes a user id, primary email or username. `create-user` makes
+a passwordless user with that primary email (it signs in with Google or an
+emailed code), only when no user has the email. `ensure-app`
 creates a Traditional web app, or brings an existing one's URIs to the given
 lists. `set-redirects` replaces the list it is given and keeps the other.
 `--secret-file` writes the app's client secret to a new 0600 file for
@@ -2055,7 +2058,7 @@ application's own name, logo and colors ([Sign-in page branding](#sign-in-page-b
 (`~/.local/state/lifekit/logto-admin.ledger.jsonl`, or `LOGTO_ADMIN_LEDGER`):
 the ids it created or touched, and the inverse request. `logto-admin.py
 ledger` lists it; `logto-admin.py undo [N]` sends entry N's inverse (default:
-the newest not yet undone): delete the role or app it created, take the role
+the newest not yet undone): delete the user, role or app it created, take the role
 back, restore the previous redirect URIs, or restore the previous
 sign-in experience objects (tenant or per application), or delete the email
 connector it created.
@@ -2077,6 +2080,33 @@ the same images as `compose/identity/`, loopback ports 13001/13002), then
 tears it down. It never touches the `identity` project. Run it after a Logto
 upgrade, before the bootstrap or the script is used against the new
 version: the bootstrap writes Logto's tables directly.
+
+### Inviting a person: `people invite` / `people status`
+
+`scripts/people/people.py` is the owner-facing wrapper over the commands
+above (the Logto half; the tailnet and mail halves come later). `invite`
+ensures the Logto user (primary email, no password: they sign in with Google,
+or an emailed code once the connector is live), ensures and assigns one role
+per right, and prints the invite email for you to send. It never sends mail.
+Rights live in `scripts/people/rights.json` (the role name is the Logto role;
+`PEOPLE_RIGHTS` points at another catalog). It is idempotent, an unknown right
+is refused before any write, and every write lands in the `logto-admin.py`
+ledger, so `logto-admin.py undo` reverses it (role grant, then role, then user).
+It uses the same M2M credentials and ledger as `logto-admin.py`; the `all`
+scope on the Management API covers creating users.
+
+```bash
+sops exec-env <m2m>.sops 'python3 scripts/people/people.py invite <email> \
+  --right backstage [--right finance-sentry] --host <host> [--invite-url <link>]'
+sops exec-env <m2m>.sops 'python3 scripts/people/people.py status [<email>]'
+```
+
+`--host` (or `PEOPLE_HOST`) is the tailnet DNS name the products are served on;
+it is not stored in the repo. Without `--invite-url` the email carries a marked
+placeholder where the Tailscale invite link goes. `status` lists each user's
+roles and suspended flag, and flags drift: a user with no product role (the
+`admin` platform role is exempt), or a suspended user who still holds one.
+The rehearsal script runs `invite` and `status` on the throwaway Logto too.
 
 ## Sign-in page branding
 
