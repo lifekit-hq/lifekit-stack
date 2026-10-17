@@ -8,6 +8,7 @@ command is idempotent: it reads first and changes only what differs.
     logto-admin.py token-check
     logto-admin.py ensure-role NAME [--description TEXT]
     logto-admin.py assign-role USER ROLE
+    logto-admin.py create-user EMAIL [--name TEXT]
     logto-admin.py ensure-app NAME [--redirect-uri URI]... [--post-logout-uri URI]...
                               [--secret-file PATH]
     logto-admin.py set-redirects APP [--redirect-uri URI]... [--post-logout-uri URI]...
@@ -28,7 +29,9 @@ command is idempotent: it reads first and changes only what differs.
     logto-admin.py undo [N]
 
 USER is a Logto user id, primary email or username. ROLE is a role name (a
-User role). APP is an application id or its exact name. ensure-app creates a
+User role). create-user makes a user with that primary email and no password
+(it signs in with Google or an emailed code), only when no user has the email;
+undo deletes it. APP is an application id or its exact name. ensure-app creates a
 Traditional web app; given URIs, it also brings an existing app's URIs to
 exactly those. set-redirects replaces the given list and keeps the other one
 (pass both to set both). --secret-file writes the app's default client
@@ -255,32 +258,86 @@ def cmd_token_check(api: Api, _ledger: Ledger, _args) -> None:
     )
 
 
-def cmd_ensure_role(api: Api, ledger: Ledger, args) -> None:
-    role = find_role(api, args.name)
+def lookup_user(api: Api, email: str) -> dict | None:
+    """The user whose primary email is EMAIL (Logto stores it lowercase), or None."""
+    want = email.strip().lower()
+    hits = [
+        u for u in api.list_all("/api/users") if (u.get("primaryEmail") or "") == want
+    ]
+    if len(hits) > 1:
+        raise AdminError(f"{len(hits)} users match primary email {want!r}")
+    return hits[0] if hits else None
+
+
+def ensure_user(
+    api: Api, ledger: Ledger, email: str, name: str | None = None
+) -> tuple[dict, int | None]:
+    """Get or create the passwordless user for EMAIL. Returns (user, ledger n or None)."""
+    user = lookup_user(api, email)
+    if user:
+        return user, None
+    body = {"primaryEmail": email.strip().lower()}
+    if name:
+        body["name"] = name
+    _, _, user = api.call("POST", "/api/users", body)
+    n = ledger.append(
+        {
+            "action": "create-user",
+            "user": user["id"],
+            "undo": {"method": "DELETE", "path": f"/api/users/{user['id']}"},
+        }
+    )
+    return user, n
+
+
+def ensure_role(
+    api: Api, ledger: Ledger, name: str, description: str | None = None
+) -> tuple[dict, int | None]:
+    """Get or create the User role NAME. Returns (role, ledger n or None)."""
+    role = find_role(api, name)
     if role:
         if role.get("type") != "User":
             raise AdminError(
-                f"role {args.name!r} exists as type {role.get('type')}, not User"
+                f"role {name!r} exists as type {role.get('type')}, not User"
             )
-        say(f"role {args.name}: exists ({role['id']})")
-        return
+        return role, None
     _, _, role = api.call(
         "POST",
         "/api/roles",
-        {
-            "name": args.name,
-            "description": args.description or args.name,
-            "type": "User",
-        },
+        {"name": name, "description": description or name, "type": "User"},
     )
     n = ledger.append(
         {
             "action": "create-role",
-            "role": {"id": role["id"], "name": args.name},
+            "role": {"id": role["id"], "name": name},
             "undo": {"method": "DELETE", "path": f"/api/roles/{role['id']}"},
         }
     )
-    say(f"role {args.name}: created ({role['id']}), ledger #{n}")
+    return role, n
+
+
+def grant_role(api: Api, ledger: Ledger, uid: str, role: dict) -> int | None:
+    """Give user UID the role, if missing. Returns the ledger n, or None if already held."""
+    rid = role["id"]
+    if any(r.get("id") == rid for r in api.list_all(f"/api/users/{uid}/roles")):
+        return None
+    api.call("POST", f"/api/users/{uid}/roles", {"roleIds": [rid]})
+    return ledger.append(
+        {
+            "action": "assign-role",
+            "user": uid,
+            "role": {"id": rid, "name": role["name"]},
+            "undo": {"method": "DELETE", "path": f"/api/users/{uid}/roles/{rid}"},
+        }
+    )
+
+
+def cmd_ensure_role(api: Api, ledger: Ledger, args) -> None:
+    role, n = ensure_role(api, ledger, args.name, args.description)
+    if n is None:
+        say(f"role {args.name}: exists ({role['id']})")
+    else:
+        say(f"role {args.name}: created ({role['id']}), ledger #{n}")
 
 
 def cmd_assign_role(api: Api, ledger: Ledger, args) -> None:
@@ -288,20 +345,19 @@ def cmd_assign_role(api: Api, ledger: Ledger, args) -> None:
     role = find_role(api, args.role)
     if not role:
         raise AdminError(f"no role named {args.role!r} (ensure-role first)")
-    uid, rid = user["id"], role["id"]
-    if any(r.get("id") == rid for r in api.list_all(f"/api/users/{uid}/roles")):
-        say(f"user {uid} already has role {args.role}")
-        return
-    api.call("POST", f"/api/users/{uid}/roles", {"roleIds": [rid]})
-    n = ledger.append(
-        {
-            "action": "assign-role",
-            "user": uid,
-            "role": {"id": rid, "name": args.role},
-            "undo": {"method": "DELETE", "path": f"/api/users/{uid}/roles/{rid}"},
-        }
-    )
-    say(f"user {uid}: role {args.role} assigned, ledger #{n}")
+    n = grant_role(api, ledger, user["id"], role)
+    if n is None:
+        say(f"user {user['id']} already has role {args.role}")
+    else:
+        say(f"user {user['id']}: role {args.role} assigned, ledger #{n}")
+
+
+def cmd_create_user(api: Api, ledger: Ledger, args) -> None:
+    user, n = ensure_user(api, ledger, args.email, args.name)
+    if n is None:
+        say(f"user {user['id']}: exists")
+    else:
+        say(f"user {user['id']}: created, ledger #{n}")
 
 
 def patch_redirects(api: Api, ledger: Ledger, app: dict, redirect, post_logout) -> None:
@@ -773,6 +829,9 @@ def parser() -> argparse.ArgumentParser:
     a = sub.add_parser("assign-role", help="give a user a role, if missing")
     a.add_argument("user", help="user id, primary email or username")
     a.add_argument("role", help="role name")
+    c = sub.add_parser("create-user", help="create a passwordless user, if missing")
+    c.add_argument("email", help="primary email")
+    c.add_argument("--name", help="display name")
     for name, target, helptext in (
         ("ensure-app", "name", "get-or-create a Traditional web app"),
         ("set-redirects", "app", "replace an app's redirect URIs"),
@@ -850,6 +909,7 @@ COMMANDS = {
     "token-check": cmd_token_check,
     "ensure-role": cmd_ensure_role,
     "assign-role": cmd_assign_role,
+    "create-user": cmd_create_user,
     "ensure-app": cmd_ensure_app,
     "set-redirects": cmd_set_redirects,
     "set-sign-in-exp": cmd_set_sign_in_exp,

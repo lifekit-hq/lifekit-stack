@@ -200,6 +200,23 @@ assert_eq "sign-in methods as stored" \
 expect_fail "send-test-email (the SMTP host does not exist, so the send fails after the route accepted it)" \
   admin send-test-email owner@rehearsal.invalid
 
+echo "== people (scripts/people/people.py, same app and ledger)"
+people() { run python3 "${HERE}/../people/people.py" "$@"; }
+expect_fail "people invite refuses an unknown right (no write)" people invite friend@rehearsal.invalid \
+  --right backstage --right nope --host box.invalid
+assert_eq "no user created by the refused invite" \
+  "$(api_get /api/users '[u["primaryEmail"] for u in items if u["primaryEmail"] == "friend@rehearsal.invalid"]')" '[]'
+expect_ok "people invite (creates user and role, assigns)" people invite Friend@Rehearsal.invalid \
+  --right backstage --host box.invalid
+expect_ok "people invite (second time: no change)" people invite friend@rehearsal.invalid \
+  --right backstage --host box.invalid
+friend="$(api_get /api/users '[u["id"] for u in items if u["primaryEmail"] == "friend@rehearsal.invalid"][0]' | tr -d '"')"
+assert_eq "friend's roles" "$(api_get "/api/users/${friend}/roles" '[r["name"] for r in items]')" '["backstage"]'
+assert_eq "friend has no username or password" \
+  "$(api_get /api/users '[[u["username"], u.get("hasPassword")] for u in items if u["id"] == "'"${friend}"'"]')" '[[null, false]]'
+expect_ok "people status (the friend)" people status friend@rehearsal.invalid
+expect_ok "people status (everyone; the owner holds only admin)" people status
+
 echo "== ledger, then undo every change in reverse"
 admin ledger
 while python3 "${HERE}/logto-admin.py" ledger | python3 -c '

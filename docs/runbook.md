@@ -2078,6 +2078,33 @@ tears it down. It never touches the `identity` project. Run it after a Logto
 upgrade, before the bootstrap or the script is used against the new
 version: the bootstrap writes Logto's tables directly.
 
+### Inviting a person: `people invite` / `people status`
+
+`scripts/people/people.py` is the owner-facing wrapper over the commands
+above (the Logto half; the tailnet and mail halves come later). `invite`
+ensures the Logto user (primary email, no password: they sign in with Google,
+or an emailed code once the connector is live), ensures and assigns one role
+per right, and prints the invite email for you to send. It never sends mail.
+Rights live in `scripts/people/rights.json` (the role name is the Logto role;
+`PEOPLE_RIGHTS` points at another catalog). It is idempotent, an unknown right
+is refused before any write, and every write lands in the `logto-admin.py`
+ledger, so `logto-admin.py undo` reverses it (role grant, then role, then user).
+It uses the same M2M credentials and ledger as `logto-admin.py`; the `all`
+scope on the Management API covers creating users.
+
+```bash
+sops exec-env <m2m>.sops 'python3 scripts/people/people.py invite <email> \
+  --right backstage [--right finance-sentry] --host <host> [--invite-url <link>]'
+sops exec-env <m2m>.sops 'python3 scripts/people/people.py status [<email>]'
+```
+
+`--host` (or `PEOPLE_HOST`) is the tailnet DNS name the products are served on;
+it is not stored in the repo. Without `--invite-url` the email carries a marked
+placeholder where the Tailscale invite link goes. `status` lists each user's
+roles and suspended flag, and flags drift: a user with no product role (the
+`admin` platform role is exempt), or a suspended user who still holds one.
+The rehearsal script runs `invite` and `status` on the throwaway Logto too.
+
 ## Sign-in page branding
 
 The Logto sign-in page shows each application's own mark and primary color:

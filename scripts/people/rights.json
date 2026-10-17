@@ -1,0 +1,19 @@
+{
+  "rights": {
+    "finance-sentry": {
+      "name": "Finance Sentry",
+      "port": 4200,
+      "role": "finance-sentry",
+      "hint": "Connect your bank under Connections."
+    },
+    "backstage": {
+      "name": "Backstage",
+      "port": 18810,
+      "role": "backstage",
+      "hint": "Add it to your home screen for one-tap access."
+    }
+  },
+  "always_ports": [3001],
+  "never_ports": [3002, 4387, 18789, 8303, 22],
+  "platform_roles": ["admin"]
+}
