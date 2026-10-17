@@ -415,8 +415,8 @@ def revoke_person(
 
     rids None/empty revokes every catalog right. Returns {"email", "rights",
     "log": [lines], "changed": bool, "errors": [lines]}. The tailnet half runs
-    first (it is the network cut) and a failure there does not stop the Logto
-    half; it comes back in "errors". Bad input (unknown right, bad email,
+    first (it is the network cut) and a failure there, or no tailnet client,
+    does not stop the Logto half; it comes back in "errors". Bad input (unknown right, bad email,
     --right with the tailnet-user suspend) raises AdminError before any write.
     """
     email = email.strip().lower()
@@ -432,7 +432,10 @@ def revoke_person(
     changed = False
 
     if ts is None:
-        log.append(NOT_CONFIGURED)
+        errors.append(
+            "tailnet: not configured (set TAILSCALE_OAUTH_CLIENT_ID and "
+            "TAILSCALE_OAUTH_CLIENT_SECRET): network access not cut"
+        )
     else:
         try:
             left = tailnet_remove(ts, cat, email, ids, dry_run)

@@ -244,11 +244,12 @@ def test_a_tailnet_failure_still_revokes_logto_then_exits_1(env):
     assert block_groups(env.ts.policy)["group:backstage"] == []
 
 
-def test_revoke_without_the_oauth_client_is_logto_only(env):
+def test_revoke_without_the_oauth_client_fails_after_the_logto_half(env):
     user = seed(env)
     proc = env("revoke", "friend@example.com", tailnet_env=False)
-    assert proc.returncode == 0, proc.stderr
-    assert "tailnet: not configured" in proc.stdout
+    assert proc.returncode != 0
+    assert "tailnet: not configured" in proc.stderr
+    assert "run revoke again" in proc.stderr
     assert user["isSuspended"] is True
 
 

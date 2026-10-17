@@ -2151,7 +2151,9 @@ never printed.
   than the invited email shows up as unmatched: the email tells them to sign in
   with the invited address.
 - Without the OAuth client every tailnet step prints "tailnet: not configured"
-  and is skipped; `invite --no-tailnet` skips it on purpose.
+  and is skipped; `invite --no-tailnet` skips it on purpose. `revoke` instead
+  exits non-zero (the Logto half still runs): the network is not cut until the
+  client is set and `revoke` is run again.
 
 **One-time operator step (owner, live: changes who can reach what).** Do it in
 the admin console policy editor (Access controls) with *Preview* before saving.
