@@ -2084,10 +2084,11 @@ version: the bootstrap writes Logto's tables directly.
 ### Inviting a person: `people invite` / `people status`
 
 `scripts/people/people.py` is the owner-facing wrapper over the commands
-above (the Logto half; the tailnet half is the next section, mail comes later). `invite`
+above (the Logto half; the tailnet half and the mail are the next sections). `invite`
 ensures the Logto user (primary email, no password: they sign in with Google,
 or an emailed code once the connector is live), ensures and assigns one role
-per right, and prints the invite email for you to send. It never sends mail.
+per right, and prints the invite email for you to send. It sends mail only
+with `--send` or `--resend` ([Sending the invite email](#sending-the-invite-email)).
 Rights live in `scripts/people/rights.json` (the role name is the Logto role;
 `PEOPLE_RIGHTS` points at another catalog). It is idempotent, an unknown right
 is refused before any write, and every write lands in the `logto-admin.py`
@@ -2213,6 +2214,46 @@ placed by the repo):
 Tests: `scripts/tests/test_people_tailnet.py` against fake Logto and Tailscale
 APIs (ETag conflict, idempotent sync, the never-ports refusal, the missing
 token path). The live API is not part of any test or CI step.
+
+### Sending the invite email
+
+`people.py invite <email> --right <id> --send` mails the one invite email
+(`scripts/people/invite-email.txt`, rendered only for the chosen rights: install
+Tailscale, accept the invite with the invited address, turn on "Use Tailscale
+DNS", each product's URL and hint, sign in with Google, troubleshooting). It goes
+through Gmail SMTP (`scripts/people/mailer.py`, stdlib `smtplib`, STARTTLS on
+`smtp.gmail.com:587`) from the owner's own address. The tool mails the invitee
+only; Tailscale's own invite email is avoided because the invite is created
+without an `email` and its link is embedded in ours.
+
+- `--send` does the whole invite and then mails. `--resend` is for someone
+  already invited: it writes nothing to Logto or the policy, requires the Logto
+  user to hold each given right, mints a fresh tailnet invite link if the email
+  is not yet a tailnet member (or takes `--invite-url`), and mails it.
+- **No app password set** (today): `--send` prints the draft and a `mail not
+  configured` line and exits 0, so the invite itself never fails on mail. The
+  same happens, with a `not sent` line, when the email would still carry the
+  invite-link placeholder (no `TAILSCALE_USER_TOKEN` and no `--invite-url`).
+- A failed send exits 1 after the invite is done; re-run with `--resend`.
+
+**The one-time owner step** (not done by the repo): the same Google app
+password as [Email sign-in (Gmail SMTP)](#email-sign-in-gmail-smtp). From the
+sending Google Account turn on 2-Step Verification, then *Security > 2-Step
+Verification > App passwords*, name it for this stack, and put the 16 letters in
+the master file's slot `PARKED_LOGTO_SMTP_APP_PASSWORD` (`scripts/secrets/edit.sh
+master`). The people tool reads it from the environment of its SOPS file, so
+add to `<people>.sops`:
+
+```text
+PEOPLE_SMTP_USER=<sending Gmail address>
+PEOPLE_SMTP_PASSWORD=<the app password>
+PEOPLE_SMTP_FROM_NAME=<optional display name>   # optional
+```
+
+Confirm Google still offers app passwords on the account before relying on it.
+`PEOPLE_SMTP_HOST`, `PEOPLE_SMTP_PORT` and `PEOPLE_SMTP_CA_FILE` exist only for
+rehearsals against a local server. Tests:
+`scripts/tests/test_people.py` against a socket fake SMTP server with STARTTLS.
 
 ## Sign-in page branding
 
