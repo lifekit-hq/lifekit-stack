@@ -60,7 +60,7 @@ lost what. Idempotent: a second run finds nothing to do. --dry-run reads and
 prints "would ..." lines, writes nothing. --suspend-tailnet-user (only without
 --right) also suspends the Tailscale user (reversible, scope `users`); the
 Tailscale user and devices are never deleted. revoke_person() is the plain
-function other callers (people serve) use; it returns the lines and errors.
+function behind it (no printing, no exit); it returns the lines and errors.
 
 sync rebuilds the people-managed groups block from the Logto roles (the source
 of truth; a suspended user is in no group). Nothing is written when the groups

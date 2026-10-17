@@ -2202,7 +2202,7 @@ placed by the repo):
   admin console > Settings > OAuth clients > Generate, scopes **Policy File**
   (`policy_file`), **Users** read (`users:read`) and **Devices Core** read
   (`devices:core:read`), no tags. It does not expire and mints one-hour tokens.
-  It runs `sync`, `status` and the policy half of `invite`.
+  It runs `sync`, `status`, `revoke` and the policy half of `invite`.
 - *User token* (`TAILSCALE_USER_TOKEN`), optional: only a user-owned API token
   can create invites (an OAuth client cannot). Settings > Keys > Generate
   access token, the shortest expiry that covers the invite (1 day is plenty),
