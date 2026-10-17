@@ -303,6 +303,12 @@ def invite_writes(api, ledger, email: str, rights: list[tuple[str, dict]]) -> No
         f"user {user['id']}: " + ("exists" if n is None else f"created, ledger #{n}")
     )
     if user.get("isSuspended"):  # a revoked person invited again can sign in again
+        if not suspended_by_revoke(ledger, user["id"], email):
+            raise AdminError(
+                f"{email} is suspended, but not by people revoke (the ledger has no "
+                "revoke behind it): not re-enabling; unsuspend them in Logto first "
+                "if that is intended"
+            )
         set_suspended(api, ledger, user["id"], False)
         admin.say("user was suspended (revoked earlier): unsuspended")
     for rid, r in rights:
@@ -355,6 +361,27 @@ def deliver(email: str, text: str, placeholder: bool) -> None:
         subject, body = mailer.split_message(text)
         mailer.send(cfg, email, subject, body)
         admin.say(f"invite email sent to {email} from {cfg['user']}")
+
+
+def suspended_by_revoke(ledger, uid: str, email: str) -> bool:
+    """True when the user's latest suspend entry is the one revoke just made.
+
+    revoke appends its closing people-revoke entry right after the suspend, so the
+    entry that follows the latest suspend-user must be that revoke; any other
+    suspend (or a later unsuspend) is not revoke's to undo.
+    """
+    entries = ledger.entries()
+    last = None
+    for i, e in enumerate(entries):
+        if e.get("user") == uid and e.get("action") in (
+            "suspend-user",
+            "unsuspend-user",
+        ):
+            last = i
+    if last is None or entries[last]["action"] != "suspend-user":
+        return False
+    nxt = entries[last + 1] if last + 1 < len(entries) else {}
+    return nxt.get("action") == "people-revoke" and nxt.get("email") == email
 
 
 def set_suspended(api, ledger, uid: str, suspended: bool) -> int:
