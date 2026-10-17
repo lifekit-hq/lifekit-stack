@@ -21,9 +21,11 @@ runs:
                           other is 403 and nothing runs.
 
 The service refuses to start without a secret of at least 32 characters or
-without PEOPLE_SERVE_ACTORS, so a mis-set env never serves an open API. It runs the same functions as people.py
-(one request at a time: they print their progress, which is captured and
-returned as `output`), so Logto, tailnet and mail behave exactly as on the CLI.
+without PEOPLE_SERVE_ACTORS, so a mis-set env never serves an open API.
+
+It runs the same functions as people.py (one request at a time: they print
+their progress, which is captured and returned as `output`), so Logto, tailnet
+and mail behave exactly as on the CLI.
 
 Routes: GET /healthz, GET /v1/rights, GET /v1/people[?email=],
 POST /v1/people/invite, POST /v1/people/resend. Revoke is not here yet: when

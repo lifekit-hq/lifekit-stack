@@ -2304,7 +2304,8 @@ Each invite and resend adds one line to the Logto admin ledger
 (`logto-admin.py ledger`, the `people-state` volume): `action: people-request`,
 `actor`, `request` (`invite` / `resend`), `email`, `rights`, `send`, `result`
 (`ok` / `error`), next to the invite's own undoable writes. Entries without
-`undo` data are skipped by `logto-admin.py undo`.
+`undo` data are skipped by `logto-admin.py undo`. A request refused before it runs
+(401, 403, 400) is not recorded.
 
 | Route | Request | Response (200) |
 | --- | --- | --- |
@@ -2329,6 +2330,7 @@ Errors are `{"ok": false, "error": {"code", "message", "output"?}}`:
 | 404 / 405 | `not_found`, `method_not_allowed` | |
 | 413 | `too_large` | body over 8 KiB |
 | 502 | `failed` | a Logto, tailnet or mail step failed (or the user was not found); `output` shows what completed first, and a failed send after a finished invite is retried with resend |
+| 500 | `internal` | an unexpected error (the detail is in the container log, not the response); an invite or resend that died this way is still recorded in the ledger with `result: error` |
 | 503 | `not_configured` | `PEOPLE_HOST` is not set on the service |
 
 Revoke is not served yet: it follows `people revoke` (a separate slice). Its
