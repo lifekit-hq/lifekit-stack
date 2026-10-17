@@ -2255,6 +2255,89 @@ Confirm Google still offers app passwords on the account before relying on it.
 rehearsals against a local server. Tests:
 `scripts/tests/test_people.py` against a socket fake SMTP server with STARTTLS.
 
+### People serve
+
+`scripts/people/serve.py` is the people tool as a small JSON API, for the
+lifekit-dashboard People page (the page is built in that repo). The dashboard
+holds no Logto, Tailscale or SMTP secret: it calls this service, which runs the
+same functions as `people.py` (so Logto, tailnet and mail behave exactly as on
+the CLI) and holds the credentials. It is compose service `people-serve`
+(`compose/docker-compose.yml`, `compose/people-serve/`), contract `none`, on the
+internal network `lifekit-people` (no egress, no host port) plus `default` for
+its own egress. The dashboard reaches it at `http://people-serve:8095`.
+
+**It is off.** The service sits behind the compose profile `people`, so the
+merge deploy's `up -d` neither builds nor starts it, and `deploy.sh` only
+checks its contract label. Turning it on needs the owner's word (it puts real
+secrets in place and widens who can change sign-in):
+
+1. Choose the shared secret (32+ random characters) and put it, with the
+   people tool's credentials, in the stack env file the compose project reads:
+   `PEOPLE_SERVE_SECRET`, `PEOPLE_HOST` (the tailnet DNS name the products are
+   served on), `PEOPLE_LOGTO_ENDPOINT` (a Logto URL the container can reach:
+   Logto binds loopback, so the tailnet URL or the identity network),
+   `LOGTO_M2M_APP_ID` / `LOGTO_M2M_APP_SECRET`, the tailnet credentials
+   (["People: the tailnet half"](#people-the-tailnet-half)) and the mail ones
+   (["Sending the invite email"](#sending-the-invite-email)). Optionally
+   `PEOPLE_SERVE_ACTORS` (comma-separated emails allowed to act; unset means any
+   caller holding the secret and an email). An unset tailnet or mail block just
+   skips that step, as on the CLI.
+2. On the VPS: `docker compose -p compose --env-file /srv/lifekit-secrets/stack.env
+   -f compose/docker-compose.yml --profile people up -d --build people-serve`.
+   This creates the `lifekit-people` network.
+3. In the dashboard's compose project, declare `lifekit-people` as an external
+   network, attach the dashboard to it, and give it the same secret
+   (`PEOPLE_SERVE_SECRET`) as an env var. Nothing else.
+
+To turn it off: `docker compose -p compose ... --profile people stop people-serve`
+(or `rm -sf`), and detach the dashboard. A later merge deploy does not restart it.
+
+**Endpoint contract.** All bodies and responses are JSON. Every route but
+`/healthz` needs both headers, else `401` and nothing runs:
+
+| Header | Value |
+| --- | --- |
+| `X-People-Secret` | the shared secret (constant-time compare) |
+| `X-Auth-Request-Email` | the signed-in owner's email (the header the gate already forwards); recorded as the actor |
+
+Each invite and resend adds one line to the Logto admin ledger
+(`logto-admin.py ledger`, the `people-state` volume): `action: people-request`,
+`actor`, `request` (`invite` / `resend`), `email`, `rights`, `send`, `result`
+(`ok` / `error`), next to the invite's own undoable writes. Entries without
+`undo` data are skipped by `logto-admin.py undo`.
+
+| Route | Request | Response (200) |
+| --- | --- | --- |
+| `GET /healthz` | no headers | `{"ok": true}` |
+| `GET /v1/rights` | | `{"rights": [{"id", "name", "port"}]}`: the catalog, for the checkboxes |
+| `GET /v1/people[?email=]` | | `{"people": [{"email", "name", "roles", "rights", "suspended", "tailnet", "drift"}], "tailnet_configured", "tailnet_notes", "drift"}`; `rights` are catalog ids held, `tailnet` is a one-line membership and groups summary or `null`, `drift` lists per-person problems, the top-level `drift` the tailnet-wide ones |
+| `POST /v1/people/invite` | `{"email", "rights": [id...], "send"?: bool, "invite_url"?: "https://..."}` | `{"ok": true, "email", "output": [line...]}`; `output` is the CLI's progress and, without `send`, the draft email |
+| `POST /v1/people/resend` | `{"email", "rights": [id...], "invite_url"?}` | as invite; writes nothing to Logto or the policy, requires the user to hold each right, and mails |
+
+Invite is idempotent. `send` mails only with the mail settings and a tailnet
+invite link in place; otherwise the response carries the draft and a `not sent`
+line in `output`, with status 200, as on the CLI. The host in the email is the
+service's `PEOPLE_HOST`, never the request's.
+
+Errors are `{"ok": false, "error": {"code", "message", "output"?}}`:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `bad_request`, `unknown_right` | bad email, rights, `send` or `invite_url`; nothing was written |
+| 401 | `unauthorized` | missing or wrong secret, or no valid owner email |
+| 403 | `forbidden` | the email is not in `PEOPLE_SERVE_ACTORS` |
+| 404 / 405 | `not_found`, `method_not_allowed` | |
+| 413 | `too_large` | body over 8 KiB |
+| 502 | `failed` | a Logto, tailnet or mail step failed (or the user was not found); `output` shows what completed first, and a failed send after a finished invite is retried with resend |
+| 503 | `not_configured` | `PEOPLE_HOST` is not set on the service |
+
+Revoke is not served yet: it follows `people revoke` (a separate slice). Its
+seam is `route_table` in `serve.py`: add the route and one handler beside resend.
+
+Tests: `scripts/tests/test_people_serve.py` (auth rejections, every route, the
+ledger actor, and that a deploy render does not include the service) against
+fake Logto, Tailscale and SMTP servers.
+
 ## Sign-in page branding
 
 The Logto sign-in page shows each application's own mark and primary color:
