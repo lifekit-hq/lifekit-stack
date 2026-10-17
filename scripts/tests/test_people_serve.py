@@ -34,7 +34,6 @@ from test_people import (  # noqa: F401 - tls_ctx is a fixture
 from test_people_tailnet import (
     CLIENT_ID,
     CLIENT_SECRET,
-    INVITE_URL,
     USER_TOKEN,
     FakeTailscale,
     give_role,
@@ -309,7 +308,7 @@ def test_invite_is_idempotent(serve):
     assert len(writes(serve.logto)) == before
 
 
-def test_invite_send_mails_once(serve, tls_ctx):
+def test_invite_send_mails_once(serve, tls_ctx):  # noqa: F811 - fixture import
     smtp = FakeSmtp(tls_ctx=tls_ctx[0])
     base = serve.start(smtp_env(smtp, tls_ctx[2]))
     status, out = serve.call(
@@ -330,7 +329,7 @@ def test_invite_send_mails_once(serve, tls_ctx):
     assert PASSWORD not in json.dumps(out)
 
 
-def test_invite_without_send_never_mails(serve, tls_ctx):
+def test_invite_without_send_never_mails(serve, tls_ctx):  # noqa: F811 - fixture import
     smtp = FakeSmtp(tls_ctx=tls_ctx[0])
     base = serve.start(smtp_env(smtp, tls_ctx[2]))
     serve.call(
@@ -342,7 +341,7 @@ def test_invite_without_send_never_mails(serve, tls_ctx):
     assert smtp.messages == [] and smtp.logins == []
 
 
-def test_resend_writes_nothing_to_logto_and_mails(serve, tls_ctx):
+def test_resend_writes_nothing_to_logto_and_mails(serve, tls_ctx):  # noqa: F811 - fixture import
     smtp = FakeSmtp(tls_ctx=tls_ctx[0])
     base = serve.start(smtp_env(smtp, tls_ctx[2]))
     body = {"email": "friend@example.com", "rights": ["backstage"], "invite_url": LINK}

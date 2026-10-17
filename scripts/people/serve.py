@@ -164,7 +164,9 @@ class Service:
         for row in rows:
             u = row["user"]
             addr = (u.get("primaryEmail") or "").lower()
-            held = [rid for rid, r in cat["rights"].items() if r["role"] in row["roles"]]
+            held = [
+                rid for rid, r in cat["rights"].items() if r["role"] in row["roles"]
+            ]
             entry = {
                 "email": addr or None,
                 "name": u.get("name") or u.get("username"),
@@ -203,9 +205,7 @@ class Service:
             raise ApiError(400, "bad_request", "rights must be a non-empty list of ids")
         unknown = [r for r in rights if r not in cat["rights"]]
         if unknown:
-            raise ApiError(
-                400, "unknown_right", f"unknown right {', '.join(unknown)}"
-            )
+            raise ApiError(400, "unknown_right", f"unknown right {', '.join(unknown)}")
         url = body.get("invite_url")
         if url is not None and not (
             isinstance(url, str)
@@ -344,7 +344,10 @@ def make_handler(svc: Service):
                 self.log_message("%s", "unhandled error")
                 self.reply(
                     500,
-                    {"ok": False, "error": {"code": "internal", "message": "internal error"}},
+                    {
+                        "ok": False,
+                        "error": {"code": "internal", "message": "internal error"},
+                    },
                 )
 
         def do_GET(self):
@@ -364,7 +367,9 @@ def main(argv: list[str] | None = None) -> int:
     svc = Service()
     server = ThreadingHTTPServer((args.bind, args.port), make_handler(svc))
     print(
-        json.dumps({"level": "info", "msg": f"people serve on {args.bind}:{args.port}"}),
+        json.dumps(
+            {"level": "info", "msg": f"people serve on {args.bind}:{args.port}"}
+        ),
         flush=True,
     )
     server.serve_forever()
