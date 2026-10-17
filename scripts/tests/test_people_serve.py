@@ -324,6 +324,33 @@ def test_resend_writes_nothing_to_logto_and_mails(serve, tls_ctx):
     assert actions == ["invite", "resend"]
 
 
+def test_an_unexpected_failure_is_never_recorded_as_ok(tmp_path, monkeypatch):
+    sys.path.insert(0, str(REPO / "scripts/people"))
+    import people
+    import serve as people_serve
+
+    def boom(*_a, **_k):
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(people, "cmd_invite", boom)
+    svc = people_serve.Service(
+        {
+            "PEOPLE_SERVE_SECRET": SECRET,
+            "PEOPLE_HOST": HOST,
+            "LOGTO_M2M_APP_ID": APP_ID,
+            "LOGTO_M2M_APP_SECRET": APP_SECRET,
+            "LOGTO_ADMIN_LEDGER": str(tmp_path / "ledger.jsonl"),
+        }
+    )
+    body = {"email": "friend@example.com", "rights": ["backstage"], "invite_url": LINK}
+    with pytest.raises(TimeoutError):
+        svc.run(OWNER, "invite", body, resend=False)
+    (entry,) = [
+        json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text().splitlines()
+    ]
+    assert entry["actor"] == OWNER and entry["result"] == "error"
+
+
 def test_resend_for_someone_not_invited_is_a_failure_with_the_reason(serve):
     base = serve.start()
     serve.call(

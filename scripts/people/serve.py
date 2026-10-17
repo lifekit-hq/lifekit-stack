@@ -222,12 +222,13 @@ class Service:
         cat = self.catalog()
         args = self.args_for(body, cat, resend)
         buf = io.StringIO()
-        result, failure = "ok", None
+        result, failure = "error", None
         try:
             with contextlib.redirect_stdout(buf):
                 people.cmd_invite(self.api, self.ledger, args, cat)
+            result = "ok"
         except (AdminError, tailnet.TailnetError, mailer.MailError) as err:
-            result, failure = "error", str(err)
+            failure = str(err)
         finally:
             self.ledger.append(
                 {
