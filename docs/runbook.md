@@ -2026,6 +2026,7 @@ as soon as the transaction commits.
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py token-check'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-role admin'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py assign-role <email> admin'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py create-user <email> [--name <text>]'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-app "<name>" \
   --redirect-uri <uri> --post-logout-uri <uri> --secret-file ~/<name>.secret'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-redirects <app> \
@@ -2034,7 +2035,9 @@ sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-sign-in-e
   --sign-in-identifiers email username --primary-color <#hex> --logo-url <url>'
 ```
 
-`assign-role` takes a user id, primary email or username. `ensure-app`
+`assign-role` takes a user id, primary email or username. `create-user` makes
+a passwordless user with that primary email (it signs in with Google or an
+emailed code), only when no user has the email. `ensure-app`
 creates a Traditional web app, or brings an existing one's URIs to the given
 lists. `set-redirects` replaces the list it is given and keeps the other.
 `--secret-file` writes the app's client secret to a new 0600 file for
@@ -2055,7 +2058,7 @@ application's own name, logo and colors ([Sign-in page branding](#sign-in-page-b
 (`~/.local/state/lifekit/logto-admin.ledger.jsonl`, or `LOGTO_ADMIN_LEDGER`):
 the ids it created or touched, and the inverse request. `logto-admin.py
 ledger` lists it; `logto-admin.py undo [N]` sends entry N's inverse (default:
-the newest not yet undone): delete the role or app it created, take the role
+the newest not yet undone): delete the user, role or app it created, take the role
 back, restore the previous redirect URIs, or restore the previous
 sign-in experience objects (tenant or per application), or delete the email
 connector it created.
