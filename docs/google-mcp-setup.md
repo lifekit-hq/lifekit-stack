@@ -80,9 +80,10 @@ from a read-only consent cannot send. Order matters:
 2. Merge the compose change. The existing read-only token keeps working: mail
    stays readable, and a send is refused until the wider consent below is in.
 3. Redo step 6 with the permissions flag shown there, sign in once, and copy the
-   new token (step 7). Do this after the merge: the sign-in asks only for the
-   scopes the running config needs, so it requests `gmail.send` only once the
-   read-only flag is gone. Then check the granted scopes include `gmail.send`.
+   new token (step 7). The sign-in asks only for the scopes the running config
+   needs, so it requests `gmail.send` only once the read-only flag is gone: run
+   it after the compose change is live. Then check the granted scopes include
+   `gmail.send`.
 
 ## 3. Configure the OAuth consent screen
 
