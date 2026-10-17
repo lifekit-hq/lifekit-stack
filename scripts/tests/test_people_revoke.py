@@ -263,6 +263,36 @@ def test_invite_after_revoke_unsuspends(env):
     assert role_names(env.logto, user["id"]) == ["backstage"]
 
 
+def test_invite_refuses_a_user_suspended_outside_revoke(env, tmp_path):
+    user = seed(env)
+    user["isSuspended"] = True  # an admin suspended them in Logto
+    writes, entries = len(logto_writes(env.logto)), len(ledger(tmp_path))
+    acl = len(env.ts.acl_writes())
+    proc = env("invite", "friend@example.com", "--right", "backstage", "--host", HOST)
+    assert proc.returncode != 0
+    assert "not by people revoke" in proc.stderr
+    assert user["isSuspended"] is True
+    assert len(logto_writes(env.logto)) == writes
+    assert len(ledger(tmp_path)) == entries
+    assert len(env.ts.acl_writes()) == acl
+
+
+def test_invite_refuses_after_an_unrelated_suspend_follows_a_revoke(env):
+    user = seed(env)
+    env("revoke", "friend@example.com")
+    assert (
+        env(
+            "invite", "friend@example.com", "--right", "backstage", "--host", HOST
+        ).returncode
+        == 0
+    )
+    # an admin suspends them again outside people (the ledger last says unsuspend)
+    user["isSuspended"] = True
+    proc = env("invite", "friend@example.com", "--right", "backstage", "--host", HOST)
+    assert proc.returncode != 0
+    assert user["isSuspended"] is True
+
+
 def test_revoke_person_is_a_plain_function_that_validates_first():
     cat = people.load_catalog(people.CATALOG)
     with pytest.raises(people.AdminError, match="unknown right"):

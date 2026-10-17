@@ -2230,7 +2230,9 @@ lands in the `logto-admin.py` ledger with undo data, plus a closing
 `would ...` lines and writes nothing. A tailnet failure does not stop the Logto
 half; revoke then exits 1 with "run revoke again", and the re-run finishes it.
 A policy with a never-grant drift never blocks a revoke. Inviting a revoked
-person again unsuspends them.
+person again unsuspends them, but only when the ledger shows `people revoke`
+made the suspension; a user suspended any other way is refused (exit 1, nothing
+written) until someone unsuspends them in Logto.
 
 ```bash
 sops exec-env <people>.sops 'python3 scripts/people/people.py revoke <email> --dry-run'
