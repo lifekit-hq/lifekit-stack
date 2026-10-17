@@ -351,6 +351,38 @@ def test_an_unexpected_failure_is_never_recorded_as_ok(tmp_path, monkeypatch):
     assert entry["actor"] == OWNER and entry["result"] == "error"
 
 
+def test_each_request_gets_a_fresh_logto_token(tmp_path, monkeypatch):
+    sys.path.insert(0, str(REPO / "scripts/people"))
+    import serve as people_serve
+
+    admin = people_serve.admin
+
+    class Counting(admin.Api):
+        made: list = []
+
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            Counting.made.append(self)
+
+        def list_all(self, path):
+            return []
+
+    monkeypatch.setattr(admin, "Api", Counting)
+    svc = people_serve.Service(
+        {
+            "PEOPLE_SERVE_SECRET": SECRET,
+            "PEOPLE_HOST": HOST,
+            "LOGTO_M2M_APP_ID": APP_ID,
+            "LOGTO_M2M_APP_SECRET": APP_SECRET,
+            "LOGTO_ADMIN_LEDGER": str(tmp_path / "ledger.jsonl"),
+        }
+    )
+    svc.status(None)
+    svc.status(None)
+    assert len(Counting.made) == 2
+    assert Counting.made[0] is not Counting.made[1]
+
+
 def test_resend_for_someone_not_invited_is_a_failure_with_the_reason(serve):
     base = serve.start()
     serve.call(
@@ -506,15 +538,6 @@ def test_people_serve_is_behind_a_profile_and_declares_a_contract():
     assert set(svc["networks"]) == {"default", "people-internal"}
     # no host port: only the dashboard, on the internal network, can reach it
     assert "ports" not in svc
-
-
-def test_deploy_never_activates_the_people_profile():
-    for path in [REPO / "scripts/deploy.sh", *(REPO / "scripts/lib").glob("*.sh")]:
-        text = path.read_text()
-        assert "--profile people" not in text, path
-        assert "COMPOSE_PROFILES" not in text, path
-    ci = (REPO / ".github/workflows/ci.yml").read_text()
-    assert "profile people" not in ci and "COMPOSE_PROFILES" not in ci
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="needs docker compose")

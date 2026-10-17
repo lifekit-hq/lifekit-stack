@@ -99,8 +99,10 @@ class Service:
             raise SystemExit(
                 "people serve: LOGTO_M2M_APP_ID and LOGTO_M2M_APP_SECRET must be set"
             )
-        self.api = admin.Api(
-            env.get("LOGTO_ENDPOINT") or "http://127.0.0.1:3001", app_id, app_secret
+        self.logto = (
+            env.get("LOGTO_ENDPOINT") or "http://127.0.0.1:3001",
+            app_id,
+            app_secret,
         )
         self.ledger = admin.Ledger(
             Path(
@@ -138,13 +140,17 @@ class Service:
             ]
         }
 
+    def new_api(self) -> admin.Api:
+        return admin.Api(*self.logto)
+
     def status(self, email: str | None) -> dict:
         cat = self.catalog()
+        api = self.new_api()
         if email:
-            users = [admin.find_user(self.api, email)]
+            users = [admin.find_user(api, email)]
         else:
-            users = self.api.list_all("/api/users")
-        rows = [people.user_row(self.api, u, cat) for u in users]
+            users = api.list_all("/api/users")
+        rows = [people.user_row(api, u, cat) for u in users]
         ts = tailnet.Tailscale()
         view = people.tailnet_view(ts, cat) if ts.configured else None
         out = []
@@ -225,7 +231,7 @@ class Service:
         result, failure = "error", None
         try:
             with contextlib.redirect_stdout(buf):
-                people.cmd_invite(self.api, self.ledger, args, cat)
+                people.cmd_invite(self.new_api(), self.ledger, args, cat)
             result = "ok"
         except (AdminError, tailnet.TailnetError, mailer.MailError) as err:
             failure = str(err)
