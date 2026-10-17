@@ -241,7 +241,9 @@ fi
 # missing or inconsistent declaration never reaches `up`. The running
 # containers are checked after the smoke turns below. docs/platform-contract.md
 say "platform contract: declarations"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format json \
+# --profile '*' only widens this render so profile-gated services (people-serve)
+# get their declaration checked; the `up` below names no profile and starts none.
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile '*' config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 openclaw_compose --profile '*' config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -

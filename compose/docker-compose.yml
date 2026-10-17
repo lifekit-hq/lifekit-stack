@@ -18,6 +18,8 @@
 #    the Tempo/Loki datasource wiring. No host ports — reached in-network only.
 #   node-exporter         — host metrics (root fs free space today); read-only root
 #    mount, loopback-bound, scraped by prometheus alongside the other targets.
+#   people-serve         — (profile `people`, off by default) the people tool as a JSON API
+#                           for the dashboard's People page; docs/runbook.md "People serve".
 #   notify-relay         — the one renderer of owner notifications: a JSON envelope on
 #    /notify (docs/message-format.md), or devclaw's legacy /devclaw + /text POSTs,
 #    becomes Telegram HTML sent via the Bot API. Internal-only on :8090.
@@ -471,6 +473,64 @@ services:
       retries: 5
       start_period: 10s
 
+  people-serve:
+    <<: *policy
+    # The people tool's operations as a JSON API for the dashboard's People page
+    # (scripts/people/serve.py; docs/runbook.md "People serve"). OFF until the
+    # owner turns it on: the `people` profile keeps `up -d` (every merge
+    # deploy) from building or starting it, and it needs secrets that are not
+    # in place. Starting it (and the dashboard joining `people-internal`) is a
+    # runbook step.
+    #
+    # Holds the Logto M2M, Tailscale and SMTP credentials the dashboard must
+    # not. Reached only at http://people-serve:8095 over `people-internal`
+    # (internal, no egress: only the dashboard joins it); `default` is its
+    # egress to Logto, the Tailscale API and Gmail. Every request carries
+    # PEOPLE_SERVE_SECRET and the signed-in owner's email.
+    profiles:
+      - people
+    build:
+      context: ../scripts
+      dockerfile: ../compose/people-serve/Dockerfile
+    image: people-serve:local
+    labels:
+      lifekit.contract: "none"  # internal admin API, not a product (scripts/platform-contract.py)
+    networks:
+      - default
+      - people-internal
+    read_only: true
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          pids: 64
+    environment:
+      PEOPLE_SERVE_SECRET: ${PEOPLE_SERVE_SECRET:-}
+      PEOPLE_SERVE_ACTORS: ${PEOPLE_SERVE_ACTORS:-}
+      PEOPLE_HOST: ${PEOPLE_HOST:-}
+      LOGTO_ENDPOINT: ${PEOPLE_LOGTO_ENDPOINT:-}
+      LOGTO_M2M_APP_ID: ${LOGTO_M2M_APP_ID:-}
+      LOGTO_M2M_APP_SECRET: ${LOGTO_M2M_APP_SECRET:-}
+      TAILSCALE_OAUTH_CLIENT_ID: ${TAILSCALE_OAUTH_CLIENT_ID:-}
+      TAILSCALE_OAUTH_CLIENT_SECRET: ${TAILSCALE_OAUTH_CLIENT_SECRET:-}
+      TAILSCALE_USER_TOKEN: ${TAILSCALE_USER_TOKEN:-}
+      PEOPLE_SMTP_USER: ${PEOPLE_SMTP_USER:-}
+      PEOPLE_SMTP_PASSWORD: ${PEOPLE_SMTP_PASSWORD:-}
+      PEOPLE_SMTP_FROM_NAME: ${PEOPLE_SMTP_FROM_NAME:-}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - people-state:/var/lib/people
+    expose:
+      - "8095"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8095/healthz', timeout=3)\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   # NOTE: the prior health-claw MCP wrapper service was removed in the v2
   # cutover. workout-claw + life-state are now Kit's workspace skills (called
   # as bash by the single Kit agent), not an MCP-wrapped sibling container.
@@ -491,6 +551,13 @@ networks:
   # once by scripts/deploy.sh before the first `up`.
   identity-oidc:
     external: true
+  # people-serve <-> the dashboard, nothing else. `internal` means no egress and
+  # no host publishing; the dashboard's compose project declares it external
+  # and joins it (docs/runbook.md "People serve"). Created when the `people`
+  # profile first comes up.
+  people-internal:
+    name: lifekit-people
+    internal: true
 
 # ── Secrets ─────────────────────────────────────────────────────────────────
 # Sourced from the --env-file environment, not from a file on disk.
@@ -518,5 +585,7 @@ volumes:
     name: ${LIFEKIT_GRAFANA_VOLUME:-docker_grafana_data}
   tempo_data:
     name: ${LIFEKIT_TEMPO_VOLUME:-compose_tempo_data}
+  # people-serve's Logto admin ledger (the `people` profile only).
+  people-state:
   otel_filelog_state:
     name: ${LIFEKIT_OTEL_FILELOG_VOLUME:-compose_otel_filelog_state}
