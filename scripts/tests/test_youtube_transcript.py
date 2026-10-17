@@ -94,10 +94,16 @@ if mode == "auto" and not manual:
 """
 
 
+_held_ports: list[socket.socket] = []
+
+
 def closed_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    """A port that refuses connections. The socket stays bound (never listening)
+    so no later ephemeral bind in the same run can be handed the same port."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    _held_ports.append(s)
+    return s.getsockname()[1]
 
 
 def recv_exact(s: socket.socket, n: int) -> bytes:
