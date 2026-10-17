@@ -24,6 +24,7 @@ TAILSCALE_API_URL overrides https://api.tailscale.com (tests, rehearsals).
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -39,11 +40,17 @@ END_RE = re.compile(r"^[ \t]*//[ \t]*END people-managed\b.*$", re.M)
 GROUP_LINE_RE = re.compile(r'^"(group:[^"]+)"\s*:\s*\[(.*)\]\s*,?\s*(//.*)?$')
 MEMBER_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
+USER_TOKEN_RE = re.compile(r"^tskey-api-([^-\s]+)-")
+
 PASTE_HINT = "create an invite link in the admin console and paste it"
 
 
 class TailnetError(Exception):
     pass
+
+
+class TokenRejected(TailnetError):
+    """Tailscale answered 401: the credential is expired, revoked or wrong."""
 
 
 # ─── policy text ─────────────────────────────────────────────────────────────
@@ -356,6 +363,45 @@ class Tailscale:
             (u for u in self.users() if (u.get("loginName") or "").lower() == email),
             None,
         )
+
+    def suspend_user(self, user_id: str) -> None:
+        """Suspend a tailnet user (reversible; scope `users`). Their devices stop."""
+        self._call(
+            "POST",
+            f"/api/v2/users/{urllib.parse.quote(str(user_id), safe='')}/suspend",
+            "suspend the tailnet user",
+            ok=(200, 201, 202, 204),
+        )
+
+    def user_token_expiry(self) -> datetime.datetime | None:
+        """When TAILSCALE_USER_TOKEN expires (None: it does not), read from the key
+        record the token's own id names. Raises TokenRejected when it is already
+        expired or revoked, TailnetError when the record cannot be read."""
+        m = USER_TOKEN_RE.match(self._user_token)
+        if not m:
+            raise TailnetError("TAILSCALE_USER_TOKEN is not a tskey-api-... token")
+        status, _, body = self._send(
+            "GET",
+            f"/api/v2/tailnet/{self.tailnet}/keys/{urllib.parse.quote(m.group(1))}",
+            {"Authorization": f"Bearer {self._user_token}"},
+        )
+        if status == 401:
+            raise TokenRejected("the user token is rejected (expired or revoked)")
+        if status != 200:
+            raise self._fail("read the user token's expiry", status, body)
+        try:
+            key = json.loads(body)
+            if key.get("revoked") or key.get("invalid"):
+                raise TokenRejected("the user token is revoked or invalid")
+            expires = key.get("expires")
+            if not expires:
+                return None
+            when = datetime.datetime.fromisoformat(expires.replace("Z", "+00:00"))
+        except (ValueError, AttributeError, TypeError):
+            raise TailnetError(
+                "read the user token's expiry: unexpected response"
+            ) from None
+        return when if when.tzinfo else when.replace(tzinfo=datetime.UTC)
 
     def create_invite(self) -> str:
         """A member invite with no email field; returns its inviteUrl."""

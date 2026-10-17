@@ -244,6 +244,10 @@ def handler_for(fake: FakeLogto):
                     fake.users = [u for u in fake.users if u["id"] != uid]
                     fake.user_roles.pop(uid, None)
                     return self.reply(204)
+                if len(parts) == 4 and parts[3] == "is-suspended" and method == "PATCH":
+                    user = next(u for u in fake.users if u["id"] == uid)
+                    user["isSuspended"] = data["isSuspended"]
+                    return self.reply(200, user)
                 have = fake.user_roles.setdefault(uid, [])
                 if method == "GET":
                     return self.page([r for r in fake.roles if r["id"] in have], query)

@@ -5,6 +5,8 @@
                     [--invite-url URL] [--no-tailnet] [--send | --resend]
     people.py status [EMAIL]
     people.py sync [--dry-run]
+    people.py revoke EMAIL [--right ID]... [--dry-run] [--suspend-tailnet-user]
+    people.py status --notify
 
 invite makes sure the Logto user exists (primary email, no password: they sign
 in with Google or an emailed code) and holds one Logto role per right, then
@@ -41,6 +43,25 @@ it adds each user's tailnet membership and groups, and drift between roles and
 groups, missing grants, a policy with no tests, and tailnet members no Logto
 user matches. With EMAIL it shows that one user; without, every user.
 
+status --notify also posts what it found to notify-relay (docs/message-format.md,
+through scripts/ledger-persona/drift-alert.py's transport, so run it on the host):
+one `act` envelope for drift (any line of the drift list; silent when there is
+none) and one `wait` envelope when TAILSCALE_USER_TOKEN expires within 14 days
+or is already rejected (its expiry is read from the token's own key record;
+no token set, nothing to check). Run it on a timer (docs/runbook.md "People:
+revoke and drift alerts"); exit 1 if the relay did not take the envelope.
+
+revoke removes a person's access: the email leaves the tailnet group of each
+right (every catalog right without --right), the Logto role for each is
+removed, and the Logto user is suspended when no product role remains and no
+platform role (admin) is held. The network cut goes first. Each Logto write has
+undo data in the ledger, and a closing `people-revoke` ledger entry records who
+lost what. Idempotent: a second run finds nothing to do. --dry-run reads and
+prints "would ..." lines, writes nothing. --suspend-tailnet-user (only without
+--right) also suspends the Tailscale user (reversible, scope `users`); the
+Tailscale user and devices are never deleted. revoke_person() is the plain
+function behind it (no printing, no exit); it returns the lines and errors.
+
 sync rebuilds the people-managed groups block from the Logto roles (the source
 of truth; a suspended user is in no group). Nothing is written when the groups
 already match. --dry-run prints the changes only.
@@ -58,9 +79,11 @@ Logto and Tailscale APIs.
 from __future__ import annotations
 
 import argparse
+import datetime
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -237,8 +260,7 @@ def tailnet_invite(
             )
         except tailnet.TailnetError as err:
             admin.say(
-                f"tailnet: {err}; the user token may be expired: "
-                f"{tailnet.PASTE_HINT}"
+                f"tailnet: {err}; the user token may be expired: {tailnet.PASTE_HINT}"
             )
     return url, False
 
@@ -280,6 +302,9 @@ def invite_writes(api, ledger, email: str, rights: list[tuple[str, dict]]) -> No
     admin.say(
         f"user {user['id']}: " + ("exists" if n is None else f"created, ledger #{n}")
     )
+    if user.get("isSuspended"):  # a revoked person invited again can sign in again
+        set_suspended(api, ledger, user["id"], False)
+        admin.say("user was suspended (revoked earlier): unsuspended")
     for rid, r in rights:
         role, n = admin.ensure_role(
             api, ledger, r["role"], f"{r['name']} access ({rid})"
@@ -330,6 +355,203 @@ def deliver(email: str, text: str, placeholder: bool) -> None:
         subject, body = mailer.split_message(text)
         mailer.send(cfg, email, subject, body)
         admin.say(f"invite email sent to {email} from {cfg['user']}")
+
+
+def set_suspended(api, ledger, uid: str, suspended: bool) -> int:
+    api.call("PATCH", f"/api/users/{uid}/is-suspended", {"isSuspended": suspended})
+    return ledger.append(
+        {
+            "action": "suspend-user" if suspended else "unsuspend-user",
+            "user": uid,
+            "undo": {
+                "method": "PATCH",
+                "path": f"/api/users/{uid}/is-suspended",
+                "body": {"isSuspended": not suspended},
+            },
+        }
+    )
+
+
+def tailnet_remove(
+    ts, cat: dict, email: str, rids: list[str], dry_run: bool = False
+) -> list[str]:
+    """Take email out of group:<right> for each right. Returns the groups it left.
+
+    Reads the groups block without check_policy: a policy that has drifted must
+    never stop a revoke.
+    """
+    order = [group_of(r) for r in cat["rights"]]
+    drop = {group_of(r) for r in rids}
+    left: list[str] = []
+
+    def mutate(text: str) -> str | None:
+        have = tailnet.managed_groups(text)
+        left[:] = [
+            g for g, m in have.items() if g in drop and email in {e.lower() for e in m}
+        ]
+        if not left or dry_run:
+            return None
+        merged = {
+            g: [e for e in m if e.lower() != email] if g in drop else list(m)
+            for g, m in have.items()
+        }
+        return tailnet.with_groups(text, merged, order)
+
+    ts.update_policy(mutate)
+    return left
+
+
+def revoke_person(
+    api,
+    ledger,
+    cat: dict,
+    email: str,
+    rids: list[str] | None = None,
+    ts=None,
+    dry_run: bool = False,
+    suspend_tailnet: bool = False,
+) -> dict:
+    """Cut a person's access. Plain function: no printing, no exit.
+
+    rids None/empty revokes every catalog right. Returns {"email", "rights",
+    "log": [lines], "changed": bool, "errors": [lines]}. The tailnet half runs
+    first (it is the network cut) and a failure there, or no tailnet client,
+    does not stop the Logto half; it comes back in "errors". Bad input (unknown right, bad email,
+    --right with the tailnet-user suspend) raises AdminError before any write.
+    """
+    email = email.strip().lower()
+    if "@" not in email or " " in email:
+        raise AdminError(f"{email!r} is not an email address")
+    whole = not rids
+    if suspend_tailnet and not whole:
+        raise AdminError("suspending the tailnet user takes all rights: drop --right")
+    rights = list(cat["rights"].items()) if whole else pick_rights(cat, rids)
+    ids = [rid for rid, _ in rights]
+    log: list[str] = []
+    errors: list[str] = []
+    changed = False
+
+    if ts is None:
+        errors.append(
+            "tailnet: not configured (set TAILSCALE_OAUTH_CLIENT_ID and "
+            "TAILSCALE_OAUTH_CLIENT_SECRET): network access not cut"
+        )
+    else:
+        try:
+            left = tailnet_remove(ts, cat, email, ids, dry_run)
+            for rid in ids:
+                g = group_of(rid)
+                log.append(
+                    f"tailnet {g}: "
+                    + (
+                        ("would remove" if dry_run else "removed")
+                        if g in left
+                        else "not a member"
+                    )
+                )
+            changed |= bool(left) and not dry_run
+            if suspend_tailnet:
+                member = ts.member(email)
+                if member is None:
+                    log.append("tailnet user: not a member, nothing to suspend")
+                elif member.get("status") == "suspended":
+                    log.append("tailnet user: already suspended")
+                elif dry_run:
+                    log.append("tailnet user: would suspend")
+                else:
+                    ts.suspend_user(member["id"])
+                    changed = True
+                    log.append("tailnet user: suspended")
+        except tailnet.TailnetError as err:
+            errors.append(f"tailnet: {err}")
+
+    user = admin.lookup_user(api, email)
+    if user is None:
+        log.append(f"logto: no user for {email}, nothing to revoke there")
+    else:
+        held = {r["name"]: r for r in api.list_all(f"/api/users/{user['id']}/roles")}
+        for rid, r in rights:
+            role = held.pop(r["role"], None)
+            if role is None:
+                log.append(f"right {rid}: role {r['role']} not held")
+                continue
+            if not dry_run:
+                api.call("DELETE", f"/api/users/{user['id']}/roles/{role['id']}")
+                n = ledger.append(
+                    {
+                        "action": "remove-role",
+                        "user": user["id"],
+                        "role": {"id": role["id"], "name": role["name"]},
+                        "undo": {
+                            "method": "POST",
+                            "path": f"/api/users/{user['id']}/roles",
+                            "body": {"roleIds": [role["id"]]},
+                        },
+                    }
+                )
+                changed = True
+                log.append(f"right {rid}: role {r['role']} removed, ledger #{n}")
+            else:
+                log.append(f"right {rid}: would remove role {r['role']}")
+        product = {r["role"] for r in cat["rights"].values()}
+        platform = sorted(set(held) - product)
+        if set(held) & product:
+            log.append(
+                "logto: still holds "
+                + ", ".join(sorted(set(held) & product))
+                + ": not suspended"
+            )
+        elif platform:
+            log.append(
+                f"logto: holds platform role {', '.join(platform)}: not suspended"
+            )
+        elif user.get("isSuspended"):
+            log.append("logto: already suspended")
+        elif dry_run:
+            log.append("logto: would suspend the user (no rights remain)")
+        else:
+            n = set_suspended(api, ledger, user["id"], True)
+            changed = True
+            log.append(f"logto: user suspended (no rights remain), ledger #{n}")
+
+    if changed:
+        n = ledger.append(
+            {"action": "people-revoke", "email": email, "rights": ids, "whole": whole}
+        )
+        log.append(f"revoke recorded, ledger #{n}")
+    elif not errors:
+        log.append(
+            "nothing to revoke: already done" if not dry_run else "dry run: no writes"
+        )
+    return {
+        "email": email,
+        "rights": ids,
+        "log": log,
+        "changed": changed,
+        "errors": errors,
+    }
+
+
+def cmd_revoke(api, ledger, args, cat: dict) -> None:
+    ts = tailnet.Tailscale()
+    if not ts.configured:
+        ts = None
+    result = revoke_person(
+        api,
+        ledger,
+        cat,
+        args.email,
+        args.right,
+        ts,
+        args.dry_run,
+        args.suspend_tailnet_user,
+    )
+    for line in result["log"]:
+        admin.say(line)
+    if result["errors"]:
+        raise AdminError(
+            "; ".join(result["errors"]) + " (the rest was done; run revoke again)"
+        )
 
 
 def desired_groups(api, cat: dict) -> dict[str, list[str]]:
@@ -490,7 +712,77 @@ def tailnet_global_drift(view: dict, cat: dict, rows: list[dict], everyone: bool
     return out
 
 
+TOKEN_WARN_DAYS = 14
+STATUS_ACTION = "people.py status"
+TOKEN_ACTION = (
+    "generate a new user token (Settings > Keys) for the people SOPS file, or "
+    "remove TAILSCALE_USER_TOKEN from it when no invite is pending"
+)
+
+
+def token_problem(ts, now=None) -> tuple[str, str | None]:
+    """-> (status line, a problem to alert on or None) for TAILSCALE_USER_TOKEN."""
+    now = now or datetime.datetime.now(datetime.UTC)
+    try:
+        expires = ts.user_token_expiry()
+    except tailnet.TokenRejected as err:
+        return str(err), f"TAILSCALE_USER_TOKEN is expired or rejected: {err}"
+    except tailnet.TailnetError as err:
+        return f"expiry unknown ({err})", f"cannot check TAILSCALE_USER_TOKEN: {err}"
+    if expires is None:
+        return "does not expire", None
+    left = expires - now
+    day = expires.strftime("%Y-%m-%d")
+    if left <= datetime.timedelta(0):
+        return f"expired {day}", f"TAILSCALE_USER_TOKEN expired on {day}"
+    days = left.days
+    line = f"expires {day} (in {days} days)"
+    if left < datetime.timedelta(days=TOKEN_WARN_DAYS):
+        return line, f"TAILSCALE_USER_TOKEN expires on {day}, in {days} days"
+    return line, None
+
+
+def drift_envelope(findings: list[str]) -> dict:
+    n = len(findings)
+    return {
+        "level": "act",
+        "source": "people",
+        "subject": "drift",
+        "headline": f"{n} access finding{'s' if n != 1 else ''}: roles, tailnet "
+        "groups and members disagree",
+        "body": "\n".join(f"- {f}" for f in findings),
+        "action": STATUS_ACTION,
+    }
+
+
+def token_envelope(problem: str) -> dict:
+    return {
+        "level": "wait",
+        "source": "people",
+        "subject": "tailnet-token",
+        "headline": problem[:780],
+        "action": TOKEN_ACTION,
+    }
+
+
+def notify(envelopes: list[dict]) -> None:
+    """POST each envelope to notify-relay through the drift-alert transport."""
+    spec = importlib.util.spec_from_file_location(
+        "drift_alert", HERE.parent / "ledger-persona" / "drift-alert.py"
+    )
+    transport = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(transport)
+    for env in envelopes:
+        try:
+            transport.post(env)
+        except (RuntimeError, subprocess.TimeoutExpired, OSError) as err:
+            raise AdminError(f"alert not delivered: {err}") from None
+        admin.say(f"alert sent to notify-relay: {env['subject']}")
+
+
 def cmd_status(api, _ledger, args, cat: dict) -> None:
+    if args.notify and args.email:
+        raise AdminError("--notify checks everyone: drop the email")
     if args.email:
         users = [admin.find_user(api, args.email.strip().lower())]
     else:
@@ -518,17 +810,32 @@ def cmd_status(api, _ledger, args, cat: dict) -> None:
         for note in view["notes"]:
             admin.say(f"tailnet: {note}")
         extra = tailnet_global_drift(view, cat, rows, not args.email)
+    problem = None
+    if view is not None and ts.can_invite and not args.email:
+        line, problem = token_problem(ts)
+        admin.say(f"tailnet user token: {line}")
     drifted = [r for r in rows if r["drift"]]
+    findings: list[str] = []
     if drifted or extra:
         admin.say("drift:")
         for row in drifted:
             u = row["user"]
             who = u.get("primaryEmail") or u["id"]
             admin.say(f"  {who}: {'; '.join(row['drift'])}")
+            findings.append(f"{who}: {'; '.join(row['drift'])}")
         for line in extra:
             admin.say(f"  tailnet: {line}")
+            findings.append(f"tailnet: {line}")
     else:
         admin.say("drift: none")
+    if args.notify:
+        envelopes = ([drift_envelope(findings)] if findings else []) + (
+            [token_envelope(problem)] if problem else []
+        )
+        if envelopes:
+            notify(envelopes)
+        else:
+            admin.say("nothing to alert on")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -557,6 +864,29 @@ def parser() -> argparse.ArgumentParser:
     )
     s = sub.add_parser("status", help="Logto roles, suspended flag and drift")
     s.add_argument("email", nargs="?")
+    s.add_argument(
+        "--notify",
+        action="store_true",
+        help="post drift and a nearly expired user token to notify-relay",
+    )
+    r = sub.add_parser(
+        "revoke", help="cut a person's network and sign-in access (idempotent)"
+    )
+    r.add_argument("email")
+    r.add_argument(
+        "--right",
+        action="append",
+        metavar="ID",
+        help="revoke only this right (repeatable); default: every right",
+    )
+    r.add_argument(
+        "--dry-run", action="store_true", help="print what would change, write nothing"
+    )
+    r.add_argument(
+        "--suspend-tailnet-user",
+        action="store_true",
+        help="also suspend the Tailscale user (all rights only; never deletes)",
+    )
     y = sub.add_parser(
         "sync", help="rebuild the tailnet groups block from the Logto roles"
     )
@@ -587,9 +917,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         cat = load_catalog(Path(os.environ.get("PEOPLE_RIGHTS") or CATALOG))
-        {"invite": cmd_invite, "status": cmd_status, "sync": cmd_sync}[args.cmd](
-            api, ledger, args, cat
-        )
+        {
+            "invite": cmd_invite,
+            "status": cmd_status,
+            "sync": cmd_sync,
+            "revoke": cmd_revoke,
+        }[args.cmd](api, ledger, args, cat)
     except (AdminError, tailnet.TailnetError, mailer.MailError) as err:
         print(f"people: {err}", file=sys.stderr)
         return 1
