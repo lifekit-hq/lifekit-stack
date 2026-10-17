@@ -77,6 +77,7 @@ def serve(tmp_path):
             "LOGTO_M2M_APP_SECRET": APP_SECRET,
             "PEOPLE_HOST": HOST,
             "PEOPLE_SERVE_SECRET": secret,
+            "PEOPLE_SERVE_ACTORS": OWNER,
         }
         if tailnet:
             env |= {
@@ -171,6 +172,27 @@ def test_refuses_to_start_without_a_strong_secret(serve, secret):
     assert "PEOPLE_SERVE_SECRET" in proc.stderr
 
 
+@pytest.mark.parametrize("actors", ["", " , "])
+def test_refuses_to_start_without_actors(serve, actors):
+    proc = subprocess.run(
+        [sys.executable, str(SERVE), "--port", str(free_port())],
+        env={
+            "PATH": os.environ["PATH"],
+            "HOME": "/nonexistent",
+            "LOGTO_M2M_APP_ID": APP_ID,
+            "LOGTO_M2M_APP_SECRET": APP_SECRET,
+            "PEOPLE_SERVE_SECRET": SECRET,
+            "PEOPLE_SERVE_ACTORS": actors,
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "PEOPLE_SERVE_ACTORS" in proc.stderr
+
+
 # ─── auth ────────────────────────────────────────────────────────────────────
 
 ROUTES = [
@@ -223,6 +245,16 @@ def test_actor_allowlist_limits_who_may_act(serve):
     other = {**GOOD, "X-Auth-Request-Email": "mallory@example.com"}
     status, out = serve.call(base, "GET", "/v1/rights", None, other)
     assert status == 403 and out["error"]["code"] == "forbidden"
+    status, _ = serve.call(
+        base,
+        "POST",
+        "/v1/people/invite",
+        {"email": "friend@example.com", "rights": ["backstage"], "invite_url": LINK},
+        other,
+    )
+    assert status == 403
+    assert writes(serve.logto) == []
+    assert serve.entries() == []
 
 
 def test_unknown_route_and_wrong_method(serve):
@@ -336,6 +368,7 @@ def test_an_unexpected_failure_is_never_recorded_as_ok(tmp_path, monkeypatch):
     svc = people_serve.Service(
         {
             "PEOPLE_SERVE_SECRET": SECRET,
+            "PEOPLE_SERVE_ACTORS": OWNER,
             "PEOPLE_HOST": HOST,
             "LOGTO_M2M_APP_ID": APP_ID,
             "LOGTO_M2M_APP_SECRET": APP_SECRET,
@@ -371,6 +404,7 @@ def test_each_request_gets_a_fresh_logto_token(tmp_path, monkeypatch):
     svc = people_serve.Service(
         {
             "PEOPLE_SERVE_SECRET": SECRET,
+            "PEOPLE_SERVE_ACTORS": OWNER,
             "PEOPLE_HOST": HOST,
             "LOGTO_M2M_APP_ID": APP_ID,
             "LOGTO_M2M_APP_SECRET": APP_SECRET,

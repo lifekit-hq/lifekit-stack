@@ -2276,12 +2276,12 @@ secrets in place and widens who can change sign-in):
    `PEOPLE_SERVE_SECRET`, `PEOPLE_HOST` (the tailnet DNS name the products are
    served on), `PEOPLE_LOGTO_ENDPOINT` (a Logto URL the container can reach:
    Logto binds loopback, so the tailnet URL or the identity network),
-   `LOGTO_M2M_APP_ID` / `LOGTO_M2M_APP_SECRET`, the tailnet credentials
+   `LOGTO_M2M_APP_ID` / `LOGTO_M2M_APP_SECRET`, `PEOPLE_SERVE_ACTORS` (the
+   owner's email; comma-separated emails allowed to act, required: the service
+   refuses to start without it), the tailnet credentials
    (["People: the tailnet half"](#people-the-tailnet-half)) and the mail ones
-   (["Sending the invite email"](#sending-the-invite-email)). Optionally
-   `PEOPLE_SERVE_ACTORS` (comma-separated emails allowed to act; unset means any
-   caller holding the secret and an email). An unset tailnet or mail block just
-   skips that step, as on the CLI.
+   (["Sending the invite email"](#sending-the-invite-email)). An unset tailnet
+   or mail block just skips that step, as on the CLI.
 2. On the VPS: `docker compose -p compose --env-file /srv/lifekit-secrets/stack.env
    -f compose/docker-compose.yml --profile people up -d --build people-serve`.
    This creates the `lifekit-people` network.

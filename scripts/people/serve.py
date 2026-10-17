@@ -16,11 +16,12 @@ runs:
                           constant time
     X-Auth-Request-Email  the signed-in owner's email, forwarded by the
                           dashboard; recorded in the Logto admin ledger as the
-                          actor of each invite and resend. PEOPLE_SERVE_ACTORS
-                          (comma-separated emails), when set, limits who may act.
+                          actor of each invite and resend. Only emails listed
+                          in PEOPLE_SERVE_ACTORS (comma-separated) may act; any
+                          other is 403 and nothing runs.
 
-The service refuses to start without a secret of at least 32 characters, so a
-mis-set env never serves an open API. It runs the same functions as people.py
+The service refuses to start without a secret of at least 32 characters or
+without PEOPLE_SERVE_ACTORS, so a mis-set env never serves an open API. It runs the same functions as people.py
 (one request at a time: they print their progress, which is captured and
 returned as `output`), so Logto, tailnet and mail behave exactly as on the CLI.
 
@@ -92,6 +93,10 @@ class Service:
             for a in env.get("PEOPLE_SERVE_ACTORS", "").split(",")
             if a.strip()
         }
+        if not self.actors:
+            raise SystemExit(
+                "people serve: PEOPLE_SERVE_ACTORS must list at least one email"
+            )
         self.host = (env.get("PEOPLE_HOST") or "").strip()
         app_id = env.get("LOGTO_M2M_APP_ID", "")
         app_secret = env.get("LOGTO_M2M_APP_SECRET", "")
@@ -122,7 +127,7 @@ class Service:
         email = (headers.get(ACTOR_HEADER) or "").strip().lower()
         if not EMAIL_RE.match(email):
             raise ApiError(401, "unauthorized", f"{ACTOR_HEADER} is missing")
-        if self.actors and email not in self.actors:
+        if email not in self.actors:
             raise ApiError(403, "forbidden", "this account may not use people")
         return email
 
