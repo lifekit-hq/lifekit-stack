@@ -2084,7 +2084,7 @@ version: the bootstrap writes Logto's tables directly.
 ### Inviting a person: `people invite` / `people status`
 
 `scripts/people/people.py` is the owner-facing wrapper over the commands
-above (the Logto half; the tailnet and mail halves come later). `invite`
+above (the Logto half; the tailnet half is the next section, mail comes later). `invite`
 ensures the Logto user (primary email, no password: they sign in with Google,
 or an emailed code once the connector is live), ensures and assigns one role
 per right, and prints the invite email for you to send. It never sends mail.
@@ -2107,6 +2107,112 @@ placeholder where the Tailscale invite link goes. `status` lists each user's
 roles and suspended flag, and flags drift: a user with no product role (the
 `admin` platform role is exempt), or a suspended user who still holds one.
 The rehearsal script runs `invite` and `status` on the throwaway Logto too.
+
+### People: the tailnet half
+
+`people.py invite` and the new `people.py sync` also drive the tailnet policy,
+so a person reaches exactly the products they hold a right for. The Logto roles
+are the source of truth; the policy's tailnet groups are a projection of them,
+one `group:<right id>` per catalog right. The tool edits **only** the lines
+between a `BEGIN`/`END people-managed` marker pair inside `groups` (every other
+byte of the hand-written policy, comments included, stays), validates the
+result, and writes it with `If-Match` (a concurrent edit gets one re-read and
+retry). It also refuses to write while a policy grant lets a managed group reach
+a `never_ports` port of `scripts/people/rights.json` (the admin surfaces), and
+`status` reports the same.
+
+```bash
+sops exec-env <people>.sops 'python3 scripts/people/people.py sync [--dry-run]'
+sops exec-env <people>.sops 'python3 scripts/people/people.py invite <email> \
+  --right backstage --host <host>'
+```
+
+`<people>.sops` stands for whatever SOPS file holds the `LOGTO_M2M_*` and the
+`TAILSCALE_*` variables below; they are read from the environment only and
+never printed.
+
+- `invite` adds the email to `group:<right>`; if the email is not yet a tailnet
+  member it creates a user invite (no email field, so Tailscale sends nothing)
+  and puts the link in the email draft. With no user token, or one Tailscale
+  rejects, it prints "create an invite link in the admin console and paste it":
+  create the link there (Users > Invite), then re-run with `--invite-url <link>`
+  to render the email with it. Re-running for a non-member creates another
+  invite, since invites carry no email to match.
+- `sync` rebuilds every catalog group from the Logto roles (a suspended user is
+  in none) and writes only when something differs. Groups in the block that the
+  catalog does not know are left alone and reported. Run it after any role
+  change made by hand in the Logto console, or on a timer.
+- `status` adds each person's tailnet membership (devices, last seen) and
+  groups, and drift: a role without its group, a group without its role, a
+  right with no grant for its port or the sign-in port, a policy with no
+  `tests`, and a tailnet member no Logto user matches. Tailscale does not say
+  which login accepted an invite, so a person who accepts under another account
+  than the invited email shows up as unmatched: the email tells them to sign in
+  with the invited address.
+- Without the OAuth client every tailnet step prints "tailnet: not configured"
+  and is skipped; `invite --no-tailnet` skips it on purpose.
+
+**One-time operator step (owner, live: changes who can reach what).** Do it in
+the admin console policy editor (Access controls) with *Preview* before saving.
+`<host>` is the box's MagicDNS name and `<ip>` its tailnet address
+(`tailscale ip -4` on the box).
+
+1. A `hosts` alias, so grants and tests read well: `"hosts": { "lifekit-vps": "<ip>" },`
+2. The marker pair inside `groups`, exactly these comment lines (the group
+   lines between them are written by the tool; start them empty):
+
+   ```hujson
+   "groups": {
+     // BEGIN people-managed: written by `people sync`, hand edits are overwritten
+     "group:finance-sentry": [],
+     "group:backstage": [],
+     // END people-managed
+   },
+   ```
+
+3. One static grant per right, from its group to the alias on the right's port
+   plus every `always_ports` entry (the Logto sign-in the browser is
+   redirected to). Never one on a `never_ports` port:
+
+   ```hujson
+   { "src": ["group:backstage"], "dst": ["lifekit-vps"], "ip": ["tcp:<right port>", "tcp:<always port>"] },
+   ```
+
+4. A `tests` block, so a bad edit cannot save: per group accept the right's
+   port and deny every `never_ports` port (a test takes one port per entry):
+
+   ```hujson
+   "tests": [
+     { "src": "group:backstage", "accept": ["lifekit-vps:<right port>"],
+       "deny": ["lifekit-vps:<never port>", "lifekit-vps:<another never port>"] },
+   ],
+   ```
+
+5. Save, then check with the credentials below: `people.py status` should show
+   no `no grant` / `no tests block` drift, and `sync --dry-run` no error.
+
+**The credentials** (both ride in a SOPS file the people tool alone reads, never
+in OpenClaw or agent env; the first live use is the owner's step, nothing here is
+placed by the repo):
+
+- *OAuth client* (`TAILSCALE_OAUTH_CLIENT_ID`, `TAILSCALE_OAUTH_CLIENT_SECRET`):
+  admin console > Settings > OAuth clients > Generate, scopes **Policy File**
+  (`policy_file`), **Users** read (`users:read`) and **Devices Core** read
+  (`devices:core:read`), no tags. It does not expire and mints one-hour tokens.
+  It runs `sync`, `status` and the policy half of `invite`.
+- *User token* (`TAILSCALE_USER_TOKEN`), optional: only a user-owned API token
+  can create invites (an OAuth client cannot). Settings > Keys > Generate
+  access token, the shortest expiry that covers the invite (1 day is plenty),
+  from an Owner or Admin login. It carries that user's full power, so put it in
+  place only for the invite and remove it after; the tool falls back to the
+  paste-a-link step when it is absent or expired.
+- `TAILSCALE_TAILNET` (default `-`, the credential's own tailnet) and
+  `TAILSCALE_API_URL` (default `https://api.tailscale.com`) are overrides for
+  rehearsals; leave them unset on the box.
+
+Tests: `scripts/tests/test_people_tailnet.py` against fake Logto and Tailscale
+APIs (ETag conflict, idempotent sync, the never-ports refusal, the missing
+token path). The live API is not part of any test or CI step.
 
 ## Sign-in page branding
 
