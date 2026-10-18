@@ -715,10 +715,10 @@ groups:
             model:
               refId: A
               # 1 for each host unit that is not active or is failed. The
-              # CI runners, tailscaled and the lifekit timers live outside
+              # CI runners, tailscaled and the host timers live outside
               # Docker, so nothing else sees them; scripts/unit-gauge writes
               # both gauges through the textfile collector every 5 minutes.
-              # For a lifekit timer the unit is its service: active tracks the
+              # For a watched timer the unit is its service: active tracks the
               # .timer and failed is the service's last Result, so a failed
               # run stays reported until the next successful run.
               expr: host_unit_failed + (1 - host_unit_active)
@@ -754,9 +754,10 @@ groups:
           description: >-
             host_unit_active / host_unit_failed report {{ $labels.unit }} not active or failed
             for 10 minutes. `systemctl status {{ $labels.unit }}` and `journalctl -u {{ $labels.unit }}
-            -n 50` on the box show why. A failed lifekit timer service stays reported until its next
+            -n 50` on the box show why. A failed timer service stays reported until its next
             successful run; once the cause is fixed, `sudo systemctl reset-failed {{ $labels.unit }}.service`
-            clears the state.
+            clears the state. For memory-sync, `cat /srv/memory/.sync-failed` names the failed step and
+            docs/runbook.md "Memory-vault sync" has the response (a rebase conflict is resolved by hand).
 
       # The shared Claude account is a box-level resource like disk: one Max
       # subscription serves every consumer on the box (the operator's sessions,

@@ -180,6 +180,27 @@ if [ ! -d "${STATE_DIR}" ]; then
     "${STATE_DIR}/.curator-proposed"
 fi
 
+# ─── Runtime state out of the vault ──────────────────────────────────────────
+#
+# scripts/vault-state-moves.sh seeds the morning brief's inputs into
+# ${STATE_DIR}/morning-brief/ and moves the retired ops-agent's run dumps from
+# the vault to ${STATE_DIR}/ops-agent/. Never overwrites, never deletes, so it
+# runs on every deploy; an entry it had to leave in place prints and turns
+# nothing red.
+say "runtime state out of the vault (morning brief, ops-agent dumps)"
+bash "${REPO_DIR}/scripts/vault-state-moves.sh" \
+  || warn "vault state moves: some entries were left in place (lines above)"
+
+# ─── lifekit Claude Code home ─────────────────────────────────────────────────
+#
+# scripts/claude-home/install-claude-home.sh merges the vault harness into this
+# account's ~/.claude (the gateway's): CLAUDE_CODE_DISABLE_AUTO_MEMORY=1, the
+# two SessionStart hooks, the CLAUDE.md pointer. Every other settings key is
+# kept; a run with nothing to change prints nothing.
+say "lifekit Claude Code home (vault harness)"
+bash "${REPO_DIR}/scripts/claude-home/install-claude-home.sh" \
+  || warn "claude home: install-claude-home.sh failed (lines above)"
+
 # ─── devclaw: deployed from its own repo now (devclaw spec 005) ─────────────
 #
 # devclaw is deployed from its own repo now (devclaw spec 005) — see
@@ -529,6 +550,30 @@ DOCKER_PRUNE_STATUS=0
 bash "${REPO_DIR}/scripts/docker-prune-policy.sh" --check || DOCKER_PRUNE_STATUS=$?
 if [[ "${DOCKER_PRUNE_STATUS}" != 0 ]]; then
   printf '\033[1;31m✗ docker prune timer: the box has not converged on the repository policy (installed copy, units, enabled timer); apply it with the root step in docs/runbook.md "Scheduled Docker image and build-cache prune"\033[0m\n' >&2
+fi
+
+# ─── Memory-vault sync: host fact the repo owns, report-only ────────────────
+#
+# scripts/sync/install-memory-sync.sh installs the vault's 15-minute sync
+# (script + units, root). The deploy has no sudo; it only reports whether the
+# installed copy matches the repository and the timer is enabled. Same shape
+# as the prune timer above.
+say "memory-vault sync (host fact, report-only)"
+MEMORY_SYNC_STATUS=0
+bash "${REPO_DIR}/scripts/sync/install-memory-sync.sh" --check || MEMORY_SYNC_STATUS=$?
+if [[ "${MEMORY_SYNC_STATUS}" != 0 ]]; then
+  printf '\033[1;31m✗ memory-vault sync: the box has not converged on the repository script and units; apply them with the root step in docs/runbook.md "Memory-vault sync"\033[0m\n' >&2
+fi
+
+# ─── Runtime-state rotation: host fact the repo owns, report-only ───────────
+#
+# scripts/rotate/install-memory-rotate.sh installs the monthly memory-rotate
+# wrapper and units (root). Same shape as the sync check above.
+say "runtime-state rotation (host fact, report-only)"
+MEMORY_ROTATE_STATUS=0
+bash "${REPO_DIR}/scripts/rotate/install-memory-rotate.sh" --check || MEMORY_ROTATE_STATUS=$?
+if [[ "${MEMORY_ROTATE_STATUS}" != 0 ]]; then
+  printf '\033[1;31m✗ runtime-state rotation: the box has not converged on the repository wrapper and units; apply them with the root step in docs/runbook.md "Runtime-state rotation"\033[0m\n' >&2
 fi
 
 # ─── Host firewall: host fact the repo owns, report-only ────────────────────

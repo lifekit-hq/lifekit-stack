@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Export host systemd unit state as node-exporter textfile metrics. The box's
-# CI runners, tailscaled and the lifekit timers run outside Docker, so the
+# CI runners, tailscaled and the host timers run outside Docker, so the
 # container exporter cannot see them and a dead runner or a failed timer run
 # was silent until a deploy or a sweep noticed. node-exporter's systemd
 # collector stays off (it needs the system bus and exports every unit);
@@ -9,7 +9,7 @@
 # scripts/tmp-gauge/tmp-usage-gauge.sh. Run from unit-gauge.timer (installed
 # by install-host-gauges.sh) - see docs/runbook.md "Host unit gauge".
 #
-#   host_unit_active{unit}  1 when the unit is active, else 0. For a lifekit
+#   host_unit_active{unit}  1 when the unit is active, else 0. For a watched
 #                           timer the unit is its service and active tracks
 #                           the .timer (the oneshot service is inactive
 #                           between runs by design).
@@ -29,6 +29,9 @@ SYSTEMCTL="${SYSTEMCTL:-systemctl}"
 RUNNER_GLOB='actions.runner.*.service'
 FIXED_UNITS=(tailscaled.service docker.service containerd.service cron.service unattended-upgrades.service)
 TIMER_GLOB='lifekit-*.timer'
+# Timers outside the lifekit-* naming: the vault sync, the openclaw-config sync
+# and the vault rotation, named before the convention and kept for continuity.
+FIXED_TIMERS=(memory-sync.timer openclaw-config-sync.timer memory-rotate.timer)
 
 declare -A SEEN=()
 lines=()
@@ -83,9 +86,12 @@ for u in "${units[@]}"; do
   emit "${u%.service}" "$ACTIVE" "$RESULT" "$FILE_STATE"
 done
 
-timers="$(list_installed "$TIMER_GLOB")"
-while IFS= read -r timer; do
-  [[ -z "$timer" ]] && continue
+timers=("${FIXED_TIMERS[@]}")
+globbed="$(list_installed "$TIMER_GLOB")"
+while IFS= read -r t; do [[ -n "$t" ]] && timers+=("$t"); done <<< "$globbed"
+for timer in "${timers[@]}"; do
+  [[ -n "${SEEN[$timer]:-}" ]] && continue
+  SEEN[$timer]=1
   svc="${timer%.timer}.service"
   state "$timer"
   [[ -z "$LOAD" || "$LOAD" == "not-found" ]] && continue
@@ -94,12 +100,12 @@ while IFS= read -r timer; do
   # A timer whose service is missing is itself broken; report it failed.
   if [[ -z "$LOAD" || "$LOAD" == "not-found" ]]; then RESULT="not-found"; fi
   emit "${svc%.service}" "$timer_active" "$RESULT" "$timer_file_state"
-done <<< "$timers"
+done
 
 tmp="$(mktemp "$OUT_DIR/.host_unit.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 {
-  echo "# HELP host_unit_active 1 when the host systemd unit (or a lifekit timer) is active."
+  echo "# HELP host_unit_active 1 when the host systemd unit (or a watched timer) is active."
   echo "# TYPE host_unit_active gauge"
   echo "# HELP host_unit_failed 1 when the host systemd unit is failed or its last Result is not success."
   echo "# TYPE host_unit_failed gauge"

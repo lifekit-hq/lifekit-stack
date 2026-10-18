@@ -1,5 +1,5 @@
 [Unit]
-Description=Rotate /srv/memory memory store (logrotate + markdown archival, no LLM)
+Description=Rotate lifekit runtime state (logrotate + morning-brief inbox + agent trajectories, no LLM)
 After=network-online.target
 
 [Service]
