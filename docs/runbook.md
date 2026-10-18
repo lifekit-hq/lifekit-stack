@@ -568,7 +568,13 @@ for the files it changed, restores any that stay red (`git checkout` of a tracke
 file, removal of one it created) and commits the rest with `git commit --no-verify
 -- <its paths>`. The vault hook is skipped because it lints every changed file on
 disk, including the red ones memory-sync leaves uncommitted, which would refuse the
-commit for files the job never touched. No edit is left on disk for memory-sync to
+commit for files the job never touched. When `bin/log.sh` reports its entry
+uncommitted (the same hook refuses it), the job commits that log file itself the
+same way, as `model: log ...`. Before editing a file a job runs `git status
+--porcelain -- <path>`: a path that is already dirty holds someone else's
+uncommitted edits (a red file memory-sync kept), so the job skips that finding
+this week, never restores or commits the file, and names it in its closing log
+line; the next week's run retries it. No edit is left on disk for memory-sync to
 sweep into an `auto:` commit; a crash or a run past the one-hour `.model-pass`
 window can still do that, and is a known residual risk. The pass never pushes:
 [memory-sync](#memory-vault-sync) pushes its commits on the next tick, and skips
