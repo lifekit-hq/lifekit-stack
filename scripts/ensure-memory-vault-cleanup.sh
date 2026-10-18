@@ -25,9 +25,15 @@
 #
 # Its own author: every edit is a git commit by `memory-model` with a
 # `model:` subject, so the pass is listed apart from the `auto:` sync commits
-# and can be reverted. The commits go through the vault's commit hook when the
-# vault ships one; nothing is pushed here — scripts/sync/memory-sync.sh pushes
-# them on its next tick. While the pass runs it holds ~/memory/.model-pass,
+# and can be reverted. Each job is its own gate: it lints with
+# `bin/lint.sh --changed --tsv`, looks only at the rows for the files it
+# changed, restores any of them that stay red, and commits the rest with
+# `git commit --no-verify -- <its paths>`. --no-verify because the vault hook
+# lints every changed file on disk, including the red ones memory-sync leaves
+# uncommitted, which would refuse the commit for files the job never touched;
+# no edit is left on disk for the sync to sweep into an `auto:` commit.
+# Nothing is pushed here — scripts/sync/memory-sync.sh pushes them on its next
+# tick. While the pass runs it holds ~/memory/.model-pass,
 # and memory-sync skips its ticks while that file is under an hour old, so a
 # half-done edit never lands in an `auto:` commit.
 #
@@ -86,7 +92,7 @@ Input is the script findings the weekly audit just wrote, never a look around th
 
 Precondition: if findings.json's date is not today's UTC date, the audit did not run this week. Run 'sh bin/log.sh -k audit "skipped: audits/findings.json is stale (<its date>)"' and stop; touch nothing else and notify nothing.
 
-Setup and author. First run 'touch .model-pass'; the host's sync skips its ticks while that file is fresh. Your very last step, also when you stop early or a step fails, is 'rm -f .model-pass'. Prefix every git commit and every bin/log.sh call with GIT_AUTHOR_NAME=memory-model GIT_AUTHOR_EMAIL=memory-model@lifekit.invalid GIT_COMMITTER_NAME=memory-model GIT_COMMITTER_EMAIL=memory-model@lifekit.invalid. Commit each job as soon as it is done, naming only the files it edited: 'git add -- <paths>' then 'git commit -m "model: M<n> <what changed, one line>" -- <paths>'. Never push, never amend or rewrite history, never use --no-verify. If the commit hook refuses, fix the files you edited until it passes; if it only names files you did not edit, leave your edits uncommitted, say so in your reply, and go on.
+Setup and author. First run 'touch .model-pass'; the host's sync skips its ticks while that file is fresh. Your very last step, also when you stop early or a step fails, is 'rm -f .model-pass'. Prefix every git commit and every bin/log.sh call with GIT_AUTHOR_NAME=memory-model GIT_AUTHOR_EMAIL=memory-model@lifekit.invalid GIT_COMMITTER_NAME=memory-model GIT_COMMITTER_EMAIL=memory-model@lifekit.invalid. Commit each job as soon as it is done, with its own gate: run 'sh bin/lint.sh --changed --tsv' and read only the rows (severity, rule, path, detail) whose path is one of the files that job changed. Red files the sync left on disk are not yours and do not block you. If one of your files has a high or medium row, fix it once; if it is still red, restore it (git checkout -- <path> for a tracked file, rm for a file you created) and drop it from the job. Then commit only what is left, naming only those paths: 'git add -- <paths>' then 'git commit --no-verify -m "model: M<n> <what changed, one line>" -- <paths>'. --no-verify is for this gate only: the vault hook would lint the sync's red files too. Never push, never amend or rewrite history. Never leave any file you changed uncommitted on disk: it is either in a model: commit or restored.
 
 Jobs, in this order:
 - M1, every page-too-long finding: split the page by subject into the pages that own those subjects, keeping every fact; dated narrative goes to the page's log through bin/log.sh.
