@@ -564,9 +564,11 @@ Deterministic work (lint, index, rotation, archive moves) stays in the vault's
 scripts. Every edit is a git commit by `memory-model` with a `model:` subject, so
 `git log --author=memory-model` lists the pass and any commit reverts on its own.
 Each job gates itself: it runs `bin/lint.sh --changed --tsv`, reads only the rows
-for the files it changed, restores any that stay red (`git checkout` of a tracked
-file, removal of one it created) and commits the rest with `git commit --no-verify
--- <its paths>`. The vault hook is skipped because it lints every changed file on
+for the files a finding changed and is all-or-nothing per finding: if any stays red
+it restores every file the finding touched (`git checkout` of a tracked file,
+removal of one it created) and names the finding as skipped in its closing log
+line, otherwise it commits them together with `git commit --no-verify -- <its
+paths>`. The vault hook is skipped because it lints every changed file on
 disk, including the red ones memory-sync leaves uncommitted, which would refuse the
 commit for files the job never touched. When `bin/log.sh` reports its entry
 uncommitted (the same hook refuses it), the job commits that log file itself the
