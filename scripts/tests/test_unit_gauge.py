@@ -137,6 +137,22 @@ def test_lifekit_timer_uses_timer_activity_and_service_result(host):
     assert got['host_unit_failed{unit="lifekit-d"}'] == 1
 
 
+def test_fixed_timers_reported_without_the_lifekit_prefix(host):
+    unit, run, *_ = host
+    unit("memory-sync.timer")  # named directly, not via list-unit-files
+    unit("memory-sync.service", active="failed", result="exit-code")
+    unit("openclaw-config-sync.timer")
+    unit("openclaw-config-sync.service", active="inactive")
+    unit("other-sync.timer", listed=True)  # neither fixed nor lifekit-*
+    unit("other-sync.service", active="failed", result="exit-code")
+    assert run() == {
+        'host_unit_active{unit="memory-sync"}': 1,
+        'host_unit_failed{unit="memory-sync"}': 1,
+        'host_unit_active{unit="openclaw-config-sync"}': 1,
+        'host_unit_failed{unit="openclaw-config-sync"}': 0,
+    }
+
+
 def test_result_other_than_success_counts_as_failed_even_when_active(host):
     unit, run, *_ = host
     unit("cron.service", result="signal")

@@ -546,24 +546,55 @@ agent's entry and bindings.
 
 ### The memory-vault-cleanup cron
 
-The vault's "dreaming" pass: a follow-up to the command-kind `memory_vault_audit`
-cron (`scripts/memory-audit/`), an agent-turn job named `memory-vault-cleanup` that
-runs the vault's own `.claude/skills/memory-audit` skill **unattended** 20 minutes
-later on the same `kit` agent, so Rule 3's judgment items in `audits/latest.md` get
-worked instead of only proposed. It applies the skill's whole "safe to apply alone"
-tier itself (frontmatter/link/size fixes, stale restatements, log compaction,
-stale-status refresh-or-conclude, the archive pass) and only ever escalates what the
-skill's own text sends to "Needs Denys". Declared by
-`scripts/ensure-memory-vault-cleanup.sh` - re-run it on a rebuilt host to recreate
-the row; it converges (when a `memory-vault-cleanup` row already exists it leaves
-everything but delivery untouched and re-applies `--no-deliver`, rather than
-skipping). No chat id or other secret is needed by this script or job.
+The vault's model pass: an agent-turn job named `memory-vault-cleanup` on the
+`kit` agent, 20 minutes after the command-kind `memory_vault_audit` cron
+(`scripts/memory-audit/`). It runs the vault design's model jobs, and only on the
+findings that audit just wrote (`audits/findings.json`, plus the contradiction
+candidates and the Rotation section of `audits/latest.md`):
 
-No skill install, no agent workspace change, and no gateway restart: the prompt
-reads the skill straight off the vault's existing mount (`/home/node/memory` in
-every agent, `compose/openclaw/docker-compose.yml`) and follows it directly. Vault edits are
-left uncommitted for the host's `memory-sync.timer` to commit and push, same as
-every other vault edit.
+| Job | Input | Does |
+| --- | --- | --- |
+| M1 | `page-too-long` | splits the page by subject into its owning pages, keeping every fact |
+| M2 | `restated-subject` | replaces the copy with a link to the owning page, updating the owner first when the copy is newer |
+| M3 | SUSPECT contradiction candidates | the newest dated evidence wins; two owner rulings with nothing newer become an M6 call |
+| M4 | log items in the Rotation section | lifts any lasting fact from the moved entries into a page |
+| M6 | what M3 cannot settle, findings on files it may not edit | one owner-call line each, with a recommendation |
+
+Deterministic work (lint, index, rotation, archive moves) stays in the vault's
+scripts. Every edit is a git commit by `memory-model` with a `model:` subject, so
+`git log --author=memory-model` lists the pass and any commit reverts on its own.
+Each job gates itself: it runs `bin/lint.sh --changed --tsv`, reads only the rows
+for the files a finding changed and is all-or-nothing per finding: if any stays red
+it restores every file the finding touched (`git checkout` of a tracked file,
+removal of one it created) and names the finding as skipped in its closing log
+line, otherwise it commits them together with `git commit --no-verify -- <its
+paths>`. The vault hook is skipped because it lints every changed file on
+disk, including the red ones memory-sync leaves uncommitted, which would refuse the
+commit for files the job never touched. When `bin/log.sh` reports its entry
+uncommitted (the same hook refuses it), the job commits that log file itself the
+same way, as `model: log ...`. Before editing a file a job runs `git status
+--porcelain -- <path>`: a path that is already dirty holds someone else's
+uncommitted edits (a red file memory-sync kept), so the job skips that finding
+this week, never restores or commits the file, and names it in its closing log
+line; the next week's run retries it. No edit is left on disk for memory-sync to
+sweep into an `auto:` commit; a crash or a run past the one-hour `.model-pass`
+window can still do that, and is a known residual risk. The pass never pushes:
+[memory-sync](#memory-vault-sync) pushes its commits on the next tick, and skips
+its ticks while the pass holds `~/memory/.model-pass` (an hour at most). It never
+edits `sources/`, `PLAN.md`, `audits/` or generated blocks; such a finding becomes
+an M6 call. Declared by `scripts/ensure-memory-vault-cleanup.sh`: re-run it as
+`lifekit` after a change to it or on a rebuilt host. On an existing row it
+converges the message, description and delivery and leaves the schedule alone.
+
+The audit rotates (`bin/audit.sh --rotate`) before this pass runs, so M4 reads
+entries rotation has already moved rather than distilling before the move. That
+loses nothing once the vault's rotation moves logs verbatim; running M4 before the
+move needs the audit to report due rotations without applying them, a vault
+change.
+
+**Owner calls go through notify-relay, not `fleet-policy decide`.** fleet-policy
+lives in the maintainer's home on the host, which neither the gateway container
+nor the `lifekit` account can reach.
 
 **Delivery is transition-only, through notify-relay, not an OpenClaw `--announce`.**
 The job is created (and, on every re-run of the ensure script, converged) with
@@ -571,7 +602,7 @@ The job is created (and, on every re-run of the ensure script, converged) with
 the job's own default (`mode: "announce", channel: "last"`) fail-closes every run,
 since an isolated-session job has no prior chat for "last" to resolve against
 (confirmed live 2026-09-29: `cron show` reported exactly that fail-closed
-`deliveryPreview`). Instead, the agent's own prompt builds the skill's "Needs Denys"
+`deliveryPreview`). Instead, the agent's own prompt builds the M6 owner-call
 list, diffs it (as a set) against the previous run's list kept in
 `audits/needs-denys-state.json` (vault-side state, not a knowledge page), and only
 when that set changed does it `POST` one envelope itself to
@@ -587,14 +618,13 @@ second, unformatted, every-run Telegram path.
 --json` filtered on `name == "memory-vault-cleanup"`). Then `docker exec
 openclaw-openclaw-gateway-1 openclaw cron run <id> --expect-final --json` and check
 `cron show <id>` again reports `enabled` with `sessionTarget: "isolated"`. A run
-against a same-day
-`audits/latest.md` should append one `## [date] audit | ...` line to the vault's
-`log.md` every time (`nothing to apply` when the skill found nothing to fix or
-archive); a run against a stale report appends a `skipped: audits/latest.md is
-stale (<date>)` line instead and touches nothing else in the vault. Either way,
-check `audits/needs-denys-state.json` reflects the run's Needs-Denys list, and that
-a notify-relay call only happened when that list's content actually changed from the
-file's previous contents.
+against a same-day `audits/findings.json` appends one `audit | model pass: ...`
+line to the vault's `log.md` every time (`model pass: nothing to apply` when no
+finding needed it), with its edits as `model:` commits by `memory-model` and no
+`.model-pass` left behind; a run against a stale report appends a `skipped:
+audits/findings.json is stale (<date>)` line instead and touches nothing else.
+Either way, check `audits/needs-denys-state.json` holds the run's owner calls, and
+that a notify-relay call only happened when that list changed.
 
 **Rollback:** `openclaw cron rm <id>` (or `cron edit <id> --disable`). Nothing else
 depends on this row - `memory_vault_audit` keeps running unchanged either way.
@@ -1610,7 +1640,9 @@ no further change. Merge deploys the Grafana rule and dashboard.
 `host_unit_failed{unit}` every 5 minutes from `unit-gauge.timer` into the
 textfile directory (`host_unit.prom`). Units: every `actions.runner.*`
 service, `tailscaled`, `docker`, `containerd`, `cron`, `unattended-upgrades`,
-and the service of every `lifekit-*.timer`. For a timer, `active` tracks the
+the service of every `lifekit-*.timer`, and the services of three timers named
+before that convention: `memory-sync`, `openclaw-config-sync` and
+`memory-rotate`. For a timer, `active` tracks the
 `.timer` (its oneshot service is inactive between runs by design) and `failed`
 is the service's last `Result` not being `success`. A unit not installed on
 the host is skipped, and so is one that is not enabled and not running unless it
@@ -1623,10 +1655,12 @@ The *host systemd unit is down or failed* alert (`host-unit-down-or-failed`,
 `rules.yml`) fires warning when any unit is inactive or failed for 10 minutes.
 `systemctl status <unit>` and `journalctl -u <unit> -n 50` show why. A failed
 timer run stays reported until the next successful run; after fixing the cause,
-`sudo systemctl reset-failed <unit>.service` clears it.
+`sudo systemctl reset-failed <unit>.service` clears it. A failed `memory-sync`
+has its own response in "Memory-vault sync".
 
-Adding a unit means editing the allowlist at the top of the script. A new
-`lifekit-*.timer` is picked up automatically.
+Adding a unit or a timer outside the `lifekit-*` naming means editing the
+allowlists at the top of the script. A new `lifekit-*.timer` is picked up
+automatically.
 
 **Operator step (live install):** the installer writes `/etc/systemd/system`,
 so a merge does not install it. Run on the box, as the admin account:
@@ -2927,13 +2961,9 @@ vault anywhere. Pair it with the volume snapshots below if you want more.
 Restoring from such a mirror is step 3 of
 [Recovering from a complete VPS loss](#recovering-from-a-complete-vps-loss).
 
-**On the maintainer's box** the same job runs as a `memory-sync.timer` /
-`memory-sync.service` pair in `/etc/systemd/system/`, firing
-`/usr/local/bin/memory-sync.sh` as `lifekit` every 15 minutes to sync
-`/srv/memory/` with its private GitHub remote. Those units are specific to that
-box - this repo installs `memory-rotate`, never `memory-sync` - and the script,
-the units and the vault's own risk notes live with the vault; see the private
-vault runbook for owner detail.
+**On the maintainer's box** the vault is a clone of a private GitHub repo and
+`memory-sync.timer` keeps it in sync both ways; see
+[Memory-vault sync](#memory-vault-sync).
 
 **Volumes to back up if you want full disaster recovery:**
 
@@ -2947,6 +2977,140 @@ On the maintainer's box the OpenClaw state, the secret key and the identity
 dumps go off-box nightly, encrypted, with the backstage database:
 [Off-box backup (R2)](#off-box-backup-r2). Snapshot the rest via your
 provider's backups or rsync to another box.
+
+### Memory-vault sync
+
+`scripts/sync/memory-sync.sh`, installed as `/usr/local/bin/memory-sync.sh`,
+runs from `memory-sync.timer` as `lifekit` every 15 minutes. Each tick commits
+the vault's changes (`auto: lifekit-vps sync <time>`), fetches, rebases onto
+`origin/main` and pushes `HEAD:main`. It never stashes and never picks a side:
+a rebase conflict aborts the rebase, fails the run and leaves both versions
+where they were. `log.md` files merge by union through the vault's
+`.gitattributes`. The service skips (not fails) while `/srv/memory` has no
+`.git`, so a fresh box does not page before the vault is copied in.
+
+Once the vault ships `bin/hooks/pre-commit`, each tick also:
+
+- re-sets `core.hooksPath=bin/hooks`, so every other commit in that clone
+  (agents, `bin/log.sh`, the weekly model pass) goes through the hook;
+- runs `bin/lint.sh --changed`, commits every file it passes and leaves the red
+  ones on disk uncommitted, named in `/srv/memory/.lint-failed`. The marker goes
+  away on the first tick with no red file. The tick commits with `--no-verify`
+  because it has just run the same check on exactly what it stages;
+- rebases in a temporary worktree when red edits to tracked files are on disk,
+  then moves the branch with `git checkout`, which keeps them. If the remote
+  changed one of those same files the checkout refuses and the run fails.
+
+Until that file exists the tick commits everything, as before the gate. While
+the model pass's lock (`/srv/memory/.model-pass`, see
+[The memory-vault-cleanup cron](#the-memory-vault-cleanup-cron)) is under an
+hour old, the tick does nothing.
+
+**When it fails** (the *host systemd unit is down or failed* alert names
+`memory-sync`, or the deploy's report-only line is red):
+
+```bash
+cat /srv/memory/.sync-failed       # time, step=<commit|lint|fetch|rebase|checkout|push>, exit code
+cat /srv/memory/.lint-failed       # red files left uncommitted, if any
+journalctl -u memory-sync.service -n 50
+```
+
+- `step=rebase`: a real conflict with the other clone. Resolve it by hand as
+  `lifekit` (`sudo -u lifekit -H bash`, then `cd /srv/memory`):
+  `git rebase origin/main`, fix each conflicted file, `git add` it,
+  `git rebase --continue`. The next tick pushes. Never `-X theirs`/`-X ours`.
+- `step=checkout`: the remote changed a file that has an uncommitted red edit
+  here. Fix the lint finding (or move the edit aside), and the next tick goes
+  through.
+- `step=lint`: `bin/lint.sh` itself failed without naming a file; run
+  `sh bin/lint.sh --changed` in the vault to see why.
+- `step=fetch` / `step=push`: network or credentials; the journal has git's
+  error.
+
+The next successful tick removes `.sync-failed`; `sudo systemctl reset-failed
+memory-sync.service` clears the unit state once the cause is gone. A red file
+in `.lint-failed` is not a failure: the rest of the vault keeps syncing.
+
+**Operator step (live install):** the installer writes `/usr/local/bin` and
+`/etc/systemd/system`, so a merge does not install it (the deploy only reports
+drift). Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/sync/install-memory-sync.sh
+sudo systemctl start memory-sync.service && systemctl show memory-sync.service -p Result
+```
+
+### Runtime-state rotation
+
+`memory-rotate.timer` (monthly, the 1st at 04:00) runs
+`/usr/local/bin/memory-rotate.sh` as `lifekit`. It rotates runtime state only,
+with no LLM: logrotate for the `.jsonl` logs in
+`scripts/rotate/logrotate-memory.conf`, then `scripts/rotate/rotate-state.py`,
+straight from the repo checkout:
+
+- the morning brief's `inbox.md`: dated items older than 30 days move to
+  `inbox-archive.md` under a `<!-- rotated <date> -->` banner;
+- OpenClaw agent `*.trajectory.jsonl`: gzipped after 7 days, the `.gz` deleted
+  after 60;
+- a report-only session footprint, `heartbeat.txt` and one `run-log.jsonl`
+  line in `/var/lib/lifekit/rotation/`.
+
+The vault rotates its own pages (its `bin/rotate.sh`, from the weekly
+`memory_vault_audit` cron); nothing here edits `/srv/memory`. The closed
+proposals archive the old `rotate-extras.py` did is the vault's job too.
+
+**Morning-brief inputs.** `inbox.md`, `inbox-archive.md` and `topics.yaml`
+live in `/var/lib/lifekit/morning-brief/` (`~/.life-state/morning-brief/` in
+the gateway), not in the vault. `scripts/vault-state-moves.sh`, run by every
+deploy, seeds each missing file once from the vault's copy, or from the
+generic template in `defaults/morning-brief/` when the vault has none, and
+never overwrites. The same script moves the retired ops-agent's run dumps and
+`.seen` markers from the vault's `projects/ops-agent/` to
+`/var/lib/lifekit/ops-agent/`, verbatim; a marker the vault still tracks waits
+until the vault untracks it, and `plan.md` / `log.md` stay in the vault.
+
+Kit's `morning_brief` cron reads `topics.yaml` (not the inbox) and is host
+state, so pointing it at the new file is an operator step (once, as `lifekit`;
+it prints nothing of the message):
+
+```bash
+docker exec openclaw-openclaw-gateway-1 sh -c '
+  job=$(openclaw cron list --all --json | jq -c ".jobs[] | select(.name == \"morning_brief\")")
+  id=$(printf %s "$job" | jq -r .id)
+  msg=$(printf %s "$job" | jq -r .payload.message)
+  new=$(printf %s "$msg" | sed "s|~/memory/topics.yaml|~/.life-state/morning-brief/topics.yaml|g")
+  if [ "$new" != "$msg" ]; then openclaw cron edit "$id" --message "$new" >/dev/null && echo repointed; else echo unchanged; fi'
+```
+
+**Operator step (live install):** the installer writes `/usr/local/bin` and
+`/etc/systemd/system`, so a merge does not install it (the deploy only reports
+drift). Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/rotate/install-memory-rotate.sh
+systemctl list-timers 'memory-rotate*'
+```
+
+### lifekit Claude Code home
+
+`/home/lifekit/.claude` is the gateway's `~/.claude`, so every Claude Code
+session there (devclaw, the agents' Claude CLI) reads its settings.
+`scripts/claude-home/install-claude-home.sh` converges it on the same vault
+harness the owner's own machine runs. Every deploy runs it as `lifekit`, and
+bootstrap through `sudo -u lifekit`:
+
+- `settings.json` gets `env.CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` (the provider
+  memory store is off; the vault is the one store) and two SessionStart hooks:
+  the vault's `bin/session-context.sh` and `~/.claude/hooks/vault-core.sh`,
+  which injects `~/memory/CORE.md`. Both are silent where there is no vault.
+  It is a merge: other keys and other hooks stay as they are.
+- `hooks/vault-core.sh` and `CLAUDE.md`, the vault pointer, come from
+  `defaults/claude-home/`. The `CLAUDE.md` it replaces the first time is kept
+  once as `CLAUDE.md.pre-vault-pointer`. A deploy rewrites hand edits to either.
+
+The auto-memory files already under `projects/*/memory/` are left in place:
+the env key only stops new ones. `lifekit-stack migrate` copies the laptop's
+`settings.json` over this one; the next deploy merges the keys back.
 
 ### Off-box backup (R2)
 

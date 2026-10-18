@@ -1,0 +1,19 @@
+# topics.yaml - filter spec for the general news digest in the morning brief.
+# Template: scripts/vault-state-moves.sh seeds it into
+# /var/lib/lifekit/morning-brief/ once; edit that copy, not this one.
+
+topics:
+  engineering:
+    keywords: [typescript, python, postgres, ai-engineering]
+    weight: 1.0
+  economy:
+    keywords: [inflation, interest-rates, recession]
+    weight: 0.7
+
+# Max items in the digest section of the morning brief.
+max_items: 8
+
+# Sources fed into the news fetch. Keep this list short - quality over breadth.
+sources:
+  - type: rss
+    url: https://news.ycombinator.com/rss

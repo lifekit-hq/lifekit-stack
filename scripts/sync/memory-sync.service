@@ -1,0 +1,15 @@
+[Unit]
+Description=Sync the /srv/memory vault with its GitHub remote
+After=network-online.target
+Wants=network-online.target
+# A fresh box has no vault clone until the operator copies it in; skip, not fail.
+ConditionPathExists=/srv/memory/.git
+
+[Service]
+Type=oneshot
+User=lifekit
+Group=lifekit
+ExecStart=/usr/local/bin/memory-sync.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -211,6 +211,25 @@ bash "$REPO_DIR/scripts/docker-prune-policy.sh"
 say "Installing openclaw-config sync script + systemd units"
 bash "$REPO_DIR/scripts/sync/install-config-sync.sh"
 
+# ─── memory-vault sync timer ──────────────────────────────────────────────────
+# Every 15 minutes, commits the /srv/memory vault, rebases onto its GitHub
+# remote and pushes (scripts/sync/memory-sync.sh). Needs the vault clone and
+# lifekit's push credentials in place; a tick that cannot sync leaves
+# /srv/memory/.sync-failed (docs/runbook.md "Memory-vault sync").
+
+say "Installing memory-vault sync script + systemd units"
+bash "$REPO_DIR/scripts/sync/install-memory-sync.sh"
+
+# ─── lifekit Claude Code home ─────────────────────────────────────────────────
+# Converges /home/lifekit/.claude (the gateway's ~/.claude) on the vault
+# harness: auto-memory off, the vault's SessionStart hooks, the CLAUDE.md
+# pointer (scripts/claude-home/install-claude-home.sh). deploy.sh re-runs it on
+# every deploy.
+
+say "Configuring the lifekit Claude Code home"
+sudo -u "$LIFEKIT_USER" env LIFEKIT_CLAUDE_HOME="/home/$LIFEKIT_USER/.claude" \
+  bash "$REPO_DIR/scripts/claude-home/install-claude-home.sh"
+
 # ─── Inbound media prune timer ────────────────────────────────────────────────
 # Daily, deletes OpenClaw inbound media (voice notes, photos) older than 7 days.
 
@@ -225,22 +244,14 @@ LIFEKIT_USER="$LIFEKIT_USER" bash "$REPO_DIR/scripts/media-prune/install-media-p
 say "Installing alert-inbox poller + systemd units"
 ADMIN_USER="$ADMIN_USER" bash "$REPO_DIR/scripts/alert-inbox/install-alert-inbox.sh"
 
-# ─── memory-store rotation timer ──────────────────────────────────────────────
-# Monthly rotation of the /srv/memory memory store + OpenClaw agent trajectories
-# (logrotate + rotate-extras.py, no LLM). The rotate-extras.py + logrotate-memory.conf
-# scripts live in the dsdevq/life repo at /srv/memory/system/ (delivered by memory-sync);
-# this only installs the host units + wrapper. Runtime state -> /var/lib/lifekit/rotation.
+# ─── runtime-state rotation timer ─────────────────────────────────────────────
+# Monthly rotation of runtime state, no LLM: logrotate for the .jsonl logs, the
+# morning brief's inbox under /var/lib/lifekit/morning-brief, and the OpenClaw
+# agent trajectories (scripts/rotate/rotate-state.py). The vault rotates its
+# own pages. Runtime state -> /var/lib/lifekit/rotation.
 
-say "Installing memory-store rotation script + systemd units"
-install -d -o "$LIFEKIT_USER" -g "$LIFEKIT_USER" -m 750 /var/lib/lifekit/rotation
-install -m 755 "$REPO_DIR/scripts/rotate/memory-rotate.sh" \
-  /usr/local/bin/memory-rotate.sh
-install -m 644 "$REPO_DIR/scripts/rotate/memory-rotate.service" \
-  /etc/systemd/system/memory-rotate.service
-install -m 644 "$REPO_DIR/scripts/rotate/memory-rotate.timer" \
-  /etc/systemd/system/memory-rotate.timer
-systemctl daemon-reload
-systemctl enable --now memory-rotate.timer
+say "Installing runtime-state rotation script + systemd units"
+LIFEKIT_USER="$LIFEKIT_USER" bash "$REPO_DIR/scripts/rotate/install-memory-rotate.sh"
 
 # ─── Claude quota gauge timer ─────────────────────────────────────────────────
 # Every 5 minutes, write the shared Claude account's remaining quota per window
@@ -280,7 +291,8 @@ systemctl enable --now claude-quota-share-gauge.timer
 # CI runners and OS groups of docs/resource-budget.md; tmp-usage-gauge reports
 # /tmp size and free bytes (it used to be an operator crontab line);
 # unit-gauge reports active/failed state of the CI runners, tailscaled, the
-# other allowlisted host services and the lifekit timers; lifekit-release-gauge
+# other allowlisted host services, the lifekit timers and the sync and
+# rotation timers; lifekit-release-gauge
 # reports a Weekly Release run that left its release PR unmerged, read with
 # ADMIN_USER's gh login.
 
