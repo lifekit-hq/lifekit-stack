@@ -745,7 +745,7 @@ while the mounts were live stay in the vault, under `agents/<id>/memory/`.
   `YYYY-MM-DD-<slug>.md`.
 - A `memory_search` from that agent finds the note.
 - `docker exec openclaw-openclaw-gateway-1 openclaw doctor` is clean.
-- `curl -fsS http://127.0.0.1:18789/healthz` returns 200.
+- `docker exec openclaw-openclaw-gateway-1 node -e "fetch('http://127.0.0.1:18789/healthz').then((r)=>r.text()).then(console.log)"` prints `{"ok":true,...}` (the host port exists only in token mode).
 
 ### Workspace memory files are pointers
 
@@ -1355,7 +1355,7 @@ there, so a rollback needs no config change.
 ```bash
 GW=openclaw-openclaw-gateway-1
 docker inspect --format '{{.State.Health.Status}}' "$GW"     # healthy
-curl -fsS http://127.0.0.1:18789/healthz                    # gateway health through the host port
+docker exec "$GW" node -e "fetch('http://127.0.0.1:18789/healthz').then((r)=>r.text()).then(console.log)"   # {"ok":true,...}; the host port exists only in token mode
 docker exec "$GW" openclaw channels status                  # all 6 Telegram accounts connected
 docker exec "$GW" openclaw mcp probe                        # every MCP server answers
 curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=up{job="openclaw"}'   # value "1"

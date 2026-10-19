@@ -19,8 +19,9 @@ Usage: openclaw.sh [--expect-version <version>]
   -h, --help            Show this help.
 
 Environment: OPENCLAW_GATEWAY (container name; default: found by its compose
-labels), OPENCLAW_HEALTHZ (default http://127.0.0.1:18789/healthz),
-SMOKE_TIMEOUT (seconds per command, default 180).
+labels), OPENCLAW_HEALTHZ (a URL to curl from the host instead of probing
+/healthz inside the gateway container; the host port exists only in token
+mode), SMOKE_TIMEOUT (seconds per command, default 180).
 USAGE
 }
 
@@ -33,7 +34,7 @@ while (($#)); do
   esac
 done
 
-HEALTHZ="${OPENCLAW_HEALTHZ:-http://127.0.0.1:18789/healthz}"
+HEALTHZ="${OPENCLAW_HEALTHZ:-}"
 TIMEOUT="${SMOKE_TIMEOUT:-180}"
 START="$(date +%s)"
 RED=()
@@ -92,8 +93,15 @@ if [[ -n "${EXPECT}" && "${VERSION}" != "${EXPECT}" ]]; then
 fi
 
 # ---------------------------------------------------------------- /healthz
-# The same endpoint the container healthcheck and deploy.sh probe.
-hz="$(curl -fsS -m 10 "${HEALTHZ}" 2>/dev/null || true)"
+# The same endpoint the container healthcheck and deploy.sh probe, from inside
+# the container: the host port is gone once the gateway sits behind the edge.
+if [[ -n "${HEALTHZ}" ]]; then
+  hz="$(curl -fsS -m 10 "${HEALTHZ}" 2>/dev/null || true)"
+else
+  hz="$(timeout "${TIMEOUT}" docker exec "${GW}" node -e \
+    "fetch('http://127.0.0.1:18789/healthz',{signal:AbortSignal.timeout(5000)}).then((r)=>r.ok?r.text():Promise.reject()).then((t)=>console.log(t)).catch(()=>process.exit(1))" \
+    </dev/null 2>/dev/null || true)"
+fi
 [[ "$(json_check 'print("ok" if d.get("ok") is True else "bad")' <<<"${hz}")" == ok ]] || RED+=("healthz")
 
 # ---------------------------------------------------------------- health
