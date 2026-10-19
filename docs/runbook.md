@@ -2799,8 +2799,8 @@ in either auth mode unless `gateway.trustedProxies` lists that address, so
 every deploy keeps it listed (`scripts/deploy-trusted-proxies.sh`). In token
 mode it sits next to the host's bridge addresses and only attributes the
 client: the gateway still checks the bearer and ignores the identity header.
-After the cutover, `gateway.trustedProxies` is exactly `10.231.78.2`. That network is
-internal and holds only Traefik and the gateway (`scripts/lib/deploy-common.sh`
+After the cutover, `gateway.trustedProxies` is exactly `10.231.78.2`.
+`openclaw-ingress` is internal and holds only Traefik and the gateway (`scripts/lib/deploy-common.sh`
 `OPENCLAW_EDGE_IP`). `127.0.0.1:18789` is no longer published (the
 `compose/openclaw/trusted-proxy.yml` overlay). The gateway stays on
 `lifekit-shared` for its own outbound calls (finance-sentry-mcp,
@@ -2895,7 +2895,7 @@ while the gateway is still in token mode.
 One command. It checks everything above before it changes anything: the
 password and token are in the env file, the edge answers a browser with the
 sign-in redirect and the phone app's dashboard tab with the gateway,
-Prometheus scrapes through the edge, finance-sentry calls through it, and
+`gateway.trustedProxies` lists the edge, Prometheus scrapes through the edge, finance-sentry calls through it, and
 Serve publishes `:18789` without Funnel. Then it:
 
 - saves `gateway.auth`, `gateway.trustedProxies`,
