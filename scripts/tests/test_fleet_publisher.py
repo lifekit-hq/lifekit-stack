@@ -5,6 +5,7 @@ from __future__ import annotations
 import configparser
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -321,7 +322,8 @@ def test_hold_origin_lookup_puts_the_tasks_axi_directory_on_path(fleet, tmp_path
         TASKS_AXI=tasks,
         FM_HOME=str(fleet.tmp),
         EXPECTED_PWD=str(fleet.tmp),
-        PATH="/usr/bin:/bin",
+        # Only the system dirs plus wherever jq lives: node must come from tasks-axi.
+        PATH=f"/usr/bin:/bin:{Path(shutil.which('jq')).parent}",
     )
     assert result.returncode == 0, result.stderr
     assert "node: not found" not in result.stderr
