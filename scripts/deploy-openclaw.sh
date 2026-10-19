@@ -305,7 +305,9 @@ if [[ -n "${RUNNING_VER}" && -n "${BUILT_VER}" && "${RUNNING_VER}" != "${BUILT_V
   # version pin. One built against an older core refuses to load under the
   # new one (codex 2026.6.8 vs core 2026.9.4 on 2026-09-13: the whole codex
   # runtime gone, gateway "healthy"). The doctor pass re-pins them; verify
-  # it did, try one explicit update if not, and flag the deploy otherwise.
+  # it did, try one explicit update to the core's own version if not (never
+  # @latest: npm's latest runs ahead of the pinned core), and flag the deploy
+  # otherwise.
   say "asserting official plugins match core ${BUILT_VER}"
   plugin_mismatches() {
     openclaw_compose \
@@ -329,7 +331,7 @@ for p in items:
       warn "plugin ${pid} is ${pver}, core is ${BUILT_VER}; updating"
       openclaw_compose \
         run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-          plugins update "@openclaw/${pid}@latest" || true
+          plugins update "@openclaw/${pid}@${BUILT_VER}" || true
     done <<< "${MISMATCH}"
     MISMATCH="$(plugin_mismatches || true)"
     # An `if`, not `[[ ]] && fail_later`: this block ends the phase function,
