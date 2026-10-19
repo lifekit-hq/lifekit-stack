@@ -38,7 +38,11 @@ esac
 """
 
 CURL_STUB = r"""#!/bin/sh
-printf '%s\n' "${STUB_HEALTHZ:-{\"ok\":true,\"status\":\"live\"}}"
+if [ -n "${STUB_HEALTHZ:-}" ]; then
+  printf '%s\n' "$STUB_HEALTHZ"
+else
+  echo '{"ok":true,"status":"live"}'
+fi
 """
 
 CLAUDE_STUB = r"""#!/bin/sh
@@ -344,6 +348,7 @@ def test_claude_code_no_call_skips_the_turn(rig):
         ),
         ({**HEALTHY_CLAUDE, "result": "I cannot help with that"}, {}, "turn-bad-reply"),
         ("Invalid API key", {}, "turn-no-json"),
+        ([HEALTHY_CLAUDE], {}, "turn-no-json"),
     ],
 )
 def test_claude_code_fails_on_a_broken_cli(rig, reply, env, reason):

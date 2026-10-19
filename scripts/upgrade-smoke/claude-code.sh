@@ -81,6 +81,8 @@ if ((CALL)) && ((${#RED[@]} == 0)); then
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
+    if not isinstance(d, dict):
+        raise ValueError
 except Exception:
     print("no-json -"); sys.exit()
 cost = d.get("total_cost_usd")

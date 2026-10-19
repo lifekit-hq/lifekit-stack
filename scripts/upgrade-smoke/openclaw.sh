@@ -58,6 +58,8 @@ import json, sys
 try:
     raw = sys.stdin.read()
     d = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+    if not isinstance(d, dict):
+        raise ValueError
 except Exception:
     print("PARSE_ERROR"); sys.exit()
 '"$1"
