@@ -1,13 +1,17 @@
 # Edge compose project (`edge`): the tailnet sign-in gate.
 #
 # One sign-in, against the org identity provider (compose/identity/), in front
-# of the lifekit dashboard and the devclaw console:
+# of the lifekit dashboard, the devclaw console and the OpenClaw gateway:
 #   traefik       - the forward-auth proxy. One loopback entrypoint per gated
-#                   surface (:18890 dashboard, :18891 devclaw); Tailscale Serve
-#                   keeps the surfaces' tailnet ports (18790, 18791) and points
-#                   them here instead of at the apps. Every request is checked
-#                   with oauth2-proxy before it reaches the app. Routes:
-#                   traefik/dynamic.yml.
+#                   surface (:18890 dashboard, :18891 devclaw, :18892 OpenClaw);
+#                   Tailscale Serve keeps the surfaces' tailnet ports (18790,
+#                   18791, 18789) and points them here instead of at the apps.
+#                   Every browser request is checked with oauth2-proxy before
+#                   it reaches the app. Routes: traefik/dynamic.yml and
+#                   traefik/openclaw.yml. One more entrypoint, :18893, is
+#                   unpublished: OpenClaw's service clients (Prometheus,
+#                   finance-sentry) reach the gateway through it from
+#                   lifekit-shared.
 #   oauth2-proxy  - a confidential OIDC client of Logto. It answers Traefik's
 #                   check from its session cookie, and on no session redirects
 #                   the browser to Logto and back. The cookie has no domain, so
@@ -21,8 +25,10 @@
 #
 # scripts/deploy.sh brings this project up only once the identity project is
 # up and the edge's client and cookie secrets are in the rendered env file.
-# Until the operator points Tailscale Serve at the entrypoints, nothing reaches
-# it: the runbook section has the cutover and its one-line rollback.
+# Until the operator points Tailscale Serve at the entrypoints, no browser
+# reaches it: the runbook sections have the cutovers and their one-line
+# rollbacks. The internal OpenClaw entrypoint carries Prometheus' scrape of the
+# gateway from the first deploy, in either gateway auth mode.
 #
 # Relative paths resolve from this directory (compose/edge/). An ad-hoc command
 # needs IDENTITY_ENDPOINT set by hand (deploy.sh exports it):
@@ -81,15 +87,22 @@ services:
       - --providers.file.watch=true
       - --entrypoints.dashboard.address=:18890
       - --entrypoints.devclaw.address=:18891
+      - --entrypoints.openclaw.address=:18892
+      - --entrypoints.openclaw-internal.address=:18893
       # Tailscale Serve terminates HTTPS and sends X-Forwarded-Proto/-Host;
-      # oauth2-proxy builds its callback URL from them. Both ports bind only
-      # to loopback, so only Serve (or a local process) can send them.
+      # oauth2-proxy builds its callback URL from them. These ports bind only
+      # to loopback, so only Serve (or a local process) can send them. The
+      # internal entrypoint is not one of them: what its callers send is not
+      # trusted.
       - --entrypoints.dashboard.forwardedHeaders.insecure=true
       - --entrypoints.devclaw.forwardedHeaders.insecure=true
+      - --entrypoints.openclaw.forwardedHeaders.insecure=true
       # Drop headers whose names alias the ones Traefik and oauth2-proxy set
       # (X_Forwarded_User for X-Forwarded-User), so a client cannot spoof them.
       - --entrypoints.dashboard.http.aliasHeadersStrategy=delete
       - --entrypoints.devclaw.http.aliasHeadersStrategy=delete
+      - --entrypoints.openclaw.http.aliasHeadersStrategy=delete
+      - --entrypoints.openclaw-internal.http.aliasHeadersStrategy=delete
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
     environment:
@@ -101,10 +114,16 @@ services:
       # endpoint requires (its RELAY_EDGE_PROOF): only a request that came
       # through here carries it.
       RELAY_EDGE_PROOF: ${RELAY_EDGE_PROOF:-}
+      # The bearer OpenClaw's service clients already hold (Prometheus,
+      # finance-sentry). The internal routers match it and send the caller on
+      # as a service identity (traefik/openclaw.yml); the gateway itself
+      # stops accepting it in trusted-proxy mode.
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       TZ: ${OPENCLAW_TZ:-UTC}
     ports:
       - "127.0.0.1:18890:18890"
       - "127.0.0.1:18891:18891"
+      - "127.0.0.1:18892:18892"
     volumes:
       # A directory, not the file: git replaces the file on deploy, and a
       # single-file bind mount would keep the old inode.
@@ -122,10 +141,17 @@ services:
           memory: 128m
           pids: 128
     networks:
-      - default
+      default: {}
       # The apps: lifekit-dashboard (compose project `dashboard`) and
-      # devclaw-mcp (compose project `devclaw`) both join it.
-      - lifekit-shared
+      # devclaw-mcp (compose project `devclaw`) both join it. OpenClaw's
+      # service clients find the internal entrypoint here as openclaw-edge.
+      lifekit-shared:
+        aliases: [openclaw-edge]
+      # To the OpenClaw gateway only. The address is pinned: it is the one
+      # entry of the gateway's gateway.trustedProxies in trusted-proxy mode
+      # (scripts/lib/deploy-common.sh OPENCLAW_EDGE_IP).
+      openclaw-ingress:
+        ipv4_address: 10.231.78.2
 
   oauth2-proxy:
     <<: *policy
@@ -223,4 +249,8 @@ networks:
   # Logto's OIDC clients only (compose/identity/docker-compose.yml); created
   # once by scripts/deploy.sh before the first `up`.
   identity-oidc:
+    external: true
+  # Traefik and the OpenClaw gateway only; created by scripts/deploy.sh
+  # (openclaw_ingress_network_ensure).
+  openclaw-ingress:
     external: true

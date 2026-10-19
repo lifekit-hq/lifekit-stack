@@ -29,6 +29,7 @@ esac
 args=" $* "
 case "$args" in
   *" --version "*) echo "OpenClaw ${STUB_OC_VERSION:-2026.9.8} (fc23bc8)" ;;
+  *" node -e "*) [ -z "${STUB_HEALTHZ_RC:-}" ] || exit "$STUB_HEALTHZ_RC"; echo "${STUB_HEALTHZ:-{\"ok\":true,\"status\":\"live\"\}}" ;;
   *" health --json "*) cat "$STUB_DIR/health.json" ;;
   *" doctor --post-upgrade --json "*) cat "$STUB_DIR/post-upgrade.json" ;;
   *" mcp probe --json "*) cat "$STUB_DIR/mcp.json"; exit "${STUB_MCP_RC:-0}" ;;
@@ -38,11 +39,9 @@ esac
 """
 
 CURL_STUB = r"""#!/bin/sh
-if [ -n "${STUB_HEALTHZ:-}" ]; then
-  printf '%s\n' "$STUB_HEALTHZ"
-else
-  echo '{"ok":true,"status":"live"}'
-fi
+printf '%s\n' "$*" >> "$STUB_DIR/curl.log"
+[ -n "${STUB_CURL_HEALTHZ:-}" ] || exit 7
+printf '%s\n' "$STUB_CURL_HEALTHZ"
 """
 
 CLAUDE_STUB = r"""#!/bin/sh
@@ -209,6 +208,31 @@ def test_openclaw_passes_on_a_healthy_gateway(rig):
     assert "PASS version=2026.9.8 channels=2/2 mcp=2/2 doctor-errors=0" in line
 
 
+def test_openclaw_probes_healthz_inside_the_container_not_the_host_port(rig):
+    rc, line = smoke(rig, "openclaw")
+    assert rc == 0, line
+    assert not (rig["stub"] / "curl.log").exists()
+    calls = (rig["stub"] / "docker.log").read_text()
+    assert "exec gw123 node -e" in calls
+    assert "127.0.0.1:18789/healthz" in calls
+
+
+def test_openclaw_healthz_override_curls_the_given_url(rig):
+    url = "http://127.0.0.1:19999/healthz"
+    rc, line = smoke(
+        rig,
+        "openclaw",
+        OPENCLAW_HEALTHZ=url,
+        STUB_CURL_HEALTHZ='{"ok":true}',
+        STUB_HEALTHZ_RC="1",
+    )
+    assert rc == 0, line
+    assert url in (rig["stub"] / "curl.log").read_text()
+    rc, line = smoke(rig, "openclaw", OPENCLAW_HEALTHZ=url)
+    assert rc == 1, line
+    assert "healthz" in line.split(" red=", 1)[1]
+
+
 def test_openclaw_never_fixes_restarts_or_recreates(rig):
     smoke(rig, "openclaw")
     calls = (rig["stub"] / "docker.log").read_text().splitlines()
@@ -225,6 +249,7 @@ def test_openclaw_never_fixes_restarts_or_recreates(rig):
         (None, {"STUB_CONTAINER_STATE": "true unhealthy"}, "container-true-unhealthy"),
         (None, {"STUB_OC_VERSION": "2026.9.5"}, "version-not-2026.9.8"),
         (None, {"STUB_HEALTHZ": '{"ok":false}'}, "healthz"),
+        (None, {"STUB_HEALTHZ_RC": "1"}, "healthz"),
         (
             ("health.json", {**HEALTHY_HEALTH, "plugins": {"errors": [{"id": "x"}]}}),
             {},

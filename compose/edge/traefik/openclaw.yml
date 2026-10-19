@@ -1,0 +1,100 @@
+# Traefik routes for the OpenClaw gateway behind the tailnet sign-in gate
+# (compose/edge/docker-compose.yml, docs/runbook.md "OpenClaw behind the
+# sign-in gate"). The `sso` middleware and the oauth2-proxy service are
+# dynamic.yml's: the file provider merges every file in this directory.
+#
+# Entrypoint `openclaw` (:18892, Tailscale Serve's :18789):
+#   - /oauth2/* goes straight to oauth2-proxy (sign-in callback, sign-out).
+#   - The OpenClaw phone app skips the sign-in. Its native client
+#     (`OpenClaw/<build> CFNetwork/... Darwin/...`) and its dashboard tab (an
+#     iPhone/iPad WKWebView: `Mozilla/5.0 (iPhone; ...) AppleWebKit/...
+#     (KHTML, like Gecko) Mobile/<build>`, with no `Safari/` token) cannot
+#     follow a browser sign-in. Matching on the User-Agent is not access
+#     control: these requests carry no identity (any copy is stripped), so the
+#     gateway's own device-token or setup-code pairing auth is the only gate,
+#     exactly as today. Mobile Safari sends `Safari/` and signs in.
+#   - Everything else (any browser) passes the `sso` check, which adds the
+#     signed-in email the gateway maps to the operator (trusted-proxy mode).
+#
+# Entrypoint `openclaw-internal` (:18893, unpublished; openclaw-edge on
+# lifekit-shared): the gateway's service clients, which cannot sign in. Each
+# route matches one path and the bearer they already hold (the gateway
+# token), and sends the caller on as a fixed service identity with only the
+# scopes it needs: Prometheus reads the metrics route, finance-sentry calls
+# the OpenAI-compatible API. Anything else on this entrypoint is a 404. The
+# same routes work while the gateway is still in token mode (it checks the
+# bearer itself and ignores the identity), so these clients move here before
+# the mode switch, with no gap.
+#
+# The identity headers are stripped from every request first, so neither a
+# client nor the app route can present one: a header set to "" is removed.
+#
+# This file is a Go template (Traefik's file provider): `env` reads the
+# container environment once at start. Go's HTTP server trims trailing space
+# from a header value, so with OPENCLAW_GATEWAY_TOKEN unset the internal
+# routes match nothing.
+---
+http:
+  routers:
+    openclaw-oauth2:
+      entryPoints: [openclaw]
+      rule: PathPrefix(`/oauth2/`)
+      priority: 100
+      service: oauth2-proxy
+    openclaw-app:
+      entryPoints: [openclaw]
+      rule: >-
+        HeaderRegexp(`User-Agent`, `^OpenClaw/`)
+        || HeaderRegexp(`User-Agent`, `^Mozilla/5\.0 \((iPhone|iPad); [^)]*\) AppleWebKit/[0-9.]+ \([^)]*\) Mobile/[0-9A-Za-z]+$`)
+      priority: 50
+      middlewares: [openclaw-no-identity]
+      service: openclaw
+    openclaw:
+      entryPoints: [openclaw]
+      rule: PathPrefix(`/`)
+      priority: 1
+      middlewares: [openclaw-no-identity, sso]
+      service: openclaw
+
+    openclaw-prometheus:
+      entryPoints: [openclaw-internal]
+      rule: >-
+        Path(`/api/diagnostics/prometheus`)
+        && Header(`Authorization`, `Bearer {{ env "OPENCLAW_GATEWAY_TOKEN" }}`)
+      middlewares: [openclaw-service-prometheus]
+      service: openclaw
+    openclaw-finance-sentry:
+      entryPoints: [openclaw-internal]
+      rule: >-
+        PathPrefix(`/v1/`)
+        && Header(`Authorization`, `Bearer {{ env "OPENCLAW_GATEWAY_TOKEN" }}`)
+      middlewares: [openclaw-service-finance-sentry]
+      service: openclaw
+
+  middlewares:
+    openclaw-no-identity:
+      headers:
+        customRequestHeaders:
+          X-Auth-Request-Email: ""
+          X-Openclaw-Scopes: ""
+    # The service identities are listed in the gateway's
+    # gateway.auth.trustedProxy.allowUsers; X-Openclaw-Scopes caps what the
+    # gateway grants them.
+    openclaw-service-prometheus:
+      headers:
+        customRequestHeaders:
+          X-Auth-Request-Email: service:prometheus
+          X-Openclaw-Scopes: operator.read
+    openclaw-service-finance-sentry:
+      headers:
+        customRequestHeaders:
+          X-Auth-Request-Email: service:finance-sentry
+          X-Openclaw-Scopes: operator.write
+
+  services:
+    openclaw:
+      loadBalancer:
+        servers:
+          # The gateway's alias on openclaw-ingress only
+          # (compose/openclaw/docker-compose.yml).
+          - url: http://openclaw-gateway-edge:18789

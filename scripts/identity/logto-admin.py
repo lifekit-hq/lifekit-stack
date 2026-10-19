@@ -8,6 +8,7 @@ command is idempotent: it reads first and changes only what differs.
     logto-admin.py token-check
     logto-admin.py ensure-role NAME [--description TEXT]
     logto-admin.py assign-role USER ROLE
+    logto-admin.py role-users ROLE
     logto-admin.py create-user EMAIL [--name TEXT]
     logto-admin.py ensure-app NAME [--redirect-uri URI]... [--post-logout-uri URI]...
                               [--secret-file PATH]
@@ -29,7 +30,8 @@ command is idempotent: it reads first and changes only what differs.
     logto-admin.py undo [N]
 
 USER is a Logto user id, primary email or username. ROLE is a role name (a
-User role). create-user makes a user with that primary email and no password
+User role). role-users prints the primary email of each user holding ROLE,
+one per line, and changes nothing. create-user makes a user with that primary email and no password
 (it signs in with Google or an emailed code), only when no user has the email;
 undo deletes it. APP is an application id or its exact name. ensure-app creates a
 Traditional web app; given URIs, it also brings an existing app's URIs to
@@ -350,6 +352,20 @@ def cmd_assign_role(api: Api, ledger: Ledger, args) -> None:
         say(f"user {user['id']} already has role {args.role}")
     else:
         say(f"user {user['id']}: role {args.role} assigned, ledger #{n}")
+
+
+def cmd_role_users(api: Api, _ledger: Ledger, args) -> None:
+    role = find_role(api, args.role)
+    if not role:
+        raise AdminError(f"no role named {args.role!r}")
+    for user in api.list_all(f"/api/roles/{role['id']}/users"):
+        if user.get("primaryEmail"):
+            say(user["primaryEmail"])
+        else:
+            print(
+                f"logto-admin: user {user.get('id')} has no primary email",
+                file=sys.stderr,
+            )
 
 
 def cmd_create_user(api: Api, ledger: Ledger, args) -> None:
@@ -829,6 +845,8 @@ def parser() -> argparse.ArgumentParser:
     a = sub.add_parser("assign-role", help="give a user a role, if missing")
     a.add_argument("user", help="user id, primary email or username")
     a.add_argument("role", help="role name")
+    ru = sub.add_parser("role-users", help="print the primary emails of a role's users")
+    ru.add_argument("role", help="role name")
     c = sub.add_parser("create-user", help="create a passwordless user, if missing")
     c.add_argument("email", help="primary email")
     c.add_argument("--name", help="display name")
@@ -909,6 +927,7 @@ COMMANDS = {
     "token-check": cmd_token_check,
     "ensure-role": cmd_ensure_role,
     "assign-role": cmd_assign_role,
+    "role-users": cmd_role_users,
     "create-user": cmd_create_user,
     "ensure-app": cmd_ensure_app,
     "set-redirects": cmd_set_redirects,

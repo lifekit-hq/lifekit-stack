@@ -745,7 +745,7 @@ while the mounts were live stay in the vault, under `agents/<id>/memory/`.
   `YYYY-MM-DD-<slug>.md`.
 - A `memory_search` from that agent finds the note.
 - `docker exec openclaw-openclaw-gateway-1 openclaw doctor` is clean.
-- `curl -fsS http://127.0.0.1:18789/healthz` returns 200.
+- `docker exec openclaw-openclaw-gateway-1 node -e "fetch('http://127.0.0.1:18789/healthz').then((r)=>r.text()).then(console.log)"` prints `{"ok":true,...}` (the host port exists only in token mode).
 
 ### Workspace memory files are pointers
 
@@ -1355,7 +1355,7 @@ there, so a rollback needs no config change.
 ```bash
 GW=openclaw-openclaw-gateway-1
 docker inspect --format '{{.State.Health.Status}}' "$GW"     # healthy
-curl -fsS http://127.0.0.1:18789/healthz                    # gateway health through the host port
+docker exec "$GW" node -e "fetch('http://127.0.0.1:18789/healthz').then((r)=>r.text()).then(console.log)"   # {"ok":true,...}; the host port exists only in token mode
 docker exec "$GW" openclaw channels status                  # all 6 Telegram accounts connected
 docker exec "$GW" openclaw mcp probe                        # every MCP server answers
 curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=up{job="openclaw"}'   # value "1"
@@ -2129,6 +2129,7 @@ sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py token-check'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-role admin'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py assign-role <email> admin'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py create-user <email> [--name <text>]'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py role-users admin'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-app "<name>" \
   --redirect-uri <uri> --post-logout-uri <uri> --secret-file ~/<name>.secret'
 sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-redirects <app> \
@@ -2137,7 +2138,9 @@ sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-sign-in-e
   --sign-in-identifiers email username --primary-color <#hex> --logo-url <url>'
 ```
 
-`assign-role` takes a user id, primary email or username. `create-user` makes
+`assign-role` takes a user id, primary email or username. `role-users` prints
+the primary email of each user holding the role, one per line, and changes
+nothing. `create-user` makes
 a passwordless user with that primary email (it signs in with Google or an
 emailed code), only when no user has the email. `ensure-app`
 creates a Traditional web app, or brings an existing one's URIs to the given
@@ -2616,8 +2619,9 @@ URI.
 ## Tailnet sign-in gate
 
 Compose project `edge` (`compose/edge/`) puts one Logto sign-in in front of
-the lifekit dashboard and the devclaw console. Once signed in on either,
-the other opens without asking again. Two services:
+the lifekit dashboard and the devclaw console (and the OpenClaw dashboard
+once [its cutover](#openclaw-behind-the-sign-in-gate) has run). Once signed
+in on either, the other opens without asking again. Two services:
 
 - `traefik`, the forward-auth proxy, with one loopback entrypoint per
   surface: `127.0.0.1:18890` for the dashboard and `127.0.0.1:18891` for
@@ -2639,7 +2643,7 @@ the apps, so rolling back is pointing them back.
 | devclaw machine clients | unchanged: a request with an `Authorization` header or a `?token=` query, and `/mcp`, `/webhooks/`, `/health`, `/metrics`, go straight to devclaw, which checks them itself |
 | devclaw console | after sign-in, the gate adds devclaw's bearer (`DEVCLAW_MCP_TOKEN`), so no token is asked for |
 | Dashboard relay proof | after sign-in, the dashboard route adds `X-Lifekit-Edge-Proof` (`RELAY_EDGE_PROOF`) and the signed-in `X-Auth-Request-Email`; the dashboard's relay endpoint requires both, so a container on `lifekit-shared` that calls the dashboard directly is refused. The dashboard's own env carries the same `RELAY_EDGE_PROOF` (`docs/secrets-runbook.md`) |
-| Not behind it | finance-sentry (its own Logto client), Grafana, the OpenClaw gateway, Logto itself |
+| Not behind it | finance-sentry (its own Logto client), Grafana, Logto itself. The OpenClaw gateway goes behind it with its own cutover: [OpenClaw behind the sign-in gate](#openclaw-behind-the-sign-in-gate) |
 
 **Why Traefik and oauth2-proxy.** Tailscale Serve cannot ask anyone before
 proxying, so a proxy has to sit between it and the apps. Traefik is the
@@ -2747,6 +2751,189 @@ navigation fallback, and send the browser to `/oauth2/start?rd=<page>` when
 **Logs.** Neither service writes an access log: devclaw's old `?token=`
 links would put its bearer into Loki. Sign-in failures appear in
 `docker logs edge-oauth2-proxy-1`. Traefik logs only warnings and errors.
+
+## OpenClaw behind the sign-in gate
+
+The OpenClaw dashboard (Control UI) moves behind the same Logto sign-in as the
+lifekit dashboard and the devclaw console, so nobody pastes the gateway token
+into a browser. The gateway switches to `gateway.auth.mode` `trusted-proxy`:
+it takes the signed-in email that the edge's Traefik sends and grants the
+owner's email `operator.admin` (`gateway.auth.identityScopes`). The URL stays
+`https://<name>:18789`. Its Serve port points at the edge's `openclaw`
+entrypoint instead of the gateway, and the gateway's own `127.0.0.1:18789` is
+no longer published.
+
+The OpenClaw phone app keeps working through the cutover and after it. Its
+pairing, device token and WebSocket skip the sign-in, and the gateway's own
+device auth checks them exactly as it does today. A throwaway replica proved
+this before the change merged.
+
+**Routes** (`compose/edge/traefik/openclaw.yml`):
+
+| Entrypoint | Request | Goes to | The gateway sees |
+| --- | --- | --- | --- |
+| `openclaw`, `127.0.0.1:18892` (Serve's `:18789`) | `/oauth2/*` | oauth2-proxy (sign-in callback, sign-out) | - |
+| | the phone app: User-Agent `OpenClaw/...` (native) or an iPhone/iPad WKWebView without `Safari/` (its dashboard tab) | the gateway | no identity (any client-sent copy is removed); its device token or pairing code, as today |
+| | anything else: every browser, Mobile Safari included | the `sso` check, then the gateway | `X-Auth-Request-Email`, the signed-in Logto email, on HTTP and the WebSocket upgrade |
+| `openclaw-internal`, `openclaw-edge:18893` (`lifekit-shared` only, not published) | `/api/diagnostics/prometheus` with the gateway-token bearer | the gateway | `service:prometheus`, capped at `operator.read` |
+| | `/v1/*` with the gateway-token bearer | the gateway | `service:finance-sentry`, capped at `operator.write` |
+| | anything else | 404 | - |
+
+The User-Agent match is not access control: requests on the app route carry
+no identity, so the gateway's device auth is their only gate, as it is today.
+Unchanged and direct: finance-sentry's companion hook trigger
+(`openclaw-gateway:18789`, its `OPENCLAW_HOOK_TOKEN` on the hooks path, which
+`gateway.auth` does not govern), and the in-container CLI over loopback.
+Kit's channels and cron run inside the gateway and do not change.
+
+**Who gets in.** `gateway.auth.trustedProxy.allowUsers` holds exactly the
+owner's Logto email plus the two service identities above. The gate already
+admits only Logto's `admin` role, and the gateway narrows that to one email.
+A browser that signs in pairs as a device with OpenClaw's default scopes
+(`deviceAutoApprove`), and the owner's email adds `operator.admin`.
+
+**What reaches the gateway.** `gateway.trustedProxies` is exactly
+`10.231.78.2`, Traefik's pinned address on `openclaw-ingress`. That network is
+internal and holds only Traefik and the gateway (`scripts/lib/deploy-common.sh`
+`OPENCLAW_EDGE_IP`). `127.0.0.1:18789` is no longer published (the
+`compose/openclaw/trusted-proxy.yml` overlay). The gateway stays on
+`lifekit-shared` for its own outbound calls (finance-sentry-mcp,
+notify-relay, otel-collector), so a container there can still open a TCP
+connection to it. That container holds no identity, though: the gateway takes
+an identity only from `10.231.78.2` and no longer accepts the token. So "only
+from the proxy" holds for authentication, not for TCP.
+
+**Why the service clients go through the edge.** In trusted-proxy mode the
+gateway accepts no bearer. Its documentation says the password configured
+next to trusted-proxy mode is honoured only for local-direct callers
+(loopback, no forwarded headers), so it cannot carry Prometheus' scrape or
+finance-sentry's calls across the network. The replica confirmed this. Those
+clients therefore keep the bearer they already hold, and the edge's internal
+entrypoint swaps it for a service identity. `OPENCLAW_GATEWAY_PASSWORD`
+serves only the in-container CLI (`docs/secrets.md`). That includes the
+deploy's `exec` calls: running inside the gateway does not authenticate them,
+and without the password a 2026.10.2 replica refused `health`, `cron list`
+and `channels status` (`trusted_proxy_untrusted_source`). The internal routes
+work in token mode too, so the clients move first, with no gap.
+
+**Deploys after the cutover.** `openclaw_compose` reads the mode from
+`openclaw.json` and adds the overlay in trusted-proxy mode, so every deploy,
+one-shot run and rollback follows what the cutover left. Each deploy also
+keeps `gateway.trustedProxies` at exactly the edge
+(`scripts/deploy-trusted-proxies.sh`). The auth keys are host state, never in
+`platform.patch.json`.
+
+**Rehearsal.** CI's tests job runs the whole cutover and rollback against
+stubbed docker, tailscale and curl (`scripts/tests/test_openclaw_sso.py`):
+the order of every step, the exact config before and after, a refused dry
+run, a failed check rolling back by itself, a failing rollback that keeps its
+saved state, and no secret value in any output. `test_edge_routes.py` pins
+the routes and the User-Agent match.
+
+### Before the cutover
+
+Run these from the deployed checkout (`/srv/lifekit-stack`) after this
+change's merge deploy. That deploy creates `openclaw-ingress`, starts the
+edge's two OpenClaw entrypoints, and moves Prometheus' scrape onto the edge
+while the gateway is still in token mode.
+
+1. **The scrape.** `curl -s --data-urlencode 'query=up{job="openclaw"}'
+   http://127.0.0.1:9090/api/v1/query` shows value `"1"`.
+2. **The password.** It is already in the master file. Render it into the
+   env file; nothing restarts:
+
+   ```bash
+   sudo bash scripts/secrets/render-stack-env.sh
+   ```
+
+3. **Logto callback.** Give the gate's application the third port's callback
+   and sign-out URIs. `set-redirects` replaces each list, so name all three
+   ports:
+
+   ```bash
+   sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-redirects "lifekit sign-in gate" \
+     --redirect-uri https://<name>:18790/oauth2/callback \
+     --redirect-uri https://<name>:18791/oauth2/callback \
+     --redirect-uri https://<name>:18789/oauth2/callback \
+     --post-logout-uri https://<name>:18790/ --post-logout-uri https://<name>:18791/ \
+     --post-logout-uri https://<name>:18789/'
+   ```
+
+4. **finance-sentry** (operator step in that repository, no code change). Its
+   agent calls OpenClaw's OpenAI-compatible API, and that must now go
+   through the edge. In finance-sentry's `docker/.env.sops`, set
+   `OPENCLAW_GATEWAY_URL` to `http://openclaw-edge:18893`, keep its
+   `OPENCLAW_GATEWAY_TOKEN` as it is, and redeploy finance-sentry. The
+   cutover's preflight checks it: it reads only that one variable,
+   `Agent__OpenClaw__BaseUrl`, from the `finance-sentry-api` container,
+   and refuses while it points anywhere but `openclaw-edge:18893` (a box
+   without finance-sentry passes). The companion hook
+   trigger (`Companion__AgentTriggerUrl`, `http://openclaw-gateway:18789`)
+   stays as it is.
+5. **lifekit-dashboard.** Nothing: it does not call the gateway.
+6. **The owner's email.** List the emails the gate admits and pick the
+   owner's:
+
+   ```bash
+   sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py role-users admin'
+   ```
+
+### Cutover
+
+One command. It checks everything above before it changes anything: the
+password and token are in the env file, the edge answers a browser with the
+sign-in redirect and the phone app's dashboard tab with the gateway,
+Prometheus scrapes through the edge, finance-sentry calls through it, and
+Serve publishes `:18789` without Funnel. Then it:
+
+- saves `gateway.auth`, `gateway.trustedProxies`,
+  `gateway.controlUi.allowedOrigins` and Serve's `:18789` target to
+  `/srv/lifekit-secrets/openclaw-sso-rollback.json` (0600);
+- dry-runs the config patch inside the running gateway;
+- stops the gateway and patches `gateway.auth` to trusted-proxy (owner's
+  email only), `trustedProxies` to exactly the edge, and adds
+  `https://<name>:18789` to `allowedOrigins`;
+- starts the gateway without its published port and points Serve's `:18789`
+  at `127.0.0.1:18892`;
+- checks the result (CLI health, the browser redirect, the app route, Serve,
+  and the scrape) and rolls back on its own if anything is off.
+
+The gateway restarts once, as on any deploy that recreates it.
+
+```bash
+cd /srv/lifekit-stack
+sudo bash scripts/openclaw-sso.sh cutover --operator-email <owner email>
+```
+
+**Live check, phone first.** Open the OpenClaw app. It shows the gateway
+connected, the dashboard tab loads, and a message to the agent is answered.
+Then open `https://<name>:18789/` in a browser: Logto's sign-in (or none if
+already signed in on another surface: the cookie is shared), then the
+dashboard, with no token asked for. `sudo bash scripts/openclaw-sso.sh check`
+reports the mode and Serve target any time. If the phone does not connect,
+roll back.
+
+### Rollback
+
+```bash
+sudo bash scripts/openclaw-sso.sh rollback
+```
+
+The rollback restores exactly what the cutover saved: `gateway.auth`,
+`trustedProxies`, `allowedOrigins` and Serve's `:18789` target. The gateway
+comes back in token mode with `127.0.0.1:18789` published, which is today's
+routing. If one of its steps fails, it keeps the saved file and says so; fix
+the cause and run it again. Without a saved file, it restores token mode with
+the gateway token's env reference, re-derives `trustedProxies` and points
+Serve at `127.0.0.1:18789`.
+
+Leave Prometheus, finance-sentry and the extra Logto URIs as they are: the
+internal routes work in token mode too.
+
+**Rotating.** The password: `sops set` plus render, then a deploy (it
+recreates the gateway). The gateway token: also restart the edge's Traefik
+(`docker restart edge-traefik-1`), because it reads the token
+once at start (`docs/secrets.md`).
 
 ## Container console logs in Loki
 

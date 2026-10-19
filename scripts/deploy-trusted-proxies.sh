@@ -29,16 +29,29 @@
 # image creates the project's networks as a side effect (it publishes no
 # ports and starts nothing else), so the gateway's first start already has
 # its proxy address in config and needs no second recreate.
+#
+# In trusted-proxy mode (OPENCLAW_AUTH_MODE=trusted-proxy, docs/runbook.md
+# "OpenClaw behind the sign-in gate") the list is set to exactly
+# OPENCLAW_EDGE_IP, the edge Traefik's pinned address on openclaw-ingress: any
+# other entry could present a signed-in identity. The host's bridge address is
+# one of those (a host process can reach the container's address directly),
+# so nothing is appended or kept. COMPOSE_OVERLAY_FILE is the trusted-proxy
+# compose overlay, so the one-shot write runs with the env that mode needs.
 
 set -euo pipefail
 
 ENV_FILE="${ENV_FILE:?ENV_FILE must be set}"
 COMPOSE_FILE="${COMPOSE_FILE:?COMPOSE_FILE must be set}"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:?OPENCLAW_CONFIG_DIR must be set}"
+OPENCLAW_AUTH_MODE="${OPENCLAW_AUTH_MODE:-token}"
 
 COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$(dirname "${COMPOSE_FILE}")")}"
+COMPOSE_FILES=(-f "${COMPOSE_FILE}")
+if [[ -n "${COMPOSE_OVERLAY_FILE:-}" ]]; then
+  COMPOSE_FILES+=(-f "${COMPOSE_OVERLAY_FILE}")
+fi
 project_compose() {
-  docker compose -p "${COMPOSE_PROJECT}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@"
+  docker compose -p "${COMPOSE_PROJECT}" --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "$@"
 }
 
 # OpenClaw >= 2026.10.2 refuses config reads and writes from a one-shot
@@ -82,6 +95,28 @@ if [[ "${CURRENT_TRUSTED_PROXIES}" == *UNREADABLE* ]]; then
   echo "gateway.trustedProxies was not set — the gateway will reject all proxied" >&2
   echo "requests with proxy_attribution_required. Fix config access and re-run deploy.sh; it is idempotent." >&2
   exit 1
+fi
+
+if [[ "${OPENCLAW_AUTH_MODE}" == "trusted-proxy" ]]; then
+  OPENCLAW_EDGE_IP="${OPENCLAW_EDGE_IP:?OPENCLAW_EDGE_IP must be set in trusted-proxy mode}"
+  WANTED_TRUSTED_PROXIES="$(python3 -c '
+import json, sys
+wanted = [sys.argv[2]]
+try:
+    current = json.loads(sys.argv[1]) if sys.argv[1] else None
+except ValueError:
+    current = None
+if current != wanted:
+    print(json.dumps(wanted, separators=(",", ":")))
+' "${CURRENT_TRUSTED_PROXIES}" "${OPENCLAW_EDGE_IP}")"
+  if [[ -z "${WANTED_TRUSTED_PROXIES}" ]]; then
+    echo "openclaw trustedProxies: trusted-proxy mode, exactly the edge (${OPENCLAW_EDGE_IP}); leaving it alone"
+    exit 0
+  fi
+  echo "openclaw trustedProxies: trusted-proxy mode, setting exactly the edge (${OPENCLAW_EDGE_IP}), was ${CURRENT_TRUSTED_PROXIES}"
+  openclaw_cli \
+    config set gateway.trustedProxies "${WANTED_TRUSTED_PROXIES}" --strict-json
+  exit 0
 fi
 
 TRUSTED_PROXY_NETWORK="${COMPOSE_PROJECT}_default"
