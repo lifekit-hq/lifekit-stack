@@ -2619,8 +2619,9 @@ URI.
 ## Tailnet sign-in gate
 
 Compose project `edge` (`compose/edge/`) puts one Logto sign-in in front of
-the lifekit dashboard and the devclaw console. Once signed in on either,
-the other opens without asking again. Two services:
+the lifekit dashboard and the devclaw console (and the OpenClaw dashboard
+once [its cutover](#openclaw-behind-the-sign-in-gate) has run). Once signed
+in on either, the other opens without asking again. Two services:
 
 - `traefik`, the forward-auth proxy, with one loopback entrypoint per
   surface: `127.0.0.1:18890` for the dashboard and `127.0.0.1:18891` for
