@@ -92,7 +92,7 @@ yearly review above, first 2027-09-19).
 4. The merge deploys: `up -d` recreates the gateway with the mounts, the
    platform patch adds the `sops` provider and the enabled accounts' `botToken` refs after
    a dry run that resolves them, `secrets reload` follows.
-5. Verify: `openclaw channels status` shows every account connected;
+5. Verify: `openclaw channels status` shows every enabled account connected;
    `openclaw secrets audit --allow-exec` lists no gateway finding;
    `docker exec openclaw-openclaw-gateway-1 env | cut -d= -f1 | grep -c BOT_TOKEN`
    prints 1 (`DEVCLAW_BOT_TOKEN`, the master-file one).

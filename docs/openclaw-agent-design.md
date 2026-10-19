@@ -51,7 +51,7 @@ The platform half is in git and deployed on merge; the per-agent half (entries, 
 
 ### Routing
 
-A binding matches a channel and optionally an account or peer; the most specific match wins, so `telegram:career` beats kit's `telegram:*`. A Telegram bot with no binding of its own falls through to kit, so a domain agent reached by its own bot needs its own binding. Retiring an agent means removing its bindings and disabling or rebinding its bot, not only its entry.
+A binding matches a channel and optionally an account or peer; the most specific match wins, so `telegram:career` beats kit's `telegram:*`. A Telegram bot with no binding of its own falls through to kit, so a domain agent reached by its own bot needs its own binding. Retiring an agent means removing its bindings and disabling or rebinding its bot, not only its entry. Disabling a Telegram bot also drops its `botToken` ref from the platform file (`docs/runbook.md` "Telegram bot tokens: enabled accounts only").
 
 ### Decisions waiting on the owner
 

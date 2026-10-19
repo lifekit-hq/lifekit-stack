@@ -22,8 +22,8 @@ a second person appears, not before.
 Least privilege is structural, not procedural: the gateway key is a
 recipient of the gateway file only, so a compromised gateway (or an
 exec-capable agent inside it, which runs as the same uid and can read what
-the gateway reads) reaches five bot tokens the gateway holds in memory
-anyway, and nothing from the master file. The operator keys never sit on
+the gateway reads) reaches the five bot tokens in the gateway file (only the enabled
+accounts' are held in memory), and nothing from the master file. The operator keys never sit on
 a service account.
 
 The operator set is {captain, firstmate}: both are recipients of both
