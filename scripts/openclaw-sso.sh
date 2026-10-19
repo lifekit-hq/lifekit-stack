@@ -153,8 +153,17 @@ cli_health() {
   openclaw_compose exec -T openclaw-gateway node dist/index.js health --json >/dev/null 2>&1
 }
 
+# For the config patch with the gateway stopped: a clean stop releases the
+# state, so the one-shot container can write it (replica, 2026-10-19).
 openclaw_cli() {
   openclaw_compose run --rm --no-deps -T --entrypoint openclaw openclaw-gateway "$@"
+}
+
+# With the gateway running, OpenClaw >= 2026.10.2 refuses a one-shot's state
+# read ("cannot verify Gateway ownership"), so the dry run goes through `exec`
+# into it (scripts/lib/deploy-common.sh openclaw_gateway_running).
+openclaw_exec() {
+  openclaw_compose exec -T openclaw-gateway openclaw "$@"
 }
 
 check() {
@@ -202,6 +211,8 @@ preflight() {
     || failures+=("the edge's traefik is not running at ${OPENCLAW_EDGE_IP} on ${OPENCLAW_INGRESS_NETWORK} (got '${ip}'); deploy first")
   [[ -n "$(edge_compose ps -q --status running oauth2-proxy 2>/dev/null || true)" ]] \
     || failures+=("the edge's oauth2-proxy is not running: browsers could not sign in (runbook \"Tailnet sign-in gate\")")
+  openclaw_gateway_running \
+    || failures+=("the gateway is not running; the dry run of the patch runs inside it (deploy first)")
   id="$(openclaw_compose ps -q openclaw-gateway 2>/dev/null || true)"
   [[ -n "$(container_ip_on "${id}" "${OPENCLAW_INGRESS_NETWORK}")" ]] \
     || failures+=("the gateway is not on ${OPENCLAW_INGRESS_NETWORK}; deploy first")
@@ -311,7 +322,7 @@ cutover() {
   patch="$(cutover_patch "${email}")"
 
   say "openclaw sso cutover: dry run of the config patch (writes nothing)"
-  if ! printf '%s\n' "${patch}" | OPENCLAW_COMPOSE_AUTH_MODE=trusted-proxy openclaw_cli config patch --stdin --dry-run --allow-exec; then
+  if ! printf '%s\n' "${patch}" | openclaw_exec config patch --stdin --dry-run --allow-exec; then
     rm -f "${ROLLBACK_FILE}"
     echo "cutover: the patch was rejected; nothing changed" >&2
     return 1

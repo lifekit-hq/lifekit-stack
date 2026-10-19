@@ -86,7 +86,8 @@ if " ps -q " in f" {line} ":
     elif line.endswith(" oauth2-proxy"):
         print(os.environ.get("OAUTH2_PROXY_ID", "oauthid"))
     elif line.endswith(" openclaw-gateway"):
-        print("gwid")
+        if " --status running " not in line or os.environ.get("GW_RUNNING", "1"):
+            print("gwid")
     sys.exit()
 if " health --json" in line:
     sys.exit(int(os.environ.get("HEALTH_EXIT", "0")))
@@ -312,8 +313,11 @@ def test_cutover_moves_the_gateway_behind_the_gate_in_order(box):
     up = index_of(lines, " up -d ")
     serve = index_of(lines, "tailscale serve --bg")
     assert dry < stop < patch < up < serve
+    # The dry run reads the state the running gateway owns, so it runs inside
+    # it; the write runs with the gateway stopped.
+    assert " exec -T openclaw-gateway openclaw config patch" in lines[dry]
+    assert " run --rm " in lines[patch]
     # The new mode's compose overlay: no published port, no token in env.
-    assert "trusted-proxy.yml" in lines[dry]
     assert "trusted-proxy.yml" in lines[patch]
     assert "trusted-proxy.yml" in lines[up]
     assert "trusted-proxy.yml" not in lines[stop]
@@ -373,6 +377,7 @@ def test_preflight_lists_every_missing_dependency_and_changes_nothing(box):
         ({"WEBVIEW_CODE": "302"}, "dashboard tab at http://127.0.0.1:18892/ got 302"),
         ({"EDGE_INGRESS_IP": "10.231.78.9"}, "not running at 10.231.78.2"),
         ({"GW_INGRESS_IP": ""}, "the gateway is not on openclaw-ingress"),
+        ({"GW_RUNNING": ""}, "the gateway is not running"),
     ],
 )
 def test_preflight_checks_the_edge_routes_before_anything_changes(box, extra, message):

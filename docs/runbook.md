@@ -2810,7 +2810,10 @@ next to trusted-proxy mode is honoured only for local-direct callers
 finance-sentry's calls across the network. The replica confirmed this. Those
 clients therefore keep the bearer they already hold, and the edge's internal
 entrypoint swaps it for a service identity. `OPENCLAW_GATEWAY_PASSWORD`
-serves only the in-container CLI (`docs/secrets.md`). The internal routes
+serves only the in-container CLI (`docs/secrets.md`). That includes the
+deploy's `exec` calls: running inside the gateway does not authenticate them,
+and without the password a 2026.10.2 replica refused `health`, `cron list`
+and `channels status` (`trusted_proxy_untrusted_source`). The internal routes
 work in token mode too, so the clients move first, with no gap.
 
 **Deploys after the cutover.** `openclaw_compose` reads the mode from
@@ -2886,7 +2889,7 @@ Serve publishes `:18789` without Funnel. Then it:
 - saves `gateway.auth`, `gateway.trustedProxies`,
   `gateway.controlUi.allowedOrigins` and Serve's `:18789` target to
   `/srv/lifekit-secrets/openclaw-sso-rollback.json` (0600);
-- dry-runs the config patch;
+- dry-runs the config patch inside the running gateway;
 - stops the gateway and patches `gateway.auth` to trusted-proxy (owner's
   email only), `trustedProxies` to exactly the edge, and adds
   `https://<name>:18789` to `allowedOrigins`;
