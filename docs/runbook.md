@@ -2776,7 +2776,9 @@ persona over OpenClaw's `bootstrapMaxChars` (20,000 characters), because the
 agent would load it truncated; `--allow-oversize` overrides. The pin must be
 at or past finance-sentry's trim under that limit (#968; the composition is about
 19,800 characters at the 2026-10-15 pin, it was about 23,300 before the trim). Only `AGENTS.md` is
-written: `USER.md` and the other workspace files stay host state. `install`
+written: `MEMORY.md` and `USER.md` are vault pointers set by their own deploy
+step (see [Workspace memory files are pointers](#workspace-memory-files-are-pointers)),
+and the other workspace files stay host state. `install`
 changes a file the agent reads on its next session and restarts nothing.
 
 finance-sentry's framework primer (served by its MCP server) is Ledger's only
@@ -2785,10 +2787,10 @@ workspace: a `RETIRED_PATHS` entry (`skills/project-context`,
 `repos/finance-sentry`) exists, or a line of `MEMORY.md`, `USER.md` or `SOUL.md`
 matches a `STALE_MARKERS` pattern (the old stack, Plaid, DevClaw, the wiki
 tools, the old repo location, the Kit relay). Each hit prints as a `stale:`
-line before the `AGENTS.md` diff. Those three files hold Ledger's own memory and
-the owner's facts, so they are scanned for known markers, never compared with
-canonical text: Ledger keeps writing its memory and only a reintroduced copy
-alerts. A new retired copy is a new entry in either list.
+line before the `AGENTS.md` diff. `SOUL.md` holds Ledger's own text, and
+`MEMORY.md` and `USER.md` are vault pointers that carry no facts, so the three
+are scanned for known markers, never compared with canonical text: only a
+reintroduced copy alerts. A new retired copy is a new entry in either list.
 
 A deploy overwrites a live edit of `AGENTS.md` (the old file is kept as
 `AGENTS.md.pre-persona-install`), so fold any live-only change worth keeping into
