@@ -89,9 +89,9 @@ services:
       lifekit.contract.ingress: edge
       lifekit.contract.service: openclaw-gateway
     # Cross-project seam (devclaw spec 005): join the external lifekit-shared
-    # network so the gateway reaches devclaw-mcp, finance-sentry-mcp,
-    # notify-relay and otel-collector by service name, and Prometheus scrapes
-    # it at openclaw-gateway:18789. `default` keeps in-project DNS to
+    # network so the gateway reaches finance-sentry-mcp, notify-relay and
+    # otel-collector by service name, and Prometheus scrapes it at
+    # openclaw-gateway:18789. `default` keeps in-project DNS to
     # google-workspace-mcp.
     # gw_priority pins the container's default route to `default`. Without it
     # Docker picks the network whose name sorts first (lifekit-shared <
@@ -142,13 +142,10 @@ services:
       OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
       OPENCLAW_FINANCE_CHAT: ${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
-      # openclaw.json holds these as env SecretRefs / ${VAR} interpolation
-      # (docs/secrets.md: DEVCLAW_BOT_TOKEN, DEVCLAW_MCP_TOKEN,
-      # FINANCE_SENTRY_MCP_TOKEN), so they must be in this container's own
+      # openclaw.json holds this as ${VAR} interpolation (docs/secrets.md:
+      # FINANCE_SENTRY_MCP_TOKEN), so it must be in this container's own
       # environment - the gateway's global dotenv is legacy plaintext and is
-      # being retired, not a source these should ever fall back to.
-      DEVCLAW_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-}
-      DEVCLAW_MCP_TOKEN: ${DEVCLAW_MCP_TOKEN:-}
+      # being retired, not a source it should ever fall back to.
       FINANCE_SENTRY_MCP_TOKEN: ${FINANCE_SENTRY_MCP_TOKEN:-}
       OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
       PATH: /home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -182,14 +179,13 @@ services:
       # workspace memory/ - where session-memory writes its notes on /new or
       # /reset - is the vault's episodic agents/<id>/memory/ (vault README,
       # rotated at 90 days). The workspace memory/ directory is not
-      # configurable, so a bind mount is the lever. Only kit, finance (Ledger)
-      # and devclaw; MEMORY.md stays at the workspace root, unmounted (a
+      # configurable, so a bind mount is the lever. Only kit and finance
+      # (Ledger); MEMORY.md stays at the workspace root, unmounted (a
       # single-file bind does not survive a rename-replace). The host directories
       # must exist, owned by the gateway's uid, before this is deployed
       # (docs/runbook.md, "Agent memory in the vault").
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/kit/memory:/home/node/.openclaw/agents/kit/workspace/memory
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/finance/memory:/home/node/.openclaw/agents/finance/workspace/memory
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/devclaw/memory:/home/node/.openclaw/agents/devclaw/workspace/memory
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
       # Claude CLI home, used if an agent runs the claude-cli runtime (the live
       # agents run agentRuntime.id "openclaw"): session files land in
@@ -352,7 +348,6 @@ services:
       # the notes the gateway writes.
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/kit/memory:/home/node/.openclaw/agents/kit/workspace/memory
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/finance/memory:/home/node/.openclaw/agents/finance/workspace/memory
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/devclaw/memory:/home/node/.openclaw/agents/devclaw/workspace/memory
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
     entrypoint:
       - node
@@ -438,9 +433,8 @@ services:
 # `default` is this project's own network (openclaw_default): the gateway
 # reaches google-workspace-mcp on it. `lifekit-shared` is the EXTERNAL
 # cross-project seam (created by devclaw's project, devclaw spec 005): the
-# gateway reaches devclaw-mcp, finance-sentry-mcp, notify-relay and
-# otel-collector on it, and Prometheus (platform project) scrapes
-# openclaw-gateway:18789 on it. Only the gateway joins it.
+# gateway reaches finance-sentry-mcp, notify-relay and otel-collector on it,
+# and Prometheus (platform project) scrapes openclaw-gateway:18789 on it. Only the gateway joins it.
 networks:
   lifekit-shared:
     external: true

@@ -14,7 +14,10 @@
 #
 # Re-running converges (both files are overwritten in place). The gateway's
 # skill watcher picks up a new SKILL.md; if kit does not see it, force-recreate
-# the gateway as in scripts/ensure-morning-brief.sh.
+# the gateway:
+#   cd /srv/lifekit-stack/compose/openclaw && docker compose -p openclaw \
+#     --env-file /srv/lifekit-secrets/stack.env -f docker-compose.yml \
+#     up -d --force-recreate openclaw-gateway
 #
 # Env overrides:
 #   SECONDMATE_RELAY_AGENT  agent whose workspace gets the skill (default: kit)

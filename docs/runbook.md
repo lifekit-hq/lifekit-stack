@@ -280,9 +280,8 @@ The pulse's checklist is not config. It is the `payload.message` of the
 per-job scratch, and the workspace `HEARTBEAT.md`, which is a no-op in
 2026.9.4, never reach it; see "The finance heartbeat, retired for an isolated
 cron job" below for why the pulse is a cron row and not the heartbeat lane).
-`scripts/ensure-finance-pulse.sh` declares it from `scripts/finance-pulse.md`,
-the same way `scripts/ensure-morning-brief.sh` declares its cron: the message
-is a short contract preamble (`NO_REPLY` or exactly one message) followed by
+`scripts/ensure-finance-pulse.sh` declares it from `scripts/finance-pulse.md`:
+the message is a short contract preamble (`NO_REPLY` or exactly one message) followed by
 the checklist verbatim. Run it on the host after the `ledger-pulse` row has
 been created on the gateway; it is idempotent and rewrites the message with
 `openclaw cron edit --message` only when it differs. The edit hot-reloads and
@@ -485,7 +484,6 @@ against the 2026.9.4 schema. Save it as `openclaw.patch.json5`:
     entries: {
       kit: { model: { fallbacks: [] } },
       career: { model: { fallbacks: [] }, tools: { exec: { mode: "ask" } } },
-      devclaw: { model: { fallbacks: [] } },
       fable: { tools: { exec: { mode: "ask" } } },
     },
   },
@@ -506,7 +504,6 @@ Exec policy per agent:
 - career: set to `ask` - 0 exec calls in 30 days and no domain cron. (learning and
   social had the same setting until they were deleted on 2026-10-07.)
 - fable: `full` to `ask` - no sessions ever; its only automated turn is the deploy pong smoke.
-- devclaw keeps `full` - its daily morning-brief cron sweeps repos with `gh` and writes briefs.
 - kit keeps `full` - skills github, gh-issues and summarize need host binaries (145 exec calls in 30 days),
   and since health folded into kit on 2026-10-07 the three claw CLIs are kit's only write path for food,
   workouts and daily state.
@@ -518,7 +515,7 @@ Command-kind crons (`memory_vault_audit`, `weekly_log_summary`) bypass exec
 policy.
 
 Expected `openclaw security audit` after the patch: `gateway.auth_no_rate_limit`
-and `models.weak_tier` cleared; `security_full_configured` (devclaw) and
+and `models.weak_tier` cleared; `security_full_configured` (devclaw, until it was retired) and
 `agent_skill_mcp_boundary_drift` (kit, finance) remain.
 
 Follow-up, out of scope for this change: the boundary-drift remediation
@@ -644,7 +641,7 @@ depends on this row - `memory_vault_audit` keeps running unchanged either way.
 
 ### Agent memory in the vault
 
-Kit (`kit`), Ledger (`finance`) and devclaw keep their workspace `memory/`
+Kit (`kit`) and Ledger (`finance`) keep their workspace `memory/`
 directory in the vault (lifekit-stack#175).
 `compose/openclaw/docker-compose.yml` bind-mounts
 `${LIFEKIT_LIFE_DIR}/agents/<id>/memory` over
@@ -669,7 +666,7 @@ What the mounts leave out:
   output. Dreaming is off (the platform file, see
   [Dreaming off](#dreaming-off-pluginsentriesmemory-coreconfigdreamingenabled)),
   so they are dead and are deleted rather than moved.
-- **Only these three agents.** The other agents keep their memory in their
+- **Only these two agents.** The other agents keep their memory in their
   workspace.
 
 The mounted notes are also under the vault path that `memory.search.extraPaths`
@@ -684,7 +681,7 @@ the directories first and copy the existing notes in. The step is idempotent
 
 ```bash
 sudo -u lifekit bash -euo pipefail <<'SH'
-for id in kit finance devclaw; do
+for id in kit finance; do
   src=/srv/openclaw/config/agents/$id/workspace/memory
   dst=/srv/memory/agents/$id/memory
   install -d -m 755 "$dst"
@@ -694,7 +691,7 @@ for id in kit finance devclaw; do
 done
 cd /srv/memory
 grep -q 'lifekit-stack#175' log.md ||
-  sh bin/log.sh "agents/{kit,finance,devclaw}/memory now hold those agents' workspace memory notes, bind-mounted into the gateway (lifekit-stack#175)"
+  sh bin/log.sh "agents/{kit,finance}/memory now hold those agents' workspace memory notes, bind-mounted into the gateway (lifekit-stack#175)"
 SH
 ```
 
@@ -706,7 +703,7 @@ with a suffix after the date are not matched by the rotate glob and stay. The
 originals stay in the workspace, hidden under the mount, which is what makes
 the rollback lossless.
 
-**Rollback:** remove the three mount lines from both services and let the
+**Rollback:** remove the two mount lines from both services and let the
 merge redeploy. The agents go back to their workspace copies. Notes written
 while the mounts were live stay in the vault, under `agents/<id>/memory/`.
 
@@ -736,7 +733,7 @@ No backup is kept in the workspace: the openclaw-config mirror's git history
 holds every version mirrored before the switch, and the mirror no longer
 carries either file (see [openclaw-config mirror](#openclaw-config-mirror)).
 An agent is added to the script's `AGENTS` list only once the facts in its
-two files are confirmed in the vault. devclaw's are not yet.
+two files are confirmed in the vault.
 
 **Rollback:** revert the change and let the merge redeploy; the step stops
 running. To restore one agent's earlier files, take them from the mirror's
@@ -959,7 +956,8 @@ docker exec -i "$G" openclaw config patch --stdin < /tmp/kit-skills.patch.json
 ```
 
 The skill watcher picks up the new `SKILL.md`. If kit does not see it, force-recreate
-the gateway as in `scripts/ensure-morning-brief.sh`.
+the gateway (`docker compose -p openclaw --env-file /srv/lifekit-secrets/stack.env -f
+docker-compose.yml up -d --force-recreate openclaw-gateway` in `compose/openclaw/`).
 
 **Verify** from inside the gateway, then answer the smoke note from the second mate's
 home (`fm-inbox.sh reply <id> …`, then `drain --ack <id>`) and check kit shows the reply:

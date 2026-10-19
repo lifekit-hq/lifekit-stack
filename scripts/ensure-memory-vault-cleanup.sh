@@ -8,8 +8,7 @@
 # vault's scripts; the model only does what needs judgment.
 #
 # Why a script and not config: cron jobs live in the gateway's SQLite state,
-# not in openclaw.json — same split as ensure-morning-brief.sh and
-# ensure-finance-pulse.sh. This script IS the git-side declaration of the
+# not in openclaw.json — same split as ensure-finance-pulse.sh. This script IS the git-side declaration of the
 # job: re-running converges it (an existing job gets this message,
 # description and delivery mode; schedule and timeout are left alone).
 #
