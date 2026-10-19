@@ -589,5 +589,16 @@ def test_gateway_and_edge_share_only_the_pinned_ingress_network():
     }
     assert gw["networks"]["openclaw-ingress"] == {"external": True}
     assert edge["networks"]["openclaw-ingress"] == {"external": True}
-    lib = (REPO / "scripts/lib/deploy-common.sh").read_text()
-    assert 'OPENCLAW_EDGE_IP="10.231.78.2"' in lib
+    sourced = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$REPO_DIR/scripts/lib/deploy-common.sh" && printf %s "$OPENCLAW_EDGE_IP"',
+        ],
+        env={**os.environ, "REPO_DIR": str(REPO)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    pinned = edge["services"]["traefik"]["networks"]["openclaw-ingress"]
+    assert sourced.stdout == pinned["ipv4_address"]
