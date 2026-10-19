@@ -8,20 +8,19 @@ This page is the design, not a mirror of live state. The live fleet is host stat
 
 ## Shape: kit plus domain agents
 
-- **kit** is the front door and the general-purpose agent: the default and system agent, the catch-all for Telegram traffic nothing else claims, and the dispatcher for domain work that arrives there. Anything without a domain agent is kit's, including food and workouts (it runs the `nutrition-claw`, `workout-claw` and `life-state` CLIs itself, with targets read from the vault's `domains/health.md`) and dev work (which it hands to DevClaw through the intake doorway).
-- **Domain agents** each own one domain, with their own workspace, memory, sessions and, where the owner talks to them directly, their own Telegram bot. Since 2026-10-07: `finance`, `devclaw` and `career`.
+- **kit** is the front door and the general-purpose agent: the default and system agent, the catch-all for Telegram traffic nothing else claims, and the dispatcher for domain work that arrives there. Anything without a domain agent is kit's, including food and workouts (it runs the `nutrition-claw`, `workout-claw` and `life-state` CLIs itself, with targets read from the vault's `domains/health.md`) and dev work (which it hands off as a GitHub issue, see [DevClaw - retired](#devclaw---retired)).
+- **Domain agents** each own one domain, with their own workspace, memory, sessions and, where the owner talks to them directly, their own Telegram bot. Since 2026-10-09: `finance` and `career`.
 - **One gateway, one config.** Every agent runs in the same `openclaw-gateway` container on the `openclaw` agent runtime (`agentRuntime.id`), authenticated by the owner's Claude subscription. No API keys ([[pro-subscription-is-the-design]] in memory); a domain agent never brings a paid service with it.
 
 | Agent | Domain | How work reaches it |
 | --- | --- | --- |
 | kit | Everything without a domain agent, including food, workouts and daily state; dispatch | Telegram default account plus the `telegram:*` catch-all |
 | finance | Investing, finance-sentry companion | Own Telegram account, inbound hook |
-| devclaw | Dev harness, repo operations | Own Telegram account |
 | career | Career plan, job search, LinkedIn as a job-search tool (read-only, drafts-only). Paused: `career-weekly` is disabled until the job hunt restarts; the agent and its bot stay | Own Telegram account |
 
 The table is the intended route; `openclaw agents list --bindings` is the truth.
 
-Retired on 2026-10-07: `health` (its food and workout duties and its three disabled nudge crons moved to kit; it never had a channel), `social` and `learning` (deleted with `openclaw agents delete`, their Telegram accounts `social` and `reading` disabled rather than left to fall through to kit). Re-adding a domain means passing the test below again.
+Retired on 2026-10-07: `health` (its food and workout duties and its three disabled nudge crons moved to kit; it never had a channel), `social` and `learning` (deleted with `openclaw agents delete`, their Telegram accounts `social` and `reading` disabled rather than left to fall through to kit). Retired on 2026-10-09: `devclaw` (its binding, Telegram account, MCP server and morning-brief cron removed; build work became a GitHub issue that kit files, see [DevClaw - retired](#devclaw---retired)). Re-adding a domain means passing the test below again.
 
 ### What makes an agent earn its entry
 
@@ -60,7 +59,7 @@ Decisions go to the OpenClaw app, not Telegram. kit keeps the one ledger of open
 
 ### Workspaces and memory
 
-Each agent's workspace holds its bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, and `USER.md` and `MEMORY.md`, which are pointers to the vault that every deploy rewrites for kit, career and finance - `docs/runbook.md` "Workspace memory files are pointers"), daily notes under `memory/` (for Kit, Ledger and devclaw that directory is the vault's `agents/<id>/memory/`, bind-mounted - `docs/runbook.md` "Agent memory in the vault"), and its installed skills. The vault is mounted read-only in spirit for every agent (`~/memory`, searchable through `memory.search`); agents propose vault edits rather than writing there, except through skills and CLIs that own their data.
+Each agent's workspace holds its bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, and `USER.md` and `MEMORY.md`, which are pointers to the vault that every deploy rewrites for kit, career and finance - `docs/runbook.md` "Workspace memory files are pointers"), daily notes under `memory/` (for Kit and Ledger that directory is the vault's `agents/<id>/memory/`, bind-mounted - `docs/runbook.md` "Agent memory in the vault"), and its installed skills. The vault is mounted read-only in spirit for every agent (`~/memory`, searchable through `memory.search`); agents propose vault edits rather than writing there, except through skills and CLIs that own their data.
 
 Claude Code's own auto-memory (`~/.claude/projects/<workspace>/memory/`) is off for every agent: it is per-machine, invisible to the vault and to the projects that own the data, and it drifts. The OpenClaw image locks it off with a root-owned managed settings file that a workspace settings file cannot override (`docs/runbook.md` "lifekit Claude Code home").
 
@@ -81,7 +80,7 @@ Ledger (agent id `finance`) holds no finance facts of its own; finance-sentry is
 | --- | --- | --- |
 | Is it a separate domain the owner talks to directly, with its own voice, memory and automation? | Domain agent (and it must pass the test above) | Skill in kit or in an existing domain agent |
 | Does it have a real backing CLI with its own data? | Workspace skill; the CLI owns the data | Direct handling |
-| Does it outlive one chat turn (multi-hour, callback-driven) or already exist as an MCP server? | MCP (devclaw, google-workspace) | Skill or direct |
+| Does it outlive one chat turn (multi-hour, callback-driven) or already exist as an MCP server? | MCP (google-workspace, finance-sentry) | Skill or direct |
 
 What this rules out:
 
@@ -103,9 +102,11 @@ The current shape does not repeat that design:
 
 ---
 
-## DevClaw - the autonomous coding boundary
+## DevClaw - retired
 
-DevClaw is the one out-of-process runtime for agent work: an MCP server that runs autonomous coding tasks through [OpenHands](https://github.com/All-Hands-AI/OpenHands) in a sandbox and reports back through `notify-relay`. kit reaches it through the intake doorway (`file_intake`, then dispatch on the owner's go); the `devclaw` agent entry is the dev-harness domain agent with its own daily brief (`scripts/ensure-morning-brief.sh`). See [DevClaw architecture v2](https://github.com/lifekit-hq/devclaw/blob/main/docs/architecture-v2.md).
+The `devclaw` agent and its `devclaw` MCP server entry retired on 2026-10-09. Autonomous build work is a GitHub issue that kit (or a specialist such as Ledger) files in the right repo, with the need, the reason and the acceptance criteria. The devclaw-mcp service and its compose project belong to the devclaw repo, not to this fleet; no agent calls it.
+
+The agent entry and its system-owned `skill-collection-review-devclaw` cron are removed with `openclaw agents delete devclaw --force` once the deploy that drops the devclaw memory bind mount from the gateway has run (the delete moves the agent's directories to the trash, and the mount would be in that path). `config patch`/`config unset` refuse to drop a roster entry.
 
 ---
 

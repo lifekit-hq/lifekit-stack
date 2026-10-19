@@ -109,7 +109,7 @@ def test_only_the_finance_agent_gets_a_heartbeat():
 # codex agent runtime. Any other provider plugin stays out of the allowlist.
 ROUTED_PROVIDERS = {"anthropic", "openai", "codex"}
 UNROUTED_PROVIDERS = {"google", "kie", "ollama", "openrouter", "vllm", "xai"}
-MEMORY_AGENTS = ("kit", "finance", "devclaw")
+MEMORY_AGENTS = ("kit", "finance")
 
 
 def test_plugin_allowlist_keeps_what_the_stack_runs():
@@ -156,6 +156,15 @@ def test_agent_memory_lives_in_the_vault():
 def test_retired_wiki_vault_mount_is_gone():
     for service in ("openclaw-gateway", "openclaw-cli"):
         assert not [m for m in volumes(service) if "/.openclaw/wiki" in m]
+
+
+def test_retired_devclaw_agent_wiring_is_gone():
+    # The devclaw OpenClaw agent is retired: no memory mount, and no gateway
+    # env for its Telegram account or MCP server.
+    for service in ("openclaw-gateway", "openclaw-cli"):
+        assert not [m for m in volumes(service) if "agents/devclaw" in m]
+        env = compose_services()[service].get("environment", {})
+        assert not [k for k in env if k.startswith("DEVCLAW_")]
 
 
 def test_workshop_proposals_need_owner_approval():

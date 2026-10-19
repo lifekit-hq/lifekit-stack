@@ -76,14 +76,6 @@
       "google-workspace": {
         transport: "streamable-http",
         url: "http://google-workspace-mcp:8000/mcp/"
-      },
-
-      // devclaw — async autonomous dev work via OpenHands. v2 is live as of
-      // 2026-05-25 (lifekit-hq/devclaw feat/v2-mcp-server-first-slice). Validated
-      // end-to-end Kit → devclaw MCP → OpenHands → real file in 9s.
-      "devclaw": {
-        transport: "streamable-http",
-        url: "http://devclaw-mcp:8000/mcp/"
       }
     }
   }

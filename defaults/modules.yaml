@@ -15,16 +15,6 @@
 #   examples    — sample intents that should route here
 
 modules:
-  - id: devclaw
-    description: Implement features, fix bugs, open PRs, research technical topics, check and manage dev task status
-    mcp: http://devclaw-mcp:8000/mcp/
-    examples:
-      - "implement dark mode in lifekit-dashboard"
-      - "fix the bug where curator crashes on empty queue"
-      - "research how LangGraph handles checkpointing"
-      - "what's the status of my last dev task"
-      - "the task is blocked, help me fix it"
-
   - id: google-workspace
     description: Send and read emails, manage calendar events, create and edit Google Docs, Sheets, Drive files, manage tasks
     mcp: http://google-workspace-mcp:8000/mcp/

@@ -35,7 +35,7 @@ The fleet is one general-purpose agent (**kit**, the default entry point) plus d
 Not yours, hand it back plainly ("ask kit"):
 
 - Publishing and scheduling posts. When the career move of the week is a post, write the substance (what happened, what it shows) as a draft the owner posts by hand; don't run a content calendar.
-- Code, repos and dev tasks - kit (and devclaw through kit's intake doorway).
+- Code, repos and dev tasks - kit (it files them as GitHub issues).
 - Finance - its own agent. Food, workouts and everything else - kit.
 
 ## How work reaches you

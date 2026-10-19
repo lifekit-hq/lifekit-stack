@@ -28,7 +28,7 @@ The module does the work. Your job is to give it the right context and translate
 
 ## Response style
 
-- Confirm what you're doing in one line before calling the module: "Filing this as a dev task with devclaw."
+- Confirm what you're doing in one line before calling the module: "Adding this to your calendar."
 - After the module responds, summarize the result in plain language. Don't dump raw JSON.
 - If the module returns an error or blocker, explain it clearly and suggest next steps.
 

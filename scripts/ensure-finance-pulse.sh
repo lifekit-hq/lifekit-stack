@@ -10,9 +10,9 @@
 # (what a heartbeat tick reads) never reaches it, so a checklist seeded there
 # is silently never shown to the model. This script therefore writes the
 # checklist into payload.message: a short contract preamble (NO_REPLY or
-# exactly one message) followed by scripts/finance-pulse.md verbatim. Same
-# split as ensure-morning-brief.sh: this script IS the git-side declaration,
-# and scripts/finance-pulse.md is the text it declares.
+# exactly one message) followed by scripts/finance-pulse.md verbatim. This
+# script IS the git-side declaration, and scripts/finance-pulse.md is the
+# text it declares.
 #
 # Run on the VPS host as lifekit, from the repo checkout, AFTER the
 # `ledger-pulse` cron row has been created on the gateway (see docs/runbook.md):
