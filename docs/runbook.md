@@ -155,6 +155,15 @@ in that file, never in a PR body; objects merge and scalars replace
 can read it with stdlib Python. Check new keys against the installed schema
 (`openclaw config schema`).
 
+The deploy's CLI calls that touch live gateway state (this patch's dry run and
+apply, `secrets audit`, the `gateway.trustedProxies` write) go through
+`docker compose exec` into the running gateway, not a `run --rm` one-shot:
+OpenClaw 2026.10.2 refuses those from another PID namespace ("cannot verify
+Gateway ownership"). With no gateway running, the patch apply and the audit
+fail the deploy with a clear message; `deploy-trusted-proxies.sh` falls back to
+the one-shot, since there is no owner to verify. The upgrade steps run with the
+gateway stopped and stay `run --rm`.
+
 #### Skill Workshop applies wait for the owner (`skills.workshop.approvalPolicy`)
 
 Unset, `skills.workshop.approvalPolicy` is `"auto"`: an agent that calls
