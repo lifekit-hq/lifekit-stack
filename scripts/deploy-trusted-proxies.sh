@@ -41,6 +41,19 @@ project_compose() {
   docker compose -p "${COMPOSE_PROJECT}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@"
 }
 
+# OpenClaw >= 2026.10.2 refuses config reads and writes from a one-shot
+# container while a gateway owns the state ("cannot verify Gateway ownership
+# ... different PID namespace"), so with the gateway running the CLI goes
+# through `exec` into it. With no gateway running (the first deploy of the
+# project) there is no owner to verify and the one-shot container is right.
+openclaw_cli() {
+  if [[ -n "$(project_compose ps -q --status running openclaw-gateway 2>/dev/null)" ]]; then
+    project_compose exec -T openclaw-gateway openclaw "$@"
+  else
+    project_compose run --rm --no-deps --entrypoint openclaw openclaw-gateway "$@"
+  fi
+}
+
 CONFIG_FILE="${OPENCLAW_CONFIG_DIR}/openclaw.json"
 
 # Cheapest read first: the host config file is strict JSON on a normal
@@ -60,9 +73,8 @@ print(json.dumps(data.get("gateway", {}).get("trustedProxies")))
 ' "${CONFIG_FILE}" 2>/dev/null || echo UNREADABLE)"
 
 if [[ "${CURRENT_TRUSTED_PROXIES}" == "UNREADABLE" ]]; then
-  CURRENT_TRUSTED_PROXIES="$(project_compose \
-    run --rm --no-deps --entrypoint openclaw openclaw-gateway \
-      config get gateway.trustedProxies 2>/dev/null | tr -d '[:space:]' || echo UNREADABLE)"
+  CURRENT_TRUSTED_PROXIES="$(openclaw_cli \
+    config get gateway.trustedProxies 2>/dev/null | tr -d '[:space:]' || echo UNREADABLE)"
 fi
 
 if [[ "${CURRENT_TRUSTED_PROXIES}" == *UNREADABLE* ]]; then
@@ -119,6 +131,5 @@ case "${WANTED_TRUSTED_PROXIES}" in
 esac
 
 echo "openclaw trustedProxies: adding ${TRUSTED_PROXY_ADDR} (from ${TRUSTED_PROXY_NETWORK})"
-project_compose \
-  run --rm --no-deps --entrypoint openclaw openclaw-gateway \
-    config set gateway.trustedProxies "${WANTED_TRUSTED_PROXIES}" --strict-json
+openclaw_cli \
+  config set gateway.trustedProxies "${WANTED_TRUSTED_PROXIES}" --strict-json

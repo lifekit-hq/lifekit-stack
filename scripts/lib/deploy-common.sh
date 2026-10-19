@@ -23,6 +23,14 @@ OPENCLAW_COMPOSE_FILE="${REPO_DIR}/compose/openclaw/docker-compose.yml"
 openclaw_compose() {
   docker compose -p "${OPENCLAW_PROJECT}" --env-file "${ENV_FILE}" -f "${OPENCLAW_COMPOSE_FILE}" "$@"
 }
+# True while the project's gateway container is running. OpenClaw >= 2026.10.2
+# refuses CLI calls that read or write live gateway state from a one-shot
+# `run --rm` container ("cannot verify Gateway ownership from this process
+# (different PID namespace)"); those calls use `exec` into this container
+# instead, and check this first so a missing gateway is a clear failure.
+openclaw_gateway_running() {
+  [[ -n "$(openclaw_compose ps -q --status running openclaw-gateway 2>/dev/null)" ]]
+}
 
 # The org identity provider (Logto + its Postgres) is compose project
 # `identity` (compose/identity/), brought up by deploy.sh once its secret is

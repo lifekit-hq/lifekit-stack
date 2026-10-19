@@ -417,8 +417,11 @@ openclaw_phase_configure() {
 # it ("Restart the gateway to apply." - plugins.entries and the other
 # restart-only paths); hot-reloadable keys are picked up by the running
 # gateway on its own (gateway.reload defaults to hybrid). The one-shot
-# `run --rm --entrypoint openclaw` is the same shape as the upgrade steps
-# above; the CLI prints JSON lines once consoleStyle=json is live, so the
+# CLI calls here are `exec` into the running gateway, not `run --rm` one-shots:
+# OpenClaw 2026.10.2 refuses live-state reads and writes from another PID
+# namespace ("cannot verify Gateway ownership"; both deploys of 2026-10-19
+# went red on it). The upgrade steps above stay `run --rm` - they run with the
+# gateway stopped, so there is no owner to verify. The CLI prints JSON lines once consoleStyle=json is live, so the
 # hint is matched as a substring, not a whole line.
 PLATFORM_PATCH="${REPO_DIR}/compose/openclaw-gateway/platform.patch.json"
 say "openclaw platform config: comparing ${PLATFORM_PATCH#"${REPO_DIR}/"} with the live config"
@@ -456,34 +459,38 @@ if [[ -z "${PLATFORM_PENDING}" ]]; then
   echo "  already applied; nothing to change, gateway left alone"
 else
   printf '  pending: %s\n' "${PLATFORM_PENDING//$'\n'/, }"
-  say "openclaw platform config: dry run against the installed schema (writes nothing)"
-  # --allow-exec: the patch's channels.telegram.accounts.*.botToken values are
-  # SOPS exec SecretRefs (docs/secrets.md); the CLI otherwise refuses to
-  # validate an exec-sourced reference. Dry-run only: `config patch --help`
-  # rejects --allow-exec on the actual apply ("--allow-exec requires
-  # --dry-run", OpenClaw 2026.9.5) - the apply below resolves the same refs
-  # without the flag.
-  if ! openclaw_compose \
-      run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-        config patch --stdin --dry-run --allow-exec < "${PLATFORM_PATCH}"; then
-    fail_later "openclaw platform config: dry run rejected ${PLATFORM_PATCH#"${REPO_DIR}/"}; not applied"
+  if ! openclaw_gateway_running; then
+    fail_later "openclaw platform config: openclaw-gateway is not running; ${PLATFORM_PATCH#"${REPO_DIR}/"} not applied"
   else
-    say "openclaw platform config: applying"
-    PATCH_LOG="$(mktemp)"
-    if openclaw_compose \
-        run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-          config patch --stdin < "${PLATFORM_PATCH}" 2>&1 | tee "${PATCH_LOG}"; then
-      if grep -q 'Restart the gateway to apply' "${PATCH_LOG}"; then
-        say "openclaw platform config: applied keys need a restart; recreating openclaw-gateway"
-        openclaw_compose \
-          up -d --no-deps --force-recreate openclaw-gateway
-      else
-        echo "  applied; the running gateway hot-reloads these keys, no recreate"
-      fi
+    say "openclaw platform config: dry run against the installed schema (writes nothing)"
+    # --allow-exec: the patch's channels.telegram.accounts.*.botToken values are
+    # SOPS exec SecretRefs (docs/secrets.md); the CLI otherwise refuses to
+    # validate an exec-sourced reference. Dry-run only: `config patch --help`
+    # rejects --allow-exec on the actual apply ("--allow-exec requires
+    # --dry-run", OpenClaw 2026.9.5) - the apply below resolves the same refs
+    # without the flag.
+    if ! openclaw_compose \
+        exec -T openclaw-gateway openclaw \
+          config patch --stdin --dry-run --allow-exec < "${PLATFORM_PATCH}"; then
+      fail_later "openclaw platform config: dry run rejected ${PLATFORM_PATCH#"${REPO_DIR}/"}; not applied"
     else
-      fail_later "openclaw platform config: apply failed (output above); gateway left as deployed"
+      say "openclaw platform config: applying"
+      PATCH_LOG="$(mktemp)"
+      if openclaw_compose \
+          exec -T openclaw-gateway openclaw \
+            config patch --stdin < "${PLATFORM_PATCH}" 2>&1 | tee "${PATCH_LOG}"; then
+        if grep -q 'Restart the gateway to apply' "${PATCH_LOG}"; then
+          say "openclaw platform config: applied keys need a restart; recreating openclaw-gateway"
+          openclaw_compose \
+            up -d --no-deps --force-recreate openclaw-gateway
+        else
+          echo "  applied; the running gateway hot-reloads these keys, no recreate"
+        fi
+      else
+        fail_later "openclaw platform config: apply failed (output above); gateway left as deployed"
+      fi
+      rm -f "${PATCH_LOG}"
     fi
-    rm -f "${PATCH_LOG}"
   fi
 fi
 
@@ -506,8 +513,9 @@ fi
 # since exec doesn't need a second container to share that namespace with.
 # `secrets audit` is report-only: it proves every configured SecretRef still
 # resolves (a trip-wire for a bad re-key or a missing id) and never prints a
-# value; it stays a `run` one-shot since it's offline (doesn't need the live
-# gateway) and that's already proven to pass. `secrets reload` resolves refs
+# value. It also `exec`s into the running gateway: from a `run` one-shot,
+# OpenClaw 2026.10.2 fails its shared-state read ("cannot verify Gateway
+# ownership", different PID namespace). `secrets reload` resolves refs
 # as part of its normal operation and does not take --allow-exec (OpenClaw
 # 2026.9.5: "does not recognize option --allow-exec"); `secrets audit` does,
 # for the same reason the config patch dry run above does.
@@ -539,9 +547,13 @@ else
       secrets reload --timeout 120000 || fail_later "openclaw secrets reload failed"
 fi
 say "auditing gateway secrets (report only, no values printed)"
-openclaw_compose \
-  run --rm --no-deps -T --entrypoint openclaw openclaw-gateway \
-    secrets audit --allow-exec || fail_later "openclaw secrets audit reported a problem"
+if ! openclaw_gateway_running; then
+  fail_later "openclaw secrets audit: openclaw-gateway is not running"
+else
+  openclaw_compose \
+    exec -T openclaw-gateway openclaw \
+      secrets audit --allow-exec || fail_later "openclaw secrets audit reported a problem"
+fi
 
 }
 
