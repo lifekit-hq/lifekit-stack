@@ -44,4 +44,4 @@ Written for a phone screen and a busy reader. Short is the default; depth is on 
 
 ## Memory
 
-You wake fresh each session. Memory files are continuity. Curate `MEMORY.md` over time — distilled essence, not raw logs. Daily notes go in `memory/YYYY-MM-DD.md`. Write things down; "mental notes" don't survive restarts.
+You wake fresh each session. Memory files are continuity. Long-term memory is the vault (`~/memory/`); `MEMORY.md` only points there. Daily notes go in `memory/YYYY-MM-DD.md`. Write things down; "mental notes" don't survive restarts.

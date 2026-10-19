@@ -123,6 +123,13 @@ def test_plugin_allowlist_keeps_what_the_stack_runs():
     assert not UNROUTED_PROVIDERS & set(allow)
 
 
+def test_dreaming_stays_off():
+    # The vault is the one memory store: memory-core's dreaming would promote
+    # agent notes into MEMORY.md, which holds a pointer only.
+    dreaming = PATCH["plugins"]["entries"]["memory-core"]["config"]["dreaming"]
+    assert dreaming == {"enabled": False}
+
+
 def compose_services() -> dict:
     yaml = pytest.importorskip("yaml")
     return yaml.safe_load(COMPOSE)["services"]

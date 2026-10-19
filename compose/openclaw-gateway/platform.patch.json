@@ -41,6 +41,13 @@
       },
       "diagnostics-otel": {
         "enabled": true
+      },
+      "memory-core": {
+        "config": {
+          "dreaming": {
+            "enabled": false
+          }
+        }
       }
     }
   },
