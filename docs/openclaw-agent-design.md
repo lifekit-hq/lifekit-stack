@@ -8,7 +8,7 @@ This page is the design, not a mirror of live state. The live fleet is host stat
 
 ## Shape: kit plus domain agents
 
-- **kit** is the front door and the general-purpose agent: the default and system agent, the catch-all for Telegram traffic nothing else claims, and the dispatcher for domain work that arrives there. Anything without a domain agent is kit's, including food and workouts (it runs the `nutrition-claw`, `workout-claw` and `life-state` CLIs itself, with targets read from the vault's `domains/health.md`) and dev work (which it hands to DevClaw through the intake doorway).
+- **kit** is the front door and the general-purpose agent: the default and system agent, the catch-all for Telegram traffic nothing else claims, and the dispatcher for domain work that arrives there. Anything without a domain agent is kit's, including food and workouts (it runs the `nutrition-claw`, `workout-claw` and `life-state` CLIs itself, with targets read from the vault's `domains/health.md`) and dev work (which it hands off as a GitHub issue, see [DevClaw - retired](#devclaw---retired)).
 - **Domain agents** each own one domain, with their own workspace, memory, sessions and, where the owner talks to them directly, their own Telegram bot. Since 2026-10-09: `finance` and `career`.
 - **One gateway, one config.** Every agent runs in the same `openclaw-gateway` container on the `openclaw` agent runtime (`agentRuntime.id`), authenticated by the owner's Claude subscription. No API keys ([[pro-subscription-is-the-design]] in memory); a domain agent never brings a paid service with it.
 
