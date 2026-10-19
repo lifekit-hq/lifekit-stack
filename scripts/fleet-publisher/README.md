@@ -18,8 +18,9 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
 | Where | Field | Meaning |
 | --- | --- | --- |
 | top | `published_epoch` | Publish time |
-| top | `homes[]` | One entry per home, in `FM_HOMES` order: `id`, `path`, `published`, `valid`, `reason`, and for a published home its `schema`, `generated_epoch`, `state`, `counts` |
+| top | `homes[]` | One entry per home, in `FM_HOMES` order: `id`, `path`, `published`, `valid`, `reason`, and for a published home its `schema`, `generated_epoch`, `state`, `counts`, `invalidity` |
 | every item of every top-level list | `home_id` | The id of the home the item came from (`active_children`, `decisions_open`, `holds`, `queued`, `landed`, `endpoints`, `omitted`) |
+| `homes[]` | `invalidity` | The home summary's own `invalidity` (`{kind, ids}`: why `valid` is false, e.g. kind `terminal_in_flight` for finished work still waiting on validation or merge), passed through as-is; `null` when the summary has none |
 | `counts` (object, and each `homes[].counts`) | `queued_open` | The queued items with no hold: neither `hold_kind` nor `hold_bucket` set. `counts.queued` still includes held ones |
 | `decisions_open[]` | `board_url` | The open Lavish session for the decision, else `null` |
 | `landed[]` | `report_url` | The served copy of the item's finished `report.md`, else `null` |

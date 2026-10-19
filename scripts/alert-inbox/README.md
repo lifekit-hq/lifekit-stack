@@ -38,8 +38,9 @@ Each run:
    override).
 3. Calls `fm-inbox.sh note` exactly once per transition: a rule starting to
    fire ("alert firing: ..."), or the same rule resolving ("alert
-   resolved: ..."). An already-firing rule is silent on every subsequent
-   poll — no repeat notifications.
+   resolved: ..."). A resolved note is sent for every severity except
+   `warning`; a warning's firing note is its only note. An already-firing rule
+   is silent on every subsequent poll — no repeat notifications.
 4. If Prometheus cannot be reached at all, that is its own transition
    (`prometheus-unreachable` starting/resolving), so an outage is reported
    once, not every poll.

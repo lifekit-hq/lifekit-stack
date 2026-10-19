@@ -240,6 +240,16 @@ def notify(fm_inbox_bin: str, fm_home: str | None, text: str, dry_run: bool) -> 
     subprocess.run([fm_inbox_bin, "note", "--", text], check=True, env=env)
 
 
+def notify_resolved(
+    fm_inbox_bin: str, fm_home: str | None, rule: "Rule", text: str, dry_run: bool
+) -> None:
+    # A warning clearing needs no one: its firing note was the signal, and every
+    # note wakes firstmate. Other severities still say when they are over.
+    if rule.severity == "warning":
+        return
+    notify(fm_inbox_bin, fm_home, text, dry_run)
+
+
 def poll(
     rules_file: Path,
     prometheus_url: str,
@@ -326,9 +336,10 @@ def poll(
                         dry_run,
                     )
                 else:
-                    notify(
+                    notify_resolved(
                         fm_inbox_bin,
                         fm_home,
+                        rule,
                         f"alert resolved: {rule.title} [{rule.severity}]"
                         f" ({label_text})",
                         dry_run,
@@ -356,9 +367,10 @@ def poll(
                     if new_entry is None:
                         rule_state.pop(fp, None)
                     if transition == "resolve":
-                        notify(
+                        notify_resolved(
                             fm_inbox_bin,
                             fm_home,
+                            rule,
                             f"alert resolved: {rule.title} [{rule.severity}] (no data)",
                             dry_run,
                         )
@@ -372,9 +384,10 @@ def poll(
                         label_text = ", ".join(
                             f"{k}={v}" for k, v in sorted(labels.items())
                         )
-                        notify(
+                        notify_resolved(
                             fm_inbox_bin,
                             fm_home,
+                            rule,
                             f"alert resolved: {rule.title} [{rule.severity}]"
                             f" ({label_text})",
                             dry_run,

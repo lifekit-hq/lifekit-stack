@@ -9,6 +9,7 @@ machine. Nothing here calls Prometheus or fm-inbox.sh.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -232,7 +233,7 @@ class AdvanceStateTests(unittest.TestCase):
 class PollEndToEndTests(unittest.TestCase):
     """Drive poll() against a stub Prometheus and fm-inbox.sh, over multiple ticks."""
 
-    def _write_rules(self, tmp_path, for_seconds="0s"):
+    def _write_rules(self, tmp_path, for_seconds="0s", severity="critical"):
         rules_file = tmp_path / "rules.yml"
         rules_file.write_text(
             yaml.safe_dump(
@@ -247,7 +248,7 @@ class PollEndToEndTests(unittest.TestCase):
                                     "condition": "C",
                                     "for": for_seconds,
                                     "noDataState": "OK",
-                                    "labels": {"severity": "critical"},
+                                    "labels": {"severity": severity},
                                     "data": [
                                         {
                                             "refId": "A",
@@ -331,6 +332,42 @@ class PollEndToEndTests(unittest.TestCase):
             self.assertEqual(len(notified), 2)
             self.assertIn("firing", notified[0])
             self.assertIn("resolved", notified[1])
+
+    def test_warning_resolution_sends_no_note(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp_path = Path(d)
+            rules_file = self._write_rules(tmp_path, severity="warning")
+            state_file = tmp_path / "state.json"
+            notified: list[str] = []
+
+            down = [{"metric": {"job": "x"}, "value": [0, "0"]}]
+            up = [{"metric": {"job": "x"}, "value": [0, "1"]}]
+            results_sequence = [down, up]
+
+            original_query = poll_alerts.query_instant
+            original_notify = poll_alerts.notify
+            poll_alerts.query_instant = lambda *a, **k: results_sequence.pop(0)
+            poll_alerts.notify = lambda bin_, home, text, dry_run: notified.append(text)
+            try:
+                for t in (1000, 1001):
+                    poll_alerts.poll(
+                        rules_file=rules_file,
+                        prometheus_url="http://unused",
+                        state_file=state_file,
+                        fm_inbox_bin="unused",
+                        fm_home=None,
+                        dry_run=False,
+                        now=t,
+                    )
+            finally:
+                poll_alerts.query_instant = original_query
+                poll_alerts.notify = original_notify
+
+            self.assertEqual(len(notified), 1)
+            self.assertIn("firing", notified[0])
+            self.assertEqual(json.loads(state_file.read_text())["rules"], {})
 
     def test_prometheus_outage_notifies_once_then_recovery(self):
         import tempfile

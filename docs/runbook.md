@@ -3372,8 +3372,8 @@ crontab -e   # delete: */5 * * * * ... scripts/alert-inbox/poll_alerts.py ...
 Logs go to the journal (`journalctl -u alert-inbox`).
 
 Notifies only on transitions (a rule starting to fire, the same rule
-resolving) via `fm-inbox.sh note`; a Prometheus outage is its own transition
-so it is reported once, not every poll. Does not touch Grafana contact
+resolving; a `warning` rule's resolve is silent) via `fm-inbox.sh note`; a
+Prometheus outage is its own transition so it is reported once, not every poll. Does not touch Grafana contact
 points, policies, or credentials.
 
 ## External heartbeat (dead-man)

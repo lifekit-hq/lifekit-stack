@@ -439,7 +439,8 @@ publish_home() {
          | select(.event == "task.status" and .ts >= ($now - 3600) and .ts <= $now
                   and (((.text // "") + " " + (.key // "")) | test("usage[ -]limit"; "i")))] | length)},
       {id: $hid, path: (if $path == "" then null else $path end), published: true, schema, generated_epoch,
-       valid, reason, state, counts: (if (.counts | type) == "object" then published_counts($folded[0]) else .counts end)}' \
+       valid, reason, state, counts: (if (.counts | type) == "object" then published_counts($folded[0]) else .counts end),
+       invalidity: .invalidity}' \
     "$summary_file" > "$hw/rows.jsonl"
   head -n 1 "$hw/rows.jsonl" >> "$work/metrics.jsonl"
   tail -n 1 "$hw/rows.jsonl" >> "$work/homes.jsonl"
