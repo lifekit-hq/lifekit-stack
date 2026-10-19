@@ -425,6 +425,29 @@ def test_plugin_off_core_after_update_is_red(rig):
     out = run(rig, extra_env={"STUB_PLUGINS": stale, "STUB_PLUGINS_AFTER": stale})
     assert out.returncode != 0
     assert "still off core=1" in out.stdout
+    # The fallback targets the core's own version; npm's latest runs ahead of it.
+    updates = [c for c in docker_calls(rig) if "plugins update" in c]
+    assert updates and all("@openclaw/codex@2026.9.5" in c for c in updates)
+    assert "plugins still off core 2026.9.5: codex 2026.6.8" in out.stderr
+    assert "red because: plugins-off-core" in out.stderr
+
+
+def test_untolerated_finding_names_its_requirement_in_the_job_log(rig):
+    finding = {
+        "checkId": "core/doctor/security",
+        "severity": "warning",
+        "message": 'Heartbeat agent "x": directPolicy is unset.',
+        "requirement": "doctor.heartbeat_direct_policy_unset",
+    }
+    (rig["state"] / "lint.json").write_text(json.dumps({"findings": [finding]}))
+    out = run(rig)
+    assert out.returncode != 0
+    fid = "core/doctor/security[doctor.heartbeat_direct_policy_unset]"
+    assert f"untolerated finding ids: {fid}" in out.stdout
+    # stdout is the step summary (sign-in only); stderr is the job log.
+    assert "verdict: RED" in out.stderr
+    assert "red because: lint-findings" in out.stderr
+    assert f"untolerated finding ids: {fid}" in out.stderr
 
 
 def test_lint_only_mounts_read_only_and_does_not_copy(rig):

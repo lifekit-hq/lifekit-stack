@@ -581,6 +581,9 @@ def test_build_on_version_bump_with_repinned_plugins_returns_zero_and_queues_not
     calls = Path(env["DOCKER_CALL_LOG"]).read_text()
     assert "stop openclaw-cli openclaw-gateway" in calls
     assert "doctor --fix --non-interactive" in calls
+    # The fallback targets the core's own version; npm's latest runs ahead of it.
+    assert "plugins update @openclaw/codex@2026.9.5" in calls
+    assert "@latest" not in calls
 
 
 def test_build_with_plugins_still_off_core_queues_a_failure_without_aborting(env):

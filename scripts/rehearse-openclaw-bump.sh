@@ -280,7 +280,12 @@ for f in items:
             counts[name] += 1
             break
     else:
-        bad.append(re.sub(r"[^A-Za-z0-9_.:/-]", "?", fid)[:64])
+        # checkId alone is ambiguous (core/doctor/security covers many checks);
+        # the structured requirement code names the one that fired.
+        req = str(f.get("requirement") or "")
+        if req:
+            fid = f"{fid}[{req}]"
+        bad.append(re.sub(r"[^A-Za-z0-9_.:/\[\]-]", "?", fid)[:128])
 print(" ".join(f"{k}={v}" for k, v in counts.items()), ",".join(sorted(set(bad))) or "-")
 PY
 }
@@ -357,6 +362,13 @@ write_summary() {
     mv "${f}.cut" "${f}"
   fi
   cat "${f}"
+  # stdout is the CI step summary, which GitHub shows only to signed-in
+  # viewers; the verdict and its reasons also go to stderr, the job log.
+  say "verdict: ${verdict}"
+  if ((${#RED[@]})); then
+    say "red because: ${RED[*]}"
+    say "untolerated finding ids: ${UNTOLERATED:--}"
+  fi
 }
 
 run_lint() {
@@ -449,13 +461,17 @@ else
   MISMATCH="$(plugin_mismatches)"
   if [[ -n "${MISMATCH}" ]]; then
     P_FALLBACK="$(grep -c . <<<"${MISMATCH}")"
-    while read -r pid _; do
+    while read -r pid pver; do
       [[ -z "${pid}" ]] && continue
-      oc_copy plugins update "@openclaw/${pid}@latest" >>"${DEST}/doctor-fix.log" 2>&1 || true
+      say "plugin ${pid} is ${pver}, core is ${CORE_VER}; updating to ${CORE_VER}"
+      # The core's own version, never @latest: npm's latest runs ahead of the
+      # pinned core, so a bump rehearsed after the next release lands stays off core.
+      oc_copy plugins update "@openclaw/${pid}@${CORE_VER}" >>"${DEST}/doctor-fix.log" 2>&1 || true
     done <<<"${MISMATCH}"
     MISMATCH="$(plugin_mismatches)"
     if [[ -n "${MISMATCH}" ]]; then
       P_OFFCORE="$(grep -c . <<<"${MISMATCH}")"
+      say "plugins still off core ${CORE_VER}: ${MISMATCH//$'\n'/, }"
       RED+=("plugins-off-core")
     fi
   fi
