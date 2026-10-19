@@ -90,7 +90,7 @@ yearly review above, first 2027-09-19).
    names only. Compare the names with the inventory, commit, PR, merge.
 3. `sudo bash scripts/secrets/render-stack-env.sh` (`/srv/lifekit-secrets/stack.env`).
 4. The merge deploys: `up -d` recreates the gateway with the mounts, the
-   platform patch adds the `sops` provider and the five `botToken` refs after
+   platform patch adds the `sops` provider and the enabled accounts' `botToken` refs after
    a dry run that resolves them, `secrets reload` follows.
 5. Verify: `openclaw channels status` shows every account connected;
    `openclaw secrets audit --allow-exec` lists no gateway finding;
