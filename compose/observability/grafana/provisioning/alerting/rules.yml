@@ -657,8 +657,8 @@ groups:
           summary: "textfile metric file {{ $labels.file }} has not been updated for over 15 minutes"
           description: >-
             node_textfile_mtime_seconds shows {{ $labels.file }} last written more than 15 minutes ago. Every gauge
-            that writes into the textfile directory (the quota, /tmp usage, host-group, unit and release gauges' systemd
-            timers) refreshes its file every 5 minutes (the quota-share gauge
+            that writes into the textfile directory (the quota, /tmp usage, host-group, unit and release gauges and the Ledger
+            drift check, all systemd timers) refreshes its file every 5 minutes (the quota-share gauge
             hourly, judged against 2 hours), so its timer or script has stopped and rules
             reading that file are seeing stale values. `systemctl --failed`, the gauge unit's journal, and
             `systemctl list-timers` on the box.
