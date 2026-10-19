@@ -17,3 +17,21 @@ commands:
     && .venv/bin/pip install --quiet -r requirements.txt
     && .venv/bin/python -m pytest -q
     compose/container-exporter/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests
+
+# Review rules, injected into the review step only when a changed file
+# matches `path`. Read from the default branch only (no-mistakes v1.84).
+# A bare `**` has no slash, so the matcher compares it against each file's
+# basename, and `*` there matches any slash-free name: it covers every path.
+review:
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Block only on what would break: wrong behavior, a broken contract,
+        money or data loss, a security gap, or changed behavior with no
+        test. Do not raise style, naming, wording or cleanup findings.
+        Every finding names file:line, the input that fails and what goes
+        wrong. If nothing blocks, say so plainly.
+    - path: "docs/**"
+      instructions: |
+        Prose: block only on a wrong fact, a broken link, or a contract
+        the code contradicts.
