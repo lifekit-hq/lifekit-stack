@@ -156,7 +156,14 @@ def env(name, default):
 
 
 if any("api/v1/query" in a for a in args):
-    up = env("PROM_UP", "1")
+    # The scrape goes through the edge, and the gateway answers a proxy it
+    # does not list in trustedProxies 403 proxy_attribution_required, in
+    # either auth mode.
+    try:
+        proxies = json.load(open(os.environ["STUB_CONFIG"]))["gateway"].get("trustedProxies") or []
+    except Exception:
+        proxies = []
+    up = env("PROM_UP", "1" if "10.231.78.2" in proxies else "0")
     print(json.dumps({"data": {"result": [{"value": [0, up]}] if up else []}}))
 else:
     ua = args[args.index("-A") + 1]
@@ -179,10 +186,12 @@ def serve_config(target: str, funnel: bool = False) -> dict:
     return cfg
 
 
+# What every deploy leaves in token mode (scripts/deploy-trusted-proxies.sh):
+# the host's bridge address and the edge's, so the internal routes work.
 ORIGINAL_GATEWAY = {
     "bind": "lan",
     "auth": TOKEN_AUTH,
-    "trustedProxies": ["172.30.0.1"],
+    "trustedProxies": ["172.30.0.1", "10.231.78.2"],
     "controlUi": {"allowedOrigins": ["http://localhost:18789"], "enabled": True},
 }
 
@@ -332,7 +341,7 @@ def test_cutover_saves_the_exact_previous_state_private(box):
     saved = json.loads(box["rollback_file"].read_text())
     assert saved == {
         "auth": TOKEN_AUTH,
-        "trustedProxies": ["172.30.0.1"],
+        "trustedProxies": ["172.30.0.1", "10.231.78.2"],
         "allowedOrigins": ["http://localhost:18789"],
         "serveTarget": GATEWAY,
     }
@@ -387,6 +396,22 @@ def test_preflight_checks_the_edge_routes_before_anything_changes(box, extra, me
     assert message in r.stderr
     assert changing_calls(calls(box)) == []
     assert gateway(box) == ORIGINAL_GATEWAY
+
+
+def test_preflight_refuses_a_gateway_that_does_not_trust_the_edge(box):
+    # A token-mode gateway without the edge in trustedProxies answers the
+    # edge's internal routes 403 proxy_attribution_required: the scrape is
+    # down and finance-sentry's calls fail.
+    config = json.loads(box["config"].read_text())
+    config["gateway"]["trustedProxies"] = ["172.30.0.1"]
+    box["config"].write_text(json.dumps(config))
+
+    r = run(box, "cutover", "--operator-email", EMAIL)
+
+    assert r.returncode != 0
+    assert "gateway.trustedProxies does not list the edge (10.231.78.2)" in r.stderr
+    assert "Prometheus does not see" in r.stderr
+    assert changing_calls(calls(box)) == []
 
 
 def test_preflight_refuses_a_public_funnel(box):
@@ -491,8 +516,9 @@ def test_rollback_without_a_saved_state_restores_token_mode(box):
     assert "no " in r.stderr and "restoring token mode" in r.stderr
     gw = gateway(box)
     assert gw["auth"] == TOKEN_AUTH
-    # The deploy's own derivation puts the host's proxy address back.
-    assert "172.30.0.1" in gw["trustedProxies"]
+    # The deploy's own derivation puts the host's proxy address back and
+    # keeps the edge's, so the internal routes still work in token mode.
+    assert set(gw["trustedProxies"]) == {"172.30.0.1", "10.231.78.2"}
     assert serve_target(box) == GATEWAY
 
 

@@ -255,3 +255,15 @@ def test_openclaw_entrypoints_and_only_the_public_one_is_published():
     ports = [p for p in traefik["ports"] if "1889" in p]
     assert "127.0.0.1:18892:18892" in ports
     assert not any("18893" in p for p in traefik["ports"])
+
+
+def test_openclaw_internal_entrypoint_rebuilds_the_forwarded_headers():
+    # The gateway attributes a proxied request only when the proxy is in
+    # gateway.trustedProxies (scripts/deploy-trusted-proxies.sh lists the edge
+    # in both auth modes) and the proxy overwrites the forwarded headers. With
+    # no forwardedHeaders trust on this entrypoint, Traefik replaces a
+    # caller's X-Forwarded-For with the caller's own address.
+    cmd = COMPOSE["services"]["traefik"]["command"]
+    assert not any(
+        c.startswith("--entrypoints.openclaw-internal.forwardedHeaders") for c in cmd
+    )

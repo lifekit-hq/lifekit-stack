@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # scripts/deploy-trusted-proxies.sh — make gateway.trustedProxies list the
-# gateway address of the OpenClaw compose project's default network, on
-# every deploy. Called from deploy-openclaw.sh's `prepare` phase; a separate
-# script so it can be exercised directly with a stubbed `docker` on PATH (see
-# scripts/tests/test_deploy_trusted_proxies.py) instead of only read as text.
+# gateway address of the OpenClaw compose project's default network and the
+# edge's address, on every deploy. Called from deploy-openclaw.sh's
+# `prepare` phase; a separate script so it can be exercised directly with a
+# stubbed `docker` on PATH (see scripts/tests/test_deploy_trusted_proxies.py)
+# instead of only read as text.
 #
 # Since OpenClaw 2026.9.x the gateway rejects proxied requests with
 # proxy_attribution_required unless the proxy's source address is listed in
@@ -15,11 +16,11 @@
 # in compose/openclaw-gateway/platform.patch.json (host-derived, not a static
 # platform key) — it's derived here, from a docker-network-inspect lookup.
 #
-# Converges rather than sets once: the derived address is appended when the
+# Converges rather than sets once: each address is appended when the
 # list lacks it, and every address already there stays (a hand-added proxy,
 # or the platform project's compose_default address the gateway used before
 # it moved to its own project - kept so a rollback to that layout still
-# works). A list that already holds the address is left untouched, so every
+# works). A list that already holds both is left untouched, so every
 # later deploy writes nothing. Not gated on first-deploy-ness: a deploy that
 # dies between `onboard` writing openclaw.json and this script running is
 # retried on the next attempt.
@@ -30,13 +31,20 @@
 # ports and starts nothing else), so the gateway's first start already has
 # its proxy address in config and needs no second recreate.
 #
+# OPENCLAW_EDGE_IP, the edge Traefik's pinned address on openclaw-ingress, is
+# appended too in token mode: the edge's openclaw-internal routes (Prometheus'
+# scrape, finance-sentry's /v1/*) reach the gateway from it with Traefik's
+# forwarded headers, and the gateway answers them 403 proxy_attribution_required
+# until it is listed. In token mode a listed proxy only attributes the client
+# address; the bearer is still checked and the identity header ignored.
+#
 # In trusted-proxy mode (OPENCLAW_AUTH_MODE=trusted-proxy, docs/runbook.md
 # "OpenClaw behind the sign-in gate") the list is set to exactly
-# OPENCLAW_EDGE_IP, the edge Traefik's pinned address on openclaw-ingress: any
-# other entry could present a signed-in identity. The host's bridge address is
-# one of those (a host process can reach the container's address directly),
-# so nothing is appended or kept. COMPOSE_OVERLAY_FILE is the trusted-proxy
-# compose overlay, so the one-shot write runs with the env that mode needs.
+# OPENCLAW_EDGE_IP: any other entry could present a signed-in identity. The
+# host's bridge address is one of those (a host process can reach the
+# container's address directly), so nothing is appended or kept.
+# COMPOSE_OVERLAY_FILE is the trusted-proxy compose overlay, so the one-shot
+# write runs with the env that mode needs.
 
 set -euo pipefail
 
@@ -44,6 +52,7 @@ ENV_FILE="${ENV_FILE:?ENV_FILE must be set}"
 COMPOSE_FILE="${COMPOSE_FILE:?COMPOSE_FILE must be set}"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:?OPENCLAW_CONFIG_DIR must be set}"
 OPENCLAW_AUTH_MODE="${OPENCLAW_AUTH_MODE:-token}"
+OPENCLAW_EDGE_IP="${OPENCLAW_EDGE_IP:?OPENCLAW_EDGE_IP must be set}"
 
 COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$(dirname "${COMPOSE_FILE}")")}"
 COMPOSE_FILES=(-f "${COMPOSE_FILE}")
@@ -98,7 +107,6 @@ if [[ "${CURRENT_TRUSTED_PROXIES}" == *UNREADABLE* ]]; then
 fi
 
 if [[ "${OPENCLAW_AUTH_MODE}" == "trusted-proxy" ]]; then
-  OPENCLAW_EDGE_IP="${OPENCLAW_EDGE_IP:?OPENCLAW_EDGE_IP must be set in trusted-proxy mode}"
   WANTED_TRUSTED_PROXIES="$(python3 -c '
 import json, sys
 wanted = [sys.argv[2]]
@@ -138,8 +146,8 @@ if [[ -z "${TRUSTED_PROXY_ADDR}" ]]; then
   exit 1
 fi
 
-# Prints the new list when the address is missing, nothing when it is already
-# there, INVALID when the current value is not a list.
+# Prints the new list when an address is missing, nothing when both are
+# already there, INVALID when the current value is not a list.
 WANTED_TRUSTED_PROXIES="$(python3 -c '
 import json, sys
 try:
@@ -149,13 +157,15 @@ except ValueError:
 current = [] if current in (None, {}) else current
 if not isinstance(current, list):
     print("INVALID")
-elif sys.argv[2] not in current:
-    print(json.dumps(current + [sys.argv[2]], separators=(",", ":")))
-' "${CURRENT_TRUSTED_PROXIES}" "${TRUSTED_PROXY_ADDR}")"
+else:
+    wanted = current + [a for a in sys.argv[2:] if a not in current]
+    if wanted != current:
+        print(json.dumps(wanted, separators=(",", ":")))
+' "${CURRENT_TRUSTED_PROXIES}" "${TRUSTED_PROXY_ADDR}" "${OPENCLAW_EDGE_IP}")"
 
 case "${WANTED_TRUSTED_PROXIES}" in
   "")
-    echo "openclaw trustedProxies: already lists ${TRUSTED_PROXY_ADDR} (from ${TRUSTED_PROXY_NETWORK}); leaving it alone"
+    echo "openclaw trustedProxies: already lists ${TRUSTED_PROXY_ADDR} (from ${TRUSTED_PROXY_NETWORK}) and the edge (${OPENCLAW_EDGE_IP}); leaving it alone"
     exit 0
     ;;
   INVALID)
@@ -165,6 +175,6 @@ case "${WANTED_TRUSTED_PROXIES}" in
     ;;
 esac
 
-echo "openclaw trustedProxies: adding ${TRUSTED_PROXY_ADDR} (from ${TRUSTED_PROXY_NETWORK})"
+echo "openclaw trustedProxies: ${CURRENT_TRUSTED_PROXIES} -> ${WANTED_TRUSTED_PROXIES} (${TRUSTED_PROXY_NETWORK} gateway ${TRUSTED_PROXY_ADDR}, edge ${OPENCLAW_EDGE_IP})"
 openclaw_cli \
   config set gateway.trustedProxies "${WANTED_TRUSTED_PROXIES}" --strict-json
