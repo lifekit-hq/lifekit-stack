@@ -263,6 +263,7 @@ def full_deploy(
     stub(
         fake / "scripts/platform-contract.py",
         "import os, sys\n"
+        "sys.stdin.read()  # drain, like the real one: a writer must not hit a closed pipe\n"
         'open(os.environ["DOCKER_CALL_LOG"], "a").write("contract-" + sys.argv[1].lstrip("-") + "\\n")\n',
     )
     alert_dir = fake / "compose/observability/grafana/provisioning/alerting"
@@ -329,13 +330,18 @@ def test_deploy_runs_each_openclaw_phase_at_its_point_in_the_platform_sequence(
         f"-f {fake}/compose/identity/docker-compose.yml config --format json"
     ]
     assert "LOGTO_DB_PASSWORD is not in" in r.stderr
-    # Nor the edge secrets: declared, never brought up.
+    # Nor the edge secrets: declared, and only traefik comes up, for the
+    # OpenClaw scrape route that needs no sign-in.
     edge = [line for line in trace if " -p edge " in f" {line} "]
     assert edge == [
         f"compose -p edge --env-file {env['ENV_FILE']} "
-        f"-f {fake}/compose/edge/docker-compose.yml config --format json"
+        f"-f {fake}/compose/edge/docker-compose.yml {args}"
+        for args in (
+            "config --format json",
+            "up -d --no-deps --wait --wait-timeout 120 traefik",
+        )
     ]
-    assert "(0/3); project edge not brought up" in r.stderr
+    assert "(0/3); project edge brought up as traefik only" in r.stderr
 
 
 @pytest.mark.parametrize(
@@ -506,11 +512,11 @@ def test_edge_comes_up_after_identity_once_its_secrets_are_rendered(
         (
             "LOGTO_DB_PASSWORD=abc\nEDGE_OIDC_CLIENT_ID=id\nEDGE_COOKIE_SECRET=c\n"
             "EDGE_OIDC_CLIENT_SECRET=\n",
-            "(2/3); project edge not brought up",
+            "(2/3); project edge brought up as traefik only",
         ),
     ],
 )
-def test_edge_stays_down_until_identity_and_all_its_secrets(
+def test_edge_is_traefik_only_until_identity_and_all_its_secrets(
     env, tmp_path, env_text, expect
 ):
     r, trace, fake = full_deploy(
@@ -522,9 +528,11 @@ def test_edge_stays_down_until_identity_and_all_its_secrets(
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert expect in r.stderr
+    # No oauth2-proxy and no gated-port check: traefik alone, for OpenClaw's
+    # service route.
     assert [
         s for s in edge_steps(trace, env, fake) if s.startswith(("edge-", "up "))
-    ] == []
+    ] == ["up -d --no-deps --wait --wait-timeout 120 traefik"]
 
 
 def test_edge_without_redirect_domains_fails_the_deploy_and_stays_down(env, tmp_path):
@@ -540,6 +548,7 @@ def test_edge_without_redirect_domains_fails_the_deploy_and_stays_down(env, tmp_
     assert "redirect domains undecidable" in r.stderr
     steps = edge_steps(trace, env, fake)
     assert "up -d --wait --wait-timeout 120" not in steps
+    assert "up -d --no-deps --wait --wait-timeout 120 traefik" in steps
     assert not [s for s in steps if s.startswith("edge-check")]
 
 
@@ -1157,6 +1166,7 @@ def run_gated_deploy(env, tmp_path, mode, touched):
     stub(
         fake / "scripts/platform-contract.py",
         "import os, sys\n"
+        "sys.stdin.read()  # drain, like the real one: a writer must not hit a closed pipe\n"
         'open(os.environ["DOCKER_CALL_LOG"], "a").write("contract-" + sys.argv[1].lstrip("-") + "\\n")\n',
     )
     alert_dir = fake / "compose/observability/grafana/provisioning/alerting"
@@ -1216,8 +1226,9 @@ def test_gate_off_skips_every_openclaw_phase_and_leaves_the_gateway_out_of_up(
     assert [m for m in map(marker, trace) if m] == PLATFORM_ORDER
     assert not [line for line in trace if line.startswith("openclaw:")]
     # The platform project defines no OpenClaw service, so its plain `up` cannot
-    # touch the gateway, and nothing brings the openclaw project up.
-    up = [line for line in trace if " up " in line]
+    # touch the gateway, and nothing brings the openclaw project up (the
+    # edge's traefik is not the gateway).
+    up = [line for line in trace if " up " in line and " -p edge " not in line]
     assert len(up) == 1 and up[0].endswith(
         f"-f {fake}/compose/docker-compose.yml up -d --build"
     )

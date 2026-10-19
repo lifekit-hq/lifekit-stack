@@ -433,3 +433,84 @@ def test_writes_through_exec_when_the_gateway_is_running(tmp_path, docker_stub):
         'config set gateway.trustedProxies ["172.30.0.1"] --strict-json'
     )
     assert not any(" run " in c for c in calls)
+
+
+def _trusted_proxy_run(tmp_path, docker_stub, trusted_proxies, gateway_running=""):
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+    compose_file = tmp_path / "compose" / "docker-compose.yml"
+    compose_file.parent.mkdir()
+    compose_file.write_text("")
+    overlay = compose_file.parent / "trusted-proxy.yml"
+    overlay.write_text("")
+    config_dir = write_openclaw_config(tmp_path, trusted_proxies=trusted_proxies)
+    result = run(
+        env_file,
+        compose_file,
+        config_dir,
+        docker_stub,
+        extra_env={
+            "COMPOSE_PROJECT_NAME": "openclaw",
+            "OPENCLAW_AUTH_MODE": "trusted-proxy",
+            "OPENCLAW_EDGE_IP": "10.231.78.2",
+            "COMPOSE_OVERLAY_FILE": str(overlay),
+            "NETWORK_INSPECT_OUTPUT": "172.30.0.1",
+            "GATEWAY_RUNNING": gateway_running,
+        },
+    )
+    return result, env_file, compose_file, overlay
+
+
+@pytest.mark.parametrize(
+    ("gateway_running", "verb"),
+    [
+        ("", "run --rm --no-deps --entrypoint openclaw openclaw-gateway"),
+        # OpenClaw >= 2026.10.2 refuses one-shot writes while a gateway runs.
+        ("1", "exec -T openclaw-gateway openclaw"),
+    ],
+)
+def test_trusted_proxy_mode_sets_exactly_the_edge_and_drops_the_bridge(
+    tmp_path, docker_stub, gateway_running, verb
+):
+    # In trusted-proxy mode any listed address can present a signed-in
+    # identity; the bridge gateway is reachable by any host process.
+    result, env_file, compose_file, overlay = _trusted_proxy_run(
+        tmp_path, docker_stub, ["172.18.0.1", "172.30.0.1"], gateway_running
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = docker_stub["call_log"].read_text().splitlines()
+    assert calls == [
+        f"compose -p openclaw --env-file {env_file} -f {compose_file} -f {overlay} "
+        f"{verb} config set "
+        'gateway.trustedProxies ["10.231.78.2"] --strict-json'
+    ]
+
+
+def test_trusted_proxy_mode_leaves_exactly_the_edge_alone(tmp_path, docker_stub):
+    result, *_ = _trusted_proxy_run(tmp_path, docker_stub, ["10.231.78.2"])
+
+    assert result.returncode == 0, result.stderr
+    assert "exactly the edge (10.231.78.2); leaving it alone" in result.stdout
+    assert docker_stub["call_log"].read_text() == ""
+
+
+def test_trusted_proxy_mode_needs_the_edge_address(tmp_path, docker_stub):
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+    compose_file = tmp_path / "compose" / "docker-compose.yml"
+    compose_file.parent.mkdir()
+    compose_file.write_text("")
+    config_dir = write_openclaw_config(tmp_path, trusted_proxies=["172.30.0.1"])
+
+    result = run(
+        env_file,
+        compose_file,
+        config_dir,
+        docker_stub,
+        extra_env={"OPENCLAW_AUTH_MODE": "trusted-proxy"},
+    )
+
+    assert result.returncode != 0
+    assert "OPENCLAW_EDGE_IP must be set" in result.stderr
+    assert docker_stub["call_log"].read_text() == ""

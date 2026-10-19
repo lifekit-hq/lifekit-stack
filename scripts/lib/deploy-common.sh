@@ -20,8 +20,65 @@ COMPOSE_FILE="${REPO_DIR}/compose/docker-compose.yml"
 # decided in one place.
 OPENCLAW_PROJECT="openclaw"
 OPENCLAW_COMPOSE_FILE="${REPO_DIR}/compose/openclaw/docker-compose.yml"
+# The gateway's auth mode picks the compose shape. In `token` mode (today's,
+# and every fresh host's) the gateway publishes 127.0.0.1:18789 and holds the
+# shared token. In `trusted-proxy` mode (OpenClaw behind the sign-in gate,
+# docs/runbook.md "OpenClaw behind the sign-in gate") the gateway refuses to
+# start while any shared token is configured, and only the edge may reach it,
+# so compose/openclaw/trusted-proxy.yml blanks the token, adds the local
+# password and drops the published port. The mode is read from the live
+# openclaw.json on every call, so the deploy follows whatever the operator's
+# cutover or rollback left there; OPENCLAW_COMPOSE_AUTH_MODE overrides it.
+OPENCLAW_TRUSTED_PROXY_FILE="${OPENCLAW_TRUSTED_PROXY_FILE:-${REPO_DIR}/compose/openclaw/trusted-proxy.yml}"
+openclaw_auth_mode() {
+  if [[ -n "${OPENCLAW_COMPOSE_AUTH_MODE:-}" ]]; then
+    printf '%s\n' "${OPENCLAW_COMPOSE_AUTH_MODE}"
+    return 0
+  fi
+  python3 - "${OPENCLAW_CONFIG_DIR}/openclaw.json" <<'PY'
+import json, re, sys
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        raw = f.read()
+except FileNotFoundError:  # first deploy: onboard writes a token-mode config
+    print("token")
+    sys.exit()
+except OSError as e:
+    print(f"cannot read {path} ({e.strerror}); run as the deploy account (lifekit) or root", file=sys.stderr)
+    sys.exit(1)
+try:
+    mode = ((json.loads(raw).get("gateway") or {}).get("auth") or {}).get("mode")
+except ValueError:  # a hand edit left JSON5; the mode string is still there
+    mode = "trusted-proxy" if re.search(r"""["']?mode["']?\s*:\s*["']trusted-proxy["']""", raw) else None
+print("trusted-proxy" if mode == "trusted-proxy" else "token")
+PY
+}
 openclaw_compose() {
-  docker compose -p "${OPENCLAW_PROJECT}" --env-file "${ENV_FILE}" -f "${OPENCLAW_COMPOSE_FILE}" "$@"
+  local mode files=(-f "${OPENCLAW_COMPOSE_FILE}")
+  mode="$(openclaw_auth_mode)" || return 1
+  if [[ "${mode}" == "trusted-proxy" ]]; then
+    files+=(-f "${OPENCLAW_TRUSTED_PROXY_FILE}")
+  fi
+  docker compose -p "${OPENCLAW_PROJECT}" --env-file "${ENV_FILE}" "${files[@]}" "$@"
+}
+
+# The one network between the edge's Traefik and the gateway
+# (compose/edge/docker-compose.yml, compose/openclaw/docker-compose.yml).
+# Internal (no route out), and Traefik's address on it is pinned: in
+# trusted-proxy mode it is the gateway's only gateway.trustedProxies entry, so
+# no other container can present a signed-in identity. Created once, before
+# either project's `up`, like identity-oidc.
+OPENCLAW_INGRESS_NETWORK="openclaw-ingress"
+OPENCLAW_INGRESS_SUBNET="10.231.78.0/28"
+OPENCLAW_INGRESS_IP_RANGE="10.231.78.8/29"
+# shellcheck disable=SC2034  # used by deploy-trusted-proxies.sh and openclaw-sso.sh
+OPENCLAW_EDGE_IP="10.231.78.2"
+openclaw_ingress_network_ensure() {
+  docker network inspect "${OPENCLAW_INGRESS_NETWORK}" >/dev/null 2>&1 \
+    || docker network create --internal \
+      --subnet "${OPENCLAW_INGRESS_SUBNET}" --ip-range "${OPENCLAW_INGRESS_IP_RANGE}" \
+      "${OPENCLAW_INGRESS_NETWORK}" >/dev/null
 }
 # True while the project's gateway container is running. OpenClaw >= 2026.10.2
 # refuses CLI calls that read or write live gateway state from a one-shot

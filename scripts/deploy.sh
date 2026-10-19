@@ -126,6 +126,11 @@ openclaw_phase() {
 # scripts/deploy-openclaw.sh, phase `prepare`. Placed BEFORE the compose step
 # on purpose so memory-audit script drift heals even on a deploy that fails
 # later.
+#
+# openclaw-ingress joins the edge's Traefik to the gateway (and nothing else).
+# The gateway and the edge both declare it external, and `prepare` already
+# runs the gateway image, so it is created first, on every deploy, gated or not.
+openclaw_ingress_network_ensure
 openclaw_phase prepare
 
 # Grafana's frame-ancestors origin: an explicit GRAFANA_EMBED_ORIGIN wins,
@@ -355,10 +360,11 @@ fi
 # ─── Sign-in gate: compose project `edge`, up -d ────────────────────────────
 #
 # Traefik + oauth2-proxy in front of the dashboard and the devclaw console
-# (compose/edge/, docs/runbook.md "Tailnet sign-in gate"). Brought up only
-# once the identity project is up and the edge's client and cookie secrets
-# are in the rendered env file: until the operator has registered the client
-# in Logto and rendered them, it is skipped with a warning. Up does not move
+# and the OpenClaw gateway (compose/edge/, docs/runbook.md "Tailnet sign-in
+# gate"). Brought up whole only once the identity project is up and the edge's
+# client and cookie secrets are in the rendered env file: until the operator
+# has registered the client in Logto and rendered them, only traefik comes up,
+# with a warning. Up does not move
 # any traffic: Tailscale Serve still points at the apps until the operator's
 # cutover, which the report-only check below tracks.
 say "sign-in gate (compose project ${EDGE_PROJECT})"
@@ -369,15 +375,24 @@ for var in EDGE_OIDC_CLIENT_ID EDGE_OIDC_CLIENT_SECRET EDGE_COOKIE_SECRET; do
     EDGE_SECRETS_SET=$((EDGE_SECRETS_SET + 1))
   fi
 done
+# Traefik alone still comes up when the gate cannot: its internal OpenClaw
+# entrypoint carries Prometheus' scrape of the gateway (and finance-sentry's
+# calls), which need no sign-in (compose/edge/traefik/openclaw.yml).
+edge_traefik_only() {
+  warn "edge: $1; project ${EDGE_PROJECT} brought up as traefik only, for OpenClaw's service route (docs/runbook.md \"Tailnet sign-in gate\")"
+  edge_compose up -d --no-deps --wait --wait-timeout 120 traefik \
+    || fail_later "edge: traefik did not come up healthy; the openclaw scrape target is down (edge_compose ps / logs traefik)"
+}
 if [[ "${EDGE_SECRETS_SET}" != 3 ]]; then
-  warn "edge: EDGE_OIDC_CLIENT_ID, EDGE_OIDC_CLIENT_SECRET and EDGE_COOKIE_SECRET are not all in ${ENV_FILE} (${EDGE_SECRETS_SET}/3); project ${EDGE_PROJECT} not brought up (docs/runbook.md \"Tailnet sign-in gate\")"
+  edge_traefik_only "EDGE_OIDC_CLIENT_ID, EDGE_OIDC_CLIENT_SECRET and EDGE_COOKIE_SECRET are not all in ${ENV_FILE} (${EDGE_SECRETS_SET}/3)"
 elif [[ "${IDENTITY_UP}" != 1 ]]; then
-  warn "edge: the identity project is not up; project ${EDGE_PROJECT} not brought up"
+  edge_traefik_only "the identity project is not up"
 else
   EDGE_REDIRECT_DOMAINS="$(IDENTITY_ENDPOINT="${IDENTITY_ENDPOINT}" "${REPO_DIR}/scripts/deploy-edge.sh" domains \
     | sed -n 's/^EDGE_REDIRECT_DOMAINS=//p' || true)"
   if [[ -z "${EDGE_REDIRECT_DOMAINS}" ]]; then
-    fail_later "edge: redirect domains undecidable (no tailnet name); project ${EDGE_PROJECT} not brought up"
+    fail_later "edge: redirect domains undecidable (no tailnet name); oauth2-proxy not brought up"
+    edge_traefik_only "redirect domains undecidable"
   else
     export EDGE_REDIRECT_DOMAINS
     echo "edge: OIDC client of ${IDENTITY_ENDPOINT}/oidc, redirects limited to ${EDGE_REDIRECT_DOMAINS}"

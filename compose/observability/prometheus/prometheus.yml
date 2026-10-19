@@ -91,11 +91,18 @@ scrape_configs:
   # secret (docker-compose.yml `secrets:`), never as a value in this file.
   # The `openclaw` rule group alerts on the openclaw_run_completed_total
   # series from here; `up{job="openclaw"}` rides the generic target-down rule.
-  # The gateway runs in compose project `openclaw` and is reached by its
-  # service alias over the external `lifekit-shared` network.
+  # The gateway runs in compose project `openclaw`. The scrape goes through
+  # the edge's internal OpenClaw entrypoint (openclaw-edge on the external
+  # `lifekit-shared` network, compose/edge/traefik/openclaw.yml), which matches
+  # this path and bearer and passes the scrape on as service:prometheus: in
+  # trusted-proxy mode the gateway answers no bearer directly. The target
+  # stays the gateway's own address, the one the platform contract's `scraped`
+  # item looks for; Traefik routes the proxied request by path and bearer, so
+  # the edge must be up for this target to be.
   - job_name: openclaw
     scrape_interval: 30s
     metrics_path: /api/diagnostics/prometheus
+    proxy_url: http://openclaw-edge:18893
     authorization:
       type: Bearer
       credentials_file: /run/secrets/openclaw_gateway_token

@@ -1,0 +1,31 @@
+# Overlay for OpenClaw behind the sign-in gate: the gateway in trusted-proxy
+# mode (docs/runbook.md "OpenClaw behind the sign-in gate").
+#
+# Never used on its own. openclaw_compose (scripts/lib/deploy-common.sh) adds
+# it after docker-compose.yml whenever the live openclaw.json says
+# gateway.auth.mode is "trusted-proxy", so every deploy, one-shot run and
+# rollback follows the mode the operator's cutover left:
+#
+#   - The shared token goes. The gateway refuses to start in trusted-proxy mode
+#     while OPENCLAW_GATEWAY_TOKEN is set; compose cannot drop one key of a
+#     merged environment map, and an empty value counts as unset (replica,
+#     2026-10-19). The token itself stays in the env file: the edge presents it
+#     as the service clients' bearer (compose/edge/traefik/openclaw.yml).
+#   - The local password comes in. It authenticates only local-direct callers
+#     (loopback, no forwarded headers): the in-container CLI and `exec
+#     openclaw ...` calls of the deploy. openclaw.json references it as
+#     ${OPENCLAW_GATEWAY_PASSWORD}, never the value.
+#   - 127.0.0.1:18789 is no longer published. Tailscale Serve's :18789 points at
+#     the edge, and the edge reaches the gateway over openclaw-ingress.
+---
+services:
+  openclaw-gateway:
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ""
+      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_PASSWORD:?needed in trusted-proxy mode, see docs/secrets.md}
+    ports: !reset []
+
+  openclaw-cli:
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ""
+      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_PASSWORD:?needed in trusted-proxy mode, see docs/secrets.md}

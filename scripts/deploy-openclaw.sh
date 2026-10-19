@@ -155,9 +155,19 @@ fi
 # instead of leaving the gateway rejecting proxied requests until someone
 # sets the key by hand. Logic lives in scripts/deploy-trusted-proxies.sh so
 # it can be exercised directly in tests.
+#
+# In trusted-proxy mode the list is exactly the edge's address instead
+# (docs/runbook.md "OpenClaw behind the sign-in gate").
 say "openclaw trustedProxies"
+local auth_mode overlay=""
+auth_mode="$(openclaw_auth_mode)"
+if [[ "${auth_mode}" == "trusted-proxy" ]]; then
+  overlay="${OPENCLAW_TRUSTED_PROXY_FILE}"
+fi
 ENV_FILE="${ENV_FILE}" COMPOSE_FILE="${OPENCLAW_COMPOSE_FILE}" COMPOSE_PROJECT_NAME="${OPENCLAW_PROJECT}" \
-  OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/deploy-trusted-proxies.sh"
+  OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" OPENCLAW_AUTH_MODE="${auth_mode}" \
+  OPENCLAW_EDGE_IP="${OPENCLAW_EDGE_IP}" COMPOSE_OVERLAY_FILE="${overlay}" \
+  "${REPO_DIR}/scripts/deploy-trusted-proxies.sh"
 
 }
 

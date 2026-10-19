@@ -90,8 +90,7 @@ services:
       lifekit.contract.service: openclaw-gateway
     # Cross-project seam (devclaw spec 005): join the external lifekit-shared
     # network so the gateway reaches finance-sentry-mcp, notify-relay and
-    # otel-collector by service name, and Prometheus scrapes it at
-    # openclaw-gateway:18789. `default` keeps in-project DNS to
+    # otel-collector by service name. `default` keeps in-project DNS to
     # google-workspace-mcp.
     # gw_priority pins the container's default route to `default`. Without it
     # Docker picks the network whose name sorts first (lifekit-shared <
@@ -99,10 +98,19 @@ services:
     # would arrive from lifekit-shared's gateway IP instead of the one
     # scripts/deploy-trusted-proxies.sh derives from openclaw_default. In the
     # platform project compose_default sorted first, so this was implicit.
+    #
+    # openclaw-ingress is the edge's way in (compose/edge/traefik/openclaw.yml):
+    # Traefik reaches the gateway at openclaw-gateway-edge, a name that exists
+    # only there. Under the plain service name it could resolve over
+    # lifekit-shared, and the gateway would see the request from Traefik's
+    # lifekit-shared address instead of the pinned one gateway.trustedProxies
+    # lists (scripts/lib/deploy-common.sh OPENCLAW_EDGE_IP).
     networks:
       default:
         gw_priority: 1
       lifekit-shared: {}
+      openclaw-ingress:
+        aliases: [openclaw-gateway-edge]
     # A stable name for the host, for the Kit relay's ssh_config. A bridge IP
     # changes when its network is recreated, and MagicDNS fails when Tailscale
     # is down while the host is fine. host-gateway is docker0's address; the
@@ -226,6 +234,8 @@ services:
     # gateway runs as `node` and needs none.
     # Loopback-only bind, per upstream Hetzner guidance.
     # Admin access goes through Tailscale + SSH tunnel.
+    # Token mode only: in trusted-proxy mode compose/openclaw/trusted-proxy.yml
+    # drops it, and only the edge (openclaw-ingress) reaches the gateway.
     ports:
       - "127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
     entrypoint:
@@ -433,8 +443,14 @@ services:
 # `default` is this project's own network (openclaw_default): the gateway
 # reaches google-workspace-mcp on it. `lifekit-shared` is the EXTERNAL
 # cross-project seam (created by devclaw's project, devclaw spec 005): the
-# gateway reaches finance-sentry-mcp, notify-relay and otel-collector on it,
-# and Prometheus (platform project) scrapes openclaw-gateway:18789 on it. Only the gateway joins it.
+# gateway reaches finance-sentry-mcp, notify-relay and otel-collector on it. Prometheus (platform project) scrapes the target
+# openclaw-gateway:18789 through the edge (prometheus.yml `proxy_url`), and
+# finance-sentry's OpenAI-compatible calls go the same way: in trusted-proxy
+# mode the gateway answers neither directly. Only the gateway joins it.
+# `openclaw-ingress` is the EXTERNAL network between the edge's Traefik and
+# the gateway, created by scripts/deploy.sh (openclaw_ingress_network_ensure).
 networks:
   lifekit-shared:
+    external: true
+  openclaw-ingress:
     external: true

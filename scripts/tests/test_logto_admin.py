@@ -209,6 +209,13 @@ def handler_for(fake: FakeLogto):
                     fake.test_sends.append(data)
                     return self.reply(204)
             if parts[:2] == ["api", "roles"]:
+                if len(parts) == 4 and parts[3] == "users" and method == "GET":
+                    holders = [
+                        u
+                        for u in fake.users
+                        if parts[2] in fake.user_roles.get(u["id"], [])
+                    ]
+                    return self.page(holders, query)
                 if method == "GET":
                     return self.page(fake.roles, query)
                 if method == "POST":
@@ -445,6 +452,26 @@ def test_assign_role_unknown_user_or_role(logto):
     proc = logto("assign-role", "owner", "admin")
     assert proc.returncode == 1
     assert "no role named 'admin'" in proc.stderr
+
+
+def test_role_users_prints_holders_emails(logto):
+    logto("ensure-role", "admin")
+    assert logto("role-users", "admin").stdout == ""
+    logto("assign-role", "owner", "admin")
+    proc = logto("role-users", "admin")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "owner@example.com\n"
+    logto.fake.users.append({"id": "u3", "username": "noemail"})
+    logto("assign-role", "u3", "admin")
+    proc = logto("role-users", "admin")
+    assert proc.stdout == "owner@example.com\n"
+    assert "u3 has no primary email" in proc.stderr
+    assert logto("role-users", "nosuchrole").returncode == 1
+    assert [e["action"] for e in ledger_entries(logto)] == [
+        "create-role",
+        "assign-role",
+        "assign-role",
+    ]
 
 
 def test_ensure_app_creates_with_uris_and_writes_secret(logto, tmp_path):
