@@ -201,6 +201,16 @@ say "lifekit Claude Code home (vault harness)"
 bash "${REPO_DIR}/scripts/claude-home/install-claude-home.sh" \
   || warn "claude home: install-claude-home.sh failed (lines above)"
 
+# ─── OpenClaw workspace memory files: vault pointers ─────────────────────────
+#
+# scripts/workspace-pointers/install-workspace-pointers.sh rewrites MEMORY.md
+# and USER.md in the kit, career and finance workspaces to the pointers in
+# defaults/workspace-pointers/: the vault is the one memory store. A run with
+# nothing to change prints nothing.
+say "OpenClaw workspace memory files (vault pointers)"
+bash "${REPO_DIR}/scripts/workspace-pointers/install-workspace-pointers.sh" \
+  || warn "workspace pointers: install-workspace-pointers.sh failed (lines above)"
+
 # ─── devclaw: deployed from its own repo now (devclaw spec 005) ─────────────
 #
 # devclaw is deployed from its own repo now (devclaw spec 005) — see
@@ -563,6 +573,18 @@ MEMORY_SYNC_STATUS=0
 bash "${REPO_DIR}/scripts/sync/install-memory-sync.sh" --check || MEMORY_SYNC_STATUS=$?
 if [[ "${MEMORY_SYNC_STATUS}" != 0 ]]; then
   printf '\033[1;31m✗ memory-vault sync: the box has not converged on the repository script and units; apply them with the root step in docs/runbook.md "Memory-vault sync"\033[0m\n' >&2
+fi
+
+# ─── openclaw-config mirror sync: host fact the repo owns, report-only ──────
+#
+# scripts/sync/install-config-sync.sh installs the 15-minute mirror of the
+# live OpenClaw config to the openclaw-config repo (script + units, root).
+# Same shape as the vault sync check above.
+say "openclaw-config mirror sync (host fact, report-only)"
+CONFIG_SYNC_STATUS=0
+bash "${REPO_DIR}/scripts/sync/install-config-sync.sh" --check || CONFIG_SYNC_STATUS=$?
+if [[ "${CONFIG_SYNC_STATUS}" != 0 ]]; then
+  printf '\033[1;31m✗ openclaw-config mirror sync: the box has not converged on the repository script and units; apply them with the root step in docs/runbook.md "openclaw-config mirror"\033[0m\n' >&2
 fi
 
 # ─── Runtime-state rotation: host fact the repo owns, report-only ───────────

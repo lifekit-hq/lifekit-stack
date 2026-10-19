@@ -9,9 +9,11 @@ REPO=/srv/openclaw-config
 LIVE_CONFIG=/srv/openclaw/config/openclaw.json
 LIVE_AGENTS_DIR=/srv/openclaw/config/agents
 
-# Workspace top-level files we mirror per agent (MEMORY.md added 2026-05-28).
+# Workspace top-level files we mirror per agent.
 # Daily notes under workspace/memory/ stay agent-local (.gitignore excludes them).
-WORKSPACE_FILES=(AGENTS.md USER.md SOUL.md IDENTITY.md TOOLS.md HEARTBEAT.md MEMORY.md BOOTSTRAP.md)
+# MEMORY.md and USER.md are not mirrored: they are pointers to the vault, the
+# one memory store (docs/runbook.md "Workspace memory files are pointers").
+WORKSPACE_FILES=(AGENTS.md SOUL.md IDENTITY.md TOOLS.md HEARTBEAT.md BOOTSTRAP.md)
 # Agents whose workspaces we sync.
 AGENTS=(kit career finance)
 
@@ -39,6 +41,10 @@ for agent in "${AGENTS[@]}"; do
     [ -f "$src/$f" ] && cp "$src/$f" "$dest/$f"
   done
 done
+
+# Drop the memory files mirrored before they became pointers, retired agents'
+# included. The git history keeps them; a no-op once that commit is pushed.
+git rm -q --ignore-unmatch -- 'agents/*/workspace/MEMORY.md' 'agents/*/workspace/USER.md'
 
 # Commit + push if anything changed.
 if [[ -n "$(git status --porcelain)" ]]; then

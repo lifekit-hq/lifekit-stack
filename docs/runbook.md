@@ -138,7 +138,7 @@ file); rotating that token means recreating `prometheus` too. Check it with
 
 `/srv/openclaw/config/openclaw.json` has two halves. The platform keys -
 `logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
-`diagnostics-otel` plugin enables, `gateway.auth.rateLimit`, `memory.search`
+`diagnostics-otel` plugin enables, memory-core dreaming off, `gateway.auth.rateLimit`, `memory.search`
 (`enabled` + `extraPaths`), `agents.defaults.heartbeat.every`, the inbound
 `hooks` block, the finance agent's heartbeat and
 `skills.workshop.approvalPolicy` - live in
@@ -194,6 +194,19 @@ verifies on the host: one real agent turn whose tool summary shows a
 mirror equivalent) stays clean afterward - the first index over a vault-sized
 directory takes a noticeable but bounded amount of time on first run, then
 stays incremental.
+
+#### Dreaming off (`plugins.entries.memory-core.config.dreaming.enabled`)
+
+memory-core's dreaming is an upstream feature, on by default, that promotes
+agent notes into the workspace `MEMORY.md` on a managed weekly cron ("Memory
+Dreaming Promotion"). The vault is the one memory store, and `MEMORY.md` holds
+a pointer to it (see [Workspace memory files are pointers](#workspace-memory-files-are-pointers)),
+so the platform file sets `enabled: false`. The key is under `plugins.entries`,
+so applying it recreates the gateway, and the restart's cron reconcile removes
+the managed promotion job (the gateway's `docs/concepts/dreaming.md`: disabling
+removes the explicitly declared jobs). The `timezone` and `frequency` already
+in the live config stay, because objects merge. Turning dreaming back on is a
+platform-file change, never a host edit.
 
 #### Provider plugin allowlist (`plugins.allow`, lifekit-stack#175)
 
@@ -649,10 +662,13 @@ What the mounts leave out:
 - **No config key.** OpenClaw has no key for an agent's `memory/` path, so the
   bind mount is the lever.
 - **`MEMORY.md` stays at the workspace root, not mounted.** A single-file bind
-  does not survive a write that replaces the file by rename. Folding it into
-  the vault is separate work.
+  does not survive a write that replaces the file by rename. It holds a
+  pointer to the vault, not facts (see
+  [Workspace memory files are pointers](#workspace-memory-files-are-pointers)).
 - **`dreaming/` and `.dreams/` are not copied.** They are memory-core dreaming
-  output. Dreaming is off, so they are dead and are deleted rather than moved.
+  output. Dreaming is off (the platform file, see
+  [Dreaming off](#dreaming-off-pluginsentriesmemory-coreconfigdreamingenabled)),
+  so they are dead and are deleted rather than moved.
 - **Only these three agents.** The other agents keep their memory in their
   workspace.
 
@@ -702,6 +718,29 @@ while the mounts were live stay in the vault, under `agents/<id>/memory/`.
 - A `memory_search` from that agent finds the note.
 - `docker exec openclaw-openclaw-gateway-1 openclaw doctor` is clean.
 - `curl -fsS http://127.0.0.1:18789/healthz` returns 200.
+
+### Workspace memory files are pointers
+
+`MEMORY.md` and `USER.md` are upstream OpenClaw bootstrap files: the gateway
+loads them into each agent's startup context. The vault is the one memory
+store, so in the kit, career and finance workspaces both files hold a pointer
+to `~/memory/CORE.md` and no facts. `deploy.sh` runs
+`scripts/workspace-pointers/install-workspace-pointers.sh` as `lifekit` on
+every deploy, which writes `defaults/workspace-pointers/{MEMORY,USER}.md` over
+whatever is there. A hand edit, or a fact an agent wrote into either file, is
+rewritten at the next deploy; a durable fact goes to its owning vault page.
+Dreaming, which would promote notes into `MEMORY.md`, is off (see
+[Dreaming off](#dreaming-off-pluginsentriesmemory-coreconfigdreamingenabled)).
+
+No backup is kept in the workspace: the openclaw-config mirror's git history
+holds every version mirrored before the switch, and the mirror no longer
+carries either file (see [openclaw-config mirror](#openclaw-config-mirror)).
+An agent is added to the script's `AGENTS` list only once the facts in its
+two files are confirmed in the vault. devclaw's are not yet.
+
+**Rollback:** revert the change and let the merge redeploy; the step stops
+running. To restore one agent's earlier files, take them from the mirror's
+history and install them as `lifekit`.
 
 ### Kit's needs-you decisions and the daily digest
 
@@ -2737,7 +2776,9 @@ persona over OpenClaw's `bootstrapMaxChars` (20,000 characters), because the
 agent would load it truncated; `--allow-oversize` overrides. The pin must be
 at or past finance-sentry's trim under that limit (#968; the composition is about
 19,800 characters at the 2026-10-15 pin, it was about 23,300 before the trim). Only `AGENTS.md` is
-written: `USER.md` and the other workspace files stay host state. `install`
+written: `MEMORY.md` and `USER.md` are vault pointers set by their own deploy
+step (see [Workspace memory files are pointers](#workspace-memory-files-are-pointers)),
+and the other workspace files stay host state. `install`
 changes a file the agent reads on its next session and restarts nothing.
 
 finance-sentry's framework primer (served by its MCP server) is Ledger's only
@@ -2746,10 +2787,10 @@ workspace: a `RETIRED_PATHS` entry (`skills/project-context`,
 `repos/finance-sentry`) exists, or a line of `MEMORY.md`, `USER.md` or `SOUL.md`
 matches a `STALE_MARKERS` pattern (the old stack, Plaid, DevClaw, the wiki
 tools, the old repo location, the Kit relay). Each hit prints as a `stale:`
-line before the `AGENTS.md` diff. Those three files hold Ledger's own memory and
-the owner's facts, so they are scanned for known markers, never compared with
-canonical text: Ledger keeps writing its memory and only a reintroduced copy
-alerts. A new retired copy is a new entry in either list.
+line before the `AGENTS.md` diff. `SOUL.md` holds Ledger's own text, and
+`MEMORY.md` and `USER.md` are vault pointers that carry no facts, so the three
+are scanned for known markers, never compared with canonical text: only a
+reintroduced copy alerts. A new retired copy is a new entry in either list.
 
 A deploy overwrites a live edit of `AGENTS.md` (the old file is kept as
 `AGENTS.md.pre-persona-install`), so fold any live-only change worth keeping into
@@ -3038,6 +3079,28 @@ drift). Run on the box, as the admin account:
 ```bash
 sudo bash /srv/lifekit-stack/scripts/sync/install-memory-sync.sh
 sudo systemctl start memory-sync.service && systemctl show memory-sync.service -p Result
+```
+
+### openclaw-config mirror
+
+`scripts/sync/openclaw-config-sync.sh`, installed as
+`/usr/local/bin/openclaw-config-sync.sh`, runs from
+`openclaw-config-sync.timer` as `lifekit` every 15 minutes. It copies the live
+`openclaw.json` and each listed agent's top-level workspace files into the
+`/srv/openclaw-config` clone, and commits and pushes when anything changed.
+`MEMORY.md` and `USER.md` are not mirrored: they are vault pointers (see
+[Workspace memory files are pointers](#workspace-memory-files-are-pointers)).
+Each run also `git rm`s any mirrored copy of either file, retired agents'
+included. That is a no-op once the first run after the change has pushed;
+the git history keeps the earlier versions.
+
+**Operator step (live install):** the installer writes `/usr/local/bin` and
+`/etc/systemd/system`, so a merge does not install it (the deploy only reports
+drift). Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/sync/install-config-sync.sh
+sudo systemctl start openclaw-config-sync.service && systemctl show openclaw-config-sync.service -p Result
 ```
 
 ### Runtime-state rotation

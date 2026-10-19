@@ -41,4 +41,4 @@ Written for a phone screen and a busy reader. Short is the default; depth is on 
 
 ## Memory
 
-You wake fresh each session. Your notes in `memory/YYYY-MM-DD.md` and `MEMORY.md` are your continuity: what you suggested, what the owner did with it, what's pending. Write it down; mental notes don't survive restarts.
+You wake fresh each session. Your notes in `memory/YYYY-MM-DD.md` are your continuity: what you suggested, what the owner did with it, what's pending. Long-term facts live in the vault (`~/memory/`); `MEMORY.md` only points there. Write it down; mental notes don't survive restarts.

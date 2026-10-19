@@ -15,7 +15,7 @@ Do not manually reread startup files unless: (1) the owner asks, (2) provided co
 ## Memory
 
 - **Daily notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) - what you suggested, what the owner decided, what's pending
-- **Long-term:** `MEMORY.md` - curated long-term memory; main-session only (do NOT load in group/shared contexts - security)
+- **Long-term:** the vault, `~/memory/` (start at `~/memory/CORE.md`). `MEMORY.md` and `USER.md` are pointers to it and hold no facts; every deploy rewrites them
 - **Write it down, not mental notes.** "Remember this" -> update today's daily note or the relevant file.
 
 ---

@@ -44,6 +44,7 @@ A domain that fails the test is a skill in kit, not an agent.
 | Telegram bots | `channels.telegram.accounts.<id>` in the live `openclaw.json` |
 | Cron jobs | the gateway's store, not `openclaw.json`; `openclaw cron add` / `edit` / `rm`. Git-side declarations where they exist: `scripts/ensure-*.sh` and `docs/runbook.md` |
 | Platform keys (logging, diagnostics, plugins, memory search, heartbeat, hooks) | `compose/openclaw-gateway/platform.patch.json`, applied by `deploy.sh` |
+| Workspace `MEMORY.md` / `USER.md` | the vault pointers in `defaults/workspace-pointers/`, written by `deploy.sh` |
 | Workspace templates | `defaults/agents/<id>/workspace/`, copied into the agent's workspace by hand (resolve the path with `openclaw agents list --json`; container paths under `/home/node/.openclaw/` map to `/srv/openclaw/config/` on the host) |
 | Skills | not vendored; see each workspace's `skills/README.md` |
 
@@ -59,7 +60,7 @@ Decisions go to the OpenClaw app, not Telegram. kit keeps the one ledger of open
 
 ### Workspaces and memory
 
-Each agent's workspace holds its bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`), daily notes under `memory/` (for Kit, Ledger and devclaw that directory is the vault's `agents/<id>/memory/`, bind-mounted - `docs/runbook.md` "Agent memory in the vault"), and its installed skills. The vault is mounted read-only in spirit for every agent (`~/memory`, searchable through `memory.search`); agents propose vault edits rather than writing there, except through skills and CLIs that own their data.
+Each agent's workspace holds its bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, and `USER.md` and `MEMORY.md`, which are pointers to the vault that every deploy rewrites for kit, career and finance - `docs/runbook.md` "Workspace memory files are pointers"), daily notes under `memory/` (for Kit, Ledger and devclaw that directory is the vault's `agents/<id>/memory/`, bind-mounted - `docs/runbook.md` "Agent memory in the vault"), and its installed skills. The vault is mounted read-only in spirit for every agent (`~/memory`, searchable through `memory.search`); agents propose vault edits rather than writing there, except through skills and CLIs that own their data.
 
 ---
 
