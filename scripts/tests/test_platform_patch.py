@@ -173,6 +173,19 @@ def test_workshop_proposals_need_owner_approval():
     assert PATCH["skills"]["workshop"]["approvalPolicy"] == "pending"
 
 
+def test_bot_tokens_are_sops_refs_or_dropped():
+    # A disabled account keeps no ref (null deletes it): a Telegram channel
+    # restart stops disabled accounts too, and an unresolved ref there turns
+    # the restart into a gateway restart (runbook, "Telegram bot tokens").
+    accounts = PATCH["channels"]["telegram"]["accounts"]
+    assert accounts["default"]["botToken"] is not None
+    for name, account in accounts.items():
+        token = account["botToken"]
+        assert token is None or (
+            token["source"] == "exec" and token["provider"] == "sops"
+        ), name
+
+
 def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
     svc = compose_services()["google-workspace-mcp"]
     env = svc["environment"]

@@ -146,11 +146,7 @@
           }
         },
         "career": {
-          "botToken": {
-            "source": "exec",
-            "provider": "sops",
-            "id": "career-bot-token"
-          }
+          "botToken": null
         },
         "finance": {
           "botToken": {
@@ -160,18 +156,10 @@
           }
         },
         "reading": {
-          "botToken": {
-            "source": "exec",
-            "provider": "sops",
-            "id": "learning-bot-token"
-          }
+          "botToken": null
         },
         "social": {
-          "botToken": {
-            "source": "exec",
-            "provider": "sops",
-            "id": "social-bot-token"
-          }
+          "botToken": null
         }
       }
     }

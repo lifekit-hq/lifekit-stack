@@ -174,6 +174,26 @@ requires operator approval"), so an agent-initiated apply waits for the owner.
 `autonomous.mode` (off on this host) stays host state. `skills` keys reload as
 `none` in the gateway's reload plan: read at use, no restart.
 
+#### Telegram bot tokens: enabled accounts only
+
+The platform file owns every Telegram account's `botToken`: a SOPS exec
+SecretRef (`docs/secrets.md`) for an enabled account, and `null` for a disabled
+one. In a patch, `null` deletes the key. The gateway resolves secrets only for
+enabled accounts, but a Telegram channel restart (any `channels.telegram.*`
+edit) stops every configured account, including disabled ones. OpenClaw
+2026.9.8 reads the token while stopping an account. A disabled account that
+still holds a ref therefore fails the restart with `unresolved SecretRef`, and
+hot-reload recovery escalates to a full gateway restart (SIGUSR2). With no ref
+on disabled accounts, the same edit restarts only the Telegram channel.
+
+- Disabling an account: set `enabled: false` on the box, and in the same PR set
+  the account's `botToken` to `null` here. Until that PR deploys, any Telegram
+  edit restarts the gateway.
+- Re-enabling an account: in one `openclaw config patch`, set
+  `enabled: true` and the ref (copy it from git history), then put the ref back
+  here. The next deploy finds the ref already applied. Until the PR merges, a
+  deploy deletes the ref again, so merge the PR first or straight after.
+
 #### Vault search for every agent (`memory.search`, in the platform file since 2026-09-23)
 
 Retiring the memory-wiki plugin also retired the only search the agents had
@@ -537,7 +557,9 @@ Since the 2026-09 fleet reshape (see `docs/openclaw-agent-design.md`), career
 has one delivering cron job, `career-weekly`. What each run does is in the
 agent's `AGENTS.md` (`defaults/agents/career/workspace/`). It is paused: the
 row was disabled on 2026-10-07 until the job hunt restarts, and it comes back
-with `openclaw cron enable <id>` (id from `openclaw cron list --all`). Its
+with `openclaw cron enable <id>` (id from `openclaw cron list --all`). Turn
+the disabled `career` Telegram account back on first: see "Telegram bot
+tokens: enabled accounts only" above. Its
 `social-weekly` sibling went with the `social` agent the same day. The rows
 are host state in the gateway's store. To recreate the row on a rebuilt host,
 use this shape, checked against 2026.9.5. `cron add` has no failure-alert flags, so the alert is a follow-up
