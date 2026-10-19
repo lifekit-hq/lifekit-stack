@@ -94,6 +94,7 @@ case "$1" in
 esac
 case " $* " in
   *" build openclaw-gateway "*) echo "$NEW_IMAGE" > "$S/$(key lifekit-openclaw:local)" ;;
+  *" ps -q --status running openclaw-gateway "*) [ -n "$NO_RUNNING_GATEWAY" ] || echo gw1 ;;
   *" ps -a -q openclaw-gateway "*) [ -n "$NO_GATEWAY$NO_PROJECT_GATEWAY" ] || echo gw1 ;;
   *" ps -a -q --filter ancestor="*)
     [ -n "$NO_GATEWAY" ] || [ -n "${*##*ancestor=$RUN_IMAGE*}" ] || echo gw1 ;;
@@ -110,6 +111,7 @@ case " $* " in
   *" plugins list --json "*)
     if [ -e "$PLUGINS_FIXED" ]; then v="$BUILT_VER"; else v="2026.6.8"; fi
     echo '[{"id":"codex","enabled":true,"origin":"global","version":"'"$v"'"}]' ;;
+  *" --dry-run "*) [ -z "$DRY_RUN_REJECT" ] || { echo rejected >&2; exit 1; } ;;
   *" secrets reload "*) [ -z "$RELOAD_ERR" ] || { echo "$RELOAD_ERR" >&2; exit 1; } ;;
   *" plugins update "*) [ -n "$PLUGINS_STUCK" ] || touch "$PLUGINS_FIXED" ;;
 esac
@@ -196,6 +198,7 @@ def env(tmp_path):
         "PREV_VER": "",
         "NO_GATEWAY": "",
         "NO_PROJECT_GATEWAY": "",
+        "NO_RUNNING_GATEWAY": "",
         "RUN_UNADDRESSABLE": "",
         "PLUGINS_FIXED": str(tmp_path / "plugins-fixed"),
         "PLUGINS_STUCK": "",
@@ -854,6 +857,46 @@ def test_secrets_reload_waits_120s_for_a_slow_gateway_and_passes(env):
 def test_secrets_reload_failure_still_fails_the_deploy(env, err):
     r, failures = configure_failures(env, err)
     assert len(failures) == 1, r.stdout + r.stderr
+
+
+def configure_calls(env, extra=None):
+    r = run_phases(env, ["configure"], extra)
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    return r, calls
+
+
+def test_live_state_cli_calls_exec_into_the_running_gateway(env):
+    # OpenClaw 2026.10.2 refuses these from a `run --rm` container (different
+    # PID namespace); the deploy went red on it on 2026-10-19.
+    r, calls = configure_calls(env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    prefix = (
+        f"compose -p openclaw --env-file {env['ENV_FILE']} "
+        f"-f {REPO}/compose/openclaw/docker-compose.yml "
+    )
+    cli = [
+        c[len(prefix) :] for c in calls if " openclaw " in c or c.endswith("openclaw")
+    ]
+    assert [c for c in cli if "config patch" in c or "secrets audit" in c] == [
+        "exec -T openclaw-gateway openclaw config patch --stdin --dry-run --allow-exec",
+        "exec -T openclaw-gateway openclaw config patch --stdin",
+        "exec -T openclaw-gateway openclaw secrets audit --allow-exec",
+    ]
+    assert not any(" run " in c and "--entrypoint openclaw" in c for c in calls)
+
+
+def test_dry_run_runs_before_apply_and_a_rejection_blocks_the_apply(env):
+    r, calls = configure_calls(env, {"DRY_RUN_REJECT": "1"})
+    assert "dry run rejected" in r.stderr
+    assert any("config patch --stdin --dry-run" in c for c in calls)
+    assert not any("config patch --stdin" in c and "--dry-run" not in c for c in calls)
+
+
+def test_platform_apply_and_secrets_audit_fail_clearly_without_a_running_gateway(env):
+    r, calls = configure_calls(env, {"NO_RUNNING_GATEWAY": "1"})
+    assert "platform config: openclaw-gateway is not running" in r.stderr
+    assert "secrets audit: openclaw-gateway is not running" in r.stderr
+    assert not any("config patch" in c or "secrets audit" in c for c in calls)
 
 
 def cutover_calls(env):

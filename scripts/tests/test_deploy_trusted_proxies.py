@@ -26,6 +26,13 @@ SCRIPT = REPO / "scripts/deploy-trusted-proxies.sh"
 # one-shot `run --entrypoint true` has created it.
 DOCKER_STUB = """#!/bin/sh
 log="$DOCKER_CALL_LOG"
+# The gateway-running probe is not a step under test: answer it from
+# GATEWAY_RUNNING and keep it out of the call log.
+case " $* " in
+  *" ps -q --status running openclaw-gateway "*)
+    [ -z "$GATEWAY_RUNNING" ] || echo gw1
+    exit 0 ;;
+esac
 printf '%s\\n' "$*" >> "$log"
 case "$1 $2" in
   "network inspect")
@@ -398,3 +405,31 @@ def test_aborts_when_neither_the_config_file_nor_config_get_is_readable(
 
     assert result.returncode == 1
     assert "Could not read gateway.trustedProxies" in result.stderr
+
+
+def test_writes_through_exec_when_the_gateway_is_running(tmp_path, docker_stub):
+    # OpenClaw >= 2026.10.2 refuses config writes from a one-shot container
+    # while a gateway owns the state (different PID namespace).
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+    compose_file = tmp_path / "openclaw" / "docker-compose.yml"
+    compose_file.parent.mkdir()
+    compose_file.write_text("")
+    config_dir = write_openclaw_config(tmp_path)
+
+    result = run(
+        env_file,
+        compose_file,
+        config_dir,
+        docker_stub,
+        extra_env={"NETWORK_INSPECT_OUTPUT": "172.30.0.1", "GATEWAY_RUNNING": "1"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = docker_stub["call_log"].read_text().splitlines()
+    assert calls[1] == (
+        f"compose -p openclaw --env-file {env_file} -f {compose_file} "
+        "exec -T openclaw-gateway openclaw "
+        'config set gateway.trustedProxies ["172.30.0.1"] --strict-json'
+    )
+    assert not any(" run " in c for c in calls)
