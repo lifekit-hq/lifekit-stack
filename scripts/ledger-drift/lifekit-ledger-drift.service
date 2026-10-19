@@ -1,0 +1,15 @@
+[Unit]
+Description=Export files in the finance agent's auto-memory dir or outside its workspace allowlist to node-exporter's textfile collector
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+# The admin account (README "VPS users"): it owns the textfile directory and is
+# in the docker group, which is all the read-only `docker exec` listing needs.
+# install-host-gauges.sh substitutes the placeholder at install time.
+User=__ADMIN_USER__
+ExecStart=/usr/local/bin/lifekit-ledger-drift.sh --textfile /var/lib/node_exporter/textfile
+
+[Install]
+WantedBy=multi-user.target

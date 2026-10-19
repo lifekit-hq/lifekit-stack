@@ -93,6 +93,15 @@ COPY install-sops.sh /tmp/install-sops.sh
 RUN bash /tmp/install-sops.sh /usr/local/bin && rm -f /tmp/install-sops.sh
 COPY --chown=node:node --chmod=0500 sops-resolver.py /opt/lifekit-secrets/sops-resolver.py
 
+# Claude Code auto-memory stays off for every agent session in this image
+# (gateway and openclaw-cli). The user settings install-claude-home.sh writes
+# say the same, but a workspace .claude/settings*.json - which an agent can
+# write - outranks them; managed settings outrank every other source, and this
+# root-owned copy cannot be changed from inside the container. Finance facts
+# live only in finance-sentry, so Ledger must have nowhere of its own to keep
+# them (docs/openclaw-agent-design.md "Finance data and Ledger").
+COPY --chmod=0644 managed-settings.json /etc/claude-code/managed-settings.json
+
 USER node
 
 # Agent CLIs (claude-code, clawhub, summarize) are npm-published, so unlike the

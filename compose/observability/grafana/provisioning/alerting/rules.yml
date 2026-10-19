@@ -620,7 +620,8 @@ groups:
             model:
               refId: A
               # Age of each textfile-collector file; every gauge that writes one (the quota
-              # gauge, the /tmp usage gauge, the host-group gauge, the release gauge) rewrites it every 5 minutes, so 15 minutes is
+              # gauge, the /tmp usage gauge, the host-group gauge, the release gauge, the
+              # Ledger drift check) rewrites it every 5 minutes, so 15 minutes is
               # three missed runs. The hourly quota-share file is the exception: its age
               # has 6600s taken off, so the same 900 threshold means three missed hourly runs.
               expr: >-
@@ -1464,6 +1465,59 @@ groups:
             `scripts/secrets/edit.sh gateway` (replace CLAUDE_OAUTH_TOKEN),
             and move the expiry date in this rule and in docs/secrets.md in
             the same PR (docs/secrets-runbook.md, "Claude service token").
+
+      - uid: ledger-finance-drift
+        title: Ledger finance drift
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 1 per file in the finance agent's Claude Code auto-memory dir,
+              # or in its workspace outside the allowlist
+              # (scripts/ledger-drift/lifekit-ledger-drift.sh); area and path
+              # label it. A clean run writes no per-file series.
+              expr: ledger_finance_drift_file
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # Clean is no series. A check that stopped writing is
+        # textfile-collector-stale's job, a failed run host-unit-down-or-failed's.
+        noDataState: OK
+        execErrState: Error
+        # A file is there or it is not; the gauge cannot flap.
+        for: 0s
+        labels:
+          service: openclaw
+          severity: warning
+        annotations:
+          summary: "Ledger {{ $labels.area }} has a file that may hold finance facts: {{ $labels.path }}"
+          description: >-
+            {{ $labels.path }} is in the finance agent's {{ $labels.area }}
+            (auto-memory: any file; workspace: outside the allowlist). Finance
+            facts live only in finance-sentry, so the check reports and never
+            touches the file. Read it, carry anything still true into
+            finance-sentry as a proposal the owner confirms, then retire the
+            file by hand; or, for a legitimate new workspace file, add it to
+            WORKSPACE_ALLOW by PR (docs/runbook.md, "Ledger finance drift").
 
   # finance-sentry's backup and retention jobs export their own age gauges
   # (JobMetrics.cs); without these rules a silently stopped backup or purge
