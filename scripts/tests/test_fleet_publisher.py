@@ -144,6 +144,7 @@ def test_publishes_world_readable_copy_and_worker_counts(fleet):
             "reason": None,
             "state": None,
             "counts": None,
+            "invalidity": None,
         }
     ]
     m = fleet.metrics()
@@ -161,6 +162,17 @@ def test_publishes_world_readable_copy_and_worker_counts(fleet):
     )
     assert not [p for p in fleet.out.iterdir() if p.name != "home-summary.json"]
     assert not [p for p in fleet.prom.iterdir() if p.name != "fleet.prom"]
+
+
+def test_home_invalidity_is_passed_through_as_is(fleet):
+    invalidity = {"kind": "terminal_in_flight", "ids": ["done-task", "other"]}
+    fleet.write(
+        summary(valid=False, reason="finished work in flight", invalidity=invalidity)
+    )
+    fleet.run()
+    got = fleet.published()
+    assert got["homes"][0]["valid"] is False
+    assert got["homes"][0]["invalidity"] == invalidity
 
 
 def test_unknown_worker_state_gets_its_own_series(fleet):
@@ -1329,6 +1341,25 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
         "daemon-reload",
         "enable --now lifekit-fleet-publisher.timer",
     ]
+
+
+def test_installer_finds_tasks_axi_through_an_interactive_admin_shell(tmp_path):
+    # A plain login shell lacks the node version manager set up in .bashrc: the
+    # fake su answers only the interactive form.
+    fake_su = tmp_path / "su"
+    fake_su.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$4" in *"bash -ic"*) echo "noise"; echo /home/admin/.nvm/bin/tasks-axi;; esac\n'
+    )
+    fake_su.chmod(0o755)
+    result = run_installer(
+        tmp_path, SU=str(fake_su), TASKS_AXI="", FM_HOME="/srv/fleet-home"
+    )
+    assert result.returncode == 0, result.stderr
+    unit = (
+        tmp_path / "root/etc/systemd/system/lifekit-fleet-publisher.service"
+    ).read_text()
+    assert "TASKS_AXI=/home/admin/.nvm/bin/tasks-axi" in unit
 
 
 def run_installer(tmp_path, **env):

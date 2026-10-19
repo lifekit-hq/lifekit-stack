@@ -8,9 +8,10 @@
 #   sudo FM_HOMES="<fleet home> [<fleet home> ...]" bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
 #
 # TASKS_AXI (optional) is the absolute path of tasks-axi; unset, it is looked
-# up on the admin account's PATH.
+# up as the admin account (login shell, then an interactive one for a node
+# version manager set up in .bashrc).
 #
-# Tests set INSTALL_ROOT (a prefix for every installed path) and SYSTEMCTL; an
+# Tests set INSTALL_ROOT (a prefix for every installed path), SYSTEMCTL and SU; an
 # INSTALL_ROOT run needs no root and does not chown.
 
 set -euo pipefail
@@ -19,6 +20,7 @@ ADMIN_USER="${ADMIN_USER:-denys}"
 FM_HOMES="${FM_HOMES:-${FM_HOME:-}}"
 INSTALL_ROOT="${INSTALL_ROOT:-}"
 SYSTEMCTL="${SYSTEMCTL:-systemctl}"
+SU="${SU:-su}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 read -r -a homes <<< "$FM_HOMES"
@@ -44,12 +46,17 @@ fi
 
 # tasks-axi lives in the admin account's node toolchain, which a system unit's
 # PATH does not include: resolve it as the admin account and hand the unit its
-# absolute path (the publisher adds its directory, and so node, to PATH).
+# absolute path (the publisher adds its directory, and so node, to PATH). A
+# plain login shell does not read the interactive-only setup (.bashrc) that
+# puts a node version manager's bin on PATH, so fall back to an interactive one.
 if [[ -z "${TASKS_AXI:-}" ]]; then
-  if [[ -n "$INSTALL_ROOT" ]]; then
+  if [[ -n "$INSTALL_ROOT" && "$SU" == su ]]; then
     TASKS_AXI="$(command -v tasks-axi || true)"
   else
-    TASKS_AXI="$(su - "$ADMIN_USER" -c 'command -v tasks-axi' 2> /dev/null || true)"
+    TASKS_AXI="$("$SU" - "$ADMIN_USER" -c 'command -v tasks-axi' 2> /dev/null || true)"
+    [[ "$TASKS_AXI" == /* ]] ||
+      TASKS_AXI="$("$SU" - "$ADMIN_USER" -c 'bash -ic "command -v tasks-axi"' 2> /dev/null | tail -n 1 || true)"
+    [[ "$TASKS_AXI" == /* ]] || TASKS_AXI=""
   fi
 fi
 [[ -n "$TASKS_AXI" ]] || echo "tasks-axi not found for $ADMIN_USER; set TASKS_AXI to place boards by hold origin." >&2
