@@ -2837,8 +2837,7 @@ the order of every step, the exact config before and after, a refused dry
 run, a failed check rolling back by itself, a failing rollback that keeps its
 saved state, and no secret value in any output. Its Prometheus stub reports
 the scrape up only while `trustedProxies` lists the edge, as the gateway
-does. `test_edge_routes.py` pins the routes, the User-Agent match and the
-internal entrypoint's forwarded-header handling.
+does. `test_edge_routes.py` pins the routes and the User-Agent match.
 
 ### Before the cutover
 
