@@ -2792,9 +2792,15 @@ admits only Logto's `admin` role, and the gateway narrows that to one email.
 A browser that signs in pairs as a device with OpenClaw's default scopes
 (`deviceAutoApprove`), and the owner's email adds `operator.admin`.
 
-**What reaches the gateway.** `gateway.trustedProxies` is exactly
-`10.231.78.2`, Traefik's pinned address on `openclaw-ingress`. That network is
-internal and holds only Traefik and the gateway (`scripts/lib/deploy-common.sh`
+**What reaches the gateway.** Every request through the edge comes from
+`10.231.78.2`, Traefik's pinned address on `openclaw-ingress`, with forwarded
+headers. The gateway answers such a request `403 proxy_attribution_required`
+in either auth mode unless `gateway.trustedProxies` lists that address, so
+every deploy keeps it listed (`scripts/deploy-trusted-proxies.sh`). In token
+mode it sits next to the host's bridge addresses and only attributes the
+client: the gateway still checks the bearer and ignores the identity header.
+After the cutover, `gateway.trustedProxies` is exactly `10.231.78.2`.
+`openclaw-ingress` is internal and holds only Traefik and the gateway (`scripts/lib/deploy-common.sh`
 `OPENCLAW_EDGE_IP`). `127.0.0.1:18789` is no longer published (the
 `compose/openclaw/trusted-proxy.yml` overlay). The gateway stays on
 `lifekit-shared` for its own outbound calls (finance-sentry-mcp,
@@ -2814,12 +2820,14 @@ serves only the in-container CLI (`docs/secrets.md`). That includes the
 deploy's `exec` calls: running inside the gateway does not authenticate them,
 and without the password a 2026.10.2 replica refused `health`, `cron list`
 and `channels status` (`trusted_proxy_untrusted_source`). The internal routes
-work in token mode too, so the clients move first, with no gap.
+work in token mode too, once the deploy has listed the edge in
+`gateway.trustedProxies`, so the clients move first, with no gap.
 
 **Deploys after the cutover.** `openclaw_compose` reads the mode from
 `openclaw.json` and adds the overlay in trusted-proxy mode, so every deploy,
 one-shot run and rollback follows what the cutover left. Each deploy also
-keeps `gateway.trustedProxies` at exactly the edge
+keeps `gateway.trustedProxies` at exactly the edge in trusted-proxy mode, and
+in token mode lists the edge next to the host's bridge address
 (`scripts/deploy-trusted-proxies.sh`). The auth keys are host state, never in
 `platform.patch.json`.
 
@@ -2827,8 +2835,9 @@ keeps `gateway.trustedProxies` at exactly the edge
 stubbed docker, tailscale and curl (`scripts/tests/test_openclaw_sso.py`):
 the order of every step, the exact config before and after, a refused dry
 run, a failed check rolling back by itself, a failing rollback that keeps its
-saved state, and no secret value in any output. `test_edge_routes.py` pins
-the routes and the User-Agent match.
+saved state, and no secret value in any output. Its Prometheus stub reports
+the scrape up only while `trustedProxies` lists the edge, as the gateway
+does. `test_edge_routes.py` pins the routes and the User-Agent match.
 
 ### Before the cutover
 
@@ -2838,7 +2847,10 @@ edge's two OpenClaw entrypoints, and moves Prometheus' scrape onto the edge
 while the gateway is still in token mode.
 
 1. **The scrape.** `curl -s --data-urlencode 'query=up{job="openclaw"}'
-   http://127.0.0.1:9090/api/v1/query` shows value `"1"`.
+   http://127.0.0.1:9090/api/v1/query` shows value `"1"`. A `0` with the
+   target's error `403 Forbidden` means `gateway.trustedProxies` does not
+   list the edge (`10.231.78.2`): run a deploy, which adds it. The cutover's
+   preflight refuses in that state.
 2. **The password.** It is already in the master file. Render it into the
    env file; nothing restarts:
 
@@ -2883,7 +2895,7 @@ while the gateway is still in token mode.
 One command. It checks everything above before it changes anything: the
 password and token are in the env file, the edge answers a browser with the
 sign-in redirect and the phone app's dashboard tab with the gateway,
-Prometheus scrapes through the edge, finance-sentry calls through it, and
+`gateway.trustedProxies` lists the edge, Prometheus scrapes through the edge, finance-sentry calls through it, and
 Serve publishes `:18789` without Funnel. Then it:
 
 - saves `gateway.auth`, `gateway.trustedProxies`,
@@ -2928,7 +2940,9 @@ the gateway token's env reference, re-derives `trustedProxies` and points
 Serve at `127.0.0.1:18789`.
 
 Leave Prometheus, finance-sentry and the extra Logto URIs as they are: the
-internal routes work in token mode too.
+internal routes work in token mode too. The restored `trustedProxies` holds
+the edge (the deploy keeps it there in token mode); without a saved file the
+rollback adds it back with the host's bridge address.
 
 **Rotating.** The password: `sops set` plus render, then a deploy (it
 recreates the gateway). The gateway token: also restart the edge's Traefik

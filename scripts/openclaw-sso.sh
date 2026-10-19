@@ -13,8 +13,9 @@
 #             at the gateway, or trusted-proxy mode and Serve at the edge), 1
 #             otherwise.
 #   cutover   checks everything it depends on before it changes anything
-#             (the edge's routes answer, Prometheus already scrapes through
-#             the edge, finance-sentry already calls through it, the local
+#             (the edge's routes answer, the gateway lists the edge in
+#             trustedProxies, Prometheus already scrapes through the edge,
+#             finance-sentry already calls through it, the local
 #             password is rendered), saves what it is about to change to
 #             ROLLBACK_FILE, then: stops the gateway, patches gateway.auth to
 #             trusted-proxy (the given email is the only operator, with
@@ -200,6 +201,9 @@ preflight() {
     || failures+=("${ROLLBACK_FILE} exists from an earlier cutover; run rollback first, or remove it if that state is gone")
   python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "${CONFIG_FILE}" 2>/dev/null \
     || failures+=("${CONFIG_FILE} is not readable strict JSON")
+  python3 -c 'import json, sys; sys.exit(sys.argv[2] not in (json.load(open(sys.argv[1])).get("gateway", {}).get("trustedProxies") or []))' \
+    "${CONFIG_FILE}" "${OPENCLAW_EDGE_IP}" 2>/dev/null \
+    || failures+=("gateway.trustedProxies does not list the edge (${OPENCLAW_EDGE_IP}): the gateway answers its internal routes 403 proxy_attribution_required; deploy first")
   [[ -n "$(tailnet_name)" ]] || failures+=("the tailnet name is not readable (tailscale status)")
   case "${SERVE_TARGET}" in
     "") failures+=("Serve does not publish :${SERVE_PORT}") ;;
@@ -391,10 +395,11 @@ print(json.dumps({"gateway": gw}))
   printf '%s\n' "${patch}" | OPENCLAW_COMPOSE_AUTH_MODE=token openclaw_cli config patch --stdin --replace-path gateway.auth \
     || rollback_failed "the config patch back to token auth"
   # Without a saved list, the deploy's own derivation puts the host's proxy
-  # address back (scripts/deploy-trusted-proxies.sh, token mode).
+  # address and the edge's back (scripts/deploy-trusted-proxies.sh, token
+  # mode), so the internal routes keep working.
   if [[ "$(python3 -c 'import json, sys; print(json.loads(sys.argv[1]).get("trustedProxies") is None)' "${saved}")" == True ]]; then
     ENV_FILE="${ENV_FILE}" COMPOSE_FILE="${OPENCLAW_COMPOSE_FILE}" COMPOSE_PROJECT_NAME="${OPENCLAW_PROJECT}" \
-      OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" OPENCLAW_AUTH_MODE=token \
+      OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" OPENCLAW_AUTH_MODE=token OPENCLAW_EDGE_IP="${OPENCLAW_EDGE_IP}" \
       bash "${REPO_DIR}/scripts/deploy-trusted-proxies.sh" \
       || rollback_failed "restoring gateway.trustedProxies"
   fi

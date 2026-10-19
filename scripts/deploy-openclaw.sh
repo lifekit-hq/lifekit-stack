@@ -156,7 +156,9 @@ fi
 # sets the key by hand. Logic lives in scripts/deploy-trusted-proxies.sh so
 # it can be exercised directly in tests.
 #
-# In trusted-proxy mode the list is exactly the edge's address instead
+# The edge's pinned address is appended too, so its internal routes
+# (Prometheus' scrape, finance-sentry's /v1/*) work in token mode. In
+# trusted-proxy mode the list is exactly the edge's address instead
 # (docs/runbook.md "OpenClaw behind the sign-in gate").
 say "openclaw trustedProxies"
 local auth_mode overlay=""

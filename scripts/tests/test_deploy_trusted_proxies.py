@@ -8,6 +8,11 @@ compose project's default network gateway address at network creation), so it
 can't live in compose/openclaw-gateway/platform.patch.json — deploy-openclaw.sh's
 `prepare` phase calls this script on every deploy, and the script appends the
 derived address when the list lacks it and writes nothing when it has it.
+
+The edge's pinned address (OPENCLAW_EDGE_IP) is appended the same way in token
+mode: the edge's internal routes reach the gateway from it, and the gateway
+answers them 403 proxy_attribution_required until it is listed. In
+trusted-proxy mode the list is exactly the edge.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts/deploy-trusted-proxies.sh"
+EDGE_IP = "10.231.78.2"
 
 # NETWORK_CREATED_BY_RUN: the network only exists (inspect answers) once a
 # one-shot `run --entrypoint true` has created it.
@@ -89,6 +95,7 @@ def run(env_file, compose_file, config_dir, docker_stub, extra_env=None):
         "ENV_FILE": str(env_file),
         "COMPOSE_FILE": str(compose_file),
         "OPENCLAW_CONFIG_DIR": str(config_dir),
+        "OPENCLAW_EDGE_IP": EDGE_IP,
         **(extra_env or {}),
     }
     return subprocess.run(
@@ -125,12 +132,12 @@ def test_sets_trusted_proxies_from_the_derived_network_gateway(tmp_path, docker_
         calls[1]
         == f"compose -p lifekit-stack --env-file {env_file} -f {compose_file} run --rm --no-deps "
         f"--entrypoint openclaw openclaw-gateway config set gateway.trustedProxies "
-        f'["172.30.0.1"] --strict-json'
+        f'["172.30.0.1","10.231.78.2"] --strict-json'
     )
     address = json.loads(
         calls[1].split("gateway.trustedProxies ", 1)[1].rsplit(" --strict-json", 1)[0]
     )
-    assert address == ["172.30.0.1"]
+    assert address == ["172.30.0.1", EDGE_IP]
 
 
 def test_derives_the_project_name_from_the_compose_file_directory_when_unset(
@@ -219,7 +226,8 @@ def test_creates_the_network_with_a_one_shot_run_when_it_does_not_exist_yet(
         prefix + "run --rm --no-deps --entrypoint true openclaw-gateway",
         "network inspect openclaw_default --format {{(index .IPAM.Config 0).Gateway}}",
         prefix + "run --rm --no-deps --entrypoint openclaw openclaw-gateway "
-        'config set gateway.trustedProxies ["172.18.0.1","172.30.0.1"] --strict-json',
+        "config set gateway.trustedProxies "
+        '["172.18.0.1","172.30.0.1","10.231.78.2"] --strict-json',
     ]
 
 
@@ -246,14 +254,16 @@ def test_aborts_when_the_config_set_call_fails(tmp_path, docker_stub):
     assert result.returncode == 1
 
 
-def test_leaves_the_list_alone_when_it_already_holds_the_address(tmp_path, docker_stub):
+def test_leaves_the_list_alone_when_it_already_holds_both_addresses(
+    tmp_path, docker_stub
+):
     env_file = tmp_path / ".env"
     env_file.write_text("")
     compose_file = tmp_path / "compose" / "docker-compose.yml"
     compose_file.parent.mkdir()
     compose_file.write_text("")
     config_dir = write_openclaw_config(
-        tmp_path, trusted_proxies=["10.0.0.1", "172.30.0.1"]
+        tmp_path, trusted_proxies=["10.0.0.1", "172.30.0.1", EDGE_IP]
     )
 
     result = run(
@@ -269,6 +279,7 @@ def test_leaves_the_list_alone_when_it_already_holds_the_address(tmp_path, docke
 
     assert result.returncode == 0, result.stderr
     assert "already lists 172.30.0.1" in result.stdout
+    assert "and the edge (10.231.78.2)" in result.stdout
     calls = docker_stub["call_log"].read_text().splitlines()
     assert len(calls) == 1
     assert calls[0].startswith("network inspect lifekit-stack_default ")
@@ -301,7 +312,7 @@ def test_appends_the_address_and_keeps_every_existing_entry(tmp_path, docker_stu
     address = json.loads(
         calls[1].split("gateway.trustedProxies ", 1)[1].rsplit(" --strict-json", 1)[0]
     )
-    assert address == ["172.18.0.1", "172.30.0.1"]
+    assert address == ["172.18.0.1", "172.30.0.1", EDGE_IP]
 
 
 def test_aborts_without_writing_when_the_value_is_not_a_list(tmp_path, docker_stub):
@@ -430,7 +441,7 @@ def test_writes_through_exec_when_the_gateway_is_running(tmp_path, docker_stub):
     assert calls[1] == (
         f"compose -p openclaw --env-file {env_file} -f {compose_file} "
         "exec -T openclaw-gateway openclaw "
-        'config set gateway.trustedProxies ["172.30.0.1"] --strict-json'
+        'config set gateway.trustedProxies ["172.30.0.1","10.231.78.2"] --strict-json'
     )
     assert not any(" run " in c for c in calls)
 
@@ -495,7 +506,8 @@ def test_trusted_proxy_mode_leaves_exactly_the_edge_alone(tmp_path, docker_stub)
     assert docker_stub["call_log"].read_text() == ""
 
 
-def test_trusted_proxy_mode_needs_the_edge_address(tmp_path, docker_stub):
+@pytest.mark.parametrize("mode", ["token", "trusted-proxy"])
+def test_both_modes_need_the_edge_address(tmp_path, docker_stub, mode):
     env_file = tmp_path / ".env"
     env_file.write_text("")
     compose_file = tmp_path / "compose" / "docker-compose.yml"
@@ -508,9 +520,41 @@ def test_trusted_proxy_mode_needs_the_edge_address(tmp_path, docker_stub):
         compose_file,
         config_dir,
         docker_stub,
-        extra_env={"OPENCLAW_AUTH_MODE": "trusted-proxy"},
+        extra_env={"OPENCLAW_AUTH_MODE": mode, "OPENCLAW_EDGE_IP": ""},
     )
 
     assert result.returncode != 0
     assert "OPENCLAW_EDGE_IP must be set" in result.stderr
     assert docker_stub["call_log"].read_text() == ""
+
+
+def test_token_mode_appends_the_edge_when_only_the_bridge_is_listed(
+    tmp_path, docker_stub
+):
+    # The box after the edge first shipped: token mode, the bridge addresses
+    # listed, the edge not, so its internal routes got 403
+    # proxy_attribution_required and Prometheus' scrape went down.
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+    compose_file = tmp_path / "openclaw" / "docker-compose.yml"
+    compose_file.parent.mkdir()
+    compose_file.write_text("")
+    config_dir = write_openclaw_config(
+        tmp_path, trusted_proxies=["172.18.0.1", "172.30.0.1"]
+    )
+
+    result = run(
+        env_file,
+        compose_file,
+        config_dir,
+        docker_stub,
+        extra_env={"NETWORK_INSPECT_OUTPUT": "172.30.0.1", "GATEWAY_RUNNING": "1"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = docker_stub["call_log"].read_text().splitlines()
+    assert calls[1:] == [
+        f"compose -p openclaw --env-file {env_file} -f {compose_file} "
+        "exec -T openclaw-gateway openclaw config set gateway.trustedProxies "
+        '["172.18.0.1","172.30.0.1","10.231.78.2"] --strict-json'
+    ]

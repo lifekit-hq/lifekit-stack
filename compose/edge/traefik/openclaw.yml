@@ -24,7 +24,11 @@
 # the OpenAI-compatible API. Anything else on this entrypoint is a 404. The
 # same routes work while the gateway is still in token mode (it checks the
 # bearer itself and ignores the identity), so these clients move here before
-# the mode switch, with no gap.
+# the mode switch, with no gap. In both modes the gateway answers 403
+# proxy_attribution_required unless gateway.trustedProxies lists the edge;
+# every deploy keeps it there (scripts/deploy-trusted-proxies.sh). This
+# entrypoint trusts no forwarded headers, so Traefik replaces a caller's
+# X-Forwarded-For with the caller's address, as the gateway requires.
 #
 # The identity headers are stripped from every request first, so neither a
 # client nor the app route can present one: a header set to "" is removed.
