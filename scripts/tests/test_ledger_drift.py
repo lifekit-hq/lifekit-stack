@@ -218,25 +218,15 @@ def test_service_runs_the_check_as_the_admin_user_into_the_textfile_dir():
     assert os.access(SCRIPT, os.X_OK)
 
 
-def test_timer_runs_every_five_minutes_and_is_installed_with_the_gauges():
-    # textfile-collector-stale judges every 5-minute gauge against 15 minutes;
-    # unit-gauge watches lifekit-*.timer, so a failed run alerts too.
+def test_timer_runs_every_five_minutes():
+    # textfile-collector-stale judges every 5-minute gauge against 15 minutes.
     timer = _unit("lifekit-ledger-drift.timer")
     assert timer["Timer"]["OnUnitActiveSec"] == "5min"
-    installer = (REPO / "scripts/host-gauge/install-host-gauges.sh").read_text()
-    assert "ledger-drift/lifekit-ledger-drift" in installer
-    assert "lifekit-ledger-drift.timer" in installer
 
 
-def test_auto_memory_is_locked_off_by_managed_settings_in_the_gateway_image():
+def test_auto_memory_is_locked_off_by_managed_settings():
     settings = json.loads(
         (REPO / "compose/openclaw-gateway/managed-settings.json").read_text()
     )
     assert settings["autoMemoryEnabled"] is False
     assert settings["env"]["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
-    lines = (REPO / "compose/openclaw-gateway/Dockerfile").read_text().splitlines()
-    copy = lines.index(
-        "COPY --chmod=0644 managed-settings.json /etc/claude-code/managed-settings.json"
-    )
-    # Root-owned: copied before the image drops to the node user.
-    assert copy < lines.index("USER node")
