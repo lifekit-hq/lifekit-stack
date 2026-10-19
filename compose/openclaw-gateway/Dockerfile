@@ -100,9 +100,15 @@ COPY --chown=node:node --chmod=0500 sops-resolver.py /opt/lifekit-secrets/sops-r
 # root-owned copy cannot be changed from inside the container. Finance facts
 # live only in finance-sentry, so Ledger must have nowhere of its own to keep
 # them (docs/openclaw-agent-design.md "Finance data and Ledger").
+# BuildKit applies COPY --chmod to the parent dir it creates too (0644 = no
+# search bit, nobody can open it), so create the dir 0755 first.
+RUN install -d -m 0755 /etc/claude-code
 COPY --chmod=0644 managed-settings.json /etc/claude-code/managed-settings.json
 
 USER node
+
+# Fail the build if the node user cannot read the managed settings.
+RUN test -r /etc/claude-code/managed-settings.json
 
 # Agent CLIs (claude-code, clawhub, summarize) are npm-published, so unlike the
 # skill CLIs above they ARE baked into the image: their three top-level
