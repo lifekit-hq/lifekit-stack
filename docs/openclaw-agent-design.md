@@ -62,6 +62,17 @@ Decisions go to the OpenClaw app, not Telegram. kit keeps the one ledger of open
 
 Each agent's workspace holds its bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, and `USER.md` and `MEMORY.md`, which are pointers to the vault that every deploy rewrites for kit, career and finance - `docs/runbook.md` "Workspace memory files are pointers"), daily notes under `memory/` (for Kit, Ledger and devclaw that directory is the vault's `agents/<id>/memory/`, bind-mounted - `docs/runbook.md` "Agent memory in the vault"), and its installed skills. The vault is mounted read-only in spirit for every agent (`~/memory`, searchable through `memory.search`); agents propose vault edits rather than writing there, except through skills and CLIs that own their data.
 
+Claude Code's own auto-memory (`~/.claude/projects/<workspace>/memory/`) is off for every agent: it is per-machine, invisible to the vault and to the projects that own the data, and it drifts. The OpenClaw image locks it off with a root-owned managed settings file that a workspace settings file cannot override (`docs/runbook.md` "lifekit Claude Code home").
+
+### Finance data and Ledger
+
+Ledger (agent id `finance`) holds no finance facts of its own; finance-sentry is the one store, and the flow is built so that stays true without cleanups:
+
+- **Reads** go to finance-sentry over its MCP server (`finance-sentry-mcp` on the shared network), including the framework primer that is Ledger's only big-picture source (`docs/runbook.md` "Ledger persona from finance-sentry").
+- **Changes** to finance data are proposals the owner confirms. finance-sentry refuses its research write tools and watchlist add/remove to service tokens such as Ledger's ([finance-sentry#1164](https://github.com/lifekit-hq/finance-sentry/pull/1164)); that boundary is enforced in finance-sentry, not here. The one direct write kept open is `decide_recommendation`, for a verdict the owner gives Ledger in chat.
+- **Nowhere else to keep facts.** Auto-memory is locked off (above), and the workspace holds only bootstrap files, OpenClaw state, inbound media, vault daily notes, skills and Ledger's MCP helpers.
+- **A check, not a cleanup.** `lifekit-ledger-drift.timer` reports any file in Ledger's auto-memory dir, or in its workspace outside that allowlist, as the *Ledger finance drift* alert: to the owner's Telegram and, through `alert-inbox`, to main. It never deletes or moves a file; the owner decides (`docs/runbook.md` "Ledger finance drift").
+
 ---
 
 ## Boundary rules: agent, skill, or MCP

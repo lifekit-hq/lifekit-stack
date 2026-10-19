@@ -2872,6 +2872,68 @@ new "Never edit another agent's instructions" hard rule into
 `/srv/openclaw/config/agents/kit/workspace/AGENTS.md` as `lifekit`. No restart;
 Kit reads it on its next session.
 
+### Ledger finance drift
+
+Finance facts live only in finance-sentry (Ledger's `AGENTS.md`, and
+`docs/openclaw-agent-design.md` "Finance data and Ledger"). That rule is a
+prompt; the backstop is that Ledger has nowhere of its own to keep facts, and a
+check that reports when a file turns up anyway. In October 2026 the finance
+agent's Claude Code auto-memory had grown theses and book-state files that
+went stale while finance-sentry moved on; they were cleaned up by hand twice.
+
+- **No auto-memory.** The OpenClaw image bakes
+  `/etc/claude-code/managed-settings.json` (see *lifekit Claude Code home*), so
+  no session in the gateway can write
+  `~/.claude/projects/-home-node--openclaw-agents-finance-workspace/memory/`.
+- **The check.** `scripts/ledger-drift/lifekit-ledger-drift.sh` lists that dir
+  and the finance workspace through `docker exec` into the gateway, read-only.
+  Any file in the auto-memory dir is a hit. A workspace file is a hit unless it
+  matches `WORKSPACE_ALLOW` in the script: the OpenClaw bootstrap files and
+  `AGENTS.md` backups, OpenClaw's own state, inbound chat media, the vault
+  daily notes `memory/YYYY-MM-DD.md`, installed `skills/`, and Ledger's MCP
+  helper scripts. It prints one `<area>: <path>` line per hit and exits 1 (0
+  clean, 2 when it cannot run). It never deletes or moves a file.
+- **The report.** `lifekit-ledger-drift.timer` runs it every 5 minutes as the
+  admin account with `--textfile`, which writes
+  `ledger_finance_drift_file{area,path}` (1 per hit) and
+  `ledger_finance_drift_files` into the textfile directory
+  (`ledger_finance_drift.prom`). The *Ledger finance drift* rule
+  (`ledger-finance-drift`, `rules.yml`) fires warning per file, which reaches
+  the owner's Telegram through the default policy and main through
+  `alert-inbox` (`scripts/alert-inbox/poll_alerts.py`, one "alert firing" note
+  per file). A run that cannot finish leaves the file untouched, so *host
+  systemd unit is down or failed* and then *textfile metrics are stale* report
+  it instead.
+
+By hand, on the box as the admin account (read-only):
+
+```bash
+bash /srv/lifekit-stack/scripts/ledger-drift/lifekit-ledger-drift.sh; echo "exit=$?"
+```
+
+When it alerts: read the file. Anything still true goes into finance-sentry as
+a proposal the owner confirms; then retire the file by hand (the check never
+does). A legitimate new workspace file is a PR that adds it to
+`WORKSPACE_ALLOW`. The alert resolves on the next run after the file is gone.
+
+**Operator step (live install):** the installer writes `/etc/systemd/system`,
+so a merge does not install the timer. Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/host-gauge/install-host-gauges.sh
+systemctl list-timers 'lifekit-ledger-drift*'
+cat /var/lib/node_exporter/textfile/ledger_finance_drift.prom
+```
+
+The merge's deploy reloads Grafana provisioning, which loads the alert rule;
+until the timer is installed the rule sees no data and stays quiet.
+
+**Undo:** `sudo systemctl disable --now lifekit-ledger-drift.timer && sudo rm
+/etc/systemd/system/lifekit-ledger-drift.{service,timer}
+/usr/local/bin/lifekit-ledger-drift.sh /var/lib/node_exporter/textfile/ledger_finance_drift.prom
+&& sudo systemctl daemon-reload`, and drop it from `install-host-gauges.sh` in
+the same PR.
+
 ## YouTube transcripts through the PC
 
 YouTube answers "Sign in to confirm you're not a bot" to this host's datacenter IP,
@@ -3170,6 +3232,14 @@ bootstrap through `sudo -u lifekit`:
 - `hooks/vault-core.sh` and `CLAUDE.md`, the vault pointer, come from
   `defaults/claude-home/`. The `CLAUDE.md` it replaces the first time is kept
   once as `CLAUDE.md.pre-vault-pointer`. A deploy rewrites hand edits to either.
+
+Inside the OpenClaw image the switch is also locked: the image bakes
+`/etc/claude-code/managed-settings.json` (root-owned, from
+`compose/openclaw-gateway/managed-settings.json`) with `autoMemoryEnabled: false`
+and the same env key. Managed settings outrank every other source, so a
+workspace `.claude/settings*.json` an agent writes cannot turn auto-memory back
+on, for the gateway and openclaw-cli; devclaw's own container is not covered by
+it. *Ledger finance drift* below reports a file that appears anyway.
 
 The auto-memory files already under `projects/*/memory/` are left in place:
 the env key only stops new ones. `lifekit-stack migrate` copies the laptop's

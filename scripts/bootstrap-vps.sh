@@ -294,7 +294,9 @@ systemctl enable --now claude-quota-share-gauge.timer
 # other allowlisted host services, the lifekit timers and the sync and
 # rotation timers; lifekit-release-gauge
 # reports a Weekly Release run that left its release PR unmerged, read with
-# ADMIN_USER's gh login.
+# ADMIN_USER's gh login. lifekit-ledger-drift
+# reports files in the finance agent's auto-memory dir or outside its workspace
+# allowlist (docs/runbook.md "Ledger finance drift").
 
 say "Installing host gauge scripts + systemd units"
 ADMIN_USER="$ADMIN_USER" bash "$REPO_DIR/scripts/host-gauge/install-host-gauges.sh"

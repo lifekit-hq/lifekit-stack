@@ -134,6 +134,7 @@ def test_rules_only_reference_real_metrics():
             1,
         ),
         ("weekly-release-not-merged", "weekly_release_blocked", "warning", "gt", 0),
+        ("ledger-finance-drift", "ledger_finance_drift_file", "warning", "gt", 0),
     ],
 )
 def test_new_rules(uid, metric, severity, op, limit):
@@ -751,6 +752,35 @@ EMPTY = 'pr_url="",run_url=""'
 )
 def test_weekly_release_rule_fires_only_on_a_blocked_repo(series, fires):
     code, output = promtool_alerts("weekly-release-not-merged", series)
+    if fires:
+        assert code != 0 and "got:" in output, output
+    else:
+        assert code == 0, output
+
+
+def test_ledger_drift_rule_names_area_and_path_and_stays_quiet_without_data():
+    rule = RULES["ledger-finance-drift"]
+    assert rule["for"] == "0s"
+    assert rule["noDataState"] == "OK"
+    text = rule["annotations"]["summary"] + rule["annotations"]["description"]
+    for label in ("area", "path"):
+        assert f"$labels.{label}" in text
+
+
+DRIFT = "ledger_finance_drift_file"
+
+
+@pytest.mark.parametrize(
+    ("series", "fires"),
+    [
+        # A clean run writes no per-file series, only the count.
+        ([("ledger_finance_drift_files", 0)], False),
+        ([(DRIFT + '{area="auto-memory",path="thesis.md"}', 1)], True),
+        ([(DRIFT + '{area="workspace",path="notes.md"}', 1)], True),
+    ],
+)
+def test_ledger_drift_rule_fires_per_offending_file(series, fires):
+    code, output = promtool_alerts("ledger-finance-drift", series)
     if fires:
         assert code != 0 and "got:" in output, output
     else:

@@ -4,7 +4,9 @@
 # ~/.claude) on the vault harness the owner's own machine runs:
 #
 #   - settings.json: env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 (provider memory
-#     stores are off; the vault is the one store) and the two SessionStart
+#     stores are off; the vault is the one store - the OpenClaw image also
+#     locks it with /etc/claude-code/managed-settings.json, which a workspace
+#     settings file cannot override) and the two SessionStart
 #     hooks, the vault's bin/session-context.sh and hooks/vault-core.sh. A
 #     merge: every other key, and every other hook, is kept as it is.
 #   - hooks/vault-core.sh, from defaults/claude-home/hooks/.
