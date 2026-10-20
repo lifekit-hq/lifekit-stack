@@ -96,6 +96,21 @@ if mode == "translated429":
         sys.exit(1)
     if not manual:
         (out / f"{ids}.en-orig.vtt").write_text(os.environ["AUTO_VTT"])
+if mode == "uk_auto":
+    # A Ukrainian video with auto captions only: its original track is
+    # "uk-orig"; yt-dlp writes each auto track a --sub-langs pattern matches,
+    # and YouTube refuses the machine-translated "en" one on this route.
+    import re
+    if manual:
+        sys.exit(0)
+    pats = [p for p in argv[argv.index("--sub-langs") + 1].split(",") if not p.startswith("-")]
+    def wanted(track):
+        return any(re.fullmatch(p, track) for p in pats)
+    if wanted("en"):
+        sys.stderr.write("ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests\n")
+        sys.exit(1)
+    if wanted("uk-orig"):
+        (out / f"{os.environ['VID']}.uk-orig.vtt").write_text("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nPrivit svit\n")
 if mode == "botcheck":
     sys.stderr.write("ERROR: [youtube] x: Sign in to confirm you\u2019re not a bot. Use --cookies-from-browser or --cookies for the authentication.\n")
     sys.exit(1)
@@ -332,7 +347,26 @@ def test_auto_pass_asks_only_for_the_original_track(run):
     r, calls = run(VID, mode="auto")
     manual_call, auto_call = calls.splitlines()
     assert "--sub-langs en.*" in manual_call
-    assert "--sub-langs (en.*)-orig" in auto_call
+    assert "--sub-langs .*-orig" in auto_call
+
+
+def test_video_with_only_non_english_auto_captions_returns_its_original_track(run):
+    r, calls = run(VID, mode="uk_auto")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith(
+        "Title: A title\nVideo: https://www.youtube.com/watch?v="
+        + VID
+        + "\nLanguage: uk (auto-generated)\n\n"
+    )
+    assert r.stdout.rstrip().endswith("Privit svit")
+    assert len(calls.splitlines()) == 2
+
+
+def test_transcript_states_the_language_of_human_and_auto_captions(run):
+    r, _ = run(VID, mode="manual")
+    assert "\nLanguage: en\n" in r.stdout
+    r, _ = run(VID, mode="auto")
+    assert "\nLanguage: en (auto-generated)\n" in r.stdout
 
 
 def test_translated_track_429_does_not_fail_the_run(run):
@@ -349,19 +383,6 @@ def test_youtube_refusing_the_route_is_a_clean_answer_not_a_bare_429(run, mode):
     r, calls = run(VID, mode=mode)
     assert (r.returncode, r.stdout.strip(), r.stderr) == (0, BLOCKED_LINE, "")
     assert len(calls.splitlines()) == 2  # the auto pass still got its turn
-
-
-@pytest.mark.parametrize(
-    "langs, want",
-    [
-        ("en.*", "(en.*)-orig"),
-        ("uk.*,en", "(uk.*)-orig,(en)-orig"),
-        ("en-orig", "en-orig"),
-        ("en.*,-en-GB", "(en.*)-orig,-en-GB"),
-    ],
-)
-def test_original_langs(langs, want):
-    assert transcript.original_langs(langs) == want
 
 
 def test_any_subtitle_warning_without_a_transcript_is_an_error(run):
@@ -409,7 +430,7 @@ def test_langs_override_reaches_yt_dlp(run):
     _, calls = run(VID, mode="manual", extra_env={"YT_TRANSCRIPT_LANGS": "uk.*"})
     assert "--sub-langs uk.*" in calls
     r, calls = run(VID, mode="auto", extra_env={"YT_TRANSCRIPT_LANGS": "uk.*"})
-    assert "--sub-langs (uk.*)-orig" in calls.splitlines()[-1]
+    assert "--sub-langs .*-orig" in calls.splitlines()[-1]
 
 
 # --- the allow-list relay ---------------------------------------------------
