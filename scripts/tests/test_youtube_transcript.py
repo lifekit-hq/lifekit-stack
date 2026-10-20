@@ -86,6 +86,34 @@ if mode == "relay_0x02":
 if mode == "subs429":
     sys.stderr.write("WARNING: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests\n")
     sys.exit(0)
+if mode == "translated429":
+    # What real yt-dlp did with a pattern that matched a machine-translated
+    # track: the whole run died on that track's 429, original track included.
+    ids = os.environ["VID"]
+    langs = argv[argv.index("--sub-langs") + 1]
+    if not manual and "-orig" not in langs:
+        sys.stderr.write("ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests\n")
+        sys.exit(1)
+    if not manual:
+        (out / f"{ids}.en-orig.vtt").write_text(os.environ["AUTO_VTT"])
+if mode == "uk_auto":
+    # A Ukrainian video with auto captions only: its original track is
+    # "uk-orig"; yt-dlp writes each auto track a --sub-langs pattern matches,
+    # and YouTube refuses the machine-translated "en" one on this route.
+    import re
+    if manual:
+        sys.exit(0)
+    pats = [p for p in argv[argv.index("--sub-langs") + 1].split(",") if not p.startswith("-")]
+    def wanted(track):
+        return any(re.fullmatch(p, track) for p in pats)
+    if wanted("en"):
+        sys.stderr.write("ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests\n")
+        sys.exit(1)
+    if wanted("uk-orig"):
+        (out / f"{os.environ['VID']}.uk-orig.vtt").write_text("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nPrivit svit\n")
+if mode == "botcheck":
+    sys.stderr.write("ERROR: [youtube] x: Sign in to confirm you\u2019re not a bot. Use --cookies-from-browser or --cookies for the authentication.\n")
+    sys.exit(1)
 if mode == "manual" and manual:
     (out / f"{os.environ['VID']}.en.vtt").write_text("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nHuman caption\n")
 if mode == "auto" and not manual:
@@ -312,11 +340,48 @@ def test_no_captions_is_a_normal_answer(run):
     )
 
 
-def test_failed_subtitle_download_is_an_error_not_no_captions(run):
-    r, calls = run(VID, mode="subs429")
-    assert r.returncode == 1
-    assert r.stdout == ""
-    assert "429" in r.stderr and "Unable to download video subtitles" in r.stderr
+BLOCKED_LINE = "transcript unavailable - youtube is blocking this route"
+
+
+def test_auto_pass_asks_only_for_the_original_track(run):
+    r, calls = run(VID, mode="auto")
+    manual_call, auto_call = calls.splitlines()
+    assert "--sub-langs en.*" in manual_call
+    assert "--sub-langs .*-orig" in auto_call
+
+
+def test_video_with_only_non_english_auto_captions_returns_its_original_track(run):
+    r, calls = run(VID, mode="uk_auto")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith(
+        "Title: A title\nVideo: https://www.youtube.com/watch?v="
+        + VID
+        + "\nLanguage: uk (auto-generated)\n\n"
+    )
+    assert r.stdout.rstrip().endswith("Privit svit")
+    assert len(calls.splitlines()) == 2
+
+
+def test_transcript_states_the_language_of_human_and_auto_captions(run):
+    r, _ = run(VID, mode="manual")
+    assert "\nLanguage: en\n" in r.stdout
+    r, _ = run(VID, mode="auto")
+    assert "\nLanguage: en (auto-generated)\n" in r.stdout
+
+
+def test_translated_track_429_does_not_fail_the_run(run):
+    """The regression: every video 429'd because "en.*" also matched YouTube's
+    machine-translated "en" track, which this route is always refused."""
+    r, calls = run(VID, mode="translated429")
+    assert r.returncode == 0, r.stderr
+    assert "Today we're going to talk\nabout AI >> agents" in r.stdout
+    assert "--ignore-errors" in calls.splitlines()[-1].split()
+
+
+@pytest.mark.parametrize("mode", ["subs429", "botcheck"])
+def test_youtube_refusing_the_route_is_a_clean_answer_not_a_bare_429(run, mode):
+    r, calls = run(VID, mode=mode)
+    assert (r.returncode, r.stdout.strip(), r.stderr) == (0, BLOCKED_LINE, "")
     assert len(calls.splitlines()) == 2  # the auto pass still got its turn
 
 
@@ -364,6 +429,8 @@ def test_bad_argument_is_a_usage_error(run):
 def test_langs_override_reaches_yt_dlp(run):
     _, calls = run(VID, mode="manual", extra_env={"YT_TRANSCRIPT_LANGS": "uk.*"})
     assert "--sub-langs uk.*" in calls
+    r, calls = run(VID, mode="auto", extra_env={"YT_TRANSCRIPT_LANGS": "uk.*"})
+    assert "--sub-langs .*-orig" in calls.splitlines()[-1]
 
 
 # --- the allow-list relay ---------------------------------------------------

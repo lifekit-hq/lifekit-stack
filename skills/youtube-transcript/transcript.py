@@ -12,8 +12,14 @@ stdout is the transcript, or one line starting "transcript unavailable - ".
 That line is a normal answer, not a failure: exit 0. Exit 1 is an unexpected
 yt-dlp failure (reason on stderr), exit 2 a usage error.
 
+Auto-generated captions are fetched as the video's own original-language track
+only (yt-dlp's "<lang>-orig", whatever the language: a video has one). The
+other auto tracks are YouTube's machine translations; it answers every request
+for one with HTTP 429 on this route, and the pattern "en.*" matches them, so
+asking for them failed the whole run. The transcript says which language it is.
+
 Env: YT_TRANSCRIPT_PROXY  SOCKS proxy (default socks5h://host.docker.internal:18081)
-     YT_TRANSCRIPT_LANGS  yt-dlp --sub-langs pattern (default en.*)
+     YT_TRANSCRIPT_LANGS  yt-dlp --sub-langs pattern for human captions (default en.*)
      YT_DLP               yt-dlp to run (default: yt-dlp beside this file, else PATH)
 """
 
@@ -33,6 +39,7 @@ from urllib.parse import urlparse
 DEFAULT_PROXY = "socks5h://host.docker.internal:18081"
 PC_OFF = "transcript unavailable - the PC is off"
 NO_CAPTIONS = "transcript unavailable - this video has no captions"
+BLOCKED = "transcript unavailable - youtube is blocking this route"
 
 # yt-dlp stderr that means the relay, the tunnel or the PC behind it did not
 # answer: the relay is down, or it answered SOCKS 0x05 (upstream unreachable).
@@ -42,10 +49,16 @@ UNREACHABLE = re.compile(
     r"|no route to host|temporary failure in name resolution",
     re.IGNORECASE,
 )
+# YouTube refusing this route itself (rate limit, bot check), as opposed to a
+# problem with one video: a normal answer, since a retry from here will not help.
+BLOCKED_BY_YOUTUBE = re.compile(
+    r"HTTP Error 429|Too Many Requests|confirm you.re not a bot", re.IGNORECASE
+)
 # yt-dlp reports caption trouble (a refused download, a missing PO token) as a
 # WARNING or ERROR about subtitles/captions and can still exit 0 with no file.
 SUBS_TROUBLE = re.compile(r"^(WARNING|ERROR).*(subtitle|caption)", re.I | re.M)
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+ORIGINAL_AUTO = ".*-orig"
 
 
 def video_id(arg: str) -> str | None:
@@ -137,16 +150,30 @@ def pick(files: list[Path]) -> Path | None:
     )
 
 
-def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
-    """(text, title, error). text None with error "" means no captions;
-    error "unreachable" means the relay or PC did not answer; any other error
-    is a failed fetch, which is not the same as no captions."""
+def language(vid: str, f: Path) -> str:
+    """The track's language from its file name (<id>.<lang>.vtt)."""
+    lang = f.name.removeprefix(vid + ".").removesuffix(".vtt")
+    return (
+        f"{lang.removesuffix('-orig')} (auto-generated)"
+        if lang.endswith("-orig")
+        else lang
+    )
+
+
+def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str, str]:
+    """(text, title, language, error). text None with error "" means no captions;
+    error "unreachable" means the relay or PC did not answer, "blocked" that
+    YouTube refused the route; any other error is a failed fetch, which is not
+    the same as no captions."""
     base = yt_dlp_cmd()
     if not base:
-        return None, "", "yt-dlp is not installed"
+        return None, "", "", "yt-dlp is not installed"
     title = ""
     last_err = ""
-    for kind in ("--write-subs", "--write-auto-subs"):  # human captions first
+    # Human captions first. Auto captions are only ever asked for as the
+    # original track; --ignore-errors keeps one refused track from discarding
+    # the ones that did download.
+    for kind, want in (("--write-subs", langs), ("--write-auto-subs", ORIGINAL_AUTO)):
         with tempfile.TemporaryDirectory(prefix="yt-transcript-") as tmp:
             cmd = base + [
                 "--proxy",
@@ -154,6 +181,7 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
                 "--skip-download",
                 "--no-playlist",
                 "--no-cache-dir",
+                "--ignore-errors",
                 "--no-simulate",
                 "--socket-timeout",
                 "20",
@@ -161,7 +189,7 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
                 "2",
                 kind,
                 "--sub-langs",
-                langs,
+                want,
                 "--sub-format",
                 "vtt",
                 "--print-to-file",
@@ -174,7 +202,7 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
             except subprocess.TimeoutExpired:
-                return None, "", "unreachable"
+                return None, "", "", "unreachable"
             err = (r.stderr or "").strip()
             chosen = pick(list(Path(tmp).glob("*.vtt")))
             if chosen:
@@ -182,10 +210,10 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
                 title = t.read_text(errors="replace").strip() if t.exists() else ""
                 text = vtt_to_text(chosen.read_text(errors="replace"))
                 if text:
-                    return text, title, ""
+                    return text, title, language(vid, chosen), ""
             if r.returncode != 0 or SUBS_TROUBLE.search(err):
                 if UNREACHABLE.search(err):
-                    return None, "", "unreachable"
+                    return None, "", "", "unreachable"
                 last_err = next(
                     (
                         ln
@@ -194,7 +222,9 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str]:
                     ),
                     err,
                 )
-    return None, "", last_err
+    if BLOCKED_BY_YOUTUBE.search(last_err):
+        return None, "", "", "blocked"
+    return None, "", "", last_err
 
 
 def main(argv: list[str]) -> int:
@@ -212,12 +242,20 @@ def main(argv: list[str]) -> int:
     if not proxy_reachable(proxy):
         print(PC_OFF)
         return 0
-    text, title, err = fetch(vid, proxy, os.environ.get("YT_TRANSCRIPT_LANGS", "en.*"))
+    text, title, lang, err = fetch(
+        vid, proxy, os.environ.get("YT_TRANSCRIPT_LANGS", "en.*")
+    )
     if text:
-        print(f"Title: {title}\nVideo: https://www.youtube.com/watch?v={vid}\n\n{text}")
+        print(
+            f"Title: {title}\nVideo: https://www.youtube.com/watch?v={vid}"
+            f"\nLanguage: {lang}\n\n{text}"
+        )
         return 0
     if err == "unreachable":
         print(PC_OFF)
+        return 0
+    if err == "blocked":
+        print(BLOCKED)
         return 0
     if not err:
         print(NO_CAPTIONS)
