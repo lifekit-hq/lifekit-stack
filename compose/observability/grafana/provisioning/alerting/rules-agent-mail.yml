@@ -1,5 +1,7 @@
 # Provisioned alert rule: an agent sent an email through the google-workspace
-# MCP. Same delivery as rules.yml (policies.yml -> Telegram contact point).
+# MCP. Same routing as rules.yml (policies.yml -> Telegram, critical only).
+# This one is critical on purpose: it is a Loki rule, so poll_alerts.py does not
+# model it and the fleet inbox never sees it - the phone is its only channel.
 #
 # Why a separate file: rules.yml is the Prometheus-query rule set that
 # scripts/alert-inbox/poll_alerts.py models and tests parse warning-free; this
@@ -73,7 +75,7 @@ groups:
         for: 0s
         labels:
           service: google-workspace-mcp
-          severity: warning
+          severity: critical
         annotations:
           summary: "an agent sent an email"
           description: >-

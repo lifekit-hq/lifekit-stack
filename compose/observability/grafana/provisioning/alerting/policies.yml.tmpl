@@ -1,9 +1,23 @@
 # TEMPLATE - scripts/render-heartbeat.sh renders this to policies.yml (gitignored),
 # adding the external-heartbeat route only when the heartbeat is enabled.
-# The notification policy tree: everything to the Telegram contact point.
+# The notification policy tree: only `severity: critical` pages the Telegram
+# contact point (the owner's phone). Every other alert is routed to the same
+# receiver but muted around the clock, so it is still evaluated and visible in
+# Grafana; the fleet inbox gets all alerts regardless, because
+# scripts/alert-inbox/poll_alerts.py reads the rules from Prometheus and never
+# touches this tree. (Grafana drops a contact point with no integrations, so
+# "no receiver" is spelled as an always-on mute timing.)
 # One ping when an alert starts firing, one when it resolves; a still-firing
 # alert is repeated every 4h so a silent night is never mistaken for a fixed one.
 apiVersion: 1
+
+muteTimes:
+  - orgId: 1
+    name: always
+    time_intervals:
+      - times:
+          - start_time: "00:00"
+            end_time: "24:00"
 
 policies:
   - orgId: 1
@@ -12,4 +26,10 @@ policies:
     group_wait: 30s
     group_interval: 5m
     repeat_interval: 4h
+    routes:
 __HEARTBEAT_ROUTES__
+      - receiver: telegram-lifekit
+        object_matchers:
+          - ["severity", "=", "critical"]
+      - receiver: telegram-lifekit
+        mute_time_intervals: ["always"]
