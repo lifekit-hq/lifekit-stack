@@ -105,6 +105,15 @@ services:
       - --entrypoints.openclaw-internal.http.aliasHeadersStrategy=delete
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
+      # Prometheus metrics on a dedicated entrypoint (Traefik serves them
+      # nowhere else): unpublished and not a Tailscale Serve target, reached
+      # only as edge-traefik-1:8083 from lifekit-shared (job `traefik`).
+      - --entrypoints.metrics.address=:8083
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entryPoint=metrics
+      - --metrics.prometheus.addEntryPointsLabels=true
+      - --metrics.prometheus.addRoutersLabels=true
+      - --metrics.prometheus.addServicesLabels=true
     environment:
       # The devclaw console's bearer (devclaw's DEVCLAW_TOKEN), which the
       # devclaw router adds to requests that passed the sign-in check
@@ -229,6 +238,10 @@ services:
       # (docs/runbook.md). scripts/deploy.sh sets it, `<tailnet name>:*`.
       OAUTH2_PROXY_WHITELIST_DOMAINS: ${EDGE_REDIRECT_DOMAINS:-}
       OAUTH2_PROXY_SILENCE_PING_LOGGING: "true"
+      # /metrics on its own listener, apart from the auth listener on :4180;
+      # unpublished, reached only as edge-oauth2-proxy-1:44180 from
+      # lifekit-shared (Prometheus job `oauth2-proxy`).
+      OAUTH2_PROXY_METRICS_ADDRESS: 0.0.0.0:44180
       OAUTH2_PROXY_REQUEST_LOGGING: "false"
       TZ: ${OPENCLAW_TZ:-UTC}
     read_only: true
@@ -241,6 +254,8 @@ services:
       - default
       # Reaches Logto's token, keys and userinfo endpoints (identity project).
       - identity-oidc
+      # Prometheus scrapes its metrics listener from here.
+      - lifekit-shared
 
 networks:
   default: {}
