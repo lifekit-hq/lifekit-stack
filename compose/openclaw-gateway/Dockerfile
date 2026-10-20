@@ -68,12 +68,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Skill CLIs (nutrition-claw, life-state, workout-claw) stay entrypoint-installed
-# on every container start (compose/openclaw/docker-compose.yml): they are bind-mounted
-# host checkouts (nutrition-claw/life-state rsync'd under the workspace,
-# workout-claw's source repo is archived read-only upstream so /srv/workout-claw
-# is the only copy), not present in the build context, so there is nothing for
-# the image to bake. This profile.d entry puts the persisted npm-global bin dir
+# Skill CLIs nutrition-claw and life-state stay entrypoint-installed on every
+# container start (compose/openclaw/docker-compose.yml): they are host checkouts
+# rsync'd under the workspace, not present in the build context, so there is
+# nothing for the image to bake. workout-claw is npm-published and baked with
+# the agent CLIs below. This profile.d entry puts the persisted npm-global bin dir
 # on the login-shell PATH — Codex runs tool commands via `bash -lc` (login
 # shell), whose PATH is rebuilt from /etc/profile and drops the image ENV PATH,
 # so the linked CLIs would otherwise be "command not found" under the Codex
@@ -110,9 +109,9 @@ USER node
 # Fail the build if the node user cannot read the managed settings.
 RUN test -r /etc/claude-code/managed-settings.json
 
-# Agent CLIs (claude-code, clawhub, summarize) are npm-published, so unlike the
-# skill CLIs above they ARE baked into the image: their three top-level
-# versions are pinned in package.json here and installed globally at build
+# Agent CLIs (claude-code, clawhub, summarize) and the workout-claw skill CLI
+# are npm-published, so unlike the other skill CLIs above they ARE baked into
+# the image: their top-level versions are pinned in package.json here and installed globally at build
 # time, so a fresh recreate no longer depends on the npm registry being
 # reachable or installs whatever version happened to be current
 # (lifekit-stack#146). Only those top-level versions are pinned; their
@@ -141,11 +140,13 @@ RUN mkdir -p /home/node/.npm-global \
     && CLAUDE_CODE_VERSION="$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-code']")" \
     && CLAWHUB_VERSION="$(node -p "require('./package.json').dependencies['clawhub']")" \
     && SUMMARIZE_VERSION="$(node -p "require('./package.json').dependencies['@steipete/summarize']")" \
+    && WORKOUT_CLAW_VERSION="$(node -p "require('./package.json').dependencies['workout-claw']")" \
     && npm install --global --no-save \
         --allow-scripts=@anthropic-ai/claude-code \
         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "clawhub@${CLAWHUB_VERSION}" \
         "@steipete/summarize@${SUMMARIZE_VERSION}" \
+        "workout-claw@${WORKOUT_CLAW_VERSION}" \
     && npm cache clean --force \
     && cd /home/node \
     && rm -rf /home/node/.npm-global-src

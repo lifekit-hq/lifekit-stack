@@ -36,7 +36,7 @@ Multiple skills can look superficially relevant to a request. Use this strict ma
 
 | User mentions… | The correct skill is… | NEVER use… for this |
 |---|---|---|
-| Exercise names, sets/reps/weight, "log my workout", "I did X at the gym" | **workout-claw** | life-state, nutrition-claw |
+| Exercise names, sets/reps/weight, "log my workout", "I did X at the gym", a voice note about a session, "what did I do last <lift>" | **workout-log** (it runs the workout-claw CLI) | life-state, nutrition-claw |
 | Mood, energy level, soreness, sleep, "I feel…", "morning check-in", "I'm tired", "slept well", "feeling good" | **life-state** | workout-claw, nutrition-claw |
 | Food, calories, macros, "logged dinner", "ate", "what's my protein today" | **nutrition-claw** | workout-claw, life-state |
 

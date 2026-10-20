@@ -676,19 +676,16 @@ fi
 # ─── Skill CLI install (life-state etc.) ─────────────────────────────────────
 #
 # Some module CLIs are NOT shipped from this repo — they live in separate
-# repos (workout-claw, life-state, health-claw) on the maintainer's laptop
+# repos (life-state, health-claw; workout-claw is baked into the gateway
+# image from its npm pin) on the maintainer's laptop
 # and are rsync'd to /srv/openclaw/workspace/external/ on the VPS. The
 # health-claw container installs them at start from those paths.
 #
 # Before running this deploy script after adding the health-claw service,
 # rsync the external sources to the VPS:
 #
-#   rsync -a ~/projects/workout-claw/ lifekit@lifekit-vps:/srv/openclaw/workspace/external/workout-claw/
 #   rsync -a ~/projects/life-state/   lifekit@lifekit-vps:/srv/openclaw/workspace/external/life-state/
 #   rsync -a ~/projects/health-claw/  lifekit@lifekit-vps:/srv/openclaw/workspace/external/health-claw/
-#
-# Also create the workout-claw data dir if it doesn't exist:
-#   ssh lifekit@lifekit-vps mkdir -p /srv/workout-claw
 #
 # And register the health-claw MCP in openclaw.json:
 #   (add the entry from compose/health-claw/mcp-config.json to /srv/openclaw/config/openclaw.json)
