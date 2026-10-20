@@ -1,5 +1,6 @@
 # Provisioned alert rules. Files, not clicks: deploy.sh reloads them through
-# Grafana's admin API on every deploy. Delivery is policies.yml -> Telegram.
+# Grafana's admin API on every deploy. Delivery is policies.yml -> Telegram for
+# severity: critical only; the rest are muted there (the fleet inbox still gets all).
 #
 # Two groups. `box` is the ONE pipeline for every service on the box, read
 # from compose/container-exporter (the daemon's own facts) and from `up`:
@@ -354,7 +355,7 @@ groups:
         execErrState: Error
         for: 3m
         labels:
-          severity: critical
+          severity: warning
         annotations:
           summary: the container exporter cannot read the Docker daemon
           description: >-
@@ -1996,7 +1997,7 @@ groups:
         for: 0s
         labels:
           service: prometheus
-          severity: critical
+          severity: warning
         annotations:
           summary: Prometheus is dropping outgoing notifications
           description: >-

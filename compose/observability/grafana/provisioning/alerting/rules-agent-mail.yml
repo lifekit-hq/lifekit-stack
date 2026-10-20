@@ -1,5 +1,5 @@
 # Provisioned alert rule: an agent sent an email through the google-workspace
-# MCP. Same delivery as rules.yml (policies.yml -> Telegram contact point).
+# MCP. Same routing as rules.yml (policies.yml; severity: warning is muted off the phone).
 #
 # Why a separate file: rules.yml is the Prometheus-query rule set that
 # scripts/alert-inbox/poll_alerts.py models and tests parse warning-free; this

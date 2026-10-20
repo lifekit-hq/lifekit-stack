@@ -14,8 +14,7 @@ url="${2:-}"
 
 if [[ -n "${url}" ]]; then
   cp "${dir}/heartbeat.yml.tmpl" "${dir}/heartbeat.yml"
-  route='    routes:
-      - receiver: external-heartbeat
+  route='      - receiver: external-heartbeat
         object_matchers:
           - ["heartbeat", "=", "external"]
         group_by: ["alertname"]

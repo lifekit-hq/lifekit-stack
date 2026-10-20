@@ -7,6 +7,8 @@ a new listener, a Grafana contact-point change, or Grafana admin credentials.
 
 A 2026-09-29 read-only monitoring check found every Grafana alert routes to
 exactly one Telegram chat on the owner's phone, so nothing reaches an agent.
+(Since then `policies.yml.tmpl` pages the phone for `severity: critical` only;
+this poller still sees every rule, since it never reads the policy tree.)
 Grafana's HTTP API needs admin credentials this account cannot read and must
 not use. Prometheus's query API (`http://127.0.0.1:9090`, loopback-bound,
 unauthenticated) already scrapes Grafana's own alerting metrics, but those
