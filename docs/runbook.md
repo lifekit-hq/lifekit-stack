@@ -91,11 +91,15 @@ a green run removes. If a green run cannot remove everything, it prints a
 warning and keeps the verdict; delete the leftover copy by hand.
 
 The lint verdict keys on each finding's `checkId`. Any warning or error is red
-except three rehearsal-only classes, which the script tolerates: MCP servers
-that can't be resolved (the container is off the compose network), Claude CLI
-"not logged in" (no Claude credentials are mounted), and the gateway's "lan"
-bind (by design: `--bind lan` inside the container, loopback-only publish on
-the host). `doctor --fix` writes TOOLS.md migration backups under
+except four classes the script tolerates: MCP servers that can't be resolved
+(the container is off the compose network), Claude CLI "not logged in" (no
+Claude credentials are mounted), the gateway's "lan" bind (by design:
+`--bind lan` inside the container, loopback-only publish on the host), and the
+node-hosting `machine-client-auth` finding at `gateway.auth` (live state since
+the trusted-proxy sign-in cutover: identity-header auth has no machine-client
+token path, so new node hosts cannot authenticate; paired nodes keep working,
+and the live gap is tracked separately). `doctor --fix` writes TOOLS.md
+migration backups under
 `/srv/openclaw/config/backups/`, so that path must be a directory: a stray
 file there fails the migration with ENOTDIR (the 2026-09-29 cleanup). On
 2026.9.5 the SQLite dry-run exits 1 on every copy ("archived registry identity

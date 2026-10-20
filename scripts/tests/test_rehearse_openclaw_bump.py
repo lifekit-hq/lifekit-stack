@@ -107,7 +107,15 @@ LAN_BIND = {
     "severity": "warning",
     "message": 'WARNING: Gateway bound to "lan" (0.0.0.0) (network-accessible).',
 }
-CLEAN_LINT = {"findings": [MCP_UNRESOLVED, CLAUDE_LOGGED_OUT, LAN_BIND]}
+MACHINE_AUTH = {
+    "checkId": "core/doctor/node-hosting-preconditions",
+    "severity": "warning",
+    "message": "Gateway identity-header auth has no configured token/password path for machine clients; "
+    "new node hosts cannot authenticate or become worker hosts.",
+    "path": "gateway.auth",
+    "requirement": "machine-client-auth",
+}
+CLEAN_LINT = {"findings": [MCP_UNRESOLVED, CLAUDE_LOGGED_OUT, LAN_BIND, MACHINE_AUTH]}
 # `docker compose config --no-interpolate` for the gateway: raw ${...} refs.
 COMPOSE = {
     "services": {
@@ -387,7 +395,10 @@ def test_untolerated_finding_is_red_by_id(rig):
 def test_rehearsal_only_classes_are_tolerated_by_check_id(rig):
     out = run(rig)
     assert out.returncode == 0, out.stderr
-    assert "mcp_resolution=1 claude_auth=1 gateway_bind=1" in out.stdout
+    assert (
+        "mcp_resolution=1 claude_auth=1 gateway_bind=1 machine_client_auth=1"
+        in out.stdout
+    )
     assert "untolerated finding ids: -" in out.stdout
 
 
@@ -409,6 +420,10 @@ def test_rehearsal_only_classes_are_tolerated_by_check_id(rig):
         # Runtime tool schemas failing for a reason other than resolution.
         {**MCP_UNRESOLVED, "requirement": "tool schema invalid"},
         {**MCP_UNRESOLVED, "path": "tools.allow"},
+        # Machine-client auth tolerated only at its exact requirement and path.
+        {**MACHINE_AUTH, "requirement": "machine-client-auth-extra"},
+        {**MACHINE_AUTH, "path": "gateway.auth.token"},
+        {**MACHINE_AUTH, "requirement": "other-precondition"},
     ],
 )
 def test_near_misses_of_tolerated_classes_stay_red(rig, finding):
