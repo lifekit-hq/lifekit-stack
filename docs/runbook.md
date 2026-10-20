@@ -3282,12 +3282,17 @@ command there.
   download such as an HTTP 429, a missing PO token) as a warning about subtitles or
   captions and can exit 0 with no file. The skill answers `this video has no captions`
   only after clean runs; any subtitle/caption warning or error without a transcript is
-  exit 1 with that line on stderr. Likewise only a relay-down or SOCKS `0x05`
+  exit 1 with that line on stderr, except a 429 or bot check from YouTube, which is
+  `transcript unavailable - youtube is blocking this route` (exit 0; no retry, no
+  cookies). Likewise only a relay-down or SOCKS `0x05`
   (upstream unreachable) failure reads as the PC-off line; an allow-list refusal
   (`0x02`) or other SOCKS error is exit 1 with the real reason.
-- **Captions only:** human captions first, auto-generated as the fallback, original
-  language track preferred, VTT cleaned to plain text. A video with none answers
-  `transcript unavailable - this video has no captions`; there is no audio fallback.
+- **Captions only:** human captions first (`YT_TRANSCRIPT_LANGS`, default `en.*`), then
+  the video's own auto-generated track (`*-orig`, whatever its language), VTT cleaned to
+  plain text with a `Language:` line. YouTube's machine-translated auto tracks are never
+  requested: they 429 on this route and `en.*` would match them. A video with no caption
+  track answers `transcript unavailable - this video has no captions`; there is no audio
+  fallback.
 - **Linger:** the user manager stops with the account's last session, and both units
   with it. `loginctl show-user <admin account> -p Linger` says which; `sudo loginctl
   enable-linger <admin account>` is the operator step that makes the tunnel survive logout and reboot.
