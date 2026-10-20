@@ -109,6 +109,20 @@ scrape_configs:
     static_configs:
       - targets: ['openclaw-gateway:18789']
 
+  # The tailnet sign-in gate's edge (compose/edge/): Traefik's metrics
+  # entrypoint and oauth2-proxy's metrics listener, both unpublished and
+  # reached by container name over the external `lifekit-shared` network.
+  # `up{job=~"traefik|oauth2-proxy"}` rides the generic target-down rule.
+  - job_name: traefik
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['edge-traefik-1:8083']
+
+  - job_name: oauth2-proxy
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['edge-oauth2-proxy-1:44180']
+
   # The observability stack scraping itself (ls-177 S1): Grafana, Prometheus,
   # Loki, Tempo and the OTel collector all already serve /metrics on their own
   # compose network address. Without these jobs the alert path has no way to
