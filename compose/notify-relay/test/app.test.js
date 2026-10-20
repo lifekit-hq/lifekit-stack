@@ -203,11 +203,29 @@ test("GET /health needs no transport; /metrics counts routes by fixed label", as
   assert.equal(calls.length, 0);
 });
 
-test("GET /metrics needs no transport and makes zero outbound calls, no bot token dependency", async () => {
-  const res = await fetch(`${origin}/metrics`);
-  assert.equal(res.status, 200);
-  assert.equal(res.headers.get("content-type"), "text/plain; version=0.0.4; charset=utf-8");
-  assert.equal(calls.length, 0);
+test("GET /metrics answers with a transport that throws on any call, under a different token, and never echoes it", async () => {
+  // createApp requires a token, so "no token" cannot be built. Instead the
+  // app gets a token nothing else uses and a transport that fails on any
+  // call: /metrics must succeed and must not touch either.
+  const otherToken = "999999:unused-token";
+  let transportCalls = 0;
+  const strict = async () => {
+    transportCalls += 1;
+    throw new Error("transport must not be called by /metrics");
+  };
+  const app = createApp({ token: otherToken, chat: CHAT, transport: strict, log: () => {} });
+  const srv = createServer(app.requestListener);
+  await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
+  try {
+    const res = await fetch(`http://127.0.0.1:${srv.address().port}/metrics`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/plain; version=0.0.4; charset=utf-8");
+    const text = await res.text();
+    assert.doesNotMatch(text, /unused-token/);
+    assert.equal(transportCalls, 0);
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+  }
 });
 
 test("GET /ready probes getMe through the transport and caches the answer", async () => {
