@@ -813,7 +813,7 @@ turn only. The Workspace MCP exposes exactly one write tool, `send_gmail_message
 `compose/openclaw/docker-compose.yml`, see `docs/google-mcp-setup.md`), so the server
 does not stop a run from sending: the reader's allow-list leaves it out, the reader's
 prompt names `send_gmail_message` and `draft_gmail_message` as forbidden, and the
-`agent-mail-sent` alert pings the owner on any send. A lapsed Google sign-in, a failed reader
+`agent-mail-sent` alert fires on any send (`severity: warning`: visible in Grafana, muted off the phone). A lapsed Google sign-in, a failed reader
 run or one more than an hour old shows as a `mail unavailable:` line, and the other
 parts still post.
 `scripts/ensure-needs-you-digest.sh` declares both rows and converges on re-run. It
@@ -1762,7 +1762,7 @@ rewriting the file, so *host systemd unit is down or failed* and then *textfile 
 stale* report it instead of a blocked release reading as healthy.
 
 The *Weekly Release stopped without merging* alert (`weekly-release-not-merged`, `rules.yml`)
-fires warning per repo while the gauge reads 1; the message names the repo, the release PR and the
+fires warning per repo while the gauge reads 1 (muted off the phone; it reaches the fleet inbox through `alert-inbox`); the message names the repo, the release PR and the
 run. Fix the PR's checks (the run log names the cause), then
 `gh workflow run weekly-release.yml -R <owner/repo>`; the alert resolves once a run succeeds or the
 PR is merged. The default notification policy repeats a still-firing alert every 4h.
@@ -3128,8 +3128,8 @@ went stale while finance-sentry moved on; they were cleaned up by hand twice.
   `ledger_finance_drift_file{area,path}` (1 per hit) and
   `ledger_finance_drift_files` into the textfile directory
   (`ledger_finance_drift.prom`). The *Ledger finance drift* rule
-  (`ledger-finance-drift`, `rules.yml`) fires warning per file, which reaches
-  the owner's Telegram through the default policy and main through
+  (`ledger-finance-drift`, `rules.yml`) fires warning per file, which the
+  notification policy mutes off the owner's phone, and reaches main through
   `alert-inbox` (`scripts/alert-inbox/poll_alerts.py`, one "alert firing" note
   per file). A run that cannot finish leaves the file untouched, so *host
   systemd unit is down or failed* and then *textfile metrics are stale* report
@@ -3652,7 +3652,7 @@ still uses it.
 
 ## Pull-based alert-to-inbox polling
 
-Grafana's alerts route to Telegram only, so nothing reaches an agent unless
+Grafana's alerts route to Telegram only (the phone, for `severity: critical`), so nothing reaches an agent unless
 something pulls. `scripts/alert-inbox/poll_alerts.py` (see
 `scripts/alert-inbox/README.md`) reads the provisioned alert rules' own
 PromQL from `rules.yml` and evaluates them against Prometheus's open,
