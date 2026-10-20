@@ -143,7 +143,6 @@ file appears in one of the two inventory tables.
 | `LIFEKIT_CLAUDE_JSON` | master | setting | host path of `.claude.json` |
 | `LIFEKIT_GH_CONFIG` | master | setting | host path of the `gh` login mounted into the gateway |
 | `LIFEKIT_GITCONFIG` | master | setting | host path of the gitconfig |
-| `LIFEKIT_WORKOUT_CLAW_DIR` | master | setting | host path of the workout-claw checkout |
 | `OPENCLAW_GATEWAY_PORT` | master | setting | loopback port |
 | `OPENCLAW_GATEWAY_BIND` | master | setting | bind mode |
 | `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS` | master | setting | CLI/gateway plaintext-WS switch |

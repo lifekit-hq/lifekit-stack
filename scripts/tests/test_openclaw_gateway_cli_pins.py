@@ -1,7 +1,7 @@
 """Invariants of compose/openclaw-gateway/package.json and its Dockerfile install.
 
-lifekit-stack#146: the agent CLIs (claude-code, clawhub, summarize) are baked
-into the gateway image at build time, pinned by package.json, instead of
+lifekit-stack#146: the agent CLIs (claude-code, clawhub, summarize) and the
+workout-claw skill CLI are baked into the gateway image at build time, pinned by package.json, instead of
 installed unpinned at every container start. A `^`/`~` range there would let
 the image float again, defeating the point.
 """
@@ -51,6 +51,7 @@ def test_expected_clis_are_present():
         "@anthropic-ai/claude-code",
         "clawhub",
         "@steipete/summarize",
+        "workout-claw",
     }
 
 

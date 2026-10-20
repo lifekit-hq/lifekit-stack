@@ -1246,6 +1246,83 @@ and the status read is an HTTP GET Kit could always make.
 - **Rollback:** revert the skill and re-run the ensure script. Notes already sent stay
   in the inbox they were sent to.
 
+### Kit's workout log and gym-day nudge
+
+Kit logs a gym session from one typed or spoken line and confirms it in one line, answers
+"what did I do last <lift>", and on gym days at 21:00 nudges the owner when nothing is
+logged for the day.
+
+- **CLI:** `workout-claw` is baked into the gateway image, pinned in
+  `compose/openclaw-gateway/package.json` and bumped by Dependabot like the agent CLIs.
+  Its data stays at `${LIFEKIT_STATE_DIR_HOST}/state/workout-claw` (mounted as
+  `~/.workout-claw`). The host checkout `/srv/workout-claw` is no longer mounted or
+  installed; it can be deleted once the image with the pin has deployed.
+- **Skill:** `skills/workout-log` (`SKILL.md` + `nudge.sh`), installed into kit's
+  workspace by `scripts/ensure-workout-log.sh`, which also reports kit's allowlist and the
+  cron read-only. Voice notes reach kit already transcribed (OpenClaw's audio
+  auto-detection, the local `whisper` CLI in the image).
+- **Nudge:** the `workout-nudge` cron, a command payload that runs `nudge.sh` (no model
+  turn). Its day-of-week field is the gym-days setting: host state in the gateway's cron
+  store, never in git. `nudge.sh` asks `workout-claw summary` for today (the gateway's
+  local date): nothing logged prints one nudge line, which the cron announces to Telegram;
+  a logged session prints `NO_REPLY`, which the scheduler suppresses; a workout-claw error
+  exits 1, so the failure alert fires instead of a wrong nudge.
+
+Operator steps, once per host, after the PR has deployed (the deploy rebuilt and
+recreated the gateway with the baked CLI). Run as lifekit on the VPS:
+
+```bash
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+docker exec "$G" npm ls -g --depth=0 workout-claw   # the version pinned in package.json
+
+# 1. The skill into kit's workspace.
+/srv/lifekit-stack/scripts/ensure-workout-log.sh
+
+# 2. Kit's skill allowlist, derived from the live list as in "Kit's second-mate relay"
+#    step 5. Skip it when step 1 reported kit as unfiltered.
+docker exec "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const s=c.agents.entries.kit.skills;if(!Array.isArray(s))process.exit(1);if(!s.includes("workout-log"))s.push("workout-log");process.stdout.write(JSON.stringify({agents:{entries:{kit:{skills:s}}}}))' > /tmp/kit-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/kit-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/kit-skills.patch.json
+
+# 3. The nudge. GYM_DAYS is the cron day-of-week list (0-6, Sunday is 0; e.g. 1,3,5);
+#    the chat is the owner's, from the env file. `cron add` has no failure-alert
+#    flags, so the edit sets them.
+GYM_DAYS=<gym days>
+CHAT=$(sed -nE 's/^[[:space:]]*LIFEKIT_TELEGRAM_CHAT=["'"'"']?([0-9-]+)["'"'"']?[[:space:]]*$/\1/p' \
+  /srv/lifekit-secrets/stack.env)
+docker exec "$G" openclaw cron add \
+  --name workout-nudge \
+  --description "Gym days 21:00: nudge the owner when no workout is logged today. Declared in docs/runbook.md (source: lifekit-stack)." \
+  --agent kit --session isolated \
+  --cron "0 21 * * ${GYM_DAYS}" --tz "$(docker exec "$G" printenv TZ)" --exact \
+  --command-argv '["sh","/home/node/.openclaw/agents/kit/workspace/skills/workout-log/nudge.sh"]' \
+  --timeout-seconds 20 --no-output-timeout-seconds 10 --output-max-bytes 1000 \
+  --announce --channel telegram --account default --to "$CHAT"
+ID=$(docker exec "$G" openclaw cron list --json \
+  | docker exec -i "$G" node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);process.stdout.write((j.jobs||j).find(x=>x.name==="workout-nudge").id)})')
+docker exec "$G" openclaw cron edit "$ID" \
+  --failure-alert --failure-alert-after 1 \
+  --failure-alert-mode announce --failure-alert-channel telegram \
+  --failure-alert-account-id default --failure-alert-to "$CHAT"
+```
+
+- **Kit's `AGENTS.md`** is live host state, merged by hand: its workout routing points
+  typed or spoken session lines and "what did I do last <lift>" at the `workout-log`
+  skill. A planned-session flow the workspace already has (a "done" reply that logs the
+  day's plan) stays; the skill defers to it.
+- **One nudge:** any older gym nudge in kit's workspace (a sweep script or cron prompt
+  that names fixed gym days) loses its gym part, so the owner gets one nudge, on the days
+  this cron names.
+- **Changing the gym days:** `docker exec "$G" openclaw cron edit "$ID" --cron "0 21 * * <days>"`.
+- **Verify:** `docker exec "$G" sh /home/node/.openclaw/agents/kit/workspace/skills/workout-log/nudge.sh`
+  prints the nudge line on a day with nothing logged and `NO_REPLY` once a session is
+  logged; it reads only. Then send kit one session line and check the one-line confirm
+  matches `workout-claw summary`.
+- **Rollback:** `docker exec "$G" openclaw cron rm "$ID"`, re-apply kit's old skills list, and remove the
+  skill folder from kit's workspace. The CLI pin rolls back with the image ("Rolling back
+  OpenClaw").
+
 ## Rolling back OpenClaw
 
 ### The one-rollback rule

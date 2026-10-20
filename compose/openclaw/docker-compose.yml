@@ -208,13 +208,8 @@ services:
       - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
       # Host gitconfig (user.name/email) so commits land with the right author.
       - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
-      # workout-claw CLI: prebuilt host checkout, installed -g at container
-      # start (entrypoint). The package is on npm (workout-claw 0.3.1, built
-      # from lifekit-hq/lifekit-health); this mount still installs from the
-      # host clone, whose own GitHub repo is archived. Keep /srv/workout-claw
-      # built (`npm run build`) until the install moves to the npm pin.
-      - ${LIFEKIT_WORKOUT_CLAW_DIR:-/srv/workout-claw}:/opt/workout-claw:ro
-      # workout-claw data store. The CLI hardcodes $HOME/.workout-claw
+      # workout-claw data store. The CLI itself is baked into the image
+      # (compose/openclaw-gateway/package.json). It hardcodes $HOME/.workout-claw
       # (src/lib/storage.ts); map it to the same logs dir under ~/.life so
       # sessions persist and match the host/PC layout.
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}/state/workout-claw:/home/node/.workout-claw
@@ -271,9 +266,6 @@ services:
         fi
         if ! command -v summarize >/dev/null 2>&1; then
           npm install -g @steipete/summarize 2>&1 | tail -3 | jlog
-        fi
-        if ! command -v workout-claw >/dev/null 2>&1; then
-          npm install -g /opt/workout-claw 2>&1 | tail -3 | jlog
         fi
         if ! command -v nutrition-claw >/dev/null 2>&1; then
           npm install -g /home/node/.openclaw/agents/kit/workspace/skills/nutrition-claw 2>&1 | tail -3 | jlog
