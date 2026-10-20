@@ -45,9 +45,7 @@ def test_set_wires_rule_contact_point_and_route(tmp_path):
     assert receiver["settings"]["url"] == "$HEARTBEAT_URL"
     (rule,) = hb["groups"][0]["rules"]
     assert rule["labels"] == {"heartbeat": "external"}
-    routes = yaml.safe_load((out / "policies.yml").read_text())["policies"][0][
-        "routes"
-    ]
+    routes = yaml.safe_load((out / "policies.yml").read_text())["policies"][0]["routes"]
     route = routes[0]
     assert route["receiver"] == hb["contactPoints"][0]["name"]
     assert route["object_matchers"] == [["heartbeat", "=", "external"]]
