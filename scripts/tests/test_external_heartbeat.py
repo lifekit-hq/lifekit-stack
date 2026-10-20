@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import shutil
 import subprocess
 from pathlib import Path
@@ -91,3 +92,24 @@ def test_every_alert_rule_has_a_routable_severity():
     ]
     assert rules
     assert [r for r in rules if r[2] not in ("critical", "warning")] == []
+
+
+def test_rules_the_fleet_inbox_cannot_see_are_critical():
+    # poll_alerts.py skips (with a warning) any rule it does not model, such as a
+    # Loki rule; with the phone critical-only, such a rule reaches no one unless
+    # it is critical.
+    spec = importlib.util.spec_from_file_location(
+        "poll_alerts", REPO / "scripts/alert-inbox/poll_alerts.py"
+    )
+    poll_alerts = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(poll_alerts)
+    for path in sorted(SRC.glob("rules*.yml")):
+        doc = yaml.safe_load(path.read_text())
+        modelled = {r.uid for r in poll_alerts.parse_rules(doc)[0]}
+        unseen = [
+            (path.name, rule["uid"], rule["labels"]["severity"])
+            for group in doc["groups"]
+            for rule in group["rules"]
+            if rule["uid"] not in modelled and rule["labels"]["severity"] != "critical"
+        ]
+        assert unseen == []

@@ -813,7 +813,7 @@ turn only. The Workspace MCP exposes exactly one write tool, `send_gmail_message
 `compose/openclaw/docker-compose.yml`, see `docs/google-mcp-setup.md`), so the server
 does not stop a run from sending: the reader's allow-list leaves it out, the reader's
 prompt names `send_gmail_message` and `draft_gmail_message` as forbidden, and the
-`agent-mail-sent` alert fires on any send (`severity: warning`: visible in Grafana, muted off the phone). A lapsed Google sign-in, a failed reader
+`agent-mail-sent` alert pings the owner's phone on any send (`severity: critical`). A lapsed Google sign-in, a failed reader
 run or one more than an hour old shows as a `mail unavailable:` line, and the other
 parts still post.
 `scripts/ensure-needs-you-digest.sh` declares both rows and converges on re-run. It
