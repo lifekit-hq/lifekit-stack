@@ -80,3 +80,14 @@ def test_phone_gets_critical_only_and_everything_else_is_muted(tmp_path):
         assert mute["time_intervals"] == [
             {"times": [{"start_time": "00:00", "end_time": "24:00"}]}
         ]
+
+
+def test_every_alert_rule_has_a_routable_severity():
+    rules = [
+        (path.name, rule["uid"], rule.get("labels", {}).get("severity"))
+        for path in sorted(SRC.glob("rules*.yml"))
+        for group in yaml.safe_load(path.read_text())["groups"]
+        for rule in group["rules"]
+    ]
+    assert rules
+    assert [r for r in rules if r[2] not in ("critical", "warning")] == []
