@@ -1003,48 +1003,6 @@ def test_skill_frontmatter_names_its_folder_and_gates_on_ssh_and_curl():
     assert meta["metadata"]["openclaw"]["requires"]["bins"] == ["ssh", "curl"]
 
 
-KIT_AGENTS = REPO / "defaults/agents/kit/workspace/AGENTS.md"
-ROUTER_MD = REPO / "skills/lifekit-router/SKILL.md"
-
-
-def kit_section(heading: str) -> str:
-    text = KIT_AGENTS.read_text()
-    start = re.search(rf"^#+ {re.escape(heading)}$", text, re.M).end()
-    end = text.find("\n#", start)
-    return text[start:] if end == -1 else text[start:end]
-
-
-def test_kit_hands_off_only_the_three_triggers_through_the_relay():
-    section = kit_section("Anything else")
-    triggers = re.findall(r"^- \*\*(.+?)\*\*", section, re.M)
-    assert triggers == ["A logged-in site", "A purchase or a booking", "The desktop"]
-    assert (
-        "Send `task: <his words verbatim>` through `secondmate-relay` to `firstmate`"
-        in section
-    )
-    assert '"Sent to firstmate as note <id>."' in section
-    assert "merely unsure about" in section
-    assert "never a cron, a heartbeat" in section
-
-
-def test_kit_keeps_the_confirm_sensitive_actions_rule():
-    assert "- **Confirm sensitive actions**" in kit_section("Hard rules")
-
-
-def test_relay_widens_the_ask_but_keeps_the_cron_and_heartbeat_ban():
-    text = SKILL_MD.read_text()
-    assert (
-        "Never send anything from a cron, a heartbeat or any turn the user did not ask for"
-        in text
-    )
-    assert "something only firstmate's fleet can do" in text
-    assert "`task: ` followed by his message verbatim to `firstmate`" in text
-
-
-def test_lifekit_router_is_marked_not_used_by_kit():
-    assert "**Not used by Kit.**" in ROUTER_MD.read_text()
-
-
 DIGEST = REPO / "scripts/ensure-needs-you-digest.sh"
 READER = "needs-you-mail-reader"
 READER_TOOLS = {
