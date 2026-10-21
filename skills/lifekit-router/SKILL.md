@@ -1,5 +1,7 @@
 # lifekit-router
 
+> **Not used by Kit.** Kit is not given this skill and routes by its own `AGENTS.md`, which hands logged-in sites, purchases or bookings, and desktop work to firstmate. Rule 4 below ("handle it directly") does not apply to Kit.
+
 Route every user intent to the right capability module using the routing manifest and the user's life context.
 
 ## At the start of every session

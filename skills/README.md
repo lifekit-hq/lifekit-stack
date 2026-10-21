@@ -10,7 +10,7 @@ Two kinds of skills live here:
 
 | Skill | Purpose |
 |---|---|
-| `lifekit-router` | Route every user intent to the right capability module using `~/.life/system/modules.yaml` |
+| `lifekit-router` | Route every user intent to the right capability module using `~/.life/system/modules.yaml`. Not used by Kit, which routes by its own `AGENTS.md` and hands logged-in sites, purchases or bookings, and desktop work to firstmate |
 | `memory-vault` | Operate the markdown memory vault: sync discipline, structure/link scanner (the vault `bin/lint.sh`), new-page checklist, log formats |
 | `memory-defrag` | Manual-first `/defrag` pass over the vault: dedupe/merge candidates, splits, INDEX drift, orphan sources (`defrag_scan.py`); propose-don't-apply for merges. No cron without a separate graded proposal |
 | `secondmate-relay` | Kit pipes the user's words, unchanged, to the captain inbox of the main firstmate (`firstmate`) or the VPS second mate (`fm-vps`, the default) and shows its replies unchanged, through the host's `kit-relay` forced command (`scripts/kit-relay/`); `relay.sh status` reads the fleet JSON the dashboard's fleet page uses (`lifekit-dashboard:8080/api/fleet`), read-only. Installed into kit's workspace by `scripts/ensure-secondmate-relay.sh`; kit's skill allowlist is an operator patch (`docs/runbook.md`, "Kit's second-mate relay") |
