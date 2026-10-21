@@ -58,7 +58,11 @@ argv = sys.argv[1:]
 mode = os.environ["STUB_MODE"]
 out = Path(argv[argv.index("-o") + 1]).parent
 open(os.environ["STUB_LOG"], "a").write(" ".join(argv) + "\n")
-Path(argv[argv.index("--print-to-file") + 2]).write_text("A title\n")
+prints = {argv[i + 1]: argv[i + 2] for i, a in enumerate(argv) if a == "--print-to-file"}
+Path(prints["%(title)s"]).write_text("A title\n")
+# The audio language; real yt-dlp prints "NA" when it does not know.
+if "%(language)s" in prints:
+    Path(prints["%(language)s"]).write_text(os.environ.get("STUB_LANG", "NA") + "\n")
 manual = "--write-subs" in argv
 if mode == "unreachable":
     sys.stderr.write("ERROR: Unable to connect to proxy: [Errno 111] Connection refused\n")
@@ -111,6 +115,18 @@ if mode == "uk_auto":
         sys.exit(1)
     if wanted("uk-orig"):
         (out / f"{os.environ['VID']}.uk-orig.vtt").write_text("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nPrivit svit\n")
+if mode == "dubbed":
+    # A video with auto-dubbed audio: one "<lang>-orig" auto track per audio
+    # language (bn sorts first), each written only if --sub-langs asks for it.
+    import re
+    if manual:
+        sys.exit(0)
+    pats = argv[argv.index("--sub-langs") + 1].split(",")
+    for track in os.environ["STUB_TRACKS"].split(","):
+        if any(re.fullmatch(p, track + "-orig") for p in pats):
+            (out / f"{os.environ['VID']}.{track}-orig.vtt").write_text(
+                f"WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nSpoken {track}\n"
+            )
 if mode == "botcheck":
     sys.stderr.write("ERROR: [youtube] x: Sign in to confirm you\u2019re not a bot. Use --cookies-from-browser or --cookies for the authentication.\n")
     sys.exit(1)
@@ -269,6 +285,31 @@ def test_pick_prefers_original_language_track():
     assert transcript.pick([]) is None
 
 
+def test_pick_takes_the_spoken_language_among_several_original_tracks():
+    files = [Path(f"v.{lang}-orig.vtt") for lang in ("bn", "de", "en", "es")]
+    assert transcript.pick(files, "de") == Path("v.de-orig.vtt")
+    assert transcript.pick(files, "en-US") == Path("v.en-orig.vtt")
+    assert transcript.pick(files, "sv") == Path("v.en-orig.vtt")  # English fallback
+    assert transcript.pick(files) == Path("v.en-orig.vtt")
+    assert transcript.pick(files[:2]) is None  # never the alphabetically first
+    assert transcript.pick([Path("v.uk-orig.vtt")], "en") == Path("v.uk-orig.vtt")
+
+
+@pytest.mark.parametrize(
+    ("printed", "spoken", "tracks"),
+    [
+        ("en-US\n", "en-US", "en-US-orig,en-orig"),
+        ("de", "de", "de-orig,en-orig"),
+        ("en", "en", "en-orig"),
+        ("NA\n", "", ".*-orig"),
+        ("", "", ".*-orig"),
+    ],
+)
+def test_auto_pass_asks_for_the_spoken_language_then_english(printed, spoken, tracks):
+    assert transcript.spoken_language(printed) == spoken
+    assert transcript.original_tracks(spoken) == tracks
+
+
 def test_pc_off_closed_port_is_a_normal_answer_and_never_calls_yt_dlp(run):
     r, calls = run(VID, listening=False)
     assert r.returncode == 0
@@ -360,6 +401,46 @@ def test_video_with_only_non_english_auto_captions_returns_its_original_track(ru
     )
     assert r.stdout.rstrip().endswith("Privit svit")
     assert len(calls.splitlines()) == 2
+
+
+# What `yt-dlp --list-subs` showed for a real English-spoken video with
+# auto-dubbed audio (issue #377): 20 original-language auto tracks.
+DUBBED = "bn,nl,en,fr,de,hi,id,it,ja,ko,ml,pl,pt,pa,ru,es,ta,te,uk,iw"
+
+
+@pytest.mark.parametrize(("spoken", "lang"), [("en-US", "en"), ("de", "de")])
+def test_dubbed_video_returns_the_spoken_language_track_not_the_first(
+    run, spoken, lang
+):
+    """The regression: ".*-orig" fetched all 20 tracks and bn-orig, first in
+    sort order, came back as the transcript of an English video."""
+    r, calls = run(
+        VID, mode="dubbed", extra_env={"STUB_LANG": spoken, "STUB_TRACKS": DUBBED}
+    )
+    assert r.returncode == 0, r.stderr
+    assert f"\nLanguage: {lang} (auto-generated)\n" in r.stdout
+    assert r.stdout.rstrip().endswith(f"Spoken {lang}")
+    auto_call = calls.splitlines()[-1].split()
+    assert "bn-orig" not in auto_call[auto_call.index("--sub-langs") + 1]
+
+
+def test_dubbed_video_falls_back_to_english_when_the_spoken_track_is_missing(run):
+    r, _ = run(VID, mode="dubbed", extra_env={"STUB_LANG": "sv", "STUB_TRACKS": DUBBED})
+    assert r.returncode == 0, r.stderr
+    assert "\nLanguage: en (auto-generated)\n" in r.stdout
+
+
+def test_dubbed_video_with_unknown_language_prefers_english(run):
+    r, calls = run(VID, mode="dubbed", extra_env={"STUB_TRACKS": DUBBED})
+    assert r.returncode == 0, r.stderr
+    assert "--sub-langs .*-orig" in calls.splitlines()[-1]
+    assert "\nLanguage: en (auto-generated)\n" in r.stdout
+
+
+def test_several_original_tracks_and_no_way_to_choose_is_an_error(run):
+    r, _ = run(VID, mode="dubbed", extra_env={"STUB_TRACKS": "bn,de"})
+    assert r.returncode == 1 and r.stdout == ""
+    assert "2 original-language caption tracks" in r.stderr
 
 
 def test_transcript_states_the_language_of_human_and_auto_captions(run):
