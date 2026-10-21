@@ -1214,7 +1214,8 @@ and the status read is an HTTP GET Kit could always make.
   relay, the host forced command or this repo); an id missing from a capped
   `decisions_open` list is reported as "not in the shown list", not "not open"; a reply
   cursor is passed only with the home it came from; nothing is sent from a cron, a
-  heartbeat or a turn he did not ask for; a refused call is reported verbatim and not
+  heartbeat or any turn but his own message (the PC handoff below is the one send he
+  does not spell out); a refused call is reported verbatim and not
   retried, and an exit 3 ("saved, not yet announced") is
   reported as such and re-sent only when he asks.
 - **Digest:** the 09:00 and 17:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
