@@ -17,6 +17,7 @@ and every host path the phases touch points into the test's tmp dir.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -908,6 +909,119 @@ def test_platform_apply_and_secrets_audit_fail_clearly_without_a_running_gateway
     assert not any("config patch" in c or "secrets audit" in c for c in calls)
 
 
+YT_PAYLOAD = b"#!/usr/bin/env python3\nprint('yt-dlp stub')\n"
+
+
+def post_up_ytt(env, tmp_path, ensure=None, curl_fail=False):
+    """Run the post_up phase against a scratch repo; return (result, failures, state).
+
+    The scratch repo carries the real skill and the real ensure script with its
+    yt-dlp pin moved to YT_PAYLOAD's sum (curl, on PATH, serves that payload),
+    or `ensure` as the script body instead. The gateway state dir holds a stale
+    copy of the skill and an openclaw.json.
+    """
+    bin_dir = Path(env["PATH"].split(":")[0])
+    stub(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
+    payload = tmp_path / "yt-payload"
+    payload.write_bytes(YT_PAYLOAD)
+    stub(
+        bin_dir / "curl",
+        '#!/bin/sh\necho "curl $*" >> "$DOCKER_CALL_LOG"\n'
+        '[ -z "$CURL_FAIL" ] || exit 22\n'
+        'while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done\n'
+        f'cp "{payload}" "$out"\n',
+    )
+    fake = tmp_path / "ytt-repo"
+    shutil.copytree(
+        REPO / "skills/youtube-transcript",
+        fake / "skills/youtube-transcript",
+        dirs_exist_ok=True,
+    )
+    script = fake / "scripts/ensure-youtube-transcript.sh"
+    if ensure is None:
+        text = (REPO / "scripts/ensure-youtube-transcript.sh").read_text()
+        pin = next(ln for ln in text.splitlines() if ln.startswith("YT_DLP_SHA256="))
+        ensure = text.replace(
+            pin, f'YT_DLP_SHA256="{hashlib.sha256(YT_PAYLOAD).hexdigest()}"'
+        )
+    stub(script, ensure)
+    state = tmp_path / "gw-state"
+    (state / "skills/youtube-transcript").mkdir(parents=True, exist_ok=True)
+    (state / "skills/youtube-transcript/SKILL.md").write_text("stale\n")
+    (state / "openclaw.json").write_text('{"agents": {"entries": {}}}\n')
+    script_text = f"""
+set -euo pipefail
+source {LIB}
+source {OPENCLAW}
+openclaw_phase_post_up
+printf 'failure: %s\\n' "${{DEPLOY_FAILURES[@]}}"
+"""
+    r = subprocess.run(
+        ["bash", "-c", script_text],
+        env={
+            **env,
+            "REPO_DIR": str(fake),
+            "OPENCLAW_CONFIG_DIR": str(state),
+            "CURL_FAIL": "1" if curl_fail else "",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    failures = [
+        line[len("failure: ") :]
+        for line in r.stdout.splitlines()
+        if line.startswith("failure: ") and line != "failure: "
+    ]
+    return r, failures, state
+
+
+def test_post_up_installs_the_repo_youtube_transcript_skill_into_the_shared_dir(
+    env, tmp_path
+):
+    r, failures, state = post_up_ytt(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert failures == []
+    dest = state / "skills/youtube-transcript"
+    for f in ("SKILL.md", "transcript.py"):
+        assert (dest / f).read_bytes() == (
+            REPO / "skills/youtube-transcript" / f
+        ).read_bytes()
+    assert (dest / "yt-dlp").read_bytes() == YT_PAYLOAD
+    # The deploy only reads allowlists; openclaw.json stays as it was.
+    assert (state / "openclaw.json").read_text() == '{"agents": {"entries": {}}}\n'
+    assert "no running openclaw-gateway container; allowlists not checked" in r.stdout
+    # Installed before the health checks, so doctor sees the current skill.
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    curl = next(i for i, c in enumerate(calls) if c.startswith("curl "))
+    doctor = next(i for i, c in enumerate(calls) if c.endswith("openclaw-cli doctor"))
+    assert curl < doctor
+
+
+def test_post_up_youtube_transcript_install_converges_without_a_download(env, tmp_path):
+    post_up_ytt(env, tmp_path)
+    r, failures, _ = post_up_ytt(env, tmp_path, curl_fail=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert failures == []
+    assert "already in place" in r.stdout
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    assert len([c for c in calls if c.startswith("curl ")]) == 1
+
+
+def test_post_up_youtube_transcript_failure_fails_the_deploy_but_not_the_phase(
+    env, tmp_path
+):
+    # A download that fails the pinned checksum (the real pin, the stub payload).
+    real = (REPO / "scripts/ensure-youtube-transcript.sh").read_text()
+    r, failures, state = post_up_ytt(env, tmp_path, ensure=real)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert failures == ["youtube-transcript skill install failed (output above)"]
+    assert not (state / "skills/youtube-transcript/yt-dlp").exists()
+    # The rest of post_up still ran.
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text()
+    assert "openclaw-cli channels status" in calls
+
+
 def cutover_calls(env):
     return [
         line
@@ -1007,6 +1121,9 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/deploy-openclaw.sh", True),
         ("scripts/deploy-trusted-proxies.sh", True),
         ("scripts/memory-audit/run.sh", True),
+        ("scripts/ensure-youtube-transcript.sh", True),
+        ("skills/youtube-transcript/transcript.py", True),
+        ("skills/youtube-transcript/SKILL.md", True),
         ("secrets/lifekit-gateway.env.sops", True),
         ("secrets/lifekit.env.sops", False),
         ("compose/docker-compose.yml", False),
@@ -1014,6 +1131,7 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("compose/notify-relay/server.js", False),
         ("scripts/deploy.sh", False),
         ("scripts/memory-audit-cron.sh", False),
+        ("scripts/yt-tunnel/yt-relay.py", False),
         ("docs/runbook.md", False),
         ("README.md", False),
         (".github/workflows/ci.yml", False),
