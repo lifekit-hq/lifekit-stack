@@ -1214,7 +1214,8 @@ and the status read is an HTTP GET Kit could always make.
   relay, the host forced command or this repo); an id missing from a capped
   `decisions_open` list is reported as "not in the shown list", not "not open"; a reply
   cursor is passed only with the home it came from; nothing is sent from a cron, a
-  heartbeat or a turn he did not ask for; a refused call is reported verbatim and not
+  heartbeat or any turn but his own message (the PC handoff below is the one send he
+  does not spell out); a refused call is reported verbatim and not
   retried, and an exit 3 ("saved, not yet announced") is
   reported as such and re-sent only when he asks.
 - **Digest:** the 09:00 and 17:00 `needs-you-digest` (`scripts/ensure-needs-you-digest.sh`) also
@@ -1239,6 +1240,18 @@ and the status read is an HTTP GET Kit could always make.
   needs you, not `NO_REPLY`; and the Google Workspace section's line that Kit never calls
   `start_google_auth` and, on a sign-in failure, says so once and points at
   `docs/google-mcp-setup.md`.
+- **Handoff to the PC:** Kit's "Anything else" section hands a request that needs a
+  logged-in site, a purchase or booking, or the desktop to firstmate, which runs it in
+  the browser on the owner's PC while it is on; the VPS does only login-free work. Kit
+  says it is handing off, sends `task: <his words verbatim>` to `firstmate` and replies
+  with the note id. It does not hand off what it can do itself or what it is merely
+  unsure about, and only the owner's own message triggers it: the relay's cron and
+  heartbeat ban stays. `skills/lifekit-router` is not on Kit's path. **Operator step:**
+  as `lifekit`, paste the "Anything else" section of
+  `defaults/agents/kit/workspace/AGENTS.md` over the same section of the live
+  `/srv/openclaw/config/agents/kit/workspace/AGENTS.md` (paste the section, not the
+  whole file: the live file has drifted from the template; no restart, Kit reads it on
+  its next session), then re-run the Deploy line below for the widened `SKILL.md`.
 - **Deploy:** `sudo -u lifekit /srv/lifekit-stack/scripts/ensure-secondmate-relay.sh`
   (copies `SKILL.md` and `relay.sh`; no gateway restart). Verify from inside the gateway:
   `docker exec "$G" sh "$S" status | head -c 200`, and one `note <file> firstmate`
