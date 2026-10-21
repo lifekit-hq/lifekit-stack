@@ -437,6 +437,21 @@ def test_dubbed_video_with_unknown_language_prefers_english(run):
     assert "\nLanguage: en (auto-generated)\n" in r.stdout
 
 
+@pytest.mark.parametrize(("spoken", "only"), [("he", "iw"), ("en", "uk")])
+def test_lone_original_track_is_returned_when_the_reported_language_differs(
+    run, spoken, only
+):
+    r, calls = run(
+        VID, mode="dubbed", extra_env={"STUB_LANG": spoken, "STUB_TRACKS": only}
+    )
+    assert r.returncode == 0, r.stderr
+    assert f"\nLanguage: {only} (auto-generated)\n" in r.stdout
+    assert r.stdout.rstrip().endswith(f"Spoken {only}")
+    _, narrowed, widened = (c.split() for c in calls.splitlines())
+    assert f"{only}-orig" not in narrowed[narrowed.index("--sub-langs") + 1]
+    assert widened[widened.index("--sub-langs") + 1] == ".*-orig"
+
+
 def test_several_original_tracks_and_no_way_to_choose_is_an_error(run):
     r, _ = run(VID, mode="dubbed", extra_env={"STUB_TRACKS": "bn,de"})
     assert r.returncode == 1 and r.stdout == ""

@@ -18,7 +18,8 @@ answers every request for one with HTTP 429 on this route, and the pattern
 "en.*" matches them, so asking for them failed the whole run. A video with
 auto-dubbed audio has one "-orig" track per audio language, so the track is the
 one for the language spoken (the video's audio language, as yt-dlp reports it),
-else English's; a lone "-orig" track is the original whatever its language.
+else English's; when neither exists a lone "-orig" track is the original
+whatever its language (the auto pass is asked again for every "-orig" track).
 The transcript says which language it is.
 
 Env: YT_TRANSCRIPT_PROXY  SOCKS proxy (default socks5h://host.docker.internal:18081)
@@ -210,12 +211,23 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str, str]:
     title = ""
     last_err = ""
     spoken = ""
+    narrowed_empty = False
     # Human captions first; that run also reports the spoken language. Auto
-    # captions are only ever asked for as original-language tracks;
-    # --ignore-errors keeps one refused track from discarding the ones that
-    # did download.
-    for kind in ("--write-subs", "--write-auto-subs"):
-        want = langs if kind == "--write-subs" else original_tracks(spoken)
+    # captions are only ever asked for as original-language tracks, first the
+    # spoken language's and English's, then (when those downloaded nothing)
+    # every one; --ignore-errors keeps one refused track from discarding the
+    # ones that did download.
+    for kind, widen in (
+        ("--write-subs", False),
+        ("--write-auto-subs", False),
+        ("--write-auto-subs", True),
+    ):
+        if widen and not narrowed_empty:
+            continue
+        if kind == "--write-subs":
+            want = langs
+        else:
+            want = ANY_ORIGINAL if widen else original_tracks(spoken)
         with tempfile.TemporaryDirectory(prefix="yt-transcript-") as tmp:
             cmd = base + [
                 "--proxy",
@@ -253,6 +265,8 @@ def fetch(vid: str, proxy: str, langs: str) -> tuple[str | None, str, str, str]:
             if lf.exists():
                 spoken = spoken_language(lf.read_text(errors="replace")) or spoken
             found = list(Path(tmp).glob("*.vtt"))
+            if kind == "--write-auto-subs" and not widen:
+                narrowed_empty = bool(spoken) and not found
             chosen = pick(found, spoken)
             if found and not chosen:
                 last_err = (

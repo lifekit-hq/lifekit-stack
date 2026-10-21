@@ -3292,8 +3292,9 @@ command there.
   plain text with a `Language:` line. A video with auto-dubbed audio lists one `-orig`
   track per audio language, so the auto pass asks only for the spoken language's (the
   audio language yt-dlp reports, `en-US` matching `en-orig`) and English's, and returns
-  the spoken one, else English; with several and neither, it fails rather than return
-  an arbitrary one. YouTube's machine-translated auto tracks are never
+  the spoken one, else English; when that request downloads nothing it asks once more for
+  every `-orig` track and takes a lone one whatever its language, and with several and
+  neither it fails rather than return an arbitrary one. YouTube's machine-translated auto tracks are never
   requested: they 429 on this route and `en.*` would match them. A video with no caption
   track answers `transcript unavailable - this video has no captions`; there is no audio
   fallback.
