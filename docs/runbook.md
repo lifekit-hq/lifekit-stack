@@ -3319,8 +3319,12 @@ systemctl --user status yt-tunnel.service yt-relay.service
 override the defaults. The relay units run `yt-relay.py` from the checkout, so a deploy
 that changes it needs `systemctl --user restart yt-relay.service`.
 
-Install the skill, as `lifekit` on the host (after the PR is deployed, so the checkout
-has it):
+The deploy installs the skill: the OpenClaw post-up phase runs
+`scripts/ensure-youtube-transcript.sh`, and a change to `skills/youtube-transcript/` or to
+that script triggers the OpenClaw phases (`scripts/lib/openclaw-paths.sh`), so a merge
+that changes either lands on the host with no manual step. A failed install turns the
+deploy red and the next deploy retries it. To run it outside a deploy, as `lifekit` on the
+host:
 
 ```bash
 sudo -u lifekit /srv/lifekit-stack/scripts/ensure-youtube-transcript.sh
@@ -3335,7 +3339,7 @@ the skill watcher picks up `SKILL.md`. It prints each agent's allowlist state. A
 with a `skills` list needs the name added: derive the whole list from the live file, as
 in "Kit's second-mate relay" step 5 (`agents.entries.<id>.skills`, a config patch
 replaces arrays). Bump yt-dlp by editing `YT_DLP_VERSION` and `YT_DLP_SHA256` in that
-script (the sum is the release's `SHA2-256SUMS` line for `yt-dlp`) and re-running it;
+script (the sum is the release's `SHA2-256SUMS` line for `yt-dlp`) and merging it;
 YouTube changes break old yt-dlp, so bump first when fetches start failing with
 anything but the PC-off line.
 

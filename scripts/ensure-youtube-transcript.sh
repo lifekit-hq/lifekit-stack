@@ -9,7 +9,7 @@
 # PC"). yt-dlp is the upstream python zipapp (python 3.9+; the gateway image has
 # 3.11), so no image rebuild and no container recreate is needed: the skill
 # directory is a bind mount and the gateway's skill watcher picks the files up.
-# Bumping yt-dlp is editing the two literals below and re-running this script.
+# Bumping yt-dlp is editing the two literals below and merging the change.
 #
 # Shared directory (<state-dir>/skills = ~/.openclaw/skills in the container),
 # not one copy per agent: visible to every local agent unless its allowlist
@@ -17,7 +17,9 @@
 # openclaw.json), so this script only reads it; adding the skill there is an
 # operator patch.
 #
-# Run on the VPS host as lifekit, from the repo checkout:
+# The deploy runs it (deploy-openclaw.sh, post-up phase), so a merge that
+# changes the skill or this script installs it. By hand, on the VPS host as
+# lifekit, from the repo checkout:
 #   /srv/lifekit-stack/scripts/ensure-youtube-transcript.sh
 #
 # Re-running converges. Env overrides:

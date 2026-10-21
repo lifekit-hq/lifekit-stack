@@ -14,7 +14,7 @@
 #   configure  apply compose/openclaw-gateway/platform.patch.json, then reload
 #              and audit the gateway's SOPS-backed secrets
 #   post-up    reattach openclaw-cli, reset stuck sessions, skill native deps,
-#              doctor / health / channels status
+#              the youtube-transcript skill, doctor / health / channels status
 #   smoke      one real agent turn per runtime
 #
 # Sourced, never executed: deploy.sh sources this file before its main body
@@ -672,6 +672,18 @@ if [[ -d "${SKILLS_DIR}" ]]; then
       done
     ' || echo "(skill native-dep install reported issues — review above)"
 fi
+
+# ─── youtube-transcript skill ────────────────────────────────────────────────
+#
+# skills/youtube-transcript lives in the gateway's shared skills directory
+# (<state-dir>/skills), not the workspace, so nothing else carries a merged
+# change to it there. The script converges: it copies the skill, downloads
+# yt-dlp only when the pinned checksum does not already match, and reports
+# each agent's allowlist read-only (adding the skill to one stays an operator
+# patch, docs/runbook.md "YouTube transcripts through the PC").
+say "youtube-transcript skill -> ${OPENCLAW_CONFIG_DIR}/skills"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-youtube-transcript.sh" \
+  || fail_later "youtube-transcript skill install failed (output above)"
 
 # ─── Skill CLI install (life-state etc.) ─────────────────────────────────────
 #
