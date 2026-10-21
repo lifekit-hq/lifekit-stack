@@ -159,10 +159,14 @@ printf 'failure: %s\\n' "${{DEPLOY_FAILURES[@]}}"
 
 
 def failures(r: subprocess.CompletedProcess) -> list[str]:
+    # The agent turns' failures only: with no deploy recorded, the phase also
+    # runs the post-upgrade smoke checks (test_deploy_openclaw.py tests those).
     return [
         line[len("failure: ") :]
         for line in r.stdout.splitlines()
-        if line.startswith("failure: ") and line != "failure: "
+        if line.startswith("failure: ")
+        and line != "failure: "
+        and not line.startswith("failure: upgrade smoke ")
     ]
 
 

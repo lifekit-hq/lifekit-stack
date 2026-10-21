@@ -18,6 +18,7 @@ and every host path the phases touch points into the test's tmp dir.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -109,6 +110,10 @@ case " $* " in
   *" network inspect "*) echo 172.30.0.1 ;;
   *" exec -T openclaw-gateway openclaw --version "*) echo "OpenClaw $RUNNING_VER (abc)" ;;
   *" lifekit-openclaw:local --version "*) echo "OpenClaw $BUILT_VER (def)" ;;
+  *" exec -T openclaw-gateway bash -s "*)
+    cat > "${CLAUDE_SMOKE_STDIN:-/dev/null}"
+    echo "upgrade-smoke claude-code: ${CLAUDE_SMOKE:-PASS} version=2.1.283"
+    [ "${CLAUDE_SMOKE:-PASS}" = PASS ] || exit 1 ;;
   *" plugins list --json "*)
     if [ -e "$PLUGINS_FIXED" ]; then v="$BUILT_VER"; else v="2026.6.8"; fi
     echo '[{"id":"codex","enabled":true,"origin":"global","version":"'"$v"'"}]' ;;
@@ -1373,3 +1378,139 @@ def test_gate_always_runs_every_phase_even_for_a_platform_only_change(env, tmp_p
     assert "OpenClaw phases: RUN (mode 'always'" in r.stdout
     trace = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
     assert [m for m in map(marker, trace) if m] == DEPLOY_ORDER
+
+
+# ─── post-upgrade smoke checks, end of the smoke phase ───────────────────────
+
+# Stands in for scripts/upgrade-smoke/openclaw.sh: logs its arguments, prints
+# a summary line and exits like the real one, per $OPENCLAW_SMOKE.
+OPENCLAW_SMOKE_SH = """#!/bin/sh
+echo "openclaw-smoke $*" >> "$DOCKER_CALL_LOG"
+echo "upgrade-smoke openclaw: ${OPENCLAW_SMOKE:-PASS} version=2026.9.5"
+[ "${OPENCLAW_SMOKE:-PASS}" = PASS ] || exit 1
+"""
+PINS = ("compose/openclaw-gateway/Dockerfile", "compose/openclaw-gateway/package.json")
+
+
+@pytest.fixture
+def smoke_repo(tmp_path):
+    """A scratch git repo holding what the smoke phase reads, with the real
+    claude-code.sh (piped into the gateway) and a stub openclaw.sh."""
+    fake = tmp_path / "smoke-repo"
+    for rel in (*PINS, "scripts/openclaw-smoke-verdict.py"):
+        (fake / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / rel, fake / rel)
+    (fake / "scripts/upgrade-smoke").mkdir(parents=True)
+    shutil.copy(
+        REPO / "scripts/upgrade-smoke/claude-code.sh",
+        fake / "scripts/upgrade-smoke/claude-code.sh",
+    )
+    stub(fake / "scripts/upgrade-smoke/openclaw.sh", OPENCLAW_SMOKE_SH)
+    git(fake, "init", "-q")
+    git(fake, "add", "-A")
+    git(fake, "commit", "-q", "-m", "base")
+    return fake
+
+
+def smoke_phase(env, repo, extra_env=None):
+    """Run the smoke phase under set -euo pipefail; return (result, upgrade-smoke
+    failures queued, docker calls, the script piped into the gateway)."""
+    stdin = repo.parent / "claude-smoke-stdin"
+    script = f"""
+set -euo pipefail
+source {LIB}
+source {OPENCLAW}
+rc=0
+openclaw_phase_smoke || rc=$?
+echo "rc=$rc"
+for f in "${{DEPLOY_FAILURES[@]}}"; do echo "failure: $f"; done
+"""
+    r = subprocess.run(
+        ["bash", "-c", script],
+        env={
+            **env,
+            "REPO_DIR": str(repo),
+            "CLAUDE_SMOKE_STDIN": str(stdin),
+            **(extra_env or {}),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "rc=0" in r.stdout.splitlines()
+    failures = [
+        line.removeprefix("failure: ")
+        for line in r.stdout.splitlines()
+        if line.startswith("failure: upgrade smoke")
+    ]
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    return r, failures, calls, stdin.read_text() if stdin.exists() else None
+
+
+def claude_exec(calls):
+    return [c for c in calls if " exec -T openclaw-gateway bash -s " in f" {c} "]
+
+
+def test_smoke_runs_both_checks_when_no_complete_deploy_is_recorded(env, smoke_repo):
+    r, failures, calls, piped = smoke_phase(env, smoke_repo)
+    assert failures == []
+    assert "upgrade-smoke openclaw: PASS" in r.stdout
+    assert "upgrade-smoke claude-code: PASS" in r.stdout
+    # OpenClaw: the version the build phase just built is the one expected.
+    assert "openclaw-smoke --expect-version 2026.9.5" in calls
+    # Claude Code: the real script runs inside the gateway, version only (the
+    # smoke turn is the deploy's one real turn), against the package.json pin.
+    pin = json.loads((smoke_repo / PINS[1]).read_text())["dependencies"][
+        "@anthropic-ai/claude-code"
+    ]
+    [call] = claude_exec(calls)
+    assert call.endswith(
+        f"exec -T openclaw-gateway bash -s -- --no-call --expect-version {pin}"
+    )
+    assert piped == (REPO / "scripts/upgrade-smoke/claude-code.sh").read_text()
+
+
+@pytest.mark.parametrize(
+    ("check", "extra"),
+    [
+        ("openclaw", {"OPENCLAW_SMOKE": "FAIL"}),
+        ("claude-code", {"CLAUDE_SMOKE": "FAIL"}),
+    ],
+)
+def test_a_failing_check_fails_the_deploy_naming_it(env, smoke_repo, check, extra):
+    r, failures, _, _ = smoke_phase(env, smoke_repo, extra)
+    # Queued, not aborted: deploy.sh exits 1 at its end and lists it.
+    assert failures == [f"upgrade smoke {check}: FAIL (summary line above)"]
+    assert f"upgrade-smoke {check}: FAIL" in r.stdout
+    assert f"✗ upgrade smoke {check}: FAIL" in r.stderr
+
+
+@pytest.mark.parametrize(
+    ("changed", "openclaw", "claude"),
+    [
+        (None, False, False),
+        (PINS[0], True, False),
+        (PINS[1], False, True),
+    ],
+)
+def test_smoke_checks_only_the_pins_changed_since_the_last_complete_deploy(
+    env, smoke_repo, changed, openclaw, claude
+):
+    git(smoke_repo, "update-ref", GATE_REF, "HEAD")
+    if changed:
+        commit(smoke_repo, changed)
+    _, failures, calls, _ = smoke_phase(env, smoke_repo)
+    assert failures == []
+    assert any(c.startswith("openclaw-smoke") for c in calls) is openclaw
+    assert bool(claude_exec(calls)) is claude
+
+
+def test_a_failed_upgrade_is_checked_again_on_the_next_deploy(env, smoke_repo):
+    # The bump deploy failed its check, so the ref stayed before the bump: the
+    # next deploy, with the new version already running, still checks it.
+    git(smoke_repo, "update-ref", GATE_REF, "HEAD")
+    commit(smoke_repo, PINS[0])
+    commit(smoke_repo, "docs/runbook.md")
+    _, failures, _, _ = smoke_phase(env, smoke_repo, {"OPENCLAW_SMOKE": "FAIL"})
+    assert failures == ["upgrade smoke openclaw: FAIL (summary line above)"]
