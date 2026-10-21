@@ -746,11 +746,9 @@ openclaw_phase_smoke() {
 # and the gateway refuses another agent in it) and out of any earlier smoke
 # session: a fixed id carries CLI history across a credential change, which
 # the gateway refuses ("cli session history refused across auth boundary").
-# No --deliver, so nothing reaches Telegram. A good turn is status "ok" with
-# a non-empty reply (there is no top-level "ok" key); anything else prints
-# the error, or status/summary/reply when there is none. Auth and quota
-# errors are external state (re-login, weekly cap) and only warn; anything
-# else fails the run.
+# No --deliver, so nothing reaches Telegram. scripts/openclaw-smoke-verdict.py
+# judges the output: status "ok" with a non-empty reply passes, auth and quota
+# errors only warn, anything else fails the run.
 SMOKE_AGENTS="${SMOKE_AGENTS:-kit}"
 SMOKE_RUN="$(date -u +%Y%m%dT%H%M%SZ)"
 say "smoke turns (${SMOKE_AGENTS})"
@@ -758,20 +756,7 @@ for agent in ${SMOKE_AGENTS}; do
   OUT="$(openclaw_compose exec -T openclaw-gateway \
     openclaw agent --agent "${agent}" --session-id "deploy-smoke-${agent}-${SMOKE_RUN}" --timeout 150 --json \
       -m "Deploy smoke test: reply with exactly the word pong and nothing else." 2>&1 || true)"
-  VERDICT="$(printf '%s' "${OUT}" | python3 -c '
-import json, re, sys
-raw = sys.stdin.read()
-try:
-    d = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
-except Exception:
-    print("FAIL no JSON: " + raw[:200].replace("\n", " ")); sys.exit()
-texts = [p.get("text") or "" for p in (d.get("result") or {}).get("payloads") or []]
-if d.get("status") == "ok" and "".join(texts).strip():
-    print("PASS"); sys.exit()
-err = json.dumps(d.get("error") or {"status": d.get("status"), "summary": d.get("summary"), "reply": texts})
-soft = re.search(r"rate_limit|weekly limit|usage limit|no usable profiles|expired|not logged in|auth", err, re.I)
-print(("WARN " if soft else "FAIL ") + err[:300])
-')"
+  VERDICT="$(printf '%s' "${OUT}" | python3 "${REPO_DIR}/scripts/openclaw-smoke-verdict.py")"
   case "${VERDICT}" in
     PASS)   echo "  ${agent}: ok" ;;
     WARN*)  warn "${agent}: ${VERDICT#WARN }" ;;
