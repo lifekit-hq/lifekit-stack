@@ -1122,6 +1122,7 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/deploy-trusted-proxies.sh", True),
         ("scripts/memory-audit/run.sh", True),
         ("scripts/ensure-youtube-transcript.sh", True),
+        ("scripts/openclaw-smoke-verdict.py", True),
         ("skills/youtube-transcript/transcript.py", True),
         ("skills/youtube-transcript/SKILL.md", True),
         ("secrets/lifekit-gateway.env.sops", True),
