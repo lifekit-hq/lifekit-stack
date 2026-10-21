@@ -9,6 +9,7 @@ in log lines that carry braces, and every OpenClaw deploy ended red.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -126,6 +127,54 @@ def test_empty_output_fails():
     assert run("") == "FAIL no JSON: "
 
 
-def test_the_smoke_phase_runs_the_verdict_script():
-    text = (REPO / "scripts/deploy-openclaw.sh").read_text()
-    assert '| python3 "${REPO_DIR}/scripts/openclaw-smoke-verdict.py")"' in text
+def smoke_phase(tmp_path: Path, cli_output: str) -> subprocess.CompletedProcess:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    out = tmp_path / "cli-output"
+    out.write_text(cli_output)
+    docker = bin_dir / "docker"
+    docker.write_text(f'#!/bin/sh\ncat "{out}"\n')
+    docker.chmod(0o755)
+    script = f"""
+set -euo pipefail
+source {REPO}/scripts/lib/deploy-common.sh
+source {REPO}/scripts/deploy-openclaw.sh
+openclaw_phase_smoke
+printf 'failure: %s\\n' "${{DEPLOY_FAILURES[@]}}"
+"""
+    return subprocess.run(
+        ["bash", "-c", script],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "REPO_DIR": str(REPO),
+            "ENV_FILE": str(tmp_path / "stack.env"),
+            "OPENCLAW_COMPOSE_AUTH_MODE": "token",
+            "SMOKE_AGENTS": "kit",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def failures(r: subprocess.CompletedProcess) -> list[str]:
+    return [
+        line[len("failure: ") :]
+        for line in r.stdout.splitlines()
+        if line.startswith("failure: ") and line != "failure: "
+    ]
+
+
+def test_smoke_phase_passes_the_382_reply(tmp_path):
+    r = smoke_phase(tmp_path, LEADING_NOISE + REPLY + "\n" + TRAILING_NOISE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "kit: ok" in r.stdout
+    assert failures(r) == []
+
+
+def test_smoke_phase_queues_a_failure_for_a_bad_reply(tmp_path):
+    r = smoke_phase(tmp_path, "Error: gateway not reachable\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "kit: ok" not in r.stdout
+    assert failures(r) == ["kit: no JSON: Error: gateway not reachable"]
