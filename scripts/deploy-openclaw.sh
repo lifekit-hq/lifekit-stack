@@ -15,7 +15,8 @@
 #              and audit the gateway's SOPS-backed secrets
 #   post-up    reattach openclaw-cli, reset stuck sessions, skill native deps,
 #              the youtube-transcript skill, doctor / health / channels status
-#   smoke      one real agent turn per runtime
+#   smoke      one real agent turn per runtime, then the post-upgrade smoke
+#              check of each pillar the deployed range upgraded
 #
 # Sourced, never executed: deploy.sh sources this file before its main body
 # and calls the phases between its platform phases, in the original order.
@@ -764,4 +765,45 @@ for agent in ${SMOKE_AGENTS}; do
   esac
 done
 
+# ─── Post-upgrade smoke checks: scripts/upgrade-smoke/ ──────────────────────
+#
+# The read-only check for each pillar the gateway image carries, run when its
+# pin changed: OpenClaw (the Dockerfile's FROM tag) and the Claude Code baked
+# into the image (package.json). Each prints its one summary line; PASS is the
+# signal that lets routine-upgrade grading treat the upgrade as silent, and a
+# FAIL fails the deploy naming the check (scripts/upgrade-smoke/README.md).
+# Claude Code runs inside the gateway, as the account that uses it, with
+# --no-call: the smoke turn above is this deploy's real Claude turn, so the
+# check adds no second paid call and proves only the version.
+UPGRADE_SMOKE="${REPO_DIR}/scripts/upgrade-smoke"
+if openclaw_pin_changed compose/openclaw-gateway/Dockerfile; then
+  say "upgrade smoke: OpenClaw ${BUILT_VER:-}"
+  SMOKE_ARGS=()
+  [[ -z "${BUILT_VER:-}" ]] || SMOKE_ARGS=(--expect-version "${BUILT_VER}")
+  bash "${UPGRADE_SMOKE}/openclaw.sh" "${SMOKE_ARGS[@]}" \
+    || fail_later "upgrade smoke openclaw: FAIL (summary line above)"
+fi
+if openclaw_pin_changed compose/openclaw-gateway/package.json; then
+  CLAUDE_PIN="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["dependencies"]["@anthropic-ai/claude-code"])' \
+    "${REPO_DIR}/compose/openclaw-gateway/package.json" || true)"
+  say "upgrade smoke: Claude Code ${CLAUDE_PIN} (gateway image)"
+  SMOKE_ARGS=(--no-call)
+  [[ -z "${CLAUDE_PIN}" ]] || SMOKE_ARGS+=(--expect-version "${CLAUDE_PIN}")
+  openclaw_compose exec -T openclaw-gateway bash -s -- "${SMOKE_ARGS[@]}" \
+    <"${UPGRADE_SMOKE}/claude-code.sh" \
+    || fail_later "upgrade smoke claude-code: FAIL (summary line above)"
+fi
+
+}
+
+# Exit 0 when the repo-relative path changed since the last complete deploy
+# (OPENCLAW_LAST_DEPLOYED_REF, the OpenClaw gate's ref), or when that cannot
+# be told. Not the running gateway's version: a deploy whose smoke check
+# failed never advances the ref, so the next deploy checks again instead of
+# passing on a version that is already running.
+openclaw_pin_changed() {
+  local ref="${OPENCLAW_LAST_DEPLOYED_REF:-refs/lifekit/last-deployed}" rc=0
+  git -C "${REPO_DIR}" rev-parse --verify -q "${ref}^{commit}" >/dev/null 2>&1 || return 0
+  git -C "${REPO_DIR}" diff --quiet "${ref}" HEAD -- "$1" 2>/dev/null || rc=$?
+  ((rc != 0))
 }

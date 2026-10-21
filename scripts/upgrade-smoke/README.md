@@ -3,16 +3,39 @@
 One check per upgrade pillar, run on the VPS right after that pillar is
 upgraded. Each is a script that prints exactly one summary line and exits
 0 (pass), 1 (fail) or 2 (usage error). Correctness is decided by the script;
-nothing here asks a model to judge. A later upgrade script calls the check
-for the pillar it just upgraded. A pass is what lets a routine upgrade stay
-silent; a fail starts the rollback. These scripts do not detect, apply or
-roll back upgrades.
+nothing here asks a model to judge. The upgrade path calls the check for the
+pillar it just upgraded (see "Where each check runs"). A pass is what lets a
+routine upgrade stay silent; a fail starts the rollback. These scripts do not
+detect, apply or roll back upgrades.
 
 ```bash
 scripts/upgrade-smoke/openclaw.sh    [--expect-version 2026.9.8]
 scripts/upgrade-smoke/claude-code.sh [--expect-version 2.1.303] [--no-call]
 scripts/upgrade-smoke/firstmate.sh   [--expect-no-mistakes-version v1.84.0]
 ```
+
+## Where each check runs
+
+| Pillar | Upgrade path | When it runs | How |
+| --- | --- | --- | --- |
+| OpenClaw | `deploy.sh`, OpenClaw phases (`scripts/deploy-openclaw.sh`): the image bump in `compose/openclaw-gateway/Dockerfile` | End of the `smoke` phase, when the Dockerfile changed since the last complete deploy | `openclaw.sh --expect-version <the version just built>` |
+| Claude Code in the gateway image | Same deploy: the pin in `compose/openclaw-gateway/package.json` | End of the `smoke` phase, when package.json changed since the last complete deploy | `claude-code.sh --no-call --expect-version <the pin>`, piped into the gateway with `docker compose exec -T openclaw-gateway bash -s`, so it checks the CLI the agents use |
+| firstmate | None in this repo: firstmate and no-mistakes update from their own repositories | Not wired | Follow-up: call `firstmate.sh` from that update path |
+| Claude Code of the host accounts | None in this repo: those installs update themselves | Not wired | Follow-up: call `claude-code.sh` from that update path |
+
+"The last complete deploy" is the OpenClaw gate's ref
+(`refs/lifekit/last-deployed`, `scripts/lib/openclaw-paths.sh`). With no ref,
+both checks run. A failing check fails the deploy, which never advances that
+ref, so the next deploy runs the check again rather than passing on a version
+that is already running. The deploy log carries each summary line. A FAIL
+also appears in the deploy's closing failure list as
+`upgrade smoke <pillar>: FAIL`. In the deploy, `claude-code.sh` makes no model
+call: the `smoke` phase's agent turn just before it is that deploy's real
+Claude turn, so the deploy makes no second paid call.
+
+`scripts/rehearse-openclaw-bump.sh` (the "OpenClaw bump rehearsal" workflow)
+runs before merge, on a copy of the state, and applies nothing to production,
+so no check runs there.
 
 Summary line shape: `upgrade-smoke <pillar>: PASS|FAIL <key=value ...> [red=<reason,...>]`.
 It holds versions, counts and check names, and never a config value, token or reply text.
@@ -93,3 +116,6 @@ firstmate root and home. Each script passes on a healthy pillar and fails with
 the named reason on each broken one. The OpenClaw tests also check that it
 issues only `ps`, `inspect` and `exec`, and no fix, restart or agent turn.
 The firstmate tests check that it leaves both checkouts untouched.
+The deploy wiring is tested in `scripts/tests/test_deploy_openclaw.py`
+(`test_smoke_*`, `test_a_failing_check_*`, `test_a_failed_upgrade_*`), which
+uses a stubbed `docker` and a stub `openclaw.sh`.

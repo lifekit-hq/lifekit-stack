@@ -34,6 +34,12 @@ cooldown so upstream's own hotfix cycle has landed. The loop:
    official plugin matches the core version afterwards (one update attempt,
    then a red run). First real Telegram message + first cron run remain the
    final word.
+5. Last, it runs the read-only post-upgrade smoke check
+   (`scripts/upgrade-smoke/openclaw.sh --expect-version <new>`, and
+   `claude-code.sh --no-call` inside the gateway when the Claude Code pin
+   moved) and prints its `upgrade-smoke <pillar>: PASS|FAIL` line. A FAIL
+   turns the deploy red, and the next deploy runs the check again
+   (`scripts/upgrade-smoke/README.md` "Where each check runs").
 
 Do NOT use the dashboard's "Update now" or `openclaw update` inside the
 container. The install is an npm package baked into the image (no git
