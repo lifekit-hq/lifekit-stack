@@ -167,10 +167,10 @@ def test_retired_devclaw_agent_wiring_is_gone():
         assert not [k for k in env if k.startswith("DEVCLAW_")]
 
 
-def test_workshop_proposals_need_owner_approval():
-    # Unset, approvalPolicy is "auto": an agent applies its own Skill Workshop
-    # proposal with no prompt. "pending" holds the apply for the owner.
-    assert PATCH["skills"]["workshop"]["approvalPolicy"] == "pending"
+def test_workshop_approval_policy_stays_retired():
+    # OpenClaw 2026.10.5 retired Skill Workshop proposals and removed
+    # skills.workshop.approvalPolicy from the schema; the dry run rejects it.
+    assert "skills" not in PATCH
 
 
 def test_bot_tokens_are_sops_refs_or_dropped():

@@ -150,8 +150,7 @@ file); rotating that token means recreating `prometheus` too. Check it with
 `logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
 `diagnostics-otel` plugin enables, memory-core dreaming off, `gateway.auth.rateLimit`, `memory.search`
 (`enabled` + `extraPaths`), `agents.defaults.heartbeat.every`, the inbound
-`hooks` block, the finance agent's heartbeat and
-`skills.workshop.approvalPolicy` - live in
+`hooks` block and the finance agent's heartbeat - live in
 `compose/openclaw-gateway/platform.patch.json`. On every OpenClaw deploy (see
 [Path-gated OpenClaw deploys](#path-gated-openclaw-deploys)) `deploy.sh`
 compares that file with the live config, applies it with
@@ -174,15 +173,14 @@ fail the deploy with a clear message; `deploy-trusted-proxies.sh` falls back to
 the one-shot, since there is no owner to verify. The upgrade steps run with the
 gateway stopped and stay `run --rm`.
 
-#### Skill Workshop applies wait for the owner (`skills.workshop.approvalPolicy`)
+#### Skill Workshop approval key retired (OpenClaw 2026.10.5)
 
-Unset, `skills.workshop.approvalPolicy` is `"auto"`: an agent that calls
-`apply`, `reject` or `quarantine` on its own Skill Workshop proposal goes ahead
-with no prompt, so an agent could rewrite its own skills. The platform file
-sets `"pending"` (the gateway's `docs/tools/skills-config.md`: "`pending`
-requires operator approval"), so an agent-initiated apply waits for the owner.
-`autonomous.mode` (off on this host) stays host state. `skills` keys reload as
-`none` in the gateway's reload plan: read at use, no restart.
+OpenClaw 2026.10.5 retired Skill Workshop proposals and removed
+`skills.workshop.approvalPolicy` (and `maxPending`) from the schema; the patch
+dry run rejects it as `Unrecognized key`, and a rejected dry run applies none of
+the file. There is no equivalent key: with no proposal flow there is nothing for
+the owner to approve, so the platform file sets no `skills` key. Automatic
+learning is `skills.workshop.autonomous.mode`, off on this host and host state.
 
 #### Telegram bot tokens: enabled accounts only
 
