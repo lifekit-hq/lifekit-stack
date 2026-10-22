@@ -69,11 +69,6 @@
       ]
     }
   },
-  "skills": {
-    "workshop": {
-      "approvalPolicy": "pending"
-    }
-  },
   "agents": {
     "defaults": {
       "heartbeat": {
