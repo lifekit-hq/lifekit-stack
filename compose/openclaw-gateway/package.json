@@ -3,7 +3,7 @@
   "private": true,
   "description": "Pinned versions of the agent and skill CLIs baked into the gateway image (compose/openclaw-gateway/Dockerfile). Dependabot's npm ecosystem (.github/dependabot.yml) opens the bump PRs; this file is not installed as a package, only read by the Dockerfile for its pinned versions.",
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.283",
+    "@anthropic-ai/claude-code": "2.1.296",
     "clawhub": "0.23.3",
     "@steipete/summarize": "0.23.0",
     "workout-claw": "0.4.0"
