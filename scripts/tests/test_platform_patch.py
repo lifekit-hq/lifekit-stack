@@ -173,7 +173,6 @@ def test_workshop_approval_policy_stays_retired():
     assert "skills" not in PATCH
 
 
-
 def test_bot_tokens_are_sops_refs_or_dropped():
     # A disabled account keeps no ref (null deletes it): a Telegram channel
     # restart stops disabled accounts too, and an unresolved ref there turns
