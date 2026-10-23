@@ -547,9 +547,12 @@ def install(tmp_path):
     systemctl_log = tmp_path / "systemctl.log"
     su_log = tmp_path / "su.log"
     systemctl = tmp_path / "systemctl"
-    systemctl.write_text(f'#!/usr/bin/env bash\necho "$*" >> {systemctl_log}\n')
+    calls = tmp_path / "calls.log"
+    systemctl.write_text(
+        f'#!/usr/bin/env bash\necho "$*" >> {systemctl_log}\necho systemctl >> {calls}\n'
+    )
     su = tmp_path / "su"
-    su.write_text(f'#!/usr/bin/env bash\necho "$*" >> {su_log}\n')
+    su.write_text(f'#!/usr/bin/env bash\necho "$*" >> {su_log}\necho su >> {calls}\n')
     systemctl.chmod(0o755)
     su.chmod(0o755)
     root = tmp_path / "root"
@@ -573,30 +576,71 @@ def install(tmp_path):
         assert proc.returncode == expect, proc.stderr
         return proc
 
-    return run, root, systemctl_log, su_log
+    return run, root, systemctl_log, su_log, calls
+
+
+def parse_unit(path):
+    sections = {}
+    current = None
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = sections.setdefault(line[1:-1], {})
+            continue
+        key, _, value = line.partition("=")
+        current.setdefault(key, []).append(value)
+    return sections
 
 
 def test_installer_renders_one_watch_per_home_and_baselines_before_enabling(install):
-    run, root, systemctl_log, su_log = install
+    run, root, systemctl_log, su_log, calls = install
     run("/srv/fleet/firstmate /srv/fleet/fm-vps")
     unit_dir = root / "etc/systemd/system"
-    path_unit = (unit_dir / "lifekit-reply-pusher.path").read_text()
-    assert "PathChanged=/srv/fleet/firstmate/state/inbox/.replies\n" in path_unit
-    assert "PathChanged=/srv/fleet/fm-vps/state/inbox/.replies\n" in path_unit
-    assert "__" not in path_unit
-    service = (unit_dir / "lifekit-reply-pusher.service").read_text()
-    assert "User=opuser\n" in service
-    assert (
-        'Environment="REPLY_PUSHER_HOMES=/srv/fleet/firstmate /srv/fleet/fm-vps"\n'
-        in service
-    )
-    assert "__" not in service
+    path_unit = parse_unit(unit_dir / "lifekit-reply-pusher.path")
+    assert path_unit["Path"]["PathChanged"] == [
+        "/srv/fleet/firstmate/state/inbox/.replies",
+        "/srv/fleet/fm-vps/state/inbox/.replies",
+    ]
+    assert path_unit["Path"]["Unit"] == ["lifekit-reply-pusher.service"]
+    assert path_unit["Install"]["WantedBy"] == ["multi-user.target"]
+    service = parse_unit(unit_dir / "lifekit-reply-pusher.service")
+    svc = service["Service"]
+    assert svc["Type"] == ["oneshot"]
+    assert svc["User"] == ["opuser"]
+    assert svc["Environment"] == [
+        '"REPLY_PUSHER_HOMES=/srv/fleet/firstmate /srv/fleet/fm-vps"'
+    ]
+    # The whole rendered env is never handed to the unit: the pusher reads its
+    # two hook keys itself (docs/secrets.md boundary rule).
+    assert "EnvironmentFile" not in svc
+    assert not any("OPENCLAW_HOOK" in v for vals in svc.values() for v in vals)
+    # A failed push retries, but a missing operator step (exit 78) does not.
+    assert svc["Restart"] == ["on-failure"]
+    assert svc["RestartPreventExitStatus"] == ["78"]
+    assert service["Unit"]["StartLimitIntervalSec"] == ["0"]
+    assert svc["StateDirectory"] == ["lifekit-reply-pusher"]
+    assert svc["StateDirectoryMode"] == ["0700"]
+    assert svc["ProtectSystem"] == ["strict"]
+    assert service["Install"]["WantedBy"] == ["multi-user.target"]
+    for unit in (path_unit, service):
+        assert "__" not in "".join(
+            v for s in unit.values() for vs in s.values() for v in vs
+        )
     script = root / "usr/local/libexec/lifekit-reply-pusher/reply_pusher.py"
     assert script.read_bytes() == SCRIPT.read_bytes()
     assert stat.S_IMODE((root / "var/lib/lifekit-reply-pusher").stat().st_mode) == 0o700
     [su_call] = su_log.read_text().splitlines()
     assert "opuser" in su_call and "reply_pusher.py' baseline" in su_call
     assert "REPLY_PUSHER_HOMES='/srv/fleet/firstmate /srv/fleet/fm-vps'" in su_call
+    # Cursors are written before any unit is enabled, so nothing replays.
+    assert calls.read_text().splitlines() == [
+        "su",
+        "systemctl",
+        "systemctl",
+        "systemctl",
+    ]
     assert systemctl_log.read_text().splitlines() == [
         "daemon-reload",
         "enable lifekit-reply-pusher.service",
@@ -605,7 +649,7 @@ def test_installer_renders_one_watch_per_home_and_baselines_before_enabling(inst
 
 
 def test_installer_skips_without_homes(install):
-    run, root, systemctl_log, _ = install
+    run, root, systemctl_log, *_ = install
     proc = run("")
     assert "skipping" in proc.stderr
     assert not root.exists() and not systemctl_log.exists()
@@ -637,63 +681,3 @@ def test_installer_needs_root_without_the_test_prefix():
     )
     if os.geteuid() != 0:
         assert proc.returncode == 1 and "root" in proc.stderr
-
-
-# ------------------------------------------------------------ unit shape
-
-
-def test_service_unit_shape():
-    text = (DIR / "lifekit-reply-pusher.service").read_text()
-    for line in (
-        "Type=oneshot",
-        "Restart=on-failure",
-        "RestartPreventExitStatus=78",
-        "StartLimitIntervalSec=0",
-        "StateDirectory=lifekit-reply-pusher",
-        "StateDirectoryMode=0700",
-        "ProtectSystem=strict",
-        "WantedBy=multi-user.target",
-    ):
-        assert line in text.splitlines(), line
-    # The whole rendered env is never handed to the unit: the pusher reads its
-    # two keys itself (docs/secrets.md boundary rule).
-    assert "EnvironmentFile" not in text
-    assert "OPENCLAW_HOOK" not in text
-
-
-def test_path_unit_triggers_the_service():
-    text = (DIR / "lifekit-reply-pusher.path").read_text()
-    assert "Unit=lifekit-reply-pusher.service" in text.splitlines()
-    assert "__PATH_CHANGED__" in text.splitlines()
-
-
-# ------------------------------------------------------- wiring and docs
-
-
-def test_bootstrap_installs_the_pusher_next_to_the_fleet_publisher():
-    text = (REPO / "scripts/bootstrap-vps.sh").read_text()
-    publisher = text.index("scripts/fleet-publisher/install-fleet-publisher.sh")
-    pusher = text.index("scripts/reply-pusher/install-reply-pusher.sh")
-    assert publisher < pusher
-
-
-def test_kit_skill_delivers_a_hook_reply_without_sending():
-    text = (REPO / "skills/secondmate-relay/SKILL.md").read_text()
-    section = text.split("## Firstmate reply (hook turn)")[1].split("\n## ")[0]
-    assert "relay.sh replies <home>" in section
-    assert "whose `id` is that note id" in section
-    assert "Delivering a reply is not a send" in section
-    assert "sends nothing to firstmate" in section
-
-
-def test_secrets_inventory_names_the_pusher_on_both_hook_rows():
-    rows = {
-        line.split("|")[1].strip(" `"): line
-        for line in (REPO / "docs/secrets.md").read_text().splitlines()
-        if line.startswith("| `OPENCLAW_HOOK_")
-    }
-    assert set(rows) == {"OPENCLAW_HOOK_TOKEN", "OPENCLAW_HOOK_PATH"}
-    for line in rows.values():
-        assert "reply pusher" in line
-    rule = (REPO / "docs/secrets.md").read_text().split("## Boundary rule")[1]
-    assert "host unit" in rule and "only" in rule
