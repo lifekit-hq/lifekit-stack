@@ -1221,8 +1221,13 @@ and the status read is an HTTP GET Kit could always make.
   card, or an edit to another agent's instructions is relayed only as his reply on his own
   turn: `task: <his words verbatim>` plus one `> context: <the pending ask or card question>
   (repo: <repo>)` line (the skill's "relayed ask"), and OpenClaw files no GitHub issue for
-  any ask; an answer is `answer <id>: <his words>` sent only on his
-  explicit words, only for an id in `decisions_open` at send time, to that item's
+  any ask; when his words answer a firstmate reply Kit showed, the same one context line
+  carries the thread anchor, `> context: re <note-id>: <the original ask, shortened>`
+  (folded with a pending ask's context when both apply, never a second line, and only on
+  his own turn): the new note goes to the home the shown reply came from (`firstmate` or
+  `fm-vps`) and points at the original `kit-` note, so that home reads that note and its
+  reply before answering, and its one-reply-per-note store is unchanged; an answer is
+  `answer <id>: <his words>` sent only on his explicit words, only for an id in `decisions_open` at send time, to that item's
   `home_id`; Kit does not classify decisions or gate anything: under each firstmate
   home's standing answer-note rule an ordinary decision closes on the answer, while a
   decision that would authorize a merge or a destructive, irreversible or
