@@ -18,6 +18,39 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.9](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.8...v0.1.9) (2026-10-23)
+
+
+### Features
+
+* **deploy:** run the post-upgrade smoke checks at the end of the OpenClaw deploy ([#386](https://github.com/lifekit-hq/lifekit-stack/issues/386)) ([c58c658](https://github.com/lifekit-hq/lifekit-stack/commit/c58c65812709b25c2281b516060affd138c68f48)), closes [#385](https://github.com/lifekit-hq/lifekit-stack/issues/385)
+* **edge:** put the OpenClaw dashboard behind the tailnet sign-in gate ([#363](https://github.com/lifekit-hq/lifekit-stack/issues/363)) ([3c550ab](https://github.com/lifekit-hq/lifekit-stack/commit/3c550ab2543bb21a5a00c61b6046160a4e3bbe8d))
+* **edge:** scrape Traefik and oauth2-proxy metrics in Prometheus ([#366](https://github.com/lifekit-hq/lifekit-stack/issues/366)) ([c8bb11c](https://github.com/lifekit-hq/lifekit-stack/commit/c8bb11ce245453d5be0d70e89cc0539dabbc7580))
+* **openclaw:** lock Ledger auto-memory off and report finance drift ([#352](https://github.com/lifekit-hq/lifekit-stack/issues/352)) ([56d8b8e](https://github.com/lifekit-hq/lifekit-stack/commit/56d8b8e417ce48f937729fa6d731bf661234ced0))
+* **scripts:** add post-upgrade smoke checks per pillar ([#356](https://github.com/lifekit-hq/lifekit-stack/issues/356)) ([113161b](https://github.com/lifekit-hq/lifekit-stack/commit/113161b4d1f70ee2dd9b05b9b5cb556338000b03))
+* **scripts:** push firstmate replies to Kit so it says them at once ([#393](https://github.com/lifekit-hq/lifekit-stack/issues/393)) ([e40b102](https://github.com/lifekit-hq/lifekit-stack/commit/e40b102a670981107aa44a56c7074b6f7d159f17))
+* **skills:** anchor Kit relay threads on the note id ([#396](https://github.com/lifekit-hq/lifekit-stack/issues/396)) ([0b2548f](https://github.com/lifekit-hq/lifekit-stack/commit/0b2548f3fc16ef66b4bdb84eb5a94cfa854ccb30))
+* **skills:** Kit hands logged-in errands and bookings to firstmate ([#383](https://github.com/lifekit-hq/lifekit-stack/issues/383)) ([ebebc9f](https://github.com/lifekit-hq/lifekit-stack/commit/ebebc9f2f6ff14933ec2294abd235fd20662fb31))
+* **skills:** log workouts on Kit from one line, with a gym-day nudge ([#368](https://github.com/lifekit-hq/lifekit-stack/issues/368)) ([e911446](https://github.com/lifekit-hq/lifekit-stack/commit/e911446218df6d3918191aab0d400d8b39a04233))
+
+
+### Bug Fixes
+
+* **alerting:** page the phone for critical alerts only ([#365](https://github.com/lifekit-hq/lifekit-stack/issues/365)) ([bdc966f](https://github.com/lifekit-hq/lifekit-stack/commit/bdc966fc42e8b7cc4d9103104c97fac22e8fab75))
+* **compose:** drop disabled Telegram accounts' botToken refs so channel reloads don't restart the gateway ([#360](https://github.com/lifekit-hq/lifekit-stack/issues/360)) ([ac64377](https://github.com/lifekit-hq/lifekit-stack/commit/ac643775a81a6181a2abb4f39aa0b66f82246831))
+* **deploy:** install the youtube-transcript skill on every OpenClaw deploy ([#380](https://github.com/lifekit-hq/lifekit-stack/issues/380)) ([a154c31](https://github.com/lifekit-hq/lifekit-stack/commit/a154c31c7ed4f7709b4a613ca57fd8c7780aa51e)), closes [#379](https://github.com/lifekit-hq/lifekit-stack/issues/379)
+* **deploy:** list the edge in gateway.trustedProxies in token mode ([#364](https://github.com/lifekit-hq/lifekit-stack/issues/364)) ([5fb406e](https://github.com/lifekit-hq/lifekit-stack/commit/5fb406eeab4a44ec004468009534c3f61b74a633))
+* **deploy:** parse multi-line OpenClaw smoke reply instead of reporting "no JSON" ([#384](https://github.com/lifekit-hq/lifekit-stack/issues/384)) ([1cfc538](https://github.com/lifekit-hq/lifekit-stack/commit/1cfc5388a0800e6d589d13f25c39d33f1209c760))
+* **openclaw:** drop skills.workshop.approvalPolicy retired in 2026.10.5 ([#388](https://github.com/lifekit-hq/lifekit-stack/issues/388)) ([6572359](https://github.com/lifekit-hq/lifekit-stack/commit/657235908529c7922d3e76889ce5a76161f8b406))
+* **openclaw:** make the managed-settings dir traversable and guard the build ([#358](https://github.com/lifekit-hq/lifekit-stack/issues/358)) ([ca95491](https://github.com/lifekit-hq/lifekit-stack/commit/ca95491615c158d6776f2fb055cdec0c650724fa))
+* **scripts:** name OpenClaw rehearsal red reasons in the job log, pin plugin fallback to core ([#355](https://github.com/lifekit-hq/lifekit-stack/issues/355)) ([ae5412b](https://github.com/lifekit-hq/lifekit-stack/commit/ae5412bbe0f73601c36927de86206d50d9fe0bba))
+* **scripts:** publish home invalidity and silence warning-resolved inbox notes ([#353](https://github.com/lifekit-hq/lifekit-stack/issues/353)) ([e98da65](https://github.com/lifekit-hq/lifekit-stack/commit/e98da6558fd7d92e4b11898ea2e6f068540d372f))
+* **scripts:** run deploy OpenClaw CLI steps inside the running gateway ([#362](https://github.com/lifekit-hq/lifekit-stack/issues/362)) ([94a98d6](https://github.com/lifekit-hq/lifekit-stack/commit/94a98d603705b5b2ada94ea0ab38e38f22b6ff32))
+* **scripts:** tolerate known machine-client-auth doctor finding in OpenClaw rehearsal ([#369](https://github.com/lifekit-hq/lifekit-stack/issues/369)) ([4defa25](https://github.com/lifekit-hq/lifekit-stack/commit/4defa25710f57151e1bf5c4621d9affee9a6ece4))
+* **skills:** route Kit and Ledger build asks through the relay note, not gh issue create ([#395](https://github.com/lifekit-hq/lifekit-stack/issues/395)) ([0563e39](https://github.com/lifekit-hq/lifekit-stack/commit/0563e3926391c2df6d41b7ded5214cd7f9b307af))
+* **skills:** youtube-transcript picks the spoken language's auto track ([#378](https://github.com/lifekit-hq/lifekit-stack/issues/378)) ([45f754e](https://github.com/lifekit-hq/lifekit-stack/commit/45f754e3ae1627c7daeb8957720a61da48025d48))
+* **skills:** youtube-transcript stops failing on YouTube 429 ([#374](https://github.com/lifekit-hq/lifekit-stack/issues/374)) ([0eca3a2](https://github.com/lifekit-hq/lifekit-stack/commit/0eca3a27d5b5f515c3338dcaa69a01863fff7252))
+
 ## [0.1.8](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.7...v0.1.8) (2026-10-19)
 
 
