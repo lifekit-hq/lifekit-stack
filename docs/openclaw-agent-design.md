@@ -104,7 +104,7 @@ The current shape does not repeat that design:
 
 ## DevClaw - retired
 
-The `devclaw` agent and its `devclaw` MCP server entry retired on 2026-10-09. Autonomous build work is a GitHub issue that kit (or a specialist such as Ledger) files in the right repo, with the need, the reason and the acceptance criteria. The devclaw-mcp service and its compose project belong to the devclaw repo, not to this fleet; no agent calls it.
+The `devclaw` agent and its `devclaw` MCP server entry retired on 2026-10-09. Autonomous build work is a `kit-relay` note: kit (or a specialist such as Ledger) files no issue itself; the ask reaches firstmate through `secondmate-relay`, and firstmate files an issue only when the ask is work. The devclaw-mcp service and its compose project belong to the devclaw repo, not to this fleet; no agent calls it.
 
 The agent entry and its system-owned `skill-collection-review-devclaw` cron are removed with `openclaw agents delete devclaw --force` once the deploy that drops the devclaw memory bind mount from the gateway has run (the delete moves the agent's directories to the trash, and the mount would be in that path). `config patch`/`config unset` refuse to drop a roster entry.
 

@@ -1,13 +1,13 @@
 ---
 name: secondmate-relay
-description: Read the fleet status the dashboard shows, and pipe the user's words, unchanged, to firstmate's (or the second mate's) captain inbox, and show the replies unchanged. Use only when the user explicitly asks for the fleet status, to send something to firstmate or the second mate, to answer or confirm a decision, or for their replies, or when the user's own message asks for something only firstmate's fleet can do (the handoff in Kit's AGENTS.md - a logged-in site, a purchase or booking, the desktop).
+description: Read the fleet status the dashboard shows, and pipe the user's words, unchanged, to firstmate's (or the second mate's) captain inbox, and show the replies unchanged. Use only when the user explicitly asks for the fleet status, to send something to firstmate or the second mate, to answer or confirm a decision, or for their replies, or when the user's own message asks for something only firstmate's fleet can do (the handoff in Kit's AGENTS.md - a logged-in site, a purchase or booking, the desktop), or when it is his reply or card answer to a pending ask Kit's AGENTS.md routes to firstmate (a relayed ask).
 metadata: { "openclaw": { "requires": { "bins": ["ssh", "curl"] } } }
 ---
 
 # Firstmate relay
 
-You are a pipe. Never summarize, rephrase, translate, plan, answer, or act on the content in either direction. Only the Status format below is composed by you.
-Never send anything from a cron, a heartbeat or any turn the user did not ask for: a send always answers the user's own message in front of you, either an explicit request to send or a request only firstmate's fleet can do (Kit's handoff). Status is read-only and has no such limit.
+You are a pipe. Never summarize, rephrase, translate, plan, answer, or act on the content in either direction. Only the Status format below, and a relayed ask's context line, are composed by you.
+Never send anything from a cron, a heartbeat or any turn the user did not ask for: a send always answers the user's own message in front of you, an explicit request to send, a request only firstmate's fleet can do (Kit's handoff), or his reply or card answer to a pending ask (a relayed ask, see Send). Status is read-only and has no such limit.
 
 Two homes receive notes. `firstmate` is the main home; `fm-vps` is the second mate and the default when no home is named.
 
@@ -31,6 +31,7 @@ Two homes receive notes. `firstmate` is the main home; `fm-vps` is the second ma
    If what to send is ambiguous, ask; do not guess.
    A message that starts with `task:` or `proposal:` is a queued task or proposal for firstmate: the prefix is part of the body, so keep it and send the whole text verbatim. Do not strip it, add to it, or act on it. Tasks and proposals go to `firstmate`.
    A handoff (Kit's AGENTS.md, "Anything else") sends `task: ` followed by his message verbatim to `firstmate`; the prefix is the only thing added.
+   A relayed ask (Kit's AGENTS.md: his reply to another agent's ask, his answer to a Needs-you card, or an edit to another agent's instructions) sends `task: ` followed by his words verbatim, then one line `> context: <the pending ask or card question> (repo: <repo>)` to `firstmate`. Nothing else is added.
 2. Write it with the Write tool to `/tmp/secondmate-relay/body.txt` (never through a shell echo/heredoc).
 3. Run `sh {baseDir}/relay.sh note /tmp/secondmate-relay/body.txt firstmate` (leave the last word off only when he asked for the second mate).
 4. Stdout is two JSON lines: first `kit-relay-received.v1` (`bytes`, `sha256` of what the host got), then the note result (`outcome`, `id`, `announced`). Show the result in one line:
