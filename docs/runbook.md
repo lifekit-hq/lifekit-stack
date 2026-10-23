@@ -1208,7 +1208,11 @@ and the status read is an HTTP GET Kit could always make.
   "+N not shown" appears only when `counts.decisions_open` really exceeds the list. Kit never calls `start_google_auth` (its link redirects to localhost and leaves
   a pending sign-in); on a Google sign-in failure it says so once and points at
   `docs/google-mcp-setup.md` steps 6-7. Tasks and proposals go to `firstmate` with the
-  `task:`/`proposal:` prefix; an answer is `answer <id>: <his words>` sent only on his
+  `task:`/`proposal:` prefix; an ask another agent made of Kit, an answer to a Needs-you
+  card, or an edit to another agent's instructions is relayed only as his reply on his own
+  turn: `task: <his words verbatim>` plus one `> context: <the pending ask or card question>
+  (repo: <repo>)` line (the skill's "relayed ask"), and OpenClaw files no GitHub issue for
+  any ask; an answer is `answer <id>: <his words>` sent only on his
   explicit words, only for an id in `decisions_open` at send time, to that item's
   `home_id`; Kit does not classify decisions or gate anything: under each firstmate
   home's standing answer-note rule an ordinary decision closes on the answer, while a
@@ -1243,7 +1247,9 @@ and the status read is an HTTP GET Kit could always make.
   line says it posts "Nothing needs you today." when nothing is open and no mail
   needs you, not `NO_REPLY`; and the Google Workspace section's line that Kit never calls
   `start_google_auth` and, on a sign-in failure, says so once and points at
-  `docs/google-mcp-setup.md`.
+  `docs/google-mcp-setup.md`. The relay-only door (no `gh issue create` for build asks)
+  is three more lines in the live file: the "Autonomous dev work" bullet, the `ask_user`
+  `answered` bullet and the "Never edit another agent's instructions" rule.
 - **Handoff to the PC:** Kit's "Anything else" section hands a request that needs a
   logged-in site, a purchase or booking, or the desktop to firstmate, which runs it in
   the browser on the owner's PC while it is on; the VPS does only login-free work. Kit
@@ -3133,9 +3139,9 @@ Nobody edits the finance agent's `AGENTS.md` by hand, but three things did
 (2026-09-29 to 2026-10-09: an `openclaw doctor --fix` migration, a crewmate's
 sweep, Kit acting on a chat message). The rule is that agent instructions change
 only through the repo that owns them (Kit's `AGENTS.md` carries it: no live edit
-of another agent's persona; tell the owner, and relay the ask to firstmate as a kit-relay note if
-the owner wants the change made in finance-sentry `agent/ledger`), and this timer is the backstop that notices when
-a live edit happens anyway. The file is not locked read-only: that would need a
+of another agent's persona; tell the owner, and relay the ask to firstmate as a kit-relay
+note if the owner wants the change made in finance-sentry `agent/ledger`), and this timer
+is the backstop that notices when a live edit happens anyway. The file is not locked read-only: that would need a
 gateway restart and break upgrade migrations.
 
 `lifekit-ledger-persona-check.timer` runs `scripts/ledger-persona/drift-alert.py`
