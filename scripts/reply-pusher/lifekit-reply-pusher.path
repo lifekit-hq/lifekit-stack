@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch the firstmate homes for a new reply
+
+[Path]
+# One line per pinned home (the installer renders them). A reply is written as
+# a rename into this directory, which PathChanged sees.
+__PATH_CHANGED__
+Unit=lifekit-reply-pusher.service
+
+[Install]
+WantedBy=multi-user.target

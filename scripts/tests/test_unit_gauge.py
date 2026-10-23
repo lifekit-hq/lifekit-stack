@@ -153,6 +153,19 @@ def test_fixed_timers_reported_without_the_lifekit_prefix(host):
     }
 
 
+def test_reply_pusher_path_unit_uses_path_activity_and_service_result(host):
+    unit, run, *_ = host
+    unit("lifekit-reply-pusher.path")  # named directly, not via list-unit-files
+    unit("lifekit-reply-pusher.service", active="inactive")  # idle oneshot is healthy
+    assert run() == {
+        'host_unit_active{unit="lifekit-reply-pusher"}': 1,
+        'host_unit_failed{unit="lifekit-reply-pusher"}': 0,
+    }
+    # A push that keeps failing sits in auto-restart with a non-success Result.
+    unit("lifekit-reply-pusher.service", active="activating", result="exit-code")
+    assert run()['host_unit_failed{unit="lifekit-reply-pusher"}'] == 1
+
+
 def test_result_other_than_success_counts_as_failed_even_when_active(host):
     unit, run, *_ = host
     unit("cron.service", result="signal")

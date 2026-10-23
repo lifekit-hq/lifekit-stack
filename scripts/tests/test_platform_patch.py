@@ -2,7 +2,7 @@
 
 The file is applied to the production gateway by deploy.sh, so the bounds the
 inbound hooks were authorized under are pinned here rather than left to review:
-secrets only as ${VAR} references, a dedicated hook token, one allowed agent,
+secrets only as ${VAR} references, a dedicated hook token, the allowed agents,
 ids-only templates, and no listener beyond the gateway's loopback publish. The
 plugin allowlist and the agent-memory and read-only Google Workspace bounds of
 the openclaw compose project (lifekit-stack#175) are pinned the same way.
@@ -54,24 +54,68 @@ def test_hook_path_is_not_in_git():
     assert ENV_REF.fullmatch(HOOKS["path"]), "a path committed to the repo is guessable"
 
 
-def test_hooks_reach_only_the_finance_agent():
-    assert HOOKS["allowedAgentIds"] == ["finance"]
+# What each hook mapping may do. The agents are the only ones hooks reach
+# (hooks.allowedAgentIds), the session mode is what the mapping was authorized
+# under, and the fields are the only payload values its template may splice in.
+MAPPING_BOUNDS = {
+    "finance-sentry-companion": {
+        "agent": "finance",
+        "mode": "isolated",
+        "fields": {"kind", "eventId"},
+    },
+    "firstmate-reply": {
+        "agent": "kit",
+        "mode": "persistent",
+        "fields": {"home", "noteId"},
+    },
+}
+
+
+def test_hooks_reach_only_the_authorized_agents():
     assert HOOKS.get("allowRequestSessionKey", False) is False
     assert HOOKS["mappings"], "hooks enabled with no mapping"
+    assert {m["id"] for m in HOOKS["mappings"]} == set(MAPPING_BOUNDS)
+    assert sorted(HOOKS["allowedAgentIds"]) == sorted(
+        {b["agent"] for b in MAPPING_BOUNDS.values()}
+    )
     for mapping in HOOKS["mappings"]:
-        assert mapping["agentId"] == "finance"
-        assert mapping["sessionMode"] == "isolated"
+        bounds = MAPPING_BOUNDS[mapping["id"]]
+        assert mapping["agentId"] == bounds["agent"]
+        assert mapping["sessionMode"] == bounds["mode"]
         assert mapping.get("allowUnsafeExternalContent", False) is False
         assert "transform" not in mapping
 
 
+def test_persistent_mappings_use_a_static_session_key_of_their_own_agent():
+    # A persistent turn lands in a long-lived conversation, so its key is fixed
+    # in the file: never derived from the payload, always the mapping's agent.
+    for mapping in HOOKS["mappings"]:
+        if mapping["sessionMode"] != "persistent":
+            assert "sessionKey" not in mapping
+            continue
+        key = mapping["sessionKey"]
+        assert "{{" not in key
+        assert key.startswith(f"agent:{mapping['agentId']}:")
+
+
 def test_templates_interpolate_identifiers_only():
     # finance-sentry constitution, Principle VII: the hook carries ids only, so
-    # no free-text payload field may be spliced into the agent's prompt.
+    # no free-text payload field may be spliced into the agent's prompt. The
+    # same holds for a firstmate reply: never its body.
     for mapping in HOOKS["mappings"]:
-        for key in ("messageTemplate", "textTemplate"):
+        allowed = MAPPING_BOUNDS[mapping["id"]]["fields"]
+        for key in ("messageTemplate", "textTemplate", "sessionKey", "to"):
             fields = set(re.findall(r"\{\{\s*([^}\s]+)\s*\}\}", mapping.get(key, "")))
-            assert fields <= {"kind", "eventId"}, f"{key} interpolates {fields}"
+            assert fields <= allowed, f"{key} interpolates {fields}"
+
+
+def test_firstmate_reply_delivers_to_the_sessions_own_chat():
+    # No chat id of its own (docs/PRIVATE.md): the reply goes where Kit's main
+    # session last spoke.
+    mapping = next(m for m in HOOKS["mappings"] if m["id"] == "firstmate-reply")
+    assert mapping["match"] == {"path": "firstmate-reply"}
+    assert mapping["channel"] == "last"
+    assert "to" not in mapping
 
 
 def test_no_chat_id_literal():
