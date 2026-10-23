@@ -1,0 +1,36 @@
+[Unit]
+Description=Push firstmate replies to Kit's inbound hook
+After=network-online.target docker.service
+# A failing push retries forever on the backoff below; never trip a start limit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# The account that owns the fleet homes (README "VPS users"); it is in the
+# lifekit group, which is how it reads the two hook keys from the rendered env.
+# The installer substitutes the placeholders; REPLY_PUSHER_HOMES is space-separated.
+User=__ADMIN_USER__
+Environment="REPLY_PUSHER_HOMES=__FM_HOMES__"
+# Cursor and outbox per home: ids only, never a reply body.
+StateDirectory=lifekit-reply-pusher
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/bin/python3 /usr/local/libexec/lifekit-reply-pusher/reply_pusher.py run
+# Retry a failed push (gateway restarting, 5xx) with growing delay, 5 s up to 5 min.
+# Exit 78 (not configured or not baselined) is not retried: an operator step is missing.
+Restart=on-failure
+RestartSec=5
+RestartSteps=6
+RestartMaxDelaySec=300
+RestartPreventExitStatus=78
+# It only reads the homes (through fm-inbox.sh receipts) and writes its state dir.
+NoNewPrivileges=yes
+ProtectSystem=strict
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+# Boot catch-up: a .path unit cannot see a reply that landed while the box was down.
+WantedBy=multi-user.target

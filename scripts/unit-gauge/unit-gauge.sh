@@ -10,9 +10,9 @@
 # by install-host-gauges.sh) - see docs/runbook.md "Host unit gauge".
 #
 #   host_unit_active{unit}  1 when the unit is active, else 0. For a watched
-#                           timer the unit is its service and active tracks
-#                           the .timer (the oneshot service is inactive
-#                           between runs by design).
+#                           timer or path unit the unit is its service and
+#                           active tracks the .timer/.path (the oneshot service
+#                           is inactive between runs by design).
 #   host_unit_failed{unit}  1 when the unit's state is failed or its last
 #                           Result is not success, else 0.
 #
@@ -32,6 +32,9 @@ TIMER_GLOB='lifekit-*.timer'
 # Timers outside the lifekit-* naming: the vault sync, the openclaw-config sync
 # and the vault rotation, named before the convention and kept for continuity.
 FIXED_TIMERS=(memory-sync.timer openclaw-config-sync.timer memory-rotate.timer)
+# Path units handled like timers: the .path unit is the one that must stay
+# active, its oneshot service is idle between runs and only its Result counts.
+FIXED_PATHS=(lifekit-reply-pusher.path)
 
 declare -A SEEN=()
 lines=()
@@ -86,13 +89,13 @@ for u in "${units[@]}"; do
   emit "${u%.service}" "$ACTIVE" "$RESULT" "$FILE_STATE"
 done
 
-timers=("${FIXED_TIMERS[@]}")
+timers=("${FIXED_TIMERS[@]}" "${FIXED_PATHS[@]}")
 globbed="$(list_installed "$TIMER_GLOB")"
 while IFS= read -r t; do [[ -n "$t" ]] && timers+=("$t"); done <<< "$globbed"
 for timer in "${timers[@]}"; do
   [[ -n "${SEEN[$timer]:-}" ]] && continue
   SEEN[$timer]=1
-  svc="${timer%.timer}.service"
+  svc="${timer%.*}.service"
   state "$timer"
   [[ -z "$LOAD" || "$LOAD" == "not-found" ]] && continue
   timer_active="$ACTIVE" timer_file_state="$FILE_STATE"

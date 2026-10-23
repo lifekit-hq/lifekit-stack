@@ -271,11 +271,14 @@ it.
 
 #### Inbound hooks and the finance pulse (in the platform file since 2026-09-18)
 
-The same file turns on OpenClaw's inbound HTTP hooks for one caller and one
-agent, and gives the finance agent a heartbeat:
+The same file turns on OpenClaw's inbound HTTP hooks for two callers and two
+agents, and gives the finance agent a heartbeat:
 
-- `hooks`: enabled, `allowedAgentIds: ["finance"]`, caller-supplied session
-  keys off, and one mapping - `POST <hook path>/finance-sentry` runs the
+- `hooks`: enabled, `allowedAgentIds: ["finance", "kit"]` (the second is the
+  firstmate-reply mapping below; it also lets a token holder target kit
+  through the direct `/hooks/agent` endpoint, which the token already lets
+  them do for finance), caller-supplied session
+  keys off, and two mappings. The first: `POST <hook path>/finance-sentry` runs the
   finance agent in an isolated session and delivers to its Telegram chat. The
   template interpolates `kind` and `eventId` only: the push carries
   identifiers, the agent reads the detail back through its MCP tools. The
@@ -283,6 +286,12 @@ agent, and gives the finance agent a heartbeat:
   that `get_pending_companion_events` returns per event (one bare link per
   line, none for an event without one, never a built or guessed link), so the
   Telegram message is clickable into the app.
+  The second, `POST <hook path>/firstmate-reply`, is called by the reply
+  pusher (see "Reply pusher"): it runs kit's persistent main session
+  (`agent:kit:main`, a static key, so no caller opt-in) with a template that
+  interpolates `home` and `noteId` only, and delivers to that session's last
+  route. A hook turn queues behind an owner turn in flight on the same
+  session key.
 - `agents.entries.finance.heartbeat`: **retired 2026-09-26, see the fs-685
   note below** - the key is now `{"every": "0m"}`, same shape as
   `agents.defaults.heartbeat`, so the finance agent no longer ticks on the
@@ -929,8 +938,8 @@ pipe: kit copies the text into a file and runs one script; it never decides what
   `kit-<UTC yyyymmdd>-<sha256(body)[:16]>`, so a retry of the same text the same day is
   a replay of the same note, never a second one.
 - **Answering:** the second mate answers a `kit-` note with `fm-inbox.sh reply <id>`
-  (one reply per note) and then `drain --ack <id>`. Kit shows replies when asked; there
-  is no push.
+  (one reply per note) and then `drain --ack <id>`. Kit shows replies when asked, and
+  the reply pusher (see "Reply pusher") tells Kit at once when a `kit-` note is answered.
 
 The key reaches the second mate as the owner: any process in the gateway that can read
 it can send a note. `from=`, the two verbs, the rate limit, the `kit-` request ids and
@@ -1800,16 +1809,87 @@ set and skips it otherwise. Re-running the installer is how a home is added or
 removed: it reinstalls the script and rewrites the unit's `FM_HOMES`. The `lifekit-*.timer` glob in the unit gauge picks the timer up with
 no further change. Merge deploys the Grafana rule and dashboard.
 
+## Reply pusher
+
+When firstmate answers one of the owner's notes sent through Kit (a `kit-` request id),
+Kit says that reply in the owner's chat at once. `scripts/reply-pusher/` is the host
+unit behind it: `lifekit-reply-pusher.path` watches each pinned home's reply drop
+(`<home>/state/inbox/.replies`) and starts the oneshot `lifekit-reply-pusher.service`,
+which runs `reply_pusher.py`. The pusher reads a home only through
+`fm-inbox.sh receipts` (never inside the home), keeps its own cursor and an outbox under
+`/var/lib/lifekit-reply-pusher/<home>/`, and POSTs `<hook path>/firstmate-reply` with
+`{home, noteId, cursor}` - identifiers only, never a note or reply body - and
+`Idempotency-Key: <home>:<cursor>`. Kit's turn (the "Firstmate reply" paragraph of the
+`secondmate-relay` skill) reads the reply back with `relay.sh replies <home>` and says it.
+Only `kit-` replies push; `dash-`, `fs-`, `fleet-`, `term-`, any other prefix and no prefix are
+skipped (the cursor still moves past them).
+
+A failed POST keeps its outbox entry; the unit exits 1 and systemd retries it with a
+growing back-off (5 s up to 5 min, no start limit), so a gateway restart loses nothing and
+a retry carries the same key (the gateway answers a duplicate from its cache, no second
+turn). The gateway keeps no durable queue, which is why the pusher owns the outbox.
+Exit 78 (no cursor, or the two secrets missing or malformed) is not retried: run the
+installer, or fix `stack.env`.
+
+The pusher reads exactly two keys, `OPENCLAW_HOOK_TOKEN` and `OPENCLAW_HOOK_PATH`, from
+`/srv/lifekit-secrets/stack.env` on each run, held in memory only (secrets inventory rows,
+boundary rule). A rotation of the hook token or path therefore needs no pusher step; a push
+that lands between the render and the gateway recreate answers 401 and retries.
+
+**Install and cutover (operator step, never automatic).** The merge deploy lands the
+`firstmate-reply` mapping and `allowedAgentIds` through the platform patch; it does not
+install the units. On the VPS, as the admin account:
+
+```bash
+sudo FM_HOMES="<home> [<home> ...]" ADMIN_USER=<admin account> \
+  bash /srv/lifekit-stack/scripts/reply-pusher/install-reply-pusher.sh
+```
+
+The installer copies the script, renders the units for the pinned homes, **baselines each
+cursor at the home's newest existing reply (so no history replays)**, then enables the
+service (boot catch-up) and `--now` the path unit. `bootstrap-vps.sh` runs it when `FM_HOMES`
+(or `FM_HOME`) is set. Re-running is how a home is added or removed.
+
+Rehearse before trusting it:
+
+1. Send a synthetic note through Kit (the owner's own note, `kit-` id) and have the home
+   answer it with `fm-inbox.sh reply <id>`.
+2. `journalctl -u lifekit-reply-pusher -n 20` shows a clean run; no body, URL or token is
+   ever logged. `ls /var/lib/lifekit-reply-pusher/<home>/outbox` is empty and `cursor` has
+   advanced.
+3. Kit's main session shows an identifiers-only hook turn and the owner's chat gets one
+   message with the reply.
+4. **Check the delivery route.** The hook mapping delivers with `channel: "last"` from
+   `agent:kit:main`. The owner's Telegram DM runs in its own per-peer session
+   (`session.dmScope = per-channel-peer`), so if `agent:kit:main` has no last route to
+   that chat the turn runs but nothing is delivered. If so, do not widen the mapping
+   by hand: switch the mapping to an isolated session with an explicit
+   `channel: "telegram"` and `to: ${OPENCLAW_KIT_CHAT}` (a new master setting, like
+   `OPENCLAW_FINANCE_CHAT`) through the platform patch.
+5. Retry check: with the gateway unreachable (a maintenance window, never a forced
+   restart for this), answer another note: `outbox/` keeps one entry and the unit retries;
+   once the gateway is back exactly one hook turn arrives.
+
+A stuck outbox shows as `lifekit-reply-pusher.service` failed: `systemctl status
+lifekit-reply-pusher` and the journal name the cause (`transport error`, an HTTP status, a
+home's `fm-inbox receipts` exit). The host unit gauge tracks the `.path` unit (the oneshot is
+inactive by design) and the service's result.
+
+**Rollback:** `sudo systemctl disable --now lifekit-reply-pusher.path
+lifekit-reply-pusher.service`. Nothing else depends on it; the mapping can stay (it only
+answers an authorized caller) or be removed through the platform patch.
+
 ## Host unit gauge
 
 `scripts/unit-gauge/unit-gauge.sh` writes `host_unit_active{unit}` and
 `host_unit_failed{unit}` every 5 minutes from `unit-gauge.timer` into the
 textfile directory (`host_unit.prom`). Units: every `actions.runner.*`
 service, `tailscaled`, `docker`, `containerd`, `cron`, `unattended-upgrades`,
-the service of every `lifekit-*.timer`, and the services of three timers named
-before that convention: `memory-sync`, `openclaw-config-sync` and
-`memory-rotate`. For a timer, `active` tracks the
-`.timer` (its oneshot service is inactive between runs by design) and `failed`
+the service of every `lifekit-*.timer`, the services of three timers named
+before that convention (`memory-sync`, `openclaw-config-sync` and
+`memory-rotate`), and `lifekit-reply-pusher` (a `.path` unit, not a timer). For a
+timer or the path unit, `active` tracks the
+`.timer`/`.path` (its oneshot service is inactive between runs by design) and `failed`
 is the service's last `Result` not being `success`. A unit not installed on
 the host is skipped, and so is one that is not enabled and not running unless it
 has failed. If `systemctl` itself errors the script exits nonzero without

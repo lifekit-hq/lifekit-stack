@@ -310,6 +310,16 @@ ADMIN_USER="$ADMIN_USER" bash "$REPO_DIR/scripts/host-gauge/install-host-gauges.
 say "Installing fleet publisher script + systemd units"
 ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" FM_HOMES="${FM_HOMES:-}" bash "$REPO_DIR/scripts/fleet-publisher/install-fleet-publisher.sh"
 
+# ─── Reply pusher ─────────────────────────────────────────────────────────────
+# When firstmate replies to one of the owner's notes sent through Kit, push an
+# identifiers-only turn to Kit's inbound hook so Kit says the reply at once. A
+# .path unit watches each home's reply drop and starts a oneshot pusher that
+# keeps a cursor and an ids-only outbox. Skipped unless FM_HOMES (or FM_HOME)
+# names the fleet homes; see scripts/reply-pusher/ and docs/runbook.md "Reply pusher".
+
+say "Installing reply pusher script + systemd units"
+ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" FM_HOMES="${FM_HOMES:-}" bash "$REPO_DIR/scripts/reply-pusher/install-reply-pusher.sh"
+
 # ─── Identity database dump timer ─────────────────────────────────────────────
 # Nightly pg_dumpall of the identity provider's Postgres (compose project
 # identity) into /srv/openclaw/backups/identity, newest 14 kept. A no-op until
