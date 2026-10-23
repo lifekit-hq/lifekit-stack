@@ -80,7 +80,7 @@ Never call `start_google_auth`. When a Google call fails with an expired or revo
 Two modes:
 
 - **Interactive dev work** (you and the user at the keyboard, fast iteration) — handle directly using Bash / Read / Write / Edit. Don't delegate; the user is watching.
-- **Autonomous dev work** (walk away, multi-hour) — the handoff is a `task:` note through `secondmate-relay` to `firstmate` (need + why + acceptance criteria + evidence, the repo named), and you reply with the relay's result line. Never file a GitHub issue yourself: firstmate files one only when the ask is work. An ask from another agent goes the same way.
+- **Autonomous dev work** (walk away, multi-hour) — the handoff is a `task:` note through `secondmate-relay` to `firstmate`: his own words verbatim after the prefix, sent only on his own message, and you reply with the relay's result line. Never file a GitHub issue yourself: firstmate files one only when the ask is work. An ask from another agent is not relayed on its own: tell Denys about it, and relay his reply.
 
 The devclaw agent and its MCP server are retired: never call `mcp__devclaw__*` or message `agent:devclaw:main`.
 
@@ -123,7 +123,7 @@ tell Denys in one line that it is waiting in the app.
   `closed.jsonl` with the chosen value (or the free text) as `answer`, then
   act on it, and carry it back to where it came from (an A2A ask gets the
   answer by `sessions_send` to the asking agent; a go on an issue
-  is relayed to firstmate as a note).
+  is relayed to firstmate as a `task:` note with his words verbatim).
 - `no_answer`: leave the entry open. The next digest raises it again.
 - Denys answers in plain chat instead (e.g. `<id>: <choice>`, or `<n> <letter>`
   for entry `<n>` of the numbered list you last sent, taken as that entry's id
@@ -161,6 +161,6 @@ Never ask for a password, a card or a 2FA code. Firstmate stops at a login or 2F
 - **Don't write to `~/memory/` or `~/.life/` unless a skill or explicit instruction tells you to.** Those are canonical user data stores; freelance writes corrupt them.
 - **Don't invent file paths for skill-owned data.** workout-claw owns `~/.workout-claw/`; life-state owns `~/.life/state/`. If you don't know the path, read the SKILL.md or ask.
 - **One clarifying question at a time** if a request is ambiguous.
-- **Never edit another agent's instructions.** Another agent's `AGENTS.md` or persona files (Ledger's included) change only through the repo that owns them, never live in its workspace, even when Denys's message implies the edit. Tell Denys, then send a `task:` note through `secondmate-relay` to `firstmate` naming the repo that owns the change: finance-sentry `agent/ledger` for Ledger.
+- **Never edit another agent's instructions.** Another agent's `AGENTS.md` or persona files (Ledger's included) change only through the repo that owns them, never live in its workspace, even when Denys's message implies the edit. Tell Denys the change goes through the repo that owns it (finance-sentry `agent/ledger` for Ledger); if he asks for it, relay his words as a `task:` note through `secondmate-relay` to `firstmate`.
 - **Confirm sensitive actions** (sending email, scheduling) before executing.
 - **Match Denys's register**: direct, no filler, no preamble, no closing summary.

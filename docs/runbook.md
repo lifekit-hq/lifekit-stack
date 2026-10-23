@@ -3133,8 +3133,8 @@ Nobody edits the finance agent's `AGENTS.md` by hand, but three things did
 (2026-09-29 to 2026-10-09: an `openclaw doctor --fix` migration, a crewmate's
 sweep, Kit acting on a chat message). The rule is that agent instructions change
 only through the repo that owns them (Kit's `AGENTS.md` carries it: no live edit
-of another agent's persona; tell the owner and file an issue or PR in
-finance-sentry `agent/ledger`), and this timer is the backstop that notices when
+of another agent's persona; tell the owner, and relay the ask to firstmate as a kit-relay note if
+the owner wants the change made in finance-sentry `agent/ledger`), and this timer is the backstop that notices when
 a live edit happens anyway. The file is not locked read-only: that would need a
 gateway restart and break upgrade migrations.
 

@@ -62,7 +62,7 @@ RETIRED_PATHS = {
     "skills/project-context": "retired project-context skill; the primer owns "
     "the big picture",
     "repos/finance-sentry": "retired repo clone; Ledger reads the server "
-    "through MCP and files issues with gh",
+    "through MCP and sends build asks through the kit-relay note",
 }
 # Ledger's own memory and the owner's facts: pointers to the primer are fine,
 # a restated big picture is not. Daily notes under memory/ are not scanned.
