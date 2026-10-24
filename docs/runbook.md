@@ -328,14 +328,12 @@ per-job scratch, and the workspace `HEARTBEAT.md`, which is a no-op in
 cron job" below for why the pulse is a cron row and not the heartbeat lane).
 `scripts/ensure-finance-pulse.sh` declares it from `scripts/finance-pulse.md`:
 the message is a short contract preamble (`NO_REPLY` or exactly one message) followed by
-the checklist verbatim. Run it on the host after the `ledger-pulse` row has
-been created on the gateway; it is idempotent and rewrites the message with
-`openclaw cron edit --message`, and the row's `payload.timeoutSeconds` (300 s)
-with `--timeout-seconds`, each only when it differs. The edit hot-reloads and
-restarts nothing. The timeout is declared there because successful pulse runs
-take 100-170 s and the old 180 s limit let ordinary variance fail runs at the
-model call (180-188 s) and fire the critical "scheduled or background run
-failed" alert; 300 s is about 1.75x the slowest successful run. The checklist's closing `Links:` paragraph has the pulse end
+the checklist verbatim. The same script declares the row's `payload.timeoutSeconds`
+(`TIMEOUT_SECONDS` in the script, with the headroom rationale). Run it on the host
+after the `ledger-pulse` row has been created on the gateway; it is idempotent and
+rewrites the message with `openclaw cron edit --message` and the timeout with
+`--timeout-seconds`, each only when it differs. The edit hot-reloads and
+restarts nothing. The checklist's closing `Links:` paragraph has the pulse end
 a sent message with the matching app page as a plain URL (`/events`,
 `/alerts`, or the single event's own `appUrl`; none for the quiet-week digest
 or a `NO_REPLY`); the app origin is not in git, so the paragraph tells the
@@ -411,7 +409,8 @@ JSON
 ```
 
 Right after creating the row, run `/srv/lifekit-stack/scripts/ensure-finance-pulse.sh`
-so the message carries the checklist (the placeholder above does not).
+so the message carries the checklist (the placeholder above does not) and the
+timeout matches the script's declared value.
 
 **Verify** after creating or after any change to the row: trigger one run
 (`openclaw cron run <id> --expect-final --json`) and confirm the result's
