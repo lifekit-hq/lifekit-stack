@@ -31,19 +31,28 @@ if cmd[:2] == ["cron", "list"]:
 elif cmd[:2] == ["cron", "edit"]:
     with (state.parent / "edits.jsonl").open("a") as f:
         f.write(json.dumps(cmd) + "\n")
-    msg = cmd[cmd.index("--message") + 1]
     for job in data["jobs"]:
         if job["id"] == cmd[2]:
-            job["payload"]["message"] = msg
+            if "--message" in cmd:
+                job["payload"]["message"] = cmd[cmd.index("--message") + 1]
+            if "--timeout-seconds" in cmd:
+                job["payload"]["timeoutSeconds"] = int(
+                    cmd[cmd.index("--timeout-seconds") + 1]
+                )
     state.write_text(json.dumps(data))
 else:
     sys.exit("unexpected: " + " ".join(cmd))
 """
 
 
-def run(tmp_path: Path, message: str, name: str = "ledger-pulse"):
+def run(
+    tmp_path: Path, message: str, name: str = "ledger-pulse", timeout: int | None = 180
+):
     state = tmp_path / "state.json"
     if not state.exists():
+        payload = {"kind": "agentTurn", "message": message}
+        if timeout is not None:
+            payload["timeoutSeconds"] = timeout
         state.write_text(
             json.dumps(
                 {
@@ -57,7 +66,7 @@ def run(tmp_path: Path, message: str, name: str = "ledger-pulse"):
                             "id": "job1",
                             "name": name,
                             "enabled": True,
-                            "payload": {"kind": "agentTurn", "message": message},
+                            "payload": payload,
                         },
                     ]
                 }
@@ -115,3 +124,30 @@ def test_missing_row_fails_without_editing(tmp_path):
     assert res.returncode == 1
     assert "no 'ledger-pulse' automation row" in res.stderr
     assert edits(tmp_path) == []
+
+
+def test_timeout_is_converged_to_declared_value(tmp_path):
+    res, state = run(tmp_path, "stale")
+    assert res.returncode == 0, res.stderr
+    (cmd,) = edits(tmp_path)
+    assert cmd[cmd.index("--timeout-seconds") + 1] == "300"
+    assert json.loads(state.read_text())["jobs"][1]["payload"]["timeoutSeconds"] == 300
+
+
+def test_timeout_alone_is_edited_without_touching_message(tmp_path):
+    run(tmp_path, "stale")  # converge both
+    state = tmp_path / "state.json"
+    data = json.loads(state.read_text())
+    data["jobs"][1]["payload"]["timeoutSeconds"] = 180
+    state.write_text(json.dumps(data))
+    res, _ = run(tmp_path, "stale")
+    assert res.returncode == 0, res.stderr
+    first, second = edits(tmp_path)
+    assert "--message" not in second
+    assert second[second.index("--timeout-seconds") + 1] == "300"
+
+
+def test_unset_timeout_is_set(tmp_path):
+    res, state = run(tmp_path, "stale", timeout=None)
+    assert res.returncode == 0, res.stderr
+    assert json.loads(state.read_text())["jobs"][1]["payload"]["timeoutSeconds"] == 300
