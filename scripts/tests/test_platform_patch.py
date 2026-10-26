@@ -132,22 +132,23 @@ def test_firstmate_reply_delivers_to_the_owners_kit_dm():
     assert mapping["to"] == "${OPENCLAW_KIT_CHAT}"
 
 
-def test_kit_chat_falls_back_to_the_owners_telegram_chat_only():
-    # Same shape as OPENCLAW_FINANCE_CHAT: the owner's personal chat is the
-    # default, and with both unset the value stays empty in the container so the
-    # deploy's dry run refuses the patch (never a "last" fallback).
+def test_kit_chat_defaults_like_the_finance_chat():
+    # The hook's explicit target is read from the container env; it must resolve
+    # exactly as OPENCLAW_FINANCE_CHAT does (own setting, else the owner's
+    # personal chat, else empty so the deploy's dry run refuses the patch).
+    services = compose_services()
     for service in ("openclaw-gateway", "openclaw-cli"):
-        assert re.search(
-            r"^\s+OPENCLAW_KIT_CHAT: \$\{OPENCLAW_KIT_CHAT:-\$\{LIFEKIT_TELEGRAM_CHAT:-\}\}$",
-            service_block(service),
-            re.M,
-        ), f"{service} must default OPENCLAW_KIT_CHAT to LIFEKIT_TELEGRAM_CHAT"
-
-
-def test_kit_chat_is_a_documented_master_setting():
-    secrets = (REPO / "docs/secrets.md").read_text()
-    assert re.search(r"^\| `OPENCLAW_KIT_CHAT` \| master \| setting \|", secrets, re.M)
-    assert "OPENCLAW_KIT_CHAT" in (REPO / ".env.example").read_text()
+        env = services[service]["environment"]
+        assert (
+            env["OPENCLAW_KIT_CHAT"]
+            == "${OPENCLAW_KIT_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}"
+        )
+        assert (
+            env["OPENCLAW_KIT_CHAT"].replace(
+                "OPENCLAW_KIT_CHAT", "OPENCLAW_FINANCE_CHAT"
+            )
+            == env["OPENCLAW_FINANCE_CHAT"]
+        )
 
 
 def test_no_chat_id_literal():

@@ -2253,7 +2253,7 @@ Rehearse before trusting it:
 2. `journalctl -u lifekit-reply-pusher -n 20` shows a clean run; no body, URL or token is
    ever logged. `ls /var/lib/lifekit-reply-pusher/<home>/outbox` is empty and `cursor` has
    advanced.
-3. Kit's main session shows an identifiers-only hook turn and the owner's chat gets one
+3. An identifiers-only hook turn runs in an isolated Kit session and the owner's Kit DM gets one
    message with the reply.
 4. **Check the delivery route.** The hook mapping runs kit in an isolated session and
    delivers with an explicit `channel: "telegram"` and `to: ${OPENCLAW_KIT_CHAT}`, so it
