@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Allow-list SOCKS5 relay in front of the yt-tunnel ssh forward.
 
-skills/youtube-transcript talks to this relay, never to the ssh -D listener.
+skills/youtube-transcript and the job queue's egress (skills/job-queue, the
+reel-claim-check downloads) talk to this relay, never to the ssh -D listener.
 The relay is the only thing listening on the docker bridge address; the ssh
 forward (an open SOCKS proxy into the owner's PC network) binds loopback only,
 which no container can reach. The relay speaks SOCKS5 to its client: no auth,
 CONNECT only, domain-name addresses only, and only for youtube.com,
-googlevideo.com, ytimg.com and their subdomains. Everything else, IP literals
+googlevideo.com, ytimg.com (YouTube), instagram.com, cdninstagram.com and
+fbcdn.net (Instagram's pages and API, and the CDNs its media is served from)
+and their subdomains. Everything else, IP literals
 included, is refused with reply 0x02 and a log line. An allowed name goes on to
 the ssh forward still unresolved (socks5h), so the PC resolves it; an upstream
 that is down or stuck answers the client with reply 0x05.
@@ -22,7 +25,14 @@ import re
 import struct
 import sys
 
-ALLOWED = ("youtube.com", "googlevideo.com", "ytimg.com")
+ALLOWED = (
+    "youtube.com",
+    "googlevideo.com",
+    "ytimg.com",
+    "instagram.com",
+    "cdninstagram.com",
+    "fbcdn.net",
+)
 HOSTNAME = re.compile(
     r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*"
 )

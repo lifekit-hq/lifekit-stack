@@ -942,16 +942,13 @@ def post_up_ytt(env, tmp_path, ensure=None, curl_fail=False):
         fake / "skills/youtube-transcript",
         dirs_exist_ok=True,
     )
-    shutil.copytree(
-        REPO / "skills/reel-claim-check",
-        fake / "skills/reel-claim-check",
-        dirs_exist_ok=True,
-    )
+    for skill in ("reel-claim-check", "job-queue"):
+        shutil.copytree(
+            REPO / "skills" / skill, fake / "skills" / skill, dirs_exist_ok=True
+        )
     (fake / "scripts").mkdir(parents=True, exist_ok=True)
-    shutil.copy(
-        REPO / "scripts/ensure-reel-claim-check.sh",
-        fake / "scripts/ensure-reel-claim-check.sh",
-    )
+    for name in ("ensure-reel-claim-check.sh", "ensure-job-queue.sh"):
+        shutil.copy(REPO / "scripts" / name, fake / "scripts" / name)
     script = fake / "scripts/ensure-youtube-transcript.sh"
     if ensure is None:
         text = (REPO / "scripts/ensure-youtube-transcript.sh").read_text()
@@ -1023,6 +1020,18 @@ def test_post_up_installs_the_reel_claim_check_skill_into_kits_workspace(env, tm
         assert (kit / "skills/reel-claim-check" / f).read_bytes() == (
             REPO / "skills/reel-claim-check" / f
         ).read_bytes()
+
+
+def test_post_up_installs_the_shared_job_queue_before_its_first_consumer(env, tmp_path):
+    r, failures, state = post_up_ytt(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert failures == []
+    for f in ("SKILL.md", "jobq.py", "drain-gate.js"):
+        assert (state / "skills/job-queue" / f).read_bytes() == (
+            REPO / "skills/job-queue" / f
+        ).read_bytes()
+    out = r.stdout
+    assert out.index("job queue installed") < out.index("reel-claim-check skill ->")
 
 
 def test_post_up_skips_the_reel_claim_check_skill_on_a_box_without_kit(env, tmp_path):
@@ -1159,6 +1168,8 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/ensure-youtube-transcript.sh", True),
         ("scripts/ensure-reel-claim-check.sh", True),
         ("skills/reel-claim-check/reel.py", True),
+        ("scripts/ensure-job-queue.sh", True),
+        ("skills/job-queue/jobq.py", True),
         ("scripts/openclaw-smoke-verdict.py", True),
         ("skills/youtube-transcript/transcript.py", True),
         ("skills/youtube-transcript/SKILL.md", True),

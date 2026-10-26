@@ -156,6 +156,11 @@ services:
       # being retired, not a source it should ever fall back to.
       FINANCE_SENTRY_MCP_TOKEN: ${FINANCE_SENTRY_MCP_TOKEN:-}
       OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
+      # The shared job queue's egress (skills/job-queue/jobq.py, docs/runbook.md
+      # "Shared job queue"): the proxy queued downloads go out through, a
+      # socks5h:// or http:// URL or "direct". Empty means the default, the PC
+      # relay at socks5h://host.docker.internal:18081.
+      LIFEKIT_EGRESS_PROXY: ${LIFEKIT_EGRESS_PROXY:-}
       PATH: /home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:

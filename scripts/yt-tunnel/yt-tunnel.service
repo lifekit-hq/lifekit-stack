@@ -9,7 +9,8 @@
 #
 # The listener binds loopback ONLY: it is an open SOCKS proxy into the PC's
 # network and no container can reach host loopback. The one thing that talks to
-# it is yt-relay.service, which allows YouTube hostnames only. ssh opens the
+# it is yt-relay.service, which allows its listed YouTube and Instagram
+# hostnames only. ssh opens the
 # listener only after it has connected, so while the PC is off nothing listens
 # and the relay answers its client with a SOCKS failure.
 [Unit]

@@ -1424,52 +1424,153 @@ docker exec "$G" openclaw cron edit "$ID" \
   skill folder from kit's workspace. The CLI pin rolls back with the image ("Rolling back
   OpenClaw").
 
+### Shared job queue
+
+Work that needs an egress the server lacks waits on one shared, typed queue and runs on its
+own when the egress answers. Today the egress is the owner's PC (the yt-tunnel relay, "YouTube
+transcripts through the PC"), so the owner can send work while the PC is off and get each
+answer once it is on. Reel checks are its first kind ("Instagram reel claim check").
+
+- **Skill:** `skills/job-queue` (`jobq.py`, stdlib only, plus `drain-gate.js` and a short
+  `SKILL.md`), installed by the deploy into the gateway's shared skills directory
+  (`/srv/openclaw/config/skills/job-queue`, `~/.openclaw/skills/job-queue` in the container) by
+  `scripts/ensure-job-queue.sh`, which also reports read-only whether the drain cron row exists
+  and runs the shipped gate. A change to either triggers the OpenClaw phases.
+- **Jobs:** one private JSON file per job, `<kind>-<key>.json` (mode 0600) in
+  `~/.life-state/job-queue/` in the gateway, i.e. `/var/lib/lifekit/job-queue/` on the host
+  (mode 0700). A job is keyed by its kind and key (a reel's shortcode), so the same reel sent
+  twice is one job; it names the handler command the drain runs, the host its egress pre-check
+  connects to, its payload and a one-line label. Finished jobs are pruned after 14 days
+  (`JOBQ_KEEP_DAYS`). Nothing about a job's result beyond its first line is kept here.
+- **Egress, configured in one place:** `LIFEKIT_EGRESS_PROXY` in
+  `/srv/lifekit-secrets/stack.env`, passed to the gateway by `compose/openclaw/docker-compose.yml`.
+  Unset or empty is the PC relay, `socks5h://host.docker.internal:18081`; it takes any
+  `socks5h://` or `http://` proxy URL, or `direct`. The queue's readiness pre-check and every
+  handler's downloads use that one value, so a later server-side drainer (yt-dlp through a
+  rented proxy, say) is a value change, not a code change. Changing it recreates the gateway on
+  the next deploy.
+- **Drain:** one cron row on kit, `job-queue-drain`, every 2 minutes. Its trigger script
+  (`drain-gate.js`, stored in the cron row) runs `jobq.py next`, which never wakes the agent
+  unless a job can run now: nothing queued, a job already running, or an egress that does not
+  answer a real CONNECT to the job's host all skip the turn with no run history. When a job is
+  ready, the turn gets one appended instruction (`Run exactly: <handler> <job id>`) and the
+  owning skill says how to answer. Jobs run one at a time, oldest first.
+- **Exactly one answer per job, bounded:** a run that fails while the egress answers counts an
+  attempt and is retried quietly (`NO_REPLY`); the third failure (`JOBQ_MAX_ATTEMPTS`) is the
+  one failure message. A run that fails because the egress went away mid-run gives its attempt
+  back and waits. A job whose runs never report back (a turn killed, a gateway restart) is
+  taken up again after 30 minutes (`JOBQ_LEASE_MINUTES`), and given up with one message once
+  those runs reach the attempt limit. A job offered to 3 drain turns in a row that never ran
+  its handler is given up with one message too.
+
+Operator step, once per host, after the PR has deployed (a deploy run shows `cron:
+'job-queue-drain' is not set up` until it is done). Run as lifekit on the VPS:
+
+```bash
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+# The answers go to the owner's chat, from the env file. `cron add` has no failure-alert
+# flags, so the edit sets them.
+CHAT=$(sed -nE 's/^[[:space:]]*LIFEKIT_TELEGRAM_CHAT=["'"'"']?([0-9-]+)["'"'"']?[[:space:]]*$/\1/p' \
+  /srv/lifekit-secrets/stack.env)
+docker exec "$G" openclaw cron add \
+  --name job-queue-drain \
+  --description "Every 2 min: run one ready job from the shared job queue when its egress answers. Declared in docs/runbook.md (source: lifekit-stack)." \
+  --agent kit --session isolated --every 2m \
+  --trigger-script /home/node/.openclaw/skills/job-queue/drain-gate.js \
+  --message "Drain the shared job queue: follow the job instructions below exactly, one job, then answer as they say. With no job instructions below, reply exactly NO_REPLY." \
+  --timeout-seconds 900 \
+  --announce --channel telegram --account default --to "$CHAT"
+ID=$(docker exec "$G" openclaw cron list --json \
+  | docker exec -i "$G" node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);process.stdout.write((j.jobs||j).find(x=>x.name==="job-queue-drain").id)})')
+docker exec "$G" openclaw cron edit "$ID" \
+  --failure-alert --failure-alert-after 1 \
+  --failure-alert-mode announce --failure-alert-channel telegram \
+  --failure-alert-account-id default --failure-alert-to "$CHAT"
+```
+
+- **A changed gate:** the row stores the script, so when a deploy reports the gate `DIFFERS`,
+  re-apply it: `docker exec "$G" openclaw cron edit "$ID" --trigger-script /home/node/.openclaw/skills/job-queue/drain-gate.js`.
+- **What is waiting:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py list`.
+  Do not run `jobq.py next` by hand while the egress answers: each `next` that hands out a job
+  counts as an offer, and the third unclaimed one gives the job up.
+- **Drop a job:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py drop <job id>`
+  (the id `list` prints, e.g. `reel-<shortcode>`). Kit does this only when the owner asks.
+- **Verify:** `docker exec "$G" openclaw cron run "$ID" --due` with nothing queued, or with the
+  PC off, runs nothing (`docker exec "$G" openclaw cron runs "$ID"` shows no new run). With a
+  job queued and the PC on it runs the job and the answer reaches the owner's chat.
+- **A new kind** (the YouTube transcript move is the first follow-up): the skill calls
+  `jobq.add(kind, key, owner=..., handler=[...], probe=<host>, payload=..., label=...)` and,
+  in its `run <job id>` handler, `claim`, then `finish`, `retry` or `release`, downloading
+  through `egress_proxy()`; `skills/reel-claim-check/reel.py` is the worked example. The queue,
+  the gate and the cron row stay as they are.
+- **Rollback:** `docker exec "$G" openclaw cron rm "$ID"`, revert the PR, then on the host
+  `rm -r /srv/openclaw/config/skills/job-queue /var/lib/lifekit/job-queue` (the second drops
+  every waiting job).
+
 ### Instagram reel claim check
 
-The owner sends Kit an Instagram reel link in the Telegram chat; Kit downloads it, transcribes
-the speech locally, checks the factual claims against sources with the web tools it already
-has, and replies in the same chat with one short verdict. Free: no API key, no cookies, no
-Instagram login, no paid transcription.
+The owner sends Kit an Instagram reel link in the Telegram chat, as many as they like and
+whether or not the PC is on. Kit queues each one on the shared job queue and says so at once.
+When the PC is on, the drain downloads each reel through the PC, transcribes the speech
+locally, checks the factual claims against sources with the web tools Kit already has, and
+sends one short verdict per reel, the reel link on its first line. Free: no API key, no
+cookies, no Instagram login, no paid transcription. A video file the owner sends instead is
+transcribed and checked at once (the manual fallback).
 
-- **Skill:** `skills/reel-claim-check` (`SKILL.md` + `reel.py`, stdlib only). `reel.py`
-  keeps only the shortcode of the link and rebuilds the URL itself (a query string or account
-  name can never reach yt-dlp as an option), resolves `instagram.com/share/...` links by
-  following Instagram's redirect (yt-dlp does not read them), downloads audio with the pinned
-  yt-dlp that `scripts/ensure-youtube-transcript.sh` installs (one pin to bump), extracts 16 kHz
-  audio with `ffmpeg` and transcribes with the image's `whisper` (model `base`, language
-  detected). Reels over 15 minutes (`REEL_MAX_SECONDS`) or 100 MB are refused.
+- **Skill:** `skills/reel-claim-check` (`SKILL.md` + `reel.py`, stdlib only, needs the
+  `job-queue` skill). `reel.py <link>` keeps only the shortcode of the link and queues it
+  (`reel queued - ...` or `reel already queued - ...`, with the number waiting); the URL is
+  rebuilt from the shortcode, so a query string or account name can never reach yt-dlp as an
+  option. `reel.py run <job id>` is the drain's handler: it resolves `instagram.com/share/...`
+  links by following Instagram's redirect through the egress (yt-dlp does not read them),
+  downloads audio with the pinned yt-dlp that `scripts/ensure-youtube-transcript.sh` installs
+  (one pin to bump) with `--proxy` set to the egress, extracts 16 kHz audio with `ffmpeg` and
+  transcribes with the image's `whisper` (model `base`, language detected). Reels over 15
+  minutes (`REEL_MAX_SECONDS`) or 100 MB are refused. `reel.py <media file>` transcribes a
+  local file at once and keeps nothing.
+- **Egress:** the PC, through the yt-tunnel relay, whose allow-list takes `instagram.com`,
+  `cdninstagram.com` and `fbcdn.net` for this skill ("YouTube transcripts through the PC").
+  Nothing is installed on the PC. The queue's pre-check is a SOCKS CONNECT to
+  `www.instagram.com:443`, so a reel waits while the PC is off. Configured in one place,
+  `LIFEKIT_EGRESS_PROXY` ("Shared job queue").
 - **No login, so it can fail:** Instagram serves some reels only to a logged-in browser, and
-  may rate-limit this host's IP. The skill never logs in; it prints `reel unavailable -
-  Instagram serves this reel only to a logged-in browser ...` (exit 0) and Kit says so in the
-  reply. That is the expected outcome for those reels, not a fault. The same exit-0 lines cover
-  a deleted post, a post with no video, a too-long reel, a reel with no speech and an
-  unresolvable share link. A real failure (yt-dlp or whisper crash, tool missing) is exit 1 with
-  `reel failed: ...` on stderr.
+  may rate-limit. The skill never logs in; the run prints `Reel: <link>` and `reel unavailable
+  - Instagram serves this reel only to a logged-in browser ...` and Kit says so. That is the
+  expected outcome for those reels, not a fault. The same `reel unavailable` lines cover a
+  deleted post, a post with no video, a too-long reel, a reel with no speech and an
+  unresolvable share link. A real failure (yt-dlp or whisper crash, tool missing) is retried
+  by the queue and reported once as `reel check failed after N tries - <reason>`.
 - **Private path and retention:** the only copy this skill keeps is the transcript, as
   `<shortcode>.txt` (mode 0600) in `~/.life-state/reel-claim-check/` in the gateway, i.e.
-  `/var/lib/lifekit/reel-claim-check/` on the host (directory mode 0700). It is not served, not
-  in git and not in the openclaw-config mirror. The transcript is also returned to kit as the
-  tool output, so it sits in kit's session history in the gateway state, which the encrypted
-  off-box backup covers. The download is deleted right after audio extraction and the work
-  directory at the end of every run. Transcripts older than 14 days (`REEL_RETENTION_DAYS`) are
-  deleted by the next run: there is no timer. Kit must not copy a transcript elsewhere (the
-  skill says so).
-- **Install:** the deploy. The OpenClaw post-up phase runs `scripts/ensure-reel-claim-check.sh`,
-  which copies the skill into kit's workspace (a box with no kit workspace skips) and reports
-  read-only whether kit's allowlist names the skill and whether `ffmpeg`, `whisper` and the
-  yt-dlp are present in the gateway. A change to `skills/reel-claim-check/` or to the script
-  triggers the OpenClaw phases (`scripts/lib/openclaw-paths.sh`); a failed install turns the
-  deploy red.
+  `/var/lib/lifekit/reel-claim-check/` on the host (directory mode 0700). The queue entry
+  (`/var/lib/lifekit/job-queue/reel-<shortcode>.json`) holds the link and the first line of the
+  result. Neither is served, in git or in the openclaw-config mirror. The transcript is also
+  returned to kit as the tool output, so it sits in kit's session history in the gateway state,
+  which the encrypted off-box backup covers. The download is deleted right after audio
+  extraction and the work directory at the end of every run. Transcripts older than 14 days
+  (`REEL_RETENTION_DAYS`) are deleted by the next run: there is no timer. Kit must not copy a
+  transcript elsewhere (the skill says so).
+- **Install:** the deploy. The OpenClaw post-up phase runs `scripts/ensure-job-queue.sh` and
+  then `scripts/ensure-reel-claim-check.sh`, which copies the skill into kit's workspace (a box
+  with no kit workspace skips) and reports read-only whether kit's allowlist names the skill
+  and whether `ffmpeg`, `whisper`, the yt-dlp and `jobq.py` are present in the gateway. A change
+  to `skills/reel-claim-check/` or to the script triggers the OpenClaw phases
+  (`scripts/lib/openclaw-paths.sh`); a failed install turns the deploy red.
 
-Operator step, once per host, after the PR has deployed (a deploy run on the VPS shows the
-allowlist line `NOT on agent 'kit''s skills list` until it is done). Run as lifekit on the
-VPS; skip it when the deploy reported kit as unfiltered:
+Operator steps, once per host, after the PR has deployed:
+
+1. The relay runs `yt-relay.py` from the checkout, so its new allow-list needs a restart, as
+   the admin account on the host: `systemctl --user restart yt-relay.service`.
+2. The drain cron row, as in "Shared job queue" above.
+3. Kit's skill allowlist (a deploy run on the VPS shows `NOT on agent 'kit''s skills list` until
+   it is done; skip it when the deploy reported kit as unfiltered). Run as lifekit on the VPS:
 
 ```bash
 G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway)
 # Kit's skill allowlist, derived from the live list as in "Kit's workout log and gym-day nudge" step 2.
-docker exec "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const s=c.agents.entries.kit.skills;if(!Array.isArray(s))process.exit(1);if(!s.includes("reel-claim-check"))s.push("reel-claim-check");process.stdout.write(JSON.stringify({agents:{entries:{kit:{skills:s}}}}))' > /tmp/kit-skills.patch.json
+docker exec "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const s=c.agents.entries.kit.skills;if(!Array.isArray(s))process.exit(1);for(const n of ["reel-claim-check","job-queue"])if(!s.includes(n))s.push(n);process.stdout.write(JSON.stringify({agents:{entries:{kit:{skills:s}}}}))' > /tmp/kit-skills.patch.json
 docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/kit-skills.patch.json
 docker exec -i "$G" openclaw config patch --stdin < /tmp/kit-skills.patch.json
 rm /tmp/kit-skills.patch.json
@@ -1478,20 +1579,25 @@ rm /tmp/kit-skills.patch.json
 - **Kit's `AGENTS.md`** is live host state: add a line that an Instagram reel link (with or
   without "is this true") goes to the `reel-claim-check` skill. The skill's description
   already matches it, so routing works without that line, but the line makes it certain.
-- **Verify:** `docker exec "$G" python3 /home/node/.openclaw/agents/kit/workspace/skills/reel-claim-check/reel.py '<a public reel link>'`
-  prints `Reel:` ... `Transcript:` lines and the text, and leaves one `<shortcode>.txt` in the
-  private directory. A made-up link prints the `reel unavailable` line, which proves the
-  yt-dlp and the route to Instagram. Then send Kit a reel link and check the one-message verdict.
+- **Verify:** send Kit a public reel link; it answers `reel queued` at once, and
+  `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py list` shows
+  `reel-<shortcode>  queued`. With the PC off the job stays queued. With the PC on, within a
+  few minutes the verdict arrives as its own message and `list` shows the job `done` with one
+  `<shortcode>.txt` in the private directory. A made-up link ends as the `reel unavailable`
+  line, which proves the yt-dlp and the route to Instagram. The manual fallback, without the
+  queue: `docker exec "$G" python3 /home/node/.openclaw/agents/kit/workspace/skills/reel-claim-check/reel.py <a video file in the container>`
+  prints `File:` ... `Language:` lines and the text.
 - **Delete a transcript early:** `rm /var/lib/lifekit/reel-claim-check/<shortcode>.txt` on
-  the host (or `rm -r` the directory for all of them). This removes only the file this skill
-  keeps: the copy in kit's session history and its encrypted off-box backup stays until those
-  rotate.
+  the host (or `rm -r` the directory for all of them), and `jobq.py drop reel-<shortcode>` for
+  its queue entry. This removes only the files this skill keeps: the copy in kit's session
+  history and its encrypted off-box backup stays until those rotate.
 - **yt-dlp stops working on Instagram:** bump the pin in `scripts/ensure-youtube-transcript.sh`
   (version and SHA-256); the next deploy installs it and this skill picks it up.
-- **Rollback:** revert the PR (the deploy then stops installing the skill), remove
-  `reel-claim-check` from kit's workspace `skills/` on the host, and re-apply kit's old skills
-  list (the patch above without the name). Delete the private directory if the transcripts
-  are not wanted.
+- **Rollback:** revert the PR (the deploy then stops installing the skill and the queue),
+  `systemctl --user restart yt-relay.service` as the admin account, roll back "Shared job
+  queue", remove `reel-claim-check` from kit's workspace `skills/` on the host, and re-apply
+  kit's old skills list (the patch above without the names). Delete the private directory if
+  the transcripts are not wanted.
 
 ## Rolling back OpenClaw
 
@@ -3587,10 +3693,11 @@ No API key, no cookies, no paid service, nothing installed on the PC, and `-N` r
 command there.
 
 - **Allow-list:** the relay takes SOCKS5 no-auth CONNECT with a domain-name address only,
-  and only for `youtube.com`, `googlevideo.com`, `ytimg.com` or a subdomain of one of them
-  (label-boundary match, case-insensitive). Everything else (other names, lookalikes such
-  as `evilyoutube.com` or `youtube.com.evil.com`, IPv4/IPv6 address types, IP literals sent
-  as names) gets SOCKS reply `0x02` and a log line in `journalctl --user -u yt-relay`.
+  and only for `youtube.com`, `googlevideo.com`, `ytimg.com` or, for the queued reel checks
+  ("Instagram reel claim check"), `instagram.com`, `cdninstagram.com` and `fbcdn.net`, or a
+  subdomain of one of them (label-boundary match, case-insensitive). Everything else (other
+  names, lookalikes such as `evilyoutube.com` or `youtube.com.evil.com`, IPv4/IPv6 address
+  types, IP literals sent as names) gets SOCKS reply `0x02` and a log line in `journalctl --user -u yt-relay`.
   Allowed names go on to the tunnel unresolved, so the PC resolves them. The handshake and
   idle time are bounded, so a stuck client cannot hold the relay.
 - **PC off:** ssh opens its listener only after it has connected, so with the PC off the
@@ -3638,7 +3745,8 @@ systemctl --user status yt-tunnel.service yt-relay.service
 `YT_TUNNEL_PORT` / `YT_TUNNEL_BIND` (18082, `127.0.0.1`; loopback only),
 `YT_TUNNEL_RELAY_PORT` / `YT_TUNNEL_RELAY_BIND` (18081, docker0) and `YT_TUNNEL_UNIT_DIR`
 override the defaults. The relay units run `yt-relay.py` from the checkout, so a deploy
-that changes it needs `systemctl --user restart yt-relay.service`.
+that changes it (its allow-list, say) needs `systemctl --user restart yt-relay.service`.
+The shared job queue's default egress is this relay ("Shared job queue").
 
 The deploy installs the skill: the OpenClaw post-up phase runs
 `scripts/ensure-youtube-transcript.sh`, and a change to `skills/youtube-transcript/` or to
