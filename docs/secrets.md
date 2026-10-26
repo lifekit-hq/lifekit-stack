@@ -148,6 +148,7 @@ file appears in one of the two inventory tables.
 | `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS` | master | setting | CLI/gateway plaintext-WS switch |
 | `OPENCLAW_TZ` | master | setting | timezone |
 | `OPENCLAW_FINANCE_CHAT` | master | setting | Telegram chat id the finance agent delivers to (personal id) |
+| `OPENCLAW_KIT_CHAT` | master | setting | Telegram chat id the `firstmate-reply` hook delivers to, the owner's Kit DM (personal id; no fallback, the deploy refuses while unset) |
 | `LIFEKIT_TELEGRAM_CHAT` | master | setting | orchestrator/alert chat id (personal id) |
 | `DEVCLAW_CHAT` | master | setting | devclaw alert chat id (personal id) |
 | `NOTIFY_BOARD_BASE_URL` | master | setting | notify-relay: origin of the board links in owner notifications (non-secret) |

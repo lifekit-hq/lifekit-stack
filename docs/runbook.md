@@ -301,19 +301,19 @@ agents, and gives the finance agent a heartbeat:
   line, none for an event without one, never a built or guessed link), so the
   Telegram message is clickable into the app.
   The second, `POST <hook path>/firstmate-reply`, is called by the reply
-  pusher (see "Reply pusher"): it runs kit's persistent main session
-  (`agent:kit:main`, a static key, so no caller opt-in) with a template that
-  interpolates `home` and `noteId` only, and delivers to that session's last
-  route. A hook turn queues behind an owner turn in flight on the same
-  session key.
+  pusher (see "Reply pusher"): it runs kit in an isolated session with a
+  template that interpolates `home` and `noteId` only, and delivers to the
+  owner's Kit DM through an explicit `channel: "telegram"` and
+  `to: ${OPENCLAW_KIT_CHAT}`. Kit's persistent main session has no last route
+  to that chat, so the mapping never delivers to `"last"`.
 - `agents.entries.finance.heartbeat`: **retired 2026-09-26, see the fs-685
   note below** - the key is now `{"every": "0m"}`, same shape as
   `agents.defaults.heartbeat`, so the finance agent no longer ticks on the
   heartbeat lane at all. It stays the one `agents.entries` key in the
   platform file; every other per-agent key stays host state.
 - **No value is in git or in `openclaw.json`.** The file holds the literal
-  references `${OPENCLAW_HOOK_TOKEN}`, `${OPENCLAW_HOOK_PATH}` and
-  `${OPENCLAW_FINANCE_CHAT}`; OpenClaw resolves them from the container
+  references `${OPENCLAW_HOOK_TOKEN}`, `${OPENCLAW_HOOK_PATH}`,
+  `${OPENCLAW_FINANCE_CHAT}` and `${OPENCLAW_KIT_CHAT}`; OpenClaw resolves them from the container
   environment, which compose fills from `/srv/lifekit-secrets/stack.env` (see
   `.env.example`). `config patch` writes the reference back verbatim, so the
   deploy's compare sees equal strings and stays idempotent. The hook token is
@@ -2255,13 +2255,16 @@ Rehearse before trusting it:
    advanced.
 3. Kit's main session shows an identifiers-only hook turn and the owner's chat gets one
    message with the reply.
-4. **Check the delivery route.** The hook mapping delivers with `channel: "last"` from
-   `agent:kit:main`. The owner's Telegram DM runs in its own per-peer session
-   (`session.dmScope = per-channel-peer`), so if `agent:kit:main` has no last route to
-   that chat the turn runs but nothing is delivered. If so, do not widen the mapping
-   by hand: switch the mapping to an isolated session with an explicit
-   `channel: "telegram"` and `to: ${OPENCLAW_KIT_CHAT}` (a new master setting, like
-   `OPENCLAW_FINANCE_CHAT`) through the platform patch.
+4. **Check the delivery route.** The hook mapping runs kit in an isolated session and
+   delivers with an explicit `channel: "telegram"` and `to: ${OPENCLAW_KIT_CHAT}`, so it
+   no longer depends on a last route. (The owner's Telegram DM runs in its own per-peer
+   session, `session.dmScope = per-channel-peer`, which is why `agent:kit:main` never had
+   one: the earlier `channel: "last"` mapping ended in `Delivering to Telegram requires
+   target <chatId>`.) **One operator step before the deploy applies it:** place
+   `OPENCLAW_KIT_CHAT` (the owner's Kit DM chat id, a master setting) through the secrets
+   runbook, like `OPENCLAW_FINANCE_CHAT`. It has no fallback: while it is unset or empty
+   the deploy's dry run rejects the patch, the gateway keeps the old mapping and the
+   deploy ends red. Do not widen the mapping by hand.
 5. Retry check: with the gateway unreachable (a maintenance window, never a forced
    restart for this), answer another note: `outbox/` keeps one entry and the unit retries;
    once the gateway is back exactly one hook turn arrives.

@@ -73,7 +73,7 @@ MAPPING_BOUNDS = {
     },
     "firstmate-reply": {
         "agent": "kit",
-        "mode": "persistent",
+        "mode": "isolated",
         "fields": {"home", "noteId"},
     },
 }
@@ -117,13 +117,37 @@ def test_templates_interpolate_identifiers_only():
             assert fields <= allowed, f"{key} interpolates {fields}"
 
 
-def test_firstmate_reply_delivers_to_the_sessions_own_chat():
-    # No chat id of its own (docs/PRIVATE.md): the reply goes where Kit's main
-    # session last spoke.
+def test_firstmate_reply_delivers_to_the_owners_kit_dm():
+    # An isolated session has no last route and neither does kit's persistent
+    # main one (the owner's DM runs in its own per-peer session), so the route
+    # is explicit: a Telegram target read from the env, never "last" and never a
+    # chat id in the file (docs/PRIVATE.md).
     mapping = next(m for m in HOOKS["mappings"] if m["id"] == "firstmate-reply")
     assert mapping["match"] == {"path": "firstmate-reply"}
-    assert mapping["channel"] == "last"
-    assert "to" not in mapping
+    assert mapping["agentId"] == "kit"
+    assert mapping["sessionMode"] == "isolated"
+    assert "sessionKey" not in mapping
+    assert mapping["deliver"] is True
+    assert mapping["channel"] == "telegram"
+    assert mapping["to"] == "${OPENCLAW_KIT_CHAT}"
+
+
+def test_kit_chat_has_no_fallback_to_another_chat():
+    # Unlike OPENCLAW_FINANCE_CHAT, an unset OPENCLAW_KIT_CHAT must stay empty in
+    # the container so the deploy's dry run refuses the patch, rather than quietly
+    # routing the reply to some other chat.
+    for service in ("openclaw-gateway", "openclaw-cli"):
+        assert re.search(
+            r"^\s+OPENCLAW_KIT_CHAT: \$\{OPENCLAW_KIT_CHAT:-\}$",
+            service_block(service),
+            re.M,
+        ), f"{service} must pass OPENCLAW_KIT_CHAT through with an empty default"
+
+
+def test_kit_chat_is_a_documented_master_setting():
+    secrets = (REPO / "docs/secrets.md").read_text()
+    assert re.search(r"^\| `OPENCLAW_KIT_CHAT` \| master \| setting \|", secrets, re.M)
+    assert "OPENCLAW_KIT_CHAT" in (REPO / ".env.example").read_text()
 
 
 def test_no_chat_id_literal():
