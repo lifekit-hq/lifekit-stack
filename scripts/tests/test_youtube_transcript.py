@@ -583,7 +583,16 @@ def domain(name):
 
 @pytest.mark.parametrize(
     "name",
-    ["www.youtube.com", "YouTube.com", "rr1---sn-x.googlevideo.com.", "i.ytimg.com"],
+    [
+        "www.youtube.com",
+        "YouTube.com",
+        "rr1---sn-x.googlevideo.com.",
+        "i.ytimg.com",
+        "www.instagram.com",
+        "i.instagram.com",
+        "scontent-dub4-1.cdninstagram.com",
+        "instagram.fdub1-1.fna.fbcdn.net",
+    ],
 )
 def test_relay_forwards_allowed_names_unresolved_and_pipes_both_ways(relay, name):
     port, fake = relay()
@@ -604,6 +613,11 @@ def test_relay_forwards_allowed_names_unresolved_and_pipes_both_ways(relay, name
         (3, domain("evilyoutube.com")),
         (3, domain("youtube.com.evil.com")),
         (3, domain("notgooglevideo.com")),
+        (3, domain("evilinstagram.com")),
+        (3, domain("instagram.com.evil.com")),
+        (3, domain("notfbcdn.net")),
+        (3, domain("fbcdn.net.evil.com")),
+        (3, domain("facebook.com")),
         (3, domain("youtube.com@evil.com")),
         (3, domain("192.168.1.1")),
         (3, domain("::1")),

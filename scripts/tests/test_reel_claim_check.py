@@ -3,13 +3,18 @@
 
 yt-dlp, ffmpeg and whisper are replaced by stubs that write the files a real
 run would, and Instagram's share-link redirect by a fake opener, so nothing
-here touches the network or needs the models.
+here touches the network or needs the models. The queue is the real one
+(skills/job-queue) in a temporary directory, with the "direct" egress unless a
+test sets another.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -108,23 +113,44 @@ def box(tmp_path, monkeypatch):
         **os.environ,
         **{k: str(v) for k, v in stubs.items()},
         "REEL_CHECK_DIR": str(root),
+        "JOBQ_DIR": str(tmp_path / "queue"),
+        "LIFEKIT_EGRESS_PROXY": "direct",
         "STUB_LOG": str(log),
         "STUB_MODE": "ok",
         "WHISPER_TEXT": " Lemon water cures cancer.\nStudies show it. ",
     }
+    env.pop("JOBQ_MAX_ATTEMPTS", None)
     for k, v in env.items():
         monkeypatch.setenv(k, v)
+    return Box(env, root, log, tmp_path / "queue")
 
-    def run(arg: str, **extra):
+
+class Box:
+    def __init__(self, env, root, log, queue):
+        self.env, self.root, self.log, self.queue = env, root, log, queue
+
+    def __iter__(self):  # run, root, log
+        return iter((self.check, self.root, self.log))
+
+    def cli(self, *args: str, **extra):
         return subprocess.run(
-            [sys.executable, str(SKILL / "reel.py"), arg],
-            env={**env, **extra},
+            [sys.executable, str(SKILL / "reel.py"), *args],
+            env={**self.env, **extra},
             capture_output=True,
             text=True,
             check=False,
         )
 
-    return run, root, log
+    def check(self, link: str, **extra):
+        """Queue the link, then the drain turn's run of it."""
+        r = self.cli(link, **extra)
+        if r.returncode != 0 or not r.stdout.startswith("reel "):
+            return r
+        code = reel.parse_reel(link).code
+        return self.cli("run", f"reel-{code}", **extra)
+
+    def job(self, code: str = CODE) -> dict:
+        return json.loads((self.queue / f"reel-{code}.json").read_text())
 
 
 # --- URL parsing ------------------------------------------------------------
@@ -247,7 +273,6 @@ def test_share_link_follows_a_second_hop_on_instagram(monkeypatch):
     [
         ["https://evil.example/reel/DAbcdEFGhij/"],  # leaves instagram
         [""],  # answers 200: nothing to follow
-        [None],  # unreachable
         ["/somewhere/else/"] * 3,  # never reaches a reel
     ],
 )
@@ -256,21 +281,47 @@ def test_share_link_that_does_not_resolve_is_none(monkeypatch, locations):
     assert reel.resolve_share(SHARE) is None
 
 
+def test_an_unreachable_share_link_is_a_failed_run_not_an_answer(monkeypatch):
+    _share(monkeypatch, None)
+    with pytest.raises(OSError):
+        reel.resolve_share(SHARE)
+
+
+def test_a_share_link_is_resolved_through_the_egress(box, monkeypatch):
+    monkeypatch.setenv("LIFEKIT_EGRESS_PROXY", "socks5h://proxy.example:1080")
+    q = reel.jobq()
+    asked = []
+
+    def refuse(host, port, proxy, timeout):
+        asked.append((host, port, proxy))
+        raise ConnectionRefusedError("no egress")
+
+    monkeypatch.setattr(q, "open_connection", refuse)
+    with pytest.raises(OSError):
+        reel.resolve_share(SHARE)
+    assert asked == [("www.instagram.com", 443, "socks5h://proxy.example:1080")]
+
+
 def test_a_share_link_is_resolved_before_yt_dlp_sees_it(box, monkeypatch):
-    _, _, log = box
     monkeypatch.setattr(reel, "resolve_share", lambda r: reel.Reel(CODE))
-    code, out = reel.run(SHARE)
-    assert code == 0 and out.startswith(f"Reel: {LINK}")
-    assert LINK in log.read_text().splitlines()[0]
+    out, error = reel.check(SHARE)
+    assert error == "" and out.startswith(f"Reel: {LINK}")
+    assert LINK in box.log.read_text().splitlines()[0]
 
 
 def test_an_unresolvable_share_link_is_a_normal_answer_without_a_download(
     box, monkeypatch
 ):
-    _, root, log = box
     monkeypatch.setattr(reel, "resolve_share", lambda r: None)
-    assert reel.run(SHARE) == (0, reel.NO_SHARE)
-    assert log.read_text() == ""
+    assert reel.check(SHARE) == (reel.NO_SHARE, "")
+    assert box.log.read_text() == ""
+
+
+def test_a_queued_share_link_answers_with_the_link_the_owner_sent(box, monkeypatch):
+    monkeypatch.setattr(reel, "resolve_share", lambda r: None)
+    assert reel.enqueue(SHARE).startswith(reel.QUEUED)
+    out = reel.run_job(f"reel-{SHARE.code}")
+    assert out == f"Reel: {SHARE.url}\n{reel.NO_SHARE}"
 
 
 # --- the pipeline ---------------------------------------------------------------
@@ -336,61 +387,193 @@ def test_a_reel_that_cannot_be_fetched_is_a_normal_answer(box, mode, line):
     run, root, log = box
     r = run(LINK, STUB_MODE=mode)
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == line
+    assert r.stdout.splitlines() == [f"Reel: {LINK}", line]
     assert list(root.iterdir()) == []  # nothing left behind
     assert "whisper" not in log.read_text()
 
 
-def test_an_unexpected_yt_dlp_failure_is_exit_1_with_the_reason(box):
-    run, root, _ = box
-    r = run(LINK, STUB_MODE="boom")
-    assert r.returncode == 1
-    assert r.stdout == ""
-    assert r.stderr.startswith("reel failed: ERROR: Unable to download webpage")
-    assert list(root.iterdir()) == []
+def test_an_unexpected_failure_is_retried_quietly_then_reported_once(box):
+    r = box.check(LINK, STUB_MODE="boom", JOBQ_MAX_ATTEMPTS="2")
+    assert (r.returncode, r.stdout.strip()) == (0, reel.NO_REPLY)
+    job = box.job()
+    assert (job["status"], job["attempts"]) == ("queued", 1)
+    assert job["last_error"].startswith("ERROR: Unable to download webpage")
+    r = box.cli("run", f"reel-{CODE}", STUB_MODE="boom", JOBQ_MAX_ATTEMPTS="2")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines() == [
+        f"Reel: {LINK}",
+        f"{reel.FAILED} after 2 tries - ERROR: Unable to download webpage: <urlopen error timed out>",
+    ]
+    assert box.job()["status"] == "failed"
+    assert list(box.root.iterdir()) == []
+    r = box.cli("run", f"reel-{CODE}", STUB_MODE="boom", JOBQ_MAX_ATTEMPTS="2")
+    assert r.stdout.strip() == reel.NO_REPLY  # reported once, never again
+
+
+def test_a_failure_while_the_egress_is_down_waits_for_it_uncounted(box):
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        closed = s.getsockname()[1]
+    r = box.check(
+        LINK, STUB_MODE="boom", LIFEKIT_EGRESS_PROXY=f"socks5h://127.0.0.1:{closed}"
+    )
+    assert (r.returncode, r.stdout.strip()) == (0, reel.NO_REPLY)
+    job = box.job()
+    assert (job["status"], job["attempts"]) == ("queued", 0)
 
 
 def test_a_reel_without_speech_is_a_normal_answer_and_keeps_nothing(box):
     run, root, _ = box
     r = run(LINK, WHISPER_TEXT="  \n")
-    assert (r.returncode, r.stdout.strip()) == (0, reel.NO_SPEECH)
+    assert (r.returncode, r.stdout.strip()) == (0, f"Reel: {LINK}\n{reel.NO_SPEECH}")
     assert list(root.iterdir()) == []
 
 
 def test_a_reel_whose_audio_cannot_be_extracted_has_no_speech(box):
     run, root, _ = box
     r = run(LINK, FFMPEG_MODE="fail")
-    assert (r.returncode, r.stdout.strip()) == (0, reel.NO_SPEECH)
+    assert (r.returncode, r.stdout.strip()) == (0, f"Reel: {LINK}\n{reel.NO_SPEECH}")
     assert list(root.iterdir()) == []
 
 
-def test_a_whisper_crash_is_exit_1(box):
-    run, root, _ = box
-    r = run(LINK, WHISPER_MODE="fail")
-    assert r.returncode == 1 and "reel failed: Traceback: boom" in r.stderr
-    assert list(root.iterdir()) == []
+def test_a_whisper_crash_is_a_failed_run(box):
+    r = box.check(LINK, WHISPER_MODE="fail", JOBQ_MAX_ATTEMPTS="1")
+    assert r.returncode == 0 and "after 1 tries - Traceback: boom" in r.stdout
+    assert list(box.root.iterdir()) == []
 
 
-def test_a_missing_tool_is_exit_1_not_a_traceback(box):
-    run, _, _ = box
-    r = run(LINK, REEL_FFMPEG="/nonexistent/ffmpeg")
-    assert r.returncode == 1
-    assert r.stderr.strip() == "reel failed: /nonexistent/ffmpeg is not installed"
+def test_a_missing_tool_is_a_failed_run_not_a_traceback(box):
+    r = box.check(LINK, REEL_FFMPEG="/nonexistent/ffmpeg", JOBQ_MAX_ATTEMPTS="1")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines()[1] == (
+        f"{reel.FAILED} after 1 tries - /nonexistent/ffmpeg is not installed"
+    )
 
 
 @pytest.mark.parametrize("arg", ["", "hello", "https://youtu.be/bQPU6UJ4iCw"])
-def test_anything_but_a_reel_link_is_a_usage_error(box, arg):
-    run, root, log = box
-    r = run(arg)
+def test_anything_but_a_reel_link_or_a_file_is_a_usage_error(box, arg):
+    r = box.cli(arg)
     assert r.returncode == 2 and r.stdout == ""
-    assert "not an Instagram reel link" in r.stderr or "usage" in r.stderr
-    assert log.read_text() == ""
-    assert not root.exists()
+    assert "not an Instagram reel link or a media file" in r.stderr
+    assert box.log.read_text() == ""
+    assert not box.root.exists() and not box.queue.exists()
+
+
+@pytest.mark.parametrize("args", [[], ["run"], ["run", "a", "b"], [LINK, LINK]])
+def test_wrong_arguments_are_a_usage_error(box, args):
+    r = box.cli(*args)
+    assert r.returncode == 2 and "usage" in r.stderr
+
+
+# --- the queue ----------------------------------------------------------------------
+
+
+def test_a_link_is_only_queued_and_answered_at_once(box):
+    r = box.cli(f"{LINK}?igsh=abc")
+    assert (r.returncode, r.stdout.strip()) == (0, f"{reel.QUEUED} (1 waiting)")
+    assert box.log.read_text() == ""  # nothing fetched yet
+    job = box.job()
+    assert job["payload"] == {"code": CODE, "share": False, "url": LINK}
+    assert job["label"] == LINK and job["probe"] == "www.instagram.com"
+    assert job["owner"] == "reel-claim-check"
+    assert job["handler"][1:] == [str((SKILL / "reel.py").resolve()), "run"]
+    assert stat.S_IMODE((box.queue / f"reel-{CODE}.json").stat().st_mode) == 0o600
+
+
+def test_the_same_reel_twice_is_already_queued(box):
+    box.cli(LINK)
+    r = box.cli(f"https://instagram.com/reels/{CODE}/")
+    assert r.stdout.strip() == f"{reel.ALREADY} (1 waiting)"
+    r = box.cli("https://www.instagram.com/reel/OtherCode1/")
+    assert r.stdout.strip() == f"{reel.QUEUED} (2 waiting)"
+
+
+def test_a_run_that_is_not_this_jobs_turn_says_nothing(box):
+    box.cli(LINK)
+    box.cli("https://www.instagram.com/reel/OtherCode1/")
+    r = box.cli("run", "reel-OtherCode1")
+    assert (r.returncode, r.stdout.strip()) == (0, reel.NO_REPLY)
+    assert box.log.read_text() == ""
+    assert box.cli("run", "reel-NoSuchJob1").stdout.strip() == reel.NO_REPLY
+
+
+def test_a_done_run_finishes_the_job_with_its_first_line(box):
+    r = box.check(LINK)
+    assert r.returncode == 0, r.stderr
+    job = box.job()
+    assert (job["status"], job["result"]) == ("done", f"Reel: {LINK}")
+
+
+def test_a_normal_unavailable_answer_names_the_reel_and_finishes_the_job(box):
+    r = box.check(LINK, STUB_MODE="login")
+    assert r.stdout.splitlines() == [f"Reel: {LINK}", reel.LOGIN]
+    assert box.job()["status"] == "done"
+
+
+def test_the_download_goes_through_the_configured_egress(box):
+    r = box.check(LINK, LIFEKIT_EGRESS_PROXY="socks5h://proxy.example:1080")
+    assert r.returncode == 0, r.stderr
+    ytdlp = box.log.read_text().splitlines()[0].split()
+    i = ytdlp.index("--proxy")
+    assert ytdlp[i + 1] == "socks5h://proxy.example:1080" and i < ytdlp.index("--")
+
+
+def test_a_direct_egress_passes_no_proxy(box):
+    box.check(LINK)
+    assert "--proxy" not in box.log.read_text().splitlines()[0].split()
+
+
+def test_no_queue_is_exit_1(box, tmp_path, monkeypatch):
+    lone = tmp_path / "lone"
+    lone.mkdir()
+    shutil.copy(SKILL / "reel.py", lone / "reel.py")
+    r = subprocess.run(
+        [sys.executable, str(lone / "reel.py"), LINK],
+        env={**box.env, "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 1
+    assert (
+        r.stderr.strip()
+        == "reel failed: the job-queue skill (jobq.py) is not installed"
+    )
+
+
+# --- a media file: the manual fallback ----------------------------------------------------
+
+
+def test_a_media_file_is_transcribed_at_once_and_left_alone(box, tmp_path):
+    video = tmp_path / "my reel.mp4"
+    video.write_bytes(b"video")
+    r = box.cli(str(video))
+    assert r.returncode == 0, r.stderr
+    head = r.stdout.partition("\n\n")[0].splitlines()
+    assert head[0] == "File: my reel.mp4" and "Language: Ukrainian" in head
+    assert video.read_bytes() == b"video"
+    assert list(box.root.iterdir()) == []  # nothing kept
+    assert not box.queue.exists()  # nothing queued
+    assert "yt-dlp" not in box.log.read_text()
+
+
+def test_a_media_file_without_speech_is_a_normal_answer(box, tmp_path):
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"video")
+    r = box.cli(str(video), WHISPER_TEXT="")
+    assert (r.returncode, r.stdout.strip()) == (0, reel.NO_SPEECH)
+
+
+def test_a_media_file_whisper_crash_is_exit_1(box, tmp_path):
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"video")
+    r = box.cli(str(video), WHISPER_MODE="fail")
+    assert r.returncode == 1 and "reel failed: Traceback: boom" in r.stderr
 
 
 def test_a_long_caption_is_cut():
     out = reel.render(
-        reel.Reel(CODE), {"description": "word " * 600, "duration": 3}, "en", "hi"
+        f"Reel: {LINK}", {"description": "word " * 600, "duration": 3}, "en", "hi"
     )
     caption = next(ln for ln in out.splitlines() if ln.startswith("Caption: "))
     assert caption.endswith("...") and len(caption) < reel.CAPTION_LIMIT + 20
@@ -460,10 +643,12 @@ def test_yt_dlp_is_found_explicit_then_beside_then_shared_then_path(
     assert reel.yt_dlp_cmd() == [str(path_ytdlp)]
 
 
-def test_no_yt_dlp_is_exit_1(box, tmp_path):
-    run, _, _ = box
-    r = run(LINK, YT_DLP="", PATH=str(tmp_path), HOME=str(tmp_path))
-    assert r.returncode == 1 and "yt-dlp is not installed" in r.stderr
+def test_no_yt_dlp_is_a_failed_run(box, tmp_path):
+    r = box.check(
+        LINK, YT_DLP="", PATH=str(tmp_path), JOBQ_MAX_ATTEMPTS="1", HOME=str(tmp_path)
+    )
+    assert r.returncode == 0, r.stderr
+    assert "yt-dlp is not installed" in r.stdout
 
 
 # --- the skill file ---------------------------------------------------------------------

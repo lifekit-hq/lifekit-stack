@@ -1,19 +1,33 @@
 #!/usr/bin/env python3
-"""Download an Instagram reel and transcribe it, so an agent can fact-check it.
+"""Check an Instagram reel's spoken claims: queue it, download and transcribe it.
 
-    reel.py <instagram reel url>
+    reel.py <instagram reel url>   queue the reel (the shared job queue)
+    reel.py run <job id>           the queued run, started by the drain turn
+    reel.py <media file>           transcribe a file on this host now
 
-yt-dlp fetches the audio (no login, no cookies), ffmpeg turns it into 16 kHz
-mono wav and the image's local whisper transcribes it: no API key, no paid
-service. Everything is kept on this host in a private directory
-(REEL_CHECK_DIR, default ~/.life-state/reel-claim-check, mode 0700): the
-download is deleted as soon as the audio is extracted, and only the transcript
-stays, REEL_RETENTION_DAYS (default 14) days, pruned at the start of every run.
+Instagram refuses this server, so a reel is downloaded (and a share link
+resolved) through the job queue's egress (skills/job-queue/jobq.py,
+LIFEKIT_EGRESS_PROXY; today the owner's PC).
+A link is only queued, and the answer is one line at once: "reel queued - ..."
+or "reel already queued - ...", with the number of jobs waiting. When the
+egress answers, the drain cron's turn runs `reel.py run <job id>`.
 
-stdout is the reel's details and transcript, or one line starting
-"reel unavailable - ". That line is a normal answer (a reel Instagram only
-serves to a logged-in browser, a post without speech), not a failure: exit 0.
-Exit 1 is an unexpected failure (reason on stderr), exit 2 a usage error.
+The run: yt-dlp fetches the audio through the egress (no login, no cookies),
+ffmpeg turns it into 16 kHz mono wav and the image's local whisper transcribes
+it: no API key, no paid service. Everything is kept on this host in a private
+directory (REEL_CHECK_DIR, default ~/.life-state/reel-claim-check, mode 0700):
+the download is deleted as soon as the audio is extracted, and only the
+transcript stays, REEL_RETENTION_DAYS (default 14) days, pruned at the start
+of every run. Its stdout starts with "Reel: <url>", then the reel's details
+and transcript, or one line starting "reel unavailable - " (a normal answer: a
+reel Instagram only serves to a logged-in browser, a post without speech), or,
+after the queue's last attempt, "reel check failed after N tries - <reason>".
+NO_REPLY alone means there is nothing to tell the owner yet: the egress went
+away mid-run, or the failure will be tried again.
+
+A media file (the manual fallback: a video the owner sent) is transcribed at
+once, read in place and never kept. Exit 1 is an unexpected failure (reason on
+stderr), exit 2 a usage error.
 
 Only the reel's shortcode is taken from the argument; the URL handed to yt-dlp
 is rebuilt from it, so nothing else in the message reaches the command line.
@@ -30,6 +44,7 @@ Env: REEL_CHECK_DIR        private working and transcript directory
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -70,6 +85,16 @@ LOGIN_WORDS = re.compile(
 GONE_WORDS = re.compile(r"HTTP Error 404|not found|does not exist|removed", re.I)
 NO_VIDEO_WORDS = re.compile(r"no video in this post", re.IGNORECASE)
 TOO_LONG_WORDS = re.compile(r"does not pass filter|larger than max-filesize", re.I)
+
+# Queued runs (skills/job-queue): the job kind, and the host the queue asks the
+# egress about before it hands a reel job to the drain turn.
+KIND = "reel"
+PROBE_HOST = "www.instagram.com"
+QUEUED = "reel queued - it is checked once the download route is up"
+ALREADY = "reel already queued - it is checked once the download route is up"
+FAILED = "reel check failed"
+NO_REPLY = "NO_REPLY"
+USAGE = "usage: reel.py <instagram reel url> | <media file> | run <job id>"
 
 DEFAULT_RETENTION_DAYS = 14
 DEFAULT_MAX_SECONDS = 900
@@ -126,11 +151,29 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _egress_https():
+    """A urllib handler whose HTTPS connections go out through the job queue's
+    egress, like yt-dlp's download: Instagram refuses this server."""
+    q = jobq()
+    proxy = q.egress_proxy()
+
+    class Connection(http.client.HTTPSConnection):
+        def connect(self):
+            sock = q.open_connection(self.host, self.port, proxy, self.timeout)
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+    class Handler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(Connection, req)
+
+    return Handler
+
+
 def resolve_share(reel: Reel, hops: int = 3) -> Reel | None:
     """A /share/reel/<token> link redirects to the reel's own URL, which yt-dlp
     understands and the share link it does not. Follows only redirects that stay
     on Instagram; a redirect to the login page carries the target in `next`."""
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = urllib.request.build_opener(_NoRedirect, _egress_https())
     url = reel.url
     for _ in range(hops):
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -139,8 +182,8 @@ def resolve_share(reel: Reel, hops: int = 3) -> Reel | None:
             return None
         except urllib.error.HTTPError as e:
             location = e.headers.get("Location") if 300 <= e.code < 400 else None
-        except OSError:
-            return None
+        # Any other OSError (the egress went away, a timeout) is the run's
+        # failure, for the queue to retry, not an answer about the link.
         if not location:
             return None
         target = urlparse(urllib.request.urljoin(url, location))
@@ -219,9 +262,12 @@ def download(reel: Reel, work: Path, max_seconds: int) -> tuple[Path | None, dic
         "--write-info-json",
         "-o",
         str(work / "%(id)s.%(ext)s"),
-        "--",
-        reel.url,
     ]
+    # The egress is the job queue's one setting (LIFEKIT_EGRESS_PROXY).
+    proxy = jobq().egress_proxy()
+    if proxy:
+        cmd += ["--proxy", proxy]
+    cmd += ["--", reel.url]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
@@ -305,13 +351,13 @@ def transcribe(wav: Path, out: Path) -> tuple[str, str, str]:
     return " ".join(txt.read_text(errors="replace").split()), language, ""
 
 
-def render(reel: Reel, info: dict, language: str, text: str) -> str:
+def render(source: str, info: dict, language: str, text: str) -> str:
     caption = " ".join((info.get("description") or "").split())
     if len(caption) > CAPTION_LIMIT:
         caption = caption[:CAPTION_LIMIT] + "..."
     duration = info.get("duration")
     lines = [
-        f"Reel: {reel.url}",
+        source,
         f"Account: {info.get('uploader') or info.get('channel') or 'unknown'}",
         f"Duration: {round(duration)}s" if duration else "Duration: unknown",
         f"Language: {language}",
@@ -323,14 +369,23 @@ def render(reel: Reel, info: dict, language: str, text: str) -> str:
     return "\n".join(lines)
 
 
-def run(reel: Reel) -> tuple[int, str]:
-    """(exit code, stdout). Normal answers are exit 0."""
+def speech(media: Path, work: Path) -> tuple[str, str, str]:
+    """(text, language, error) for a media file; empty text means no speech."""
+    wav = work / "audio.wav"
+    if not extract_audio(media, wav):
+        return "", "", ""
+    return transcribe(wav, work)
+
+
+def check(reel: Reel) -> tuple[str, str]:
+    """(answer, error). The answer is the reel's details and transcript, or a
+    normal 'reel unavailable - ' line; an error is a real failure."""
     root = private_root()
     prune(root, int(os.environ.get("REEL_RETENTION_DAYS", DEFAULT_RETENTION_DAYS)))
     if reel.share:
         resolved = resolve_share(reel)
         if not resolved:
-            return 0, NO_SHARE
+            return NO_SHARE, ""
         reel = resolved
     max_seconds = int(os.environ.get("REEL_MAX_SECONDS", DEFAULT_MAX_SECONDS))
     work = Path(tempfile.mkdtemp(prefix=WORK_PREFIX, dir=root))
@@ -338,52 +393,135 @@ def run(reel: Reel) -> tuple[int, str]:
         media, info, error = download(reel, work, max_seconds)
         if not media:
             if not error:
-                return 0, TOO_LONG
+                return TOO_LONG, ""
             line = unavailable_line(error)
-            if line:
-                return 0, line
-            print(f"reel failed: {error}", file=sys.stderr)
-            return 1, ""
-        wav = work / "audio.wav"
-        ok = extract_audio(media, wav)
+            return (line, "") if line else ("", error)
+        text, language, error = speech(media, work)
         media.unlink(missing_ok=True)  # the download is not kept past this point
-        if not ok:
-            return 0, NO_SPEECH
-        text, language, error = transcribe(wav, work)
         if error:
-            print(f"reel failed: {error}", file=sys.stderr)
-            return 1, ""
+            return "", error
         if not text:
-            return 0, NO_SPEECH
-        out = render(reel, info, language, text)
+            return NO_SPEECH, ""
+        out = render(f"Reel: {reel.url}", info, language, text)
         saved = root / f"{reel.code}.txt"
         saved.write_text(out + "\n")
         saved.chmod(0o600)
-        return 0, out
+        return out, ""
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def check_file(media: Path) -> tuple[str, str]:
+    """(answer, error) for a media file already on this host: the manual
+    fallback. The file is read, never moved or deleted, and nothing is kept."""
+    work = Path(tempfile.mkdtemp(prefix=WORK_PREFIX, dir=private_root()))
+    try:
+        text, language, error = speech(media, work)
+        if error:
+            return "", error
+        if not text:
+            return NO_SPEECH, ""
+        return render(f"File: {media.name}", {}, language, text), ""
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def jobq():
+    """The shared job queue's module (skills/job-queue/jobq.py): JOBQ_LIB, else
+    beside this skill, else the gateway's shared skills directory."""
+    for d in (
+        os.environ.get("JOBQ_LIB", ""),
+        Path(__file__).resolve().parent.parent / "job-queue",
+        Path.home() / ".openclaw" / "skills" / "job-queue",
+    ):
+        if d and (Path(d) / "jobq.py").is_file():
+            sys.path.insert(0, str(d))
+            import jobq as module
+
+            return module
+    raise FileNotFoundError(None, None, "the job-queue skill (jobq.py)")
+
+
+def enqueue(reel: Reel) -> str:
+    q = jobq()
+    added, waiting = q.add(
+        KIND,
+        reel.code,
+        owner="reel-claim-check",
+        handler=[sys.executable, str(Path(__file__).resolve()), "run"],
+        probe=PROBE_HOST,
+        payload={"code": reel.code, "share": reel.share, "url": reel.url},
+        label=reel.url,
+    )
+    return (QUEUED if added else ALREADY) + f" ({waiting} waiting)"
+
+
+def run_job(jid: str) -> str:
+    """The queued run: what the drain turn answers. NO_REPLY when there is
+    nothing to tell the owner yet (not this job's turn, or it will be tried
+    again); otherwise the reel's line, then the answer or the final failure."""
+    q = jobq()
+    job = q.claim(jid)
+    if job is None or job.get("kind") != KIND:
+        return NO_REPLY
+    p = job["payload"]
+    reel = Reel(p["code"], bool(p.get("share")))
+    try:
+        out, error = check(reel)
+    except FileNotFoundError as e:
+        out, error = "", f"{e.filename} is not installed"
+    except (
+        OSError,
+        ValueError,
+    ) as e:  # reported like any failed run, never left running
+        out, error = "", str(e)
+    if not error:
+        q.finish(jid, out.splitlines()[0])
+        return out if out.startswith("Reel: ") else f"Reel: {p['url']}\n{out}"
+    if not q.egress_ready(job["probe"]):
+        q.release(jid)  # the egress went away mid-run: wait for it again
+        return NO_REPLY
+    if q.retry(jid, error):
+        return f"Reel: {p['url']}\n{FAILED} after {job['attempts']} tries - {error}"
+    return NO_REPLY
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2 or argv[1] in ("-h", "--help"):
-        print(
-            __doc__.split("\n\n")[0] + "\nusage: reel.py <instagram reel url>",
-            file=sys.stderr,
-        )
-        return 2
-    reel = parse_reel(argv[1])
-    if not reel:
-        print(f"not an Instagram reel link: {argv[1]}", file=sys.stderr)
+    args = argv[1:]
+    if not args or len(args) > 2 or args[0] in ("-h", "--help"):
+        print(__doc__.split("\n\n")[0] + "\n" + USAGE, file=sys.stderr)
         return 2
     os.umask(0o077)
     try:
-        code, out = run(reel)
-    except FileNotFoundError as e:  # ffmpeg or whisper missing from this image
+        if args[0] == "run" and len(args) == 2:
+            print(run_job(args[1]))
+            return 0
+        if len(args) != 1 or args[0] == "run":
+            print(USAGE, file=sys.stderr)
+            return 2
+        reel = parse_reel(args[0])
+        if reel:
+            print(enqueue(reel))
+            return 0
+        media = Path(args[0].strip()).expanduser()
+        if not media.is_file():
+            print(
+                f"not an Instagram reel link or a media file: {args[0]}",
+                file=sys.stderr,
+            )
+            return 2
+        out, error = check_file(media.resolve())
+    except FileNotFoundError as e:  # ffmpeg, whisper or the queue missing
         print(f"reel failed: {e.filename} is not installed", file=sys.stderr)
         return 1
-    if out:
-        print(out)
-    return code
+    except (OSError, ValueError) as e:
+        print(f"reel failed: {e}", file=sys.stderr)
+        return 1
+    if error:
+        print(f"reel failed: {error}", file=sys.stderr)
+        return 1
+    print(out)
+    return 0
 
 
 if __name__ == "__main__":

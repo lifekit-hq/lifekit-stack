@@ -3,11 +3,14 @@
 # (skills/reel-claim-check) into kit's workspace, and report whether kit's
 # skill allowlist carries it and whether the tools it runs are in the gateway.
 #
-# The skill downloads an Instagram reel with yt-dlp and transcribes it with the
-# whisper and ffmpeg baked into the gateway image (docs/runbook.md, "Instagram
-# reel claim check"). It runs the pinned yt-dlp that ensure-youtube-transcript.sh
-# installs, so there is one pin to bump. Kit's allowlist (agents.entries.kit.skills)
-# is host state, so this script only reads it; adding the skill is an operator patch.
+# The skill queues an Instagram reel on the shared job queue (skills/job-queue,
+# installed by ensure-job-queue.sh); when the queue's egress answers, the drain
+# runs it: yt-dlp downloads the reel through that egress and the whisper and
+# ffmpeg baked into the gateway image transcribe it (docs/runbook.md,
+# "Instagram reel claim check"). It runs the pinned yt-dlp that
+# ensure-youtube-transcript.sh installs, so there is one pin to bump. Kit's
+# allowlist (agents.entries.kit.skills) is host state, so this script only reads
+# it; adding the skill is an operator patch.
 #
 # The deploy runs it (deploy-openclaw.sh, post-up phase), so a merge that changes
 # the skill or this script installs it. By hand, on the VPS host as lifekit, from
@@ -67,7 +70,8 @@ case "$listed" in
   *) echo "allowlist: could not read agent '$AGENT''s skills list" ;;
 esac
 
-# Read-only: the three tools the skill shells out to, inside the gateway.
+# Read-only: the three tools the skill shells out to, and the queue it imports,
+# inside the gateway.
 # shellcheck disable=SC2016  # expanded by sh inside the container
 docker exec "$GATEWAY" sh -c '
 for t in ffmpeg whisper; do
@@ -76,4 +80,7 @@ done
 [ -f "$HOME/.openclaw/skills/youtube-transcript/yt-dlp" ] \
   && echo "tool: yt-dlp present (youtube-transcript skill)" \
   || echo "tool: yt-dlp MISSING - run scripts/ensure-youtube-transcript.sh"
+[ -f "$HOME/.openclaw/skills/job-queue/jobq.py" ] \
+  && echo "tool: jobq.py present (job-queue skill)" \
+  || echo "tool: jobq.py MISSING - run scripts/ensure-job-queue.sh"
 ' 2>/dev/null || echo "tools: could not check inside the gateway"
