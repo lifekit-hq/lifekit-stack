@@ -1,0 +1,28 @@
+[Unit]
+Description=Weekly vault audit and log rotation over /srv/memory (lint, index, rotation, report)
+After=network-online.target docker.service
+# A fresh box has no vault clone until the operator copies it in; skip, not fail.
+ConditionPathExists=/srv/memory/.git
+
+[Service]
+Type=oneshot
+# lifekit owns the vault (memory-sync commits as it) and is in the docker group
+# for the notify-relay post. The wrapper runs from the checkout deploy.sh keeps
+# current, so a merge changes the next run with nothing to reinstall.
+User=lifekit
+Group=lifekit
+Environment=MEMORY_VAULT=/srv/memory
+ExecStart=/usr/bin/python3 /srv/lifekit-stack/scripts/memory-audit/run-vault-audit.py
+# A run takes one to three minutes; the runner gives the wrapper 840s.
+TimeoutStartSec=900
+Nice=10
+IOSchedulingClass=idle
+# bin/audit.sh --rotate moves pages and appends to log.md inside the vault; it
+# writes nowhere else. The docker socket is a unix socket.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/memory
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX

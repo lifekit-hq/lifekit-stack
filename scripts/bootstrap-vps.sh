@@ -339,6 +339,15 @@ ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" bash "$REPO_DIR/scripts/vault-do
 say "Installing intake-to-vault script + systemd units"
 bash "$REPO_DIR/scripts/intake-to-vault/install-intake-to-vault.sh"
 
+# ─── Weekly vault audit ───────────────────────────────────────────────────────
+# Sunday 03:30 London, runs the vault's bin/audit.sh --rotate --log through
+# scripts/memory-audit/ and tells the owner through notify-relay. Replaces the
+# OpenClaw cron memory_vault_audit; skipped while there is no vault clone. See
+# docs/runbook.md "Weekly vault audit (host timer)".
+
+say "Installing vault-audit systemd units"
+bash "$REPO_DIR/scripts/memory-audit/install-vault-audit.sh"
+
 # ─── Identity database dump timer ─────────────────────────────────────────────
 # Nightly pg_dumpall of the identity provider's Postgres (compose project
 # identity) into /srv/openclaw/backups/identity, newest 14 kept. A no-op until
