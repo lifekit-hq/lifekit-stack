@@ -944,7 +944,7 @@ def idea_text(
 
 
 def test_an_idea_is_filed_directly_as_its_own_kind(box):
-    r = box.cli("idea", "--origin", "scout", stdin=idea_text())
+    r = box.cli("idea", stdin=idea_text())
     assert r.returncode == 0, r.stderr
     rows = box.index()
     assert len(rows) == 1
@@ -977,11 +977,13 @@ def test_an_idea_is_filed_directly_as_its_own_kind(box):
     assert box.log.read_text() == ""  # nothing fetched
 
 
-def test_an_idea_is_filed_as_the_scout_unless_another_origin_is_named(box):
+def test_an_idea_is_always_filed_as_the_scout_and_takes_no_origin(box):
     assert box.cli("idea", stdin=idea_text()).returncode == 0
     assert box.index()[0]["origin"] == "scout"
-    r = box.cli("idea", "--origin", "nobody", stdin=idea_text())
-    assert r.returncode == 1 and "unknown origin" in r.stderr
+    other = idea_text(source="Source: https://example.org/x")
+    r = box.cli("idea", "--origin", "kit", stdin=other)
+    assert r.returncode == 2
+    assert len(box.index()) == 1
 
 
 @pytest.mark.parametrize(
@@ -990,6 +992,10 @@ def test_an_idea_is_filed_as_the_scout_unless_another_origin_is_named(box):
         (idea_text(claim=""), "no Claim: line"),
         (idea_text(source=""), "no Source: line"),
         (idea_text(source="Source: the vendor docs"), "http(s) link"),
+        (
+            idea_text(source=f"Source: {IDEA_SOURCE}/{'a' * 200}"),
+            "Source: is longer than 200",
+        ),
         (idea_text(category="hobby"), "Category 'hobby' is not one of"),
         (
             idea_text("drop", extra="").replace("paid-funnel", "boring"),
@@ -1555,7 +1561,7 @@ case "$1" in
   exec)
     case "$*" in
       *" ingest "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "video queued - job video-x" ;;
-      *" idea "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/ideas/idea-x.v2.md" ;;
+      *" idea"*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/ideas/idea-x.v2.md" ;;
       *" status "*) printf 'done\nt\nl\nreport: /home/node/.life-state/intake/reports/x.v1.md\n' ;;
       *) echo "ran" ;;
     esac ;;
@@ -1606,9 +1612,9 @@ def test_the_wrapper_files_an_idea_from_a_file_or_stdin(tmp_path):
     report = tmp_path / "idea.txt"
     report.write_text("12345")
     for args, stdin in ((["idea", str(report)], None), (["idea"], "123")):
-        r, calls = _wrapper(tmp_path, *args, stdin=stdin, VIDEO_EVAL_ORIGIN="scout")
+        r, calls = _wrapper(tmp_path, *args, stdin=stdin, VIDEO_EVAL_ORIGIN="kit")
         assert r.returncode == 0, r.stderr
-        assert f"docker exec -i gw1 python3 {SCRIPT} idea --origin scout" in calls
+        assert f"docker exec -i gw1 python3 {SCRIPT} idea" in calls
         assert f"got {len(stdin or '12345')} bytes" in calls
         assert r.stdout.strip() == (
             "report: /var/lib/lifekit/intake/reports/ideas/idea-x.v2.md"

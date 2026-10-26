@@ -13,7 +13,7 @@ one index row.
     video.py status <job id>                  one job's state, for a producer that polls
     video.py show <job id>                    the job's report
     video.py index                            the index of every item judged
-    video.py idea [file] [--origin O]         file a judged idea's report (scout)
+    video.py idea [file]                      file a judged idea's report (scout)
     video.py door <message text>              Kit's drop door: queue a bare link (kit)
     video.py door-file <saved video>          Kit's drop door: queue a video file (kit)
 
@@ -149,6 +149,7 @@ KIND = "video"
 IDEA = "idea"
 IDEA_FIELDS = ("claim", "source")
 IDEA_MODE = "claim-check"
+IDEA_ORIGIN = "scout"
 OWNER = "video-eval"
 PROBE = {"instagram": "www.instagram.com", "youtube": "www.youtube.com", "file": ""}
 KEY_PREFIX = {"instagram": "ig", "youtube": "yt", "file": "file"}
@@ -163,7 +164,7 @@ USAGE = (
     "       video.py ingest <name> --origin kit|firstmate|scout [--check] < file\n"
     "       video.py run|status|show <job id> | part <job id> <n>\n"
     "       video.py report <job id> [file] | index\n"
-    "       video.py idea [file] [--origin kit|firstmate|scout] < report\n"
+    "       video.py idea [file] < report\n"
     "       video.py door <message text> | door-file <saved video>"
 )
 
@@ -1117,7 +1118,10 @@ def parse_report(
                 sections[-1][1].append(ln)
         elif ": " in ln:
             k, v = ln.split(": ", 1)
-            head[k.strip().lower()] = v.strip()[:HEAD_LIMIT]
+            k, v = k.strip().lower(), v.strip()
+            if k == "source" and "source" in fields and len(v) > HEAD_LIMIT:
+                errors.append(f"Source: is longer than {HEAD_LIMIT} characters")
+            head[k] = v[:HEAD_LIMIT]
     for k in ("title", "category", "gist", *fields):
         if not head.get(k):
             errors.append(f"the header has no {k.capitalize()}: line")
@@ -1357,14 +1361,14 @@ def _row(
     }
 
 
-def file_idea(text: str, origin: str, now: float | None = None) -> tuple[int, str]:
-    """(exit code, output) for `idea`: the three lines, an earlier verdict for
-    the same item, or the reasons the report does not follow the rubric. The
+def file_idea(text: str, now: float | None = None) -> tuple[int, str]:
+    """(exit code, output) for `idea`, always filed as the scout's: the three
+    lines, an earlier verdict for the same item, or the reasons the report does
+    not follow the rubric. The
     idea is recorded under its primary source's link, and its report is kept in
     reports/ideas/, out of reach of intake-to-vault, which files a video's
     report with its transcript."""
-    if origin not in ORIGINS:
-        raise ValueError(f"unknown origin {origin!r}: one of {', '.join(ORIGINS)}")
+    origin = IDEA_ORIGIN
     now = time.time() if now is None else now
     rubric = load_rubric()
     if IDEA not in rubric.list("kinds"):
@@ -1595,9 +1599,9 @@ def main(argv: list[str]) -> int:
             code, out = file_report(rest[0], text)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
-        if cmd == "idea" and len(rest) <= 1:
+        if cmd == "idea" and len(rest) <= 1 and "--origin" not in argv:
             text = Path(rest[0]).read_text() if rest else sys.stdin.read()
-            code, out = file_idea(text, origin if "--origin" in argv else "scout")
+            code, out = file_idea(text)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
         if cmd == "status" and len(rest) == 1:

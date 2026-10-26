@@ -1712,7 +1712,7 @@ rm /tmp/kit-skills.patch.json
    `... jobq.py drop reel-<shortcode>` for each `reel-*` row that is not `done` or `failed`.
 
 From the host (firstmate, or the operator; any account in the `docker` group). Origin is
-`firstmate` unless `VIDEO_EVAL_ORIGIN` says otherwise (`scout` for the ideas scout):
+`firstmate` unless `VIDEO_EVAL_ORIGIN` says otherwise (`idea` ignores it: always `scout`):
 
 - **Enqueue:** `scripts/video-eval.sh enqueue <link> [--check]` prints `video queued - job
   <job id> ...`, `video already queued ...`, or, for an item judged before, its earlier
@@ -1734,10 +1734,10 @@ From the host (firstmate, or the operator; any account in the `docker` group). O
   the `unavailable - ...` line.
 - **Read:** `scripts/video-eval.sh report <job id>` prints the report;
   `scripts/video-eval.sh index` prints the index.
-- **File a judged idea** (the ideas scout, with `VIDEO_EVAL_ORIGIN=scout`):
+- **File a judged idea** (the ideas scout; always filed as origin `scout`):
   `scripts/video-eval.sh idea <report file>` (or the report on stdin) checks the report against
   the rubric, with the idea's `Claim:` and primary `Source:` lines, and files it at once: no
-  job, no fetch. It prints the three lines, or the earlier verdict when that source or title
+  job, no fetch. A `Source:` over 200 characters is rejected, not cut. It prints the three lines, or the earlier verdict when that source or title
   was judged before; exit 3 lists what does not follow the rubric. The report is kept in
   `/var/lib/lifekit/intake/reports/ideas/`, which intake-to-vault does not file into the vault.
 

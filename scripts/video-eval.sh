@@ -16,7 +16,8 @@
 #   video-eval.sh index                      every item judged, one row each
 #   video-eval.sh idea [FILE]                file a judged idea's report (FILE,
 #                                            else stdin): no job, no fetch;
-#                                            prints its three lines at once
+#                                            always origin scout; prints its
+#                                            three lines at once
 #
 # Completion signal: `status` prints `done` or `failed` on its first line once
 # the job is finished, and a done job's last line is `report: <host path>`.
@@ -29,7 +30,8 @@
 # readable by lifekit.
 #
 # Env overrides:
-#   VIDEO_EVAL_ORIGIN    who is asking, kit | firstmate | scout (default: firstmate)
+#   VIDEO_EVAL_ORIGIN    who is asking, kit | firstmate | scout (default: firstmate;
+#                        not used by idea, which is always scout)
 #   VIDEO_EVAL_AGENT     agent whose workspace has the skill (default: kit)
 #   DOCKER               the docker command (default: docker)
 set -euo pipefail
@@ -93,7 +95,7 @@ case "$cmd" in
       echo "$1: no such file" >&2
       exit 1
     fi
-    $DOCKER exec -i "$GATEWAY" python3 "$SCRIPT" idea --origin "$ORIGIN" \
+    $DOCKER exec -i "$GATEWAY" python3 "$SCRIPT" idea \
       <"${1:-/dev/stdin}" | host_paths
     ;;
   *) usage ;;

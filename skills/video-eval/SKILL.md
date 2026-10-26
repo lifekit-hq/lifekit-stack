@@ -52,10 +52,10 @@ The job queue has already fetched and transcribed the video on its own; the drai
 
 ## 4. An idea: file it directly
 
-An idea the ideas scout proposes is not a video: there is nothing to queue or fetch. Its judge reads the rubric the same way and writes the same template with the idea's two extra header lines, `Claim:` and `Source:` (the link of the primary source opened in this pass), then files it on stdin:
+An idea the ideas scout proposes is not a video: there is nothing to queue or fetch. Its judge reads the rubric the same way and writes the same template with the idea's two extra header lines, `Claim:` and `Source:` (the link of the primary source opened in this pass), then files it on stdin (it is always filed as origin `scout`; a `Source:` over 200 characters is rejected):
 
 ```
-python3 {baseDir}/video.py idea --origin scout <<'REPORT'
+python3 {baseDir}/video.py idea <<'REPORT'
 Title: ...
 ...
 REPORT
