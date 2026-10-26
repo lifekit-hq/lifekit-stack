@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 PLUGIN = REPO / "compose/openclaw-gateway/plugins/video-drop-door"
@@ -249,8 +250,9 @@ def test_the_platform_patch_allows_and_enables_the_door():
 
 
 def test_the_gateway_gets_the_owner_chat_the_door_compares_with():
-    compose = (REPO / "compose/openclaw/docker-compose.yml").read_text()
-    assert "LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-}" in compose
+    compose = yaml.safe_load((REPO / "compose/openclaw/docker-compose.yml").read_text())
+    env = compose["services"]["openclaw-gateway"]["environment"]
+    assert env["LIFEKIT_TELEGRAM_CHAT"] == "${LIFEKIT_TELEGRAM_CHAT:-}"
 
 
 # --- the ensure script ----------------------------------------------------------
