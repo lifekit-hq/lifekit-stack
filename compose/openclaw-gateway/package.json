@@ -5,7 +5,7 @@
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.296",
     "clawhub": "0.23.3",
-    "@steipete/summarize": "0.23.0",
+    "@steipete/summarize": "0.25.2",
     "workout-claw": "0.4.0"
   }
 }
