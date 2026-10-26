@@ -1400,8 +1400,8 @@ Instagram login, no paid transcription.
   `reel failed: ...` on stderr.
 - **Private path and retention:** the only thing kept is the transcript, as
   `<shortcode>.txt` (mode 0600) in `~/.life-state/reel-claim-check/` in the gateway, i.e.
-  `/var/lib/lifekit/reel-claim-check/` on the host (directory mode 0700). It is not served, not in git, not in the off-box backup and not in
-  the openclaw-config mirror. The download is deleted right after audio extraction and the
+  `/var/lib/lifekit/reel-claim-check/` on the host (directory mode 0700). It is not served, not in git and not in
+  the openclaw-config mirror. The transcript is also returned to kit as the tool output, so it sits in kit's session history in the gateway state, which the encrypted off-box backup covers. The download is deleted right after audio extraction and the
   work directory at the end of every run. Transcripts older than 14 days
   (`REEL_RETENTION_DAYS`) are deleted by the next run: there is no timer. Kit must not copy a
   transcript elsewhere (the skill says so).
@@ -1434,7 +1434,7 @@ rm /tmp/kit-skills.patch.json
   private directory. A made-up link prints the `reel unavailable` line, which proves the
   yt-dlp and the route to Instagram. Then send Kit a reel link and check the one-message verdict.
 - **Delete a transcript early:** `rm /var/lib/lifekit/reel-claim-check/<shortcode>.txt` on
-  the host (or `rm -r` the directory for all of them). Nothing else holds a copy.
+  the host (or `rm -r` the directory for all of them). This removes only the file this skill keeps: the copy in kit's session history and its encrypted off-box backup stays until those rotate.
 - **yt-dlp stops working on Instagram:** bump the pin in `scripts/ensure-youtube-transcript.sh`
   (version and SHA-256); the next deploy installs it and this skill picks it up.
 - **Rollback:** revert the PR (the deploy then stops installing the skill), remove

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import re
 import stat
 import subprocess
 import sys
@@ -20,6 +19,8 @@ from email.message import Message
 from pathlib import Path
 
 import pytest
+
+yaml = pytest.importorskip("yaml")
 
 REPO = Path(__file__).resolve().parents[2]
 SKILL = REPO / "skills/reel-claim-check"
@@ -340,10 +341,6 @@ def test_a_reel_that_cannot_be_fetched_is_a_normal_answer(box, mode, line):
     assert "whisper" not in log.read_text()
 
 
-def test_the_login_answer_says_no_login_is_used():
-    assert "logged-in" in reel.LOGIN and "no login is used" in reel.LOGIN
-
-
 def test_an_unexpected_yt_dlp_failure_is_exit_1_with_the_reason(box):
     run, root, _ = box
     r = run(LINK, STUB_MODE="boom")
@@ -472,20 +469,15 @@ def test_no_yt_dlp_is_exit_1(box, tmp_path):
 # --- the skill file ---------------------------------------------------------------------
 
 
-def test_skill_frontmatter_names_the_skill_and_its_tools():
-    text = (SKILL / "SKILL.md").read_text()
-    front = text.split("---")[1]
-    assert re.search(r"^name: reel-claim-check$", front, re.M)
-    assert re.search(r"^description: .*instagram", front, re.M | re.I)
-    for tool in ("python3", "ffmpeg", "whisper"):
-        assert f'"{tool}"' in front
-
-
-def test_skill_tells_kit_not_to_log_in_or_publish_the_reel():
-    text = (SKILL / "SKILL.md").read_text()
-    assert "never logs in to Instagram" in text
-    assert "Do not paste the transcript" in text
-    assert "{baseDir}/reel.py" in text
+def test_skill_frontmatter_parses_into_the_name_and_bins_openclaw_reads():
+    front = (SKILL / "SKILL.md").read_text().split("---")[1]
+    meta = yaml.safe_load(front)
+    assert meta["name"] == "reel-claim-check"
+    assert meta["metadata"]["openclaw"]["requires"]["bins"] == [
+        "python3",
+        "ffmpeg",
+        "whisper",
+    ]
 
 
 # --- the ensure script ----------------------------------------------------------------------

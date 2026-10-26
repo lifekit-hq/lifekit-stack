@@ -51,4 +51,4 @@ Name the sources you used with their links; do not cite one you did not open. Do
 
 ## Where things are kept
 
-`reel.py` keeps each transcript as `<reel id>.txt` in `~/.life-state/reel-claim-check/` (a private directory on this server, not served, not in git, not in the off-box backup), for 14 days; older ones are deleted on the next run. Deleting one earlier is a host step (`docs/runbook.md`, "Instagram reel claim check"); if the owner asks, say so rather than improvising a delete.
+`reel.py` keeps each transcript as `<reel id>.txt` in `~/.life-state/reel-claim-check/` (a private directory on this server, not served, not in git), for 14 days; older ones are deleted on the next run. The text also reached you as tool output, so it stays in your session history (and that history's encrypted backup) after the file is gone. Deleting the file earlier is a host step (`docs/runbook.md`, "Instagram reel claim check"); if the owner asks, say so rather than improvising a delete.
