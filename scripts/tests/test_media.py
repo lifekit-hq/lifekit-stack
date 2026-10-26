@@ -89,9 +89,7 @@ def tools(tmp_path, monkeypatch):
     monkeypatch.setenv("STUB_LOG", str(log))
     monkeypatch.setenv("YT_DLP", str(_stub(tmp_path / "yt-dlp", YT_DLP_STUB)))
     monkeypatch.setenv("VIDEO_FFMPEG", str(_stub(tmp_path / "ffmpeg", FFMPEG_STUB)))
-    monkeypatch.setenv(
-        "VIDEO_WHISPER", str(_stub(tmp_path / "whisper", WHISPER_STUB))
-    )
+    monkeypatch.setenv("VIDEO_WHISPER", str(_stub(tmp_path / "whisper", WHISPER_STUB)))
     for k in ("STUB_MODE", "FFMPEG_MODE", "VIDEO_WHISPER_MODEL", "VIDEO_WHISPER_LANG"):
         monkeypatch.delenv(k, raising=False)
     work = tmp_path / "work"
@@ -128,7 +126,9 @@ def test_video_eval_imports_the_module_the_youtube_transcript_skill_ships():
 
 
 def test_vtt_to_text_drops_tags_timing_and_rolling_repeats():
-    assert media.vtt_to_text(AUTO_VTT) == "Today we're going to talk\nabout AI >> agents"
+    assert (
+        media.vtt_to_text(AUTO_VTT) == "Today we're going to talk\nabout AI >> agents"
+    )
 
 
 def test_vtt_to_text_keeps_a_cue_that_is_only_digits():
@@ -225,9 +225,7 @@ def test_download_of_the_info_only_skips_the_media(tools):
     assert "--skip-download" in tools.calls()[0]
 
 
-def test_a_download_skipped_for_its_length_is_no_file_and_no_error(
-    tools, monkeypatch
-):
+def test_a_download_skipped_for_its_length_is_no_file_and_no_error(tools, monkeypatch):
     monkeypatch.setenv("STUB_MODE", "toolong")
     assert media.download("https://x/v", tools.work, 900, None)[::2] == (None, "")
 
@@ -262,9 +260,7 @@ def test_speech_is_whispers_text_and_detected_language(tools):
     assert argv[argv.index("--model") + 1] == "base" and "--language" not in argv
 
 
-def test_a_forced_whisper_language_and_model_are_used_and_reported(
-    tools, monkeypatch
-):
+def test_a_forced_whisper_language_and_model_are_used_and_reported(tools, monkeypatch):
     monkeypatch.setenv("VIDEO_WHISPER_MODEL", "small")
     monkeypatch.setenv("VIDEO_WHISPER_LANG", "uk")
     clip = tools.work / "clip.m4a"
