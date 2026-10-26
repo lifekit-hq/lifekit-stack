@@ -7,9 +7,10 @@
 # The skill queues a video (a YouTube or Instagram link, or a file already on
 # the server) on the shared job queue (skills/job-queue, installed by
 # ensure-job-queue.sh); the drain runs it, fetching through the queue's egress
-# with the pinned yt-dlp and the captions code of the youtube-transcript skill
-# (ensure-youtube-transcript.sh, one pin to bump), and the whisper and ffmpeg
-# baked into the gateway image transcribe what has no captions. Kit judges it
+# with the pinned yt-dlp and the media code (media.py: captions, downloads,
+# whisper) of the youtube-transcript skill (ensure-youtube-transcript.sh, one
+# pin to bump), and the whisper and ffmpeg baked into the gateway image
+# transcribe what has no captions. Kit judges it
 # against skills/video-eval/rubric.md (docs/runbook.md, "Video evaluation").
 # Kit's allowlist (agents.entries.kit.skills) is host state, so this script only
 # reads it; adding the skill is an operator patch.
@@ -94,9 +95,9 @@ for t in ffmpeg whisper; do
   command -v "$t" >/dev/null 2>&1 && echo "tool: $t present" || echo "tool: $t MISSING in the gateway image"
 done
 yt="$HOME/.openclaw/skills/youtube-transcript"
-[ -f "$yt/yt-dlp" ] && [ -f "$yt/transcript.py" ] \
-  && echo "tool: yt-dlp and transcript.py present (youtube-transcript skill)" \
-  || echo "tool: yt-dlp or transcript.py MISSING - run scripts/ensure-youtube-transcript.sh"
+[ -f "$yt/yt-dlp" ] && [ -f "$yt/media.py" ] \
+  && echo "tool: yt-dlp and media.py present (youtube-transcript skill)" \
+  || echo "tool: yt-dlp or media.py MISSING - run scripts/ensure-youtube-transcript.sh"
 [ -f "$HOME/.openclaw/skills/job-queue/jobq.py" ] \
   && echo "tool: jobq.py present (job-queue skill)" \
   || echo "tool: jobq.py MISSING - run scripts/ensure-job-queue.sh"

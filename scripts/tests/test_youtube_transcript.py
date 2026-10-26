@@ -1,5 +1,6 @@
 """The youtube-transcript skill, its allow-list SOCKS relay, the tunnel units
 and the ensure script (docs/runbook.md, "YouTube transcripts through the PC").
+The caption helpers it runs on are media.py's, tested in test_media.py.
 
 yt-dlp is replaced by a stub that writes the caption files a real run would,
 and the PC end of the tunnel by a fake SOCKS5 server, so nothing here touches
@@ -28,6 +29,7 @@ INSTALLER = REPO / "scripts/yt-tunnel/install-yt-tunnel.sh"
 RELAY = REPO / "scripts/yt-tunnel/yt-relay.py"
 ENSURE = REPO / "scripts/ensure-youtube-transcript.sh"
 
+sys.path.insert(0, str(SKILL))  # transcript.py imports media.py from beside it
 _SPEC = importlib.util.spec_from_file_location("transcript", SKILL / "transcript.py")
 transcript = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(transcript)
@@ -264,50 +266,6 @@ def test_video_id_forms(arg):
 )
 def test_video_id_rejects(arg):
     assert transcript.video_id(arg) is None
-
-
-def test_vtt_to_text_drops_tags_timing_and_rolling_repeats():
-    assert (
-        transcript.vtt_to_text(AUTO_VTT)
-        == "Today we're going to talk\nabout AI >> agents"
-    )
-
-
-def test_vtt_to_text_keeps_a_cue_that_is_only_digits():
-    vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n100\n\n00:00:01.000 --> 00:00:02.000\n2024\n"
-    assert transcript.vtt_to_text(vtt) == "100\n2024"
-
-
-def test_pick_prefers_original_language_track():
-    files = [Path("v.en.vtt"), Path("v.en-orig.vtt")]
-    assert transcript.pick(files) == Path("v.en-orig.vtt")
-    assert transcript.pick([Path("v.en.vtt")]) == Path("v.en.vtt")
-    assert transcript.pick([]) is None
-
-
-def test_pick_takes_the_spoken_language_among_several_original_tracks():
-    files = [Path(f"v.{lang}-orig.vtt") for lang in ("bn", "de", "en", "es")]
-    assert transcript.pick(files, "de") == Path("v.de-orig.vtt")
-    assert transcript.pick(files, "en-US") == Path("v.en-orig.vtt")
-    assert transcript.pick(files, "sv") == Path("v.en-orig.vtt")  # English fallback
-    assert transcript.pick(files) == Path("v.en-orig.vtt")
-    assert transcript.pick(files[:2]) is None  # never the alphabetically first
-    assert transcript.pick([Path("v.uk-orig.vtt")], "en") == Path("v.uk-orig.vtt")
-
-
-@pytest.mark.parametrize(
-    ("printed", "spoken", "tracks"),
-    [
-        ("en-US\n", "en-US", "en-US-orig,en-orig"),
-        ("de", "de", "de-orig,en-orig"),
-        ("en", "en", "en-orig"),
-        ("NA\n", "", ".*-orig"),
-        ("", "", ".*-orig"),
-    ],
-)
-def test_auto_pass_asks_for_the_spoken_language_then_english(printed, spoken, tracks):
-    assert transcript.spoken_language(printed) == spoken
-    assert transcript.original_tracks(spoken) == tracks
 
 
 def test_pc_off_closed_port_is_a_normal_answer_and_never_calls_yt_dlp(run):
@@ -898,7 +856,7 @@ def test_ensure_installs_a_verified_ytdlp_and_the_skill_then_converges(ensure):
     assert len(calls) == 1
     ytdlp = ensure.dest / "yt-dlp"
     assert ytdlp.read_bytes() == PAYLOAD and os.access(ytdlp, os.X_OK)
-    for f in ("SKILL.md", "transcript.py"):
+    for f in ("SKILL.md", "transcript.py", "media.py"):
         assert (ensure.dest / f).read_bytes() == (SKILL / f).read_bytes()
     assert os.access(ensure.dest / "transcript.py", os.X_OK)
 

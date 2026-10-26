@@ -995,7 +995,7 @@ def test_post_up_installs_the_repo_youtube_transcript_skill_into_the_shared_dir(
     assert r.returncode == 0, r.stdout + r.stderr
     assert failures == []
     dest = state / "skills/youtube-transcript"
-    for f in ("SKILL.md", "transcript.py"):
+    for f in ("SKILL.md", "transcript.py", "media.py"):
         assert (dest / f).read_bytes() == (
             REPO / "skills/youtube-transcript" / f
         ).read_bytes()
@@ -1177,6 +1177,7 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("compose/openclaw-gateway/plugins/video-drop-door/index.js", True),
         ("scripts/openclaw-smoke-verdict.py", True),
         ("skills/youtube-transcript/transcript.py", True),
+        ("skills/youtube-transcript/media.py", True),
         ("skills/youtube-transcript/SKILL.md", True),
         ("secrets/lifekit-gateway.env.sops", True),
         ("secrets/lifekit.env.sops", False),

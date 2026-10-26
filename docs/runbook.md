@@ -1610,12 +1610,13 @@ A bare link or a video file the owner sends Kit is queued by the drop door befor
 sees the message ("Video drop door"); a link inside prose still reaches Kit, which queues it.
 
 - **Skill:** `skills/video-eval` (`SKILL.md`, `video.py`, stdlib only, and `rubric.md`; needs
-  the `job-queue` skill and the youtube-transcript skill's yt-dlp and `transcript.py`).
+  the `job-queue` skill and the youtube-transcript skill's yt-dlp and `media.py`, the media
+  code both skills share: captions, `.vtt` to text, the yt-dlp downloads and whisper).
   `video.py <link>` keeps only the reel's shortcode or the YouTube video id and queues it (job
   `video-ig-<shortcode>` or `video-yt-<id>`; a video file is `video-file-<content hash>`). The
   URL is rebuilt from that id, so nothing else in a link reaches yt-dlp. `video.py run <job id>`
   is the queue's handler, run by the queue, never by kit:
-  - **YouTube:** the captions first, the same way the youtube-transcript skill reads them.
+  - **YouTube:** the captions first, with the youtube-transcript skill's own captions code.
     Without captions, the audio is downloaded and transcribed like a reel's. Videos over 15
     minutes (`VIDEO_MAX_SECONDS`) are not transcribed and answer `unavailable - too long ...`.
   - **Reel:** a share link is resolved through the egress, then the audio is downloaded with
@@ -1676,7 +1677,7 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
   `scripts/ensure-video-eval.sh`. The second copies the skill into kit's workspace (a box with
   no kit workspace skips) and removes the retired `reel-claim-check` skill there. It also
   reports, read-only, whether kit's allowlist names the skill, whether `ffmpeg`, `whisper`, the
-  yt-dlp and `jobq.py` are present in the gateway, and whether the goals file is on file. A
+  yt-dlp, `media.py` and `jobq.py` are present in the gateway, and whether the goals file is on file. A
   change to `skills/video-eval/` or to the script triggers the OpenClaw phases; a failed
   install turns the deploy red. `scripts/video-eval.sh` is the host side and runs from the
   checkout.

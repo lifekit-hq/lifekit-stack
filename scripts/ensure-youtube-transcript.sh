@@ -10,6 +10,8 @@
 # 3.11), so no image rebuild and no container recreate is needed: the skill
 # directory is a bind mount and the gateway's skill watcher picks the files up.
 # Bumping yt-dlp is editing the two literals below and merging the change.
+# media.py beside it is the media code the video-eval skill imports from here
+# too (captions, .vtt to text, the yt-dlp downloads, whisper).
 #
 # Shared directory (<state-dir>/skills = ~/.openclaw/skills in the container),
 # not one copy per agent: visible to every local agent unless its allowlist
@@ -40,6 +42,7 @@ skill_dest="${state_dir}/skills/${SKILL}"
 
 install -D -m 0644 "$skill_src/SKILL.md" "$skill_dest/SKILL.md"
 install -D -m 0755 "$skill_src/transcript.py" "$skill_dest/transcript.py"
+install -D -m 0644 "$skill_src/media.py" "$skill_dest/media.py"
 
 if [ -x "$skill_dest/yt-dlp" ] \
   && echo "${YT_DLP_SHA256}  ${skill_dest}/yt-dlp" | sha256sum -c - >/dev/null 2>&1; then
