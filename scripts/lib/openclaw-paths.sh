@@ -26,6 +26,7 @@ openclaw_path_matches() {
     platform.patch.json | */platform.patch.json) return 0 ;;
     scripts/deploy-openclaw.sh | scripts/deploy-trusted-proxies.sh | scripts/memory-audit/*) return 0 ;;
     scripts/ensure-youtube-transcript.sh | scripts/ensure-video-eval.sh | scripts/ensure-job-queue.sh) return 0 ;;
+    scripts/ensure-video-drop-door.sh) return 0 ;;
     scripts/openclaw-smoke-verdict.py) return 0 ;;
     secrets/lifekit-gateway.env.sops) return 0 ;;
   esac

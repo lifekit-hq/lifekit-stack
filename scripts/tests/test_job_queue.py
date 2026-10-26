@@ -83,6 +83,23 @@ def test_a_finished_job_is_queued_again_on_a_new_add(q):
     assert jobq.get("reel-AAA111")["status"] == "queued"
 
 
+def test_a_jobs_position_puts_the_running_one_first_then_the_oldest(q, monkeypatch):
+    # The egress is down, so a file (no probe) runs ahead of an older link.
+    monkeypatch.setenv("LIFEKIT_EGRESS_PROXY", f"socks5h://127.0.0.1:{_closed_port()}")
+    _add("AAA111", now=1000.0)
+    jobq.add("reel", "BBB222", owner="o", handler=HANDLER, probe="", now=1001.0)
+    _add("CCC333", now=1002.0)
+    assert jobq.position("reel-AAA111") == (1, 3)
+    assert jobq.position("reel-CCC333") == (3, 3)
+    assert jobq.claim("reel-BBB222", now=1003.0) is not None
+    assert jobq.position("reel-BBB222") == (1, 3)
+    assert jobq.position("reel-AAA111") == (2, 3)
+    jobq.finish("reel-BBB222", "Reel: x", now=1004.0)
+    assert jobq.position("reel-BBB222") is None
+    assert jobq.position("reel-CCC333") == (2, 2)
+    assert jobq.position("reel-NOPE00") is None
+
+
 @pytest.mark.parametrize(
     "kind,key,probe",
     [

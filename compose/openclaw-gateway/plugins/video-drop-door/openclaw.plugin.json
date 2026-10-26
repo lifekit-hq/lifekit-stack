@@ -1,0 +1,13 @@
+{
+  "id": "video-drop-door",
+  "name": "Video drop door",
+  "description": "Queues a bare video link or video file sent to Kit, before the model",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

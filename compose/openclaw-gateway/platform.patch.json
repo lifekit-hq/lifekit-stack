@@ -33,9 +33,13 @@
       "memory-core",
       "talk-voice",
       "telegram",
-      "web-readability"
+      "web-readability",
+      "video-drop-door"
     ],
     "entries": {
+      "video-drop-door": {
+        "enabled": true
+      },
       "diagnostics-prometheus": {
         "enabled": true
       },

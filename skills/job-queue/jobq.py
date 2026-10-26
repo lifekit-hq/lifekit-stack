@@ -216,6 +216,21 @@ def get(jid: str) -> dict | None:
         return _load(_path(d, jid))
 
 
+def position(jid: str) -> tuple[int, int] | None:
+    """Where a job stands among the jobs waiting or running: (its place, how
+    many there are), a running job first, then oldest first. None when it is
+    neither waiting nor running. A link that waits for the egress can be
+    passed by a file that needs none, so the place is the queue's order, not
+    a promise."""
+    with locked() as d:
+        live = [j for _, j in _jobs(d) if j["status"] in (QUEUED, RUNNING)]
+    live.sort(key=lambda j: (j["status"] != RUNNING, j["queued_at"]))
+    for n, j in enumerate(live, 1):
+        if j["id"] == jid:
+            return n, len(live)
+    return None
+
+
 def _runnable(d: Path, now: float) -> list[dict]:
     """The jobs that may run, oldest first; none while another is running: one
     at a time, so a backlog never runs several downloads and transcriptions at

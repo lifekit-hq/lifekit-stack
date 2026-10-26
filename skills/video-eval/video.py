@@ -13,6 +13,13 @@ one index row.
     video.py status <job id>                  one job's state, for a producer that polls
     video.py show <job id>                    the job's report
     video.py index                            the index of every item judged
+    video.py door <message text>              Kit's drop door: queue a bare link (kit)
+    video.py door-file <saved video>          Kit's drop door: queue a video file (kit)
+
+The door subcommands are run by the video-drop-door gateway plugin before
+Kit's model sees a Telegram message (docs/runbook.md, "Video drop door"):
+exit 0 prints the one-line receipt (or the earlier verdict), exit 2 means the
+message is not for the door and goes to the model unchanged.
 
 Origin is who sent the item: kit (the owner on Telegram), firstmate (the owner
 in chat, filed on the host) or scout (the ideas scout). It only routes the
@@ -71,6 +78,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -142,7 +150,8 @@ USAGE = (
     "       video.py enqueue <link> --origin kit|firstmate|scout [--check]\n"
     "       video.py ingest <name> --origin kit|firstmate|scout [--check] < file\n"
     "       video.py run|status|show <job id> | part <job id> <n>\n"
-    "       video.py report <job id> [file] | index"
+    "       video.py report <job id> [file] | index\n"
+    "       video.py door <message text> | door-file <saved video>"
 )
 
 DEFAULT_RETENTION_DAYS = 14
@@ -741,7 +750,32 @@ def _item(p: dict) -> Item:
     return Item(p["source"], p["ident"], bool(p.get("share")), p.get("name", ""))
 
 
+@dataclass(frozen=True)
+class Queued:
+    """What filing an item did: repeat holds the earlier verdict's lines when
+    the index already had it (nothing queued), else jid names the job."""
+
+    item: Item
+    jid: str = ""
+    added: bool = False
+    waiting: int = 0
+    repeat: tuple[str, ...] = ()
+
+
 def _queue(item: Item, origin: str, mode: str, path: Path | None = None) -> str:
+    q = _file_job(item, origin, mode, path)
+    if q.repeat:
+        return "\n".join(q.repeat)
+    when = (
+        "judged on the next drain turn"
+        if path is not None
+        else "judged once the download route is up"
+    )
+    head = "video queued" if q.added else "video already queued"
+    return f"{head} - job {q.jid}, {when} ({q.waiting} waiting)"
+
+
+def _file_job(item: Item, origin: str, mode: str, path: Path | None = None) -> Queued:
     """Queue an item, unless the index already holds its verdict: then that
     verdict is the answer, and nothing is queued."""
     if origin not in ORIGINS:
@@ -751,7 +785,7 @@ def _queue(item: Item, origin: str, mode: str, path: Path | None = None) -> str:
     if row is not None:
         if path is not None:
             path.unlink(missing_ok=True)
-        return "\n".join(repeat_reply(row))
+        return Queued(item, repeat=tuple(repeat_reply(row)))
     payload = {
         "source": item.source,
         "ident": item.ident,
@@ -774,13 +808,7 @@ def _queue(item: Item, origin: str, mode: str, path: Path | None = None) -> str:
         label=item.url,
         quiet=origin not in REPLY_ORIGINS,
     )
-    when = (
-        "judged on the next drain turn"
-        if path is not None
-        else "judged once the download route is up"
-    )
-    head = "video queued" if added else "video already queued"
-    return f"{head} - job {jid}, {when} ({waiting} waiting)"
+    return Queued(item, jid, added, waiting)
 
 
 def default_mode(item: Item, check: bool) -> str:
@@ -796,9 +824,16 @@ def enqueue(arg: str, origin: str, check: bool = False) -> str | None:
 
 def ingest(name: str, data: bytes, origin: str, check: bool = False) -> str:
     """Queue a file already on this host: a video the owner sent, or a backfill
-    of one already downloaded. reel-<shortcode>.<ext> is that reel and
-    yt-<id>.<lang>.vtt that video's captions, so they are recorded and matched
-    under their link; any other name is a file of its own."""
+    of one already downloaded."""
+    item, kept = _kept(name, data)
+    return _queue(item, origin, default_mode(item, check), kept)
+
+
+def _kept(name: str, data: bytes) -> tuple[Item, Path]:
+    """Keep a file for its run, in the private inbox. reel-<shortcode>.<ext>
+    is that reel and yt-<id>.<lang>.vtt that video's captions, so they are
+    recorded and matched under their link; any other name is a file of its
+    own."""
     name = Path(name).name
     suffix = Path(name).suffix.lower()
     if suffix not in MEDIA_SUFFIXES | {".vtt"}:
@@ -824,7 +859,91 @@ def ingest(name: str, data: bytes, origin: str, check: bool = False) -> str:
     fd = os.open(kept, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(data)
-    return _queue(item, origin, default_mode(item, check), kept)
+    return item, kept
+
+
+# --- the drop door ----------------------------------------------------------------
+#
+# Kit's Telegram chat has a door in front of the model (the video-drop-door
+# plugin, compose/openclaw-gateway/plugins/video-drop-door): a message that is
+# one bare link, or that carries a video file, is queued here and answered with
+# a receipt, no model turn. The verdict comes back the way every kit item's
+# does, from the drain turn to the owner's chat.
+
+DOOR_MAX = 2048
+NAME_LIMIT = 60
+
+
+def door_link(text: str) -> Item | None:
+    """The video a message names when its whole text, trimmed, is one YouTube
+    or Instagram link; None for anything else, a link inside prose included.
+    Strict on shape: printable ASCII with no spaces, an explicit http(s)
+    scheme, no user or password, no port but the default."""
+    t = text.strip()
+    if not t or len(t) > DOOR_MAX or not (t.isascii() and t.isprintable()):
+        return None
+    if " " in t:
+        return None
+    try:
+        u = urlparse(t)
+        port = u.port
+    except ValueError:
+        return None
+    if u.scheme.lower() not in ("http", "https") or not u.hostname:
+        return None
+    if u.username is not None or u.password is not None or port not in (None, 80, 443):
+        return None
+    return parse_link(t)
+
+
+def door_name(item: Item) -> str:
+    """The item as a receipt names it: never the link, so the chat shows no
+    preview, and a file's name cut to fit."""
+    if item.source == "youtube":
+        return f"youtube video {item.ident}"
+    if item.source == "instagram":
+        return f"instagram {'share link' if item.share else 'reel'} {item.ident}"
+    name = "".join(c if c.isprintable() else "?" for c in item.name)
+    return f"video file {name[:NAME_LIMIT]}"
+
+
+def receipt(q: Queued, place: tuple[int, int] | None) -> str:
+    """The door's answer: one line naming the item and its place in the queue,
+    or the earlier verdict when the index already has it."""
+    if q.repeat:
+        return "\n".join(q.repeat)
+    head = "video queued" if q.added else "video already queued"
+    at = f"position {place[0]} of {place[1]}" if place else "in the queue"
+    return f"{head}: {door_name(q.item)} - {at}; the verdict comes here once judged"
+
+
+def door(text: str) -> str | None:
+    """The door for a message's text: its receipt, or None to leave it to the
+    model."""
+    item = door_link(text)
+    if item is None:
+        return None
+    return _door_receipt(_file_job(item, "kit", default_mode(item, False)))
+
+
+def door_file(media: Path) -> str | None:
+    """The door for a video file the gateway saved: its receipt, or None when
+    it is not one this skill evaluates. Checked before it is read: a regular
+    file, not a link, a media suffix, within the ingest cap."""
+    try:
+        st = media.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(st.st_mode) or media.suffix.lower() not in MEDIA_SUFFIXES:
+        return None
+    if st.st_size > MAX_INGEST_BYTES:
+        raise ValueError(f"{media.name} is larger than {MAX_INGEST_BYTES >> 20} MB")
+    item, kept = _kept(media.name, media.read_bytes())
+    return _door_receipt(_file_job(item, "kit", default_mode(item, False), kept))
+
+
+def _door_receipt(q: Queued) -> str:
+    return receipt(q, None if q.repeat else jobq().position(q.jid))
 
 
 def _transcript_path(root: Path, item: Item) -> Path:
@@ -1364,13 +1483,22 @@ def _flags(args: list[str]) -> tuple[list[str], str, bool]:
 
 
 def main(argv: list[str]) -> int:
-    args, origin, check = _flags(argv[1:])
-    if not args or args[0] in ("-h", "--help"):
+    # The door's argument is the owner's message as sent, never read for flags.
+    door_cmd = argv[1] if len(argv) == 3 and argv[1] in ("door", "door-file") else ""
+    args, origin, check = ([], "kit", False) if door_cmd else _flags(argv[1:])
+    if not door_cmd and (not args or args[0] in ("-h", "--help")):
         print(__doc__.split("\n\n")[0] + "\n" + USAGE, file=sys.stderr)
         return 2
     os.umask(0o077)
-    cmd, rest = args[0], args[1:]
+    cmd, rest = (door_cmd, argv[2:]) if door_cmd else (args[0], args[1:])
     try:
+        if cmd in ("door", "door-file"):
+            out = door(rest[0]) if cmd == "door" else door_file(Path(rest[0]))
+            if out is None:
+                print("not for the door", file=sys.stderr)
+                return 2
+            print(out)
+            return 0
         if cmd == "run" and len(rest) == 1:
             print(run_job(rest[0]))
             return 0
@@ -1416,7 +1544,18 @@ def main(argv: list[str]) -> int:
             return 0
         if (
             cmd
-            in ("run", "part", "report", "status", "show", "index", "enqueue", "ingest")
+            in (
+                "run",
+                "part",
+                "report",
+                "status",
+                "show",
+                "index",
+                "enqueue",
+                "ingest",
+                "door",
+                "door-file",
+            )
             or rest
         ):
             print(USAGE, file=sys.stderr)

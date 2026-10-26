@@ -161,6 +161,11 @@ services:
       # socks5h:// or http:// URL or "direct". Empty means the default, the PC
       # relay at socks5h://host.docker.internal:18081.
       LIFEKIT_EGRESS_PROXY: ${LIFEKIT_EGRESS_PROXY:-}
+      # The owner's chat, where the job-queue drain announces kit's verdicts:
+      # the video drop door (plugins/video-drop-door, docs/runbook.md "Video
+      # drop door") opens only for a message from this chat, so a verdict
+      # always returns to the chat that sent the video. Empty keeps it shut.
+      LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-}
       PATH: /home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
