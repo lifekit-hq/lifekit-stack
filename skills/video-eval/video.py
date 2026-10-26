@@ -1119,9 +1119,7 @@ def parse_report(
         elif ": " in ln:
             k, v = ln.split(": ", 1)
             k, v = k.strip().lower(), v.strip()
-            if k == "source" and "source" in fields and len(v) > HEAD_LIMIT:
-                errors.append(f"Source: is longer than {HEAD_LIMIT} characters")
-            head[k] = v[:HEAD_LIMIT]
+            head[k] = v if k == "source" else v[:HEAD_LIMIT]
     for k in ("title", "category", "gist", *fields):
         if not head.get(k):
             errors.append(f"the header has no {k.capitalize()}: line")
@@ -1375,16 +1373,21 @@ def file_idea(text: str, now: float | None = None) -> tuple[int, str]:
         raise ValueError(f"{rubric.path} has no {IDEA} kind")
     today = datetime.date(*time.gmtime(now)[:3])
     r, errors = parse_report(text, rubric, today, IDEA_FIELDS)
+    url = ""
     if r is not None:
         u = urlparse(r.head["source"])
         if u.scheme not in ("http", "https") or not u.netloc:
             r, errors = None, ["Source: must be the http(s) link of the primary source"]
+        else:
+            url = normalize_url(r.head["source"])
+            if _cell(url) != url:
+                why = f"Source: must fit an index cell: at most {CELL_LIMIT} characters, no |"
+                r, errors = None, [why]
     if r is None:
         return 3, "report rejected - fix it and file it again:\n" + "\n".join(
             f"- {e}" for e in errors
         )
     root = private_root()
-    url = normalize_url(r.head["source"])
     row = earlier(root, url, r.head["title"])
     if row is not None:
         if normalize_url(row["source"]) != url:

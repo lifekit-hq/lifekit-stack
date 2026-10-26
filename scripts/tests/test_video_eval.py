@@ -993,8 +993,12 @@ def test_an_idea_is_always_filed_as_the_scout_and_takes_no_origin(box):
         (idea_text(source=""), "no Source: line"),
         (idea_text(source="Source: the vendor docs"), "http(s) link"),
         (
-            idea_text(source=f"Source: {IDEA_SOURCE}/{'a' * 200}"),
-            "Source: is longer than 200",
+            idea_text(source=f"Source: {IDEA_SOURCE}/{'a' * 140}"),
+            "at most 160 characters",
+        ),
+        (
+            idea_text(source=f"Source: {IDEA_SOURCE}/{'a' * 300}"),
+            "at most 160 characters",
         ),
         (idea_text(category="hobby"), "Category 'hobby' is not one of"),
         (
@@ -1013,6 +1017,13 @@ def test_an_idea_off_the_rubric_is_rejected_and_nothing_is_filed(box, text, why)
     r = box.cli("idea", stdin=text)
     assert r.returncode == 3 and why in r.stderr, r.stderr
     assert box.index() == []
+
+
+def test_an_idea_source_that_fills_an_index_cell_is_kept_whole(box):
+    long = f"{IDEA_SOURCE}/" + "a" * (160 - len(IDEA_SOURCE) - 1)
+    r = box.cli("idea", stdin=idea_text(source=f"Source: {long}"))
+    assert r.returncode == 0, r.stderr
+    assert box.index()[0]["source"] == long
 
 
 def test_the_same_idea_filed_again_answers_with_its_earlier_verdict(box):
