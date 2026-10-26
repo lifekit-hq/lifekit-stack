@@ -486,8 +486,8 @@ available until scheduled runs are healthy again.
 The push path above and the pulse replace the polling scan. `ledger-scan` (two
 parked rows on the finance agent, every 2h 07:00-23:00 Dublin, disabled since
 2026-08-31) is retired, not re-enabled: finance-sentry's jobs detect, the hook
-wakes the agent with ids, the pulse carries the digest and the quiet-week
-check. `ledger-lit-digest` (Sunday 20:00 Dublin, two rows) is also parked; it
+wakes the agent with ids, the pulse carries the digest and the weekly
+positioning digest. `ledger-lit-digest` (Sunday 20:00 Dublin, two rows) is also parked; it
 is neither retired nor revived by this change. Neither the cron store nor the
 finance agent's workspace is in git, so this change is three operator steps on
 the host. Step 1 ran on 2026-09-19 against the live gateway: the two parked
@@ -553,10 +553,10 @@ rebuilt one.
      absolute path, workspace file tools cannot reach them; watchlist, theses,
      quotes and IPS live in Postgres via MCP, not on disk.
    - "Cadence": delete the `ledger-scan` `dry_run` bullet and the
-     "Silence-check" bullet (the pulse checklist owns the quiet-week digest).
+     "Silence-check" bullet (the pulse checklist owns the weekly positioning digest).
      Reword the first bullet to "Event-driven only. No polling scan, no daily
      digest, no morning brief. The pulse (`ledger-pulse` message) carries
-     the digest and the quiet-week check." and the THESIS BREAK bullet to
+     the digest and the Sunday positioning digest." and the THESIS BREAK bullet to
      "always notify - bypasses every silence rule." Keep the Delivery bullet.
 
    On a scratch copy of the 2026-09-19 file the three edits leave 18,169
