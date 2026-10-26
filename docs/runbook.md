@@ -1513,9 +1513,10 @@ answer once it is on. Video evaluations are its first kind ("Video evaluation").
 - **Jobs:** one private JSON file per job, `<kind>-<key>.json` (mode 0600) in
   `~/.life-state/job-queue/` in the gateway, i.e. `/var/lib/lifekit/job-queue/` on the host
   (mode 0700). A job is keyed by its kind and key (a reel's shortcode, say), so the same reel
-  sent twice is one job; it names the handler command the drain runs, the host its egress pre-check
+  sent twice is one job; it names the handler command the queue runs, the host its egress pre-check
   connects to (none for a file already here), its payload and a one-line label. Finished jobs are pruned after 14 days
-  (`JOBQ_KEEP_DAYS`). Nothing about a job's result beyond its first line is kept here.
+  (`JOBQ_KEEP_DAYS`). Nothing about a job's result beyond its first line is kept here, except a
+  finished run's output (`<job id>.out`, 0600) until a drain turn reads it.
 - **Egress, configured in one place:** `LIFEKIT_EGRESS_PROXY` in
   `/srv/lifekit-secrets/stack.env`, passed to the gateway by `compose/openclaw/docker-compose.yml`.
   Unset or empty is the PC relay, `socks5h://host.docker.internal:18081`; it takes any
@@ -1524,20 +1525,27 @@ answer once it is on. Video evaluations are its first kind ("Video evaluation").
   rented proxy, say) is a value change, not a code change. Changing it recreates the gateway on
   the next deploy.
 - **Drain:** one cron row on kit, `job-queue-drain`, every 2 minutes. Its trigger script
-  (`drain-gate.js`, stored in the cron row) runs `jobq.py next`, which never wakes the agent
-  unless a job can run now: nothing queued, a job already running, or no queued job whose
-  egress answers a real CONNECT to its host all skip the turn with no run history. A job with
-  no probe host (a file already on the server) needs no egress, so a link waiting for the PC
-  never holds it back. When a job is ready, the turn gets one appended instruction (`Run
-  exactly: <handler> <job id>`) and the owning skill says how to answer. Jobs run one at a
-  time, the oldest one whose egress answers first.
+  (`drain-gate.js`, stored in the cron row) runs `jobq.py next`. When a job can run, `next`
+  starts its handler itself, detached in a session of its own (`jobq.py runner`), and wakes no
+  agent: the run belongs to the queue, not to a turn, so neither a tool's timeout nor a turn
+  ending can kill it mid-run (a long fetch or transcription on a busy host once outlived the
+  agent's exec timeout and never reported back). The runner keeps what the handler printed.
+  Only a run that printed an answer wakes the agent: the next drain turn gets one appended
+  instruction (`Run exactly: python3 .../jobq.py output <job id>`), which prints that output
+  once, and the owning skill says how to answer. Nothing queued, a job already running, or no
+  queued job whose egress answers a real CONNECT to its host all skip the turn with no run
+  history. A job with no probe host (a file already on the server) needs no egress, so a link
+  waiting for the PC never holds it back. Jobs run one at a time, the oldest one whose egress
+  answers first; a run's output is handed to a turn before the next job starts.
 - **Exactly one answer per job, bounded:** a run that fails while the egress answers counts an
   attempt and is retried quietly (`NO_REPLY`); the third failure (`JOBQ_MAX_ATTEMPTS`) is the
   one failure message. A run that fails because the egress went away mid-run gives its attempt
-  back and waits. A job whose runs never report back (a turn killed, a gateway restart) is
-  taken up again after 30 minutes (`JOBQ_LEASE_MINUTES`), and given up with one message once
-  those runs reach the attempt limit. A job offered to 3 drain turns in a row that never ran
-  its handler is given up with one message too.
+  back and waits. A run is bounded by `JOBQ_RUN_MINUTES` (90); one that ran over, crashed, or
+  whose runner died (a gateway restart) is taken up again on the next drain, and given up
+  with one message once those runs reach the attempt limit. A run's output that 3 drain turns
+  in a row did not read is given up with one message too, and one read by a turn that then
+  neither filed nor released the job is taken up again after 30 minutes
+  (`JOBQ_LEASE_MINUTES`).
 
 Operator step, once per host, after the PR has deployed (a deploy run shows `cron:
 'job-queue-drain' is not set up` until it is done). Run as lifekit on the VPS:
@@ -1568,8 +1576,8 @@ docker exec "$G" openclaw cron edit "$ID" \
 - **A changed gate:** the row stores the script, so when a deploy reports the gate `DIFFERS`,
   re-apply it: `docker exec "$G" openclaw cron edit "$ID" --trigger-script /home/node/.openclaw/skills/job-queue/drain-gate.js`.
 - **What is waiting:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py list`.
-  Do not run `jobq.py next` by hand while the egress answers: each `next` that hands out a job
-  counts as an offer, and the third unclaimed one gives the job up.
+  Do not run `jobq.py next` by hand while the egress answers: it starts the next job, and each
+  `next` that hands out a run's output counts as an offer, the third unread one giving it up.
 - **Drop a job:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py drop <job id>`
   (the id `list` prints, e.g. `video-ig-<shortcode>`). Kit does this only when the owner asks.
 - **Verify:** `docker exec "$G" openclaw cron run "$ID" --due` with nothing queued, or with the
@@ -1577,8 +1585,10 @@ docker exec "$G" openclaw cron edit "$ID" \
   job queued and the PC on it runs the job and the answer reaches the owner's chat.
 - **A new kind** (the YouTube transcript move is the first follow-up): the skill calls
   `jobq.add(kind, key, owner=..., handler=[...], probe=<host>, payload=..., label=...)` and,
-  in its `run <job id>` handler, `claim`, then `finish`, `retry` or `release`, downloading
-  through `egress_proxy()`; `skills/video-eval/video.py` is the worked example. A job that
+  in its `run <job id>` handler, `running` (None unless the queue's runner started it), then
+  `finish`, `retry` or `release`, downloading through `egress_proxy()`, and prints what the
+  drain turn answers from (`NO_REPLY` for nothing); `skills/video-eval/video.py` is the
+  worked example. A job that
   needs no egress (a file already on the host) passes `probe=""`, and one whose producer polls
   instead of hearing an answer passes `quiet=True`. The queue,
   the gate and the cron row stay as they are.
@@ -1604,7 +1614,7 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
   `video.py <link>` keeps only the reel's shortcode or the YouTube video id and queues it (job
   `video-ig-<shortcode>` or `video-yt-<id>`; a video file is `video-file-<content hash>`). The
   URL is rebuilt from that id, so nothing else in a link reaches yt-dlp. `video.py run <job id>`
-  is the drain's handler:
+  is the queue's handler, run by the queue, never by kit:
   - **YouTube:** the captions first, the same way the youtube-transcript skill reads them.
     Without captions, the audio is downloaded and transcribed like a reel's. Videos over 15
     minutes (`VIDEO_MAX_SECONDS`) are not transcribed and answer `unavailable - too long ...`.
@@ -1614,8 +1624,8 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
   - **A file already on the host:** no egress.
 
   It prints the material, the rubric's path and version, the mode and the owner's goals, and
-  leaves the job running. The judge (kit's turn) writes the report and files it with
-  `video.py report <job id>`.
+  leaves the job running. The next drain turn reads that (`jobq.py output <job id>`), and the
+  judge (kit's turn) writes the report and files it with `video.py report <job id>`.
 - **The rubric:** `skills/video-eval/rubric.md`.
   - Its front matter is machine-read: the categories (`persona`, `channels`, `finance`,
     `dev-tooling`, `home`, `other`), the verdicts, the drop reason codes, the four tests, the
@@ -1714,6 +1724,9 @@ From the host (firstmate, or the operator; any account in the `docker` group). O
   Each file's line says what was queued. The files are judged one per drain turn, with no
   egress needed: the gate skips a link job waiting for the PC and offers the oldest job whose
   egress answers.
+- **Re-run a failed job:** send it again, the same way it came: `scripts/video-eval.sh
+  backfill <file>` for a backfilled file, else `scripts/video-eval.sh enqueue <link>`. A
+  `failed` job is queued afresh (attempt 0); a `queued` or `running` one is left as it is.
 - **Completion signal:** `scripts/video-eval.sh status <job id>`. Its first line is `queued -
   attempt N` or `running - attempt N` while waiting. When finished it is `done` or `failed`,
   followed by the result. A judged job's result is the three-line answer, its last line

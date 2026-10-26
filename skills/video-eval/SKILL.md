@@ -26,7 +26,7 @@ To show what is waiting: `python3 ~/.openclaw/skills/job-queue/jobq.py list`.
 
 ## 2. A queued job's turn
 
-The job-queue drain gives you a turn with `Run exactly: python3 .../video.py run video-<id>` and this skill's name. Run that command exactly once and wait for it (a few minutes for a long video). Its output:
+The job queue has already fetched and transcribed the video on its own; the drain gives you a turn with `Run exactly: python3 .../jobq.py output video-<id>` and this skill's name. Run that command exactly once: it is quick, and it prints that run's output once. Never run `video.py run` yourself. The output:
 
 - **`NO_REPLY`** alone: nothing to say yet (the PC went away mid-run, a failure will be tried again, or nobody waits for an answer). Your whole answer is `NO_REPLY`.
 - **Three lines**, the second saying `already judged <date>`: the same item was judged before. Your whole answer is those three lines.

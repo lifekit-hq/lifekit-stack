@@ -2,7 +2,8 @@
 "Shared job queue").
 
 The egress is a fake SOCKS5 or HTTP proxy on loopback, so nothing here leaves
-the machine.
+the machine. The handler the queue's runner starts is a stand-in that sleeps
+FAKE_SLEEP seconds, then does what FAKE_MODE says.
 """
 
 from __future__ import annotations
@@ -10,12 +11,15 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import shutil
+import signal
 import socket
 import stat
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -28,16 +32,84 @@ _SPEC = importlib.util.spec_from_file_location("jobq", SKILL / "jobq.py")
 jobq = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(jobq)
 
-HANDLER = ["python3", "/skills/x/x.py", "run"]
+FAKE_HANDLER = r"""
+import os, sys, time
+sys.path.insert(0, os.environ["FAKE_LIB"])
+import jobq
+jid = sys.argv[-1]
+time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
+mode = os.environ.get("FAKE_MODE", "material")
+if jobq.running(jid) is None:
+    print("NO_REPLY")
+elif mode == "material":
+    print("material for " + jid)
+elif mode == "answer":
+    jobq.finish(jid, "answered")
+    print("the answer for " + jid)
+elif mode == "retry":
+    jobq.retry(jid, "boom")
+    print("NO_REPLY")
+elif mode == "crash":
+    sys.exit("Traceback: boom")
+"""
+HANDLER = [sys.executable, "-c", FAKE_HANDLER, "run"]
 
 
 @pytest.fixture
 def q(tmp_path, monkeypatch):
-    monkeypatch.setenv("JOBQ_DIR", str(tmp_path / "queue"))
+    qdir = tmp_path / "queue"
+    monkeypatch.setenv("JOBQ_DIR", str(qdir))
     monkeypatch.setenv("LIFEKIT_EGRESS_PROXY", "direct")
-    for k in ("JOBQ_MAX_ATTEMPTS", "JOBQ_LEASE_MINUTES", "JOBQ_KEEP_DAYS"):
+    monkeypatch.setenv("FAKE_LIB", str(SKILL))
+    for k in (
+        "JOBQ_MAX_ATTEMPTS",
+        "JOBQ_LEASE_MINUTES",
+        "JOBQ_KEEP_DAYS",
+        "JOBQ_RUN_MINUTES",
+        "FAKE_SLEEP",
+        "FAKE_MODE",
+    ):
         monkeypatch.delenv(k, raising=False)
-    return tmp_path / "queue"
+    yield qdir
+    _kill_runs(qdir)
+
+
+def _kill_runs(qdir: Path) -> None:
+    """Every runner and handler a test left behind (they outlive their parent
+    by design), found by the queue directory in their environment."""
+    mark = f"JOBQ_DIR={qdir}".encode()
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit() or int(proc.name) == os.getpid():
+            continue
+        try:
+            if mark in (proc / "environ").read_bytes().split(b"\0"):
+                os.kill(int(proc.name), signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _ran(jid: str, timeout: float = 30.0) -> dict:
+    """The job once its runner has noted the handler's end."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        job = jobq.get(jid)
+        if "ran_at" in (job.get("run") or {}):
+            return job
+        time.sleep(0.05)
+    raise AssertionError(f"{jid} never ran: {jobq.get(jid)}")
+
+
+def _add_file(key="AAA111", now=1000.0, **kw):
+    """A job that needs no egress, like a file already on the host."""
+    return jobq.add(
+        "video",
+        f"file-{key}",
+        owner="video-eval",
+        handler=HANDLER,
+        probe="",
+        now=now,
+        **kw,
+    )
 
 
 def _add(key="AAA111", now=1000.0, **kw):
@@ -201,15 +273,169 @@ def test_next_is_idle_with_nothing_queued_or_one_running(q):
     assert jobq.next_job(now=1003.0) == ("idle", "")
 
 
-def test_next_hands_over_the_exact_handler_command(q):
-    _add()
-    state, message = jobq.next_job(now=1001.0)
+def test_next_runs_the_handler_itself_and_wakes_no_turn_for_it(q):
+    _add_file()
+    assert jobq.next_job(now=1001.0) == ("started", "")
+    job = jobq.get("video-file-AAA111")
+    assert (job["status"], job["attempts"]) == ("running", 1)
+    job = _ran("video-file-AAA111")
+    assert job["status"] == "running"  # it waits for the turn that answers
+    assert job["run"]["exit"] == 0 and job["run"]["unread"] is True
+    assert stat.S_IMODE((q / "video-file-AAA111.out").stat().st_mode) == 0o600
+
+
+def test_a_run_that_printed_something_is_handed_to_one_turn_to_answer(q):
+    jid = "video-file-AAA111"
+    _add_file()
+    jobq.next_job(now=1001.0)
+    _ran(jid)
+    state, message = jobq.next_job(now=1002.0)
     assert state == "ready"
+    me = shlex.join([sys.executable, str(SKILL.resolve() / "jobq.py")])
     assert message.splitlines() == [
-        "Job reel-AAA111 is ready (attempt 1 of 3, queued 1970-01-01 00:16 UTC).",
-        "Run exactly: python3 /skills/x/x.py run reel-AAA111",
+        f"Job {jid} has run (attempt 1 of 3, queued 1970-01-01 00:16 UTC).",
+        f"Run exactly: {me} output {jid}",
         "Then answer as the video-eval skill says for a queued job.",
     ]
+    assert jobq.output(jid, now=1003.0) == f"material for {jid}"
+    assert not (q / f"{jid}.out").exists()
+    assert jobq.output(jid, now=1004.0) == "NO_REPLY"  # read once
+    _add_file("BBB222", now=1005.0)
+    assert jobq.next_job(now=1006.0) == ("idle", "")  # its turn is judging it
+    jobq.finish(jid, "judged", now=1007.0)
+    assert jobq.next_job(now=1008.0) == ("started", "")
+    assert jobq.get("video-file-BBB222")["status"] == "running"
+
+
+def test_a_job_the_handler_finished_is_answered_before_the_next_one_starts(
+    q, monkeypatch
+):
+    monkeypatch.setenv("FAKE_MODE", "answer")
+    _add_file("AAA111", now=1000.0)
+    _add_file("BBB222", now=1001.0)
+    jobq.next_job(now=1002.0)
+    assert _ran("video-file-AAA111")["status"] == "done"
+    state, message = jobq.next_job(now=1003.0)
+    assert state == "ready" and "output video-file-AAA111" in message
+    assert jobq.output("video-file-AAA111") == "the answer for video-file-AAA111"
+    assert jobq.next_job(now=1004.0) == ("started", "")
+    assert jobq.get("video-file-BBB222")["status"] == "running"
+
+
+def test_a_run_that_says_no_reply_wakes_no_turn(q, monkeypatch):
+    monkeypatch.setenv("FAKE_MODE", "retry")
+    _add_file()
+    jobq.next_job(now=1001.0)
+    job = _ran("video-file-AAA111")
+    assert (job["status"], job["attempts"]) == ("queued", 1)
+    assert not (q / "video-file-AAA111.out").exists()
+    monkeypatch.setenv("FAKE_MODE", "material")
+    assert jobq.next_job(now=1002.0) == ("started", "")  # the retry, at once
+    assert _ran("video-file-AAA111")["attempts"] == 2
+
+
+def _descendants(pid: int) -> list[int]:
+    children: dict[int, list[int]] = {}
+    for proc in Path("/proc").glob("[0-9]*"):
+        try:
+            fields = (proc / "stat").read_text().rsplit(")", 1)[1].split()
+        except OSError:
+            continue
+        children.setdefault(int(fields[1]), []).append(int(proc.name))
+    out, todo = [], [pid]
+    while todo:
+        kids = children.get(todo.pop(), [])
+        out += kids
+        todo += kids
+    return out
+
+
+def test_the_run_outlives_the_command_that_started_it(q, monkeypatch):
+    # The bug this fixes: the agent ran the handler in its exec tool, which
+    # killed it at the tool's timeout, mid-transcription, so it never reported
+    # back. Now the gate's command starts it; killing that command the way the
+    # tool does (its process group, then every process under it) leaves it be.
+    monkeypatch.setenv("FAKE_SLEEP", "2")
+    _add_file()
+    gate = subprocess.Popen(
+        [
+            "sh",
+            "-c",
+            f"{shlex.join([sys.executable, str(SKILL / 'jobq.py'), 'next'])}"
+            "; echo gate-done; sleep 60",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    assert gate.stdout.readline() == "JOBQ idle\n"
+    assert gate.stdout.readline() == "gate-done\n"
+    for pid in _descendants(gate.pid):
+        os.kill(pid, signal.SIGTERM)
+    os.killpg(gate.pid, signal.SIGTERM)
+    gate.wait(timeout=10)
+    gate.stdout.close()
+    job = _ran("video-file-AAA111")
+    assert job["status"] == "running" and job["run"]["exit"] == 0
+    assert jobq.next_job()[0] == "ready"
+    assert jobq.output("video-file-AAA111") == "material for video-file-AAA111"
+
+
+def test_a_runner_that_died_is_taken_up_again_at_once_then_given_up(q, monkeypatch):
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    os.kill(jobq.get(jid)["run"]["pid"], signal.SIGKILL)  # a gateway restart, say
+    _kill_runs(q)
+    deadline = time.monotonic() + 10
+    while jobq.next_job(now=1002.0) != ("started", "") and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert jobq.get(jid)["attempts"] == 2
+    os.kill(jobq.get(jid)["run"]["pid"], signal.SIGKILL)
+    while (state := jobq.next_job(now=1003.0))[0] != "ready":
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    assert "gave up: its last 2 runs never reported back" in state[1]
+    assert jobq.get(jid)["status"] == "failed"
+
+
+@pytest.mark.parametrize("mode", ["crash", "silent"])
+def test_a_handler_that_ended_without_reporting_back_is_run_again_at_once(
+    q, monkeypatch, mode
+):
+    monkeypatch.setenv("FAKE_MODE", mode)
+    _add_file()
+    jobq.next_job(now=1001.0)
+    job = _ran("video-file-AAA111")
+    assert job["status"] == "running" and "unread" not in job["run"]
+    if mode == "crash":
+        assert job["run"]["exit"] == 1 and job["last_error"] == "Traceback: boom"
+    assert jobq.next_job(now=1002.0) == ("started", "")
+    assert jobq.get("video-file-AAA111")["attempts"] == 2
+
+
+def test_a_read_output_nobody_finished_is_run_again_after_the_lease(q):
+    jid = "video-file-AAA111"
+    _add_file()
+    jobq.next_job(now=1001.0)
+    _ran(jid)
+    jobq.next_job(now=1002.0)
+    jobq.output(jid, now=1003.0)
+    assert jobq.next_job(now=1003.0 + 29 * 60) == ("idle", "")
+    assert jobq.next_job(now=1003.0 + 31 * 60) == ("started", "")
+    assert jobq.get(jid)["attempts"] == 2
+
+
+def test_only_the_queues_own_run_gets_the_job(q, monkeypatch):
+    _add_file()
+    jobq.claim("video-file-AAA111", now=1001.0)
+    assert jobq.running("video-file-AAA111") is None  # a handler run by hand
+    monkeypatch.setenv(jobq.RUN_ENV, "video-file-BBB222")
+    assert jobq.running("video-file-AAA111") is None
+    monkeypatch.setenv(jobq.RUN_ENV, "video-file-AAA111")
+    assert jobq.running("video-file-AAA111")["attempts"] == 1
 
 
 def test_next_waits_while_the_egress_does_not_answer(q, monkeypatch):
@@ -222,7 +448,7 @@ def test_next_waits_while_the_egress_does_not_answer(q, monkeypatch):
 def test_a_job_with_no_probe_needs_no_egress(q, monkeypatch):
     monkeypatch.setenv("LIFEKIT_EGRESS_PROXY", f"socks5h://127.0.0.1:{_closed_port()}")
     jobq.add("video", "file-AAA111", owner="video-eval", handler=HANDLER, probe="")
-    assert jobq.next_job(now=1001.0)[0] == "ready"
+    assert jobq.next_job(now=1001.0)[0] == "started"
     assert jobq.get("video-file-AAA111")["probe"] == ""
 
 
@@ -237,10 +463,12 @@ def test_a_file_behind_a_link_waiting_for_the_pc_is_offered_and_claimed(q, monke
         probe="",
         now=1001.0,
     )
-    state, message = jobq.next_job(now=1002.0)
-    assert state == "ready" and "video-file-BBB222" in message
-    assert jobq.get("reel-AAA111").get("offers") is None
-    assert jobq.claim("video-file-BBB222", now=1003.0)["attempts"] == 1
+    assert jobq.next_job(now=1002.0) == ("started", "")
+    assert jobq.get("video-file-BBB222")["status"] == "running"
+    assert jobq.get("reel-AAA111")["status"] == "queued"
+    _ran("video-file-BBB222")
+    assert "video-file-BBB222" in jobq.next_job(now=1003.0)[1]
+    jobq.output("video-file-BBB222", now=1004.0)
     assert jobq.next_job(now=1004.0) == ("idle", "")  # one is running
     jobq.finish("video-file-BBB222", "done", now=1005.0)
     assert jobq.next_job(now=1006.0) == ("wait", "")  # the link still waits
@@ -256,43 +484,51 @@ def test_files_keep_their_order_and_the_link_goes_first_once_the_egress_answers(
         probe="",
         now=1001.0,
     )
-    assert "reel-AAA111" in jobq.next_job(now=1002.0)[1]
-    assert jobq.claim("video-file-BBB222", now=1003.0) is None
+    assert jobq.next_job(now=1002.0) == ("started", "")
+    assert jobq.get("reel-AAA111")["status"] == "running"
+    assert jobq.get("video-file-BBB222")["status"] == "queued"
+
+
+def _offered(**kw) -> str:
+    """A job that ran, its output handed to OFFER_LIMIT turns none read."""
+    _add_file(**kw)
+    jobq.next_job(now=1001.0)
+    _ran("video-file-AAA111")
+    for _ in range(jobq.OFFER_LIMIT):
+        assert jobq.next_job(now=1001.0)[0] == "ready"
+    return "video-file-AAA111"
 
 
 def test_a_quiet_job_gives_up_without_a_reply(q):
-    _add(quiet=True)
-    for _ in range(jobq.OFFER_LIMIT):
-        jobq.next_job(now=1001.0)
+    jid = _offered(quiet=True)
     state, message = jobq.next_job(now=1002.0)
     assert state == "ready" and message.splitlines()[1] == (
         "Run nothing. Reply exactly NO_REPLY: whoever queued it reads its status."
     )
-    assert jobq.get("reel-AAA111")["status"] == "failed"
+    assert jobq.get(jid)["status"] == "failed"
 
 
-def test_next_gives_up_after_offers_no_turn_ran(q):
-    _add()
-    for _ in range(jobq.OFFER_LIMIT):
-        assert jobq.next_job(now=1001.0)[0] == "ready"
+def test_next_gives_up_after_offers_no_turn_read(q):
+    jid = _offered()
     state, message = jobq.next_job(now=1002.0)
     assert state == "ready"
     assert message.startswith(
-        "Job reel-AAA111 gave up: 3 drain turns in a row did not run it."
+        f"Job {jid} gave up: 3 drain turns in a row did not read its result."
     )
-    assert "Run nothing." in message and "https://example/AAA111" in message
-    job = jobq.get("reel-AAA111")
+    assert "Run nothing." in message and jid in message
+    job = jobq.get(jid)
     assert job["status"] == "failed" and job["result"].startswith("gave up")
+    assert not (jobq.root() / f"{jid}.out").exists()
     assert jobq.next_job(now=1003.0) == ("idle", "")
 
 
-def test_a_claim_resets_the_offer_count(q):
-    _add()
-    for _ in range(jobq.OFFER_LIMIT):
-        jobq.next_job(now=1001.0)
-    jobq.claim("reel-AAA111", now=1002.0)
-    jobq.release("reel-AAA111")
-    assert jobq.next_job(now=1003.0)[1].startswith("Job reel-AAA111 is ready")
+def test_each_run_starts_the_offer_count_again(q):
+    jid = _offered()
+    jobq.release(jid)
+    assert jobq.output(jid) != "NO_REPLY"  # read at last; the run starts over
+    assert jobq.next_job(now=1002.0) == ("started", "")
+    _ran(jid)
+    assert jobq.next_job(now=1003.0)[1].startswith(f"Job {jid} has run")
 
 
 def test_next_gives_up_on_a_job_whose_last_runs_never_reported_back(q, monkeypatch):
@@ -320,9 +556,16 @@ def _cli(*args, env):
 def test_the_cli_prints_the_gate_sentinel_first(q):
     env = {**os.environ}
     assert _cli("next", env=env).stdout == "JOBQ idle\n"
-    _add()
+    _add_file()
+    assert _cli("next", env=env).stdout == "JOBQ idle\n"  # started: no turn
+    _ran("video-file-AAA111")
     out = _cli("next", env=env).stdout.splitlines()
     assert out[0] == "JOBQ ready" and out[2].startswith("Run exactly: ")
+    run = shlex.split(out[2].removeprefix("Run exactly: "))
+    r = subprocess.run(run, env=env, capture_output=True, text=True, check=True)
+    assert r.stdout == "material for video-file-AAA111\n"
+    jobq.finish("video-file-AAA111", "judged")
+    _add()
     env["LIFEKIT_EGRESS_PROXY"] = f"socks5h://127.0.0.1:{_closed_port()}"
     assert _cli("next", env=env).stdout == "JOBQ wait\n"
 
