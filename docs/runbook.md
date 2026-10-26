@@ -1734,6 +1734,12 @@ From the host (firstmate, or the operator; any account in the `docker` group). O
   the `unavailable - ...` line.
 - **Read:** `scripts/video-eval.sh report <job id>` prints the report;
   `scripts/video-eval.sh index` prints the index.
+- **File a judged idea** (the ideas scout, with `VIDEO_EVAL_ORIGIN=scout`):
+  `scripts/video-eval.sh idea <report file>` (or the report on stdin) checks the report against
+  the rubric, with the idea's `Claim:` and primary `Source:` lines, and files it at once: no
+  job, no fetch. It prints the three lines, or the earlier verdict when that source or title
+  was judged before; exit 3 lists what does not follow the rubric. The report is kept in
+  `/var/lib/lifekit/intake/reports/ideas/`, which intake-to-vault does not file into the vault.
 
 Then:
 

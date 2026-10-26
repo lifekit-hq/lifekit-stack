@@ -1555,6 +1555,7 @@ case "$1" in
   exec)
     case "$*" in
       *" ingest "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "video queued - job video-x" ;;
+      *" idea "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/ideas/idea-x.v2.md" ;;
       *" status "*) printf 'done\nt\nl\nreport: /home/node/.life-state/intake/reports/x.v1.md\n' ;;
       *) echo "ran" ;;
     esac ;;
@@ -1562,13 +1563,14 @@ esac
 """
 
 
-def _wrapper(tmp_path, *args):
+def _wrapper(tmp_path, *args, stdin=None, **extra):
     log = tmp_path / "docker.log"
     log.write_text("")
     docker = _stub(tmp_path / "docker", WRAPPER_DOCKER)
     r = subprocess.run(
         ["bash", str(WRAPPER), *args],
-        env={**os.environ, "DOCKER": str(docker), "DOCKER_LOG": str(log)},
+        env={**os.environ, "DOCKER": str(docker), "DOCKER_LOG": str(log), **extra},
+        input=stdin,
         capture_output=True,
         text=True,
         check=False,
@@ -1600,6 +1602,19 @@ def test_the_wrapper_backfills_files_without_downloading_them(tmp_path):
     assert "got 5 bytes" in calls
 
 
+def test_the_wrapper_files_an_idea_from_a_file_or_stdin(tmp_path):
+    report = tmp_path / "idea.txt"
+    report.write_text("12345")
+    for args, stdin in ((["idea", str(report)], None), (["idea"], "123")):
+        r, calls = _wrapper(tmp_path, *args, stdin=stdin, VIDEO_EVAL_ORIGIN="scout")
+        assert r.returncode == 0, r.stderr
+        assert f"docker exec -i gw1 python3 {SCRIPT} idea --origin scout" in calls
+        assert f"got {len(stdin or '12345')} bytes" in calls
+        assert r.stdout.strip() == (
+            "report: /var/lib/lifekit/intake/reports/ideas/idea-x.v2.md"
+        )
+
+
 def test_the_wrapper_reports_a_missing_file_and_fails(tmp_path):
     r, _ = _wrapper(tmp_path, "backfill", str(tmp_path / "nope.mp4"))
     assert r.returncode == 1 and "no such file" in r.stderr
@@ -1612,7 +1627,9 @@ def test_the_wrapper_prints_host_paths(tmp_path):
     )
 
 
-@pytest.mark.parametrize("args", [[], ["bogus"], ["enqueue"], ["report"]])
+@pytest.mark.parametrize(
+    "args", [[], ["bogus"], ["enqueue"], ["report"], ["idea", "a", "b"]]
+)
 def test_the_wrapper_usage(tmp_path, args):
     r, _ = _wrapper(tmp_path, *args)
     assert r.returncode == 2
