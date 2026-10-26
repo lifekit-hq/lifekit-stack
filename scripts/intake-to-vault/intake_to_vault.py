@@ -199,7 +199,7 @@ def page_url(path: Path) -> str:
         if line == "---":
             break
         if line.startswith("url: "):
-            return line[len("url: ") :].strip().strip('"')
+            return line[len("url: ") :].strip()
     return ""
 
 
@@ -212,6 +212,11 @@ def quoted(text: str) -> str:
     return '"' + one_line(text).replace("\\", "/").replace('"', "'") + '"'
 
 
+def written_url(source: str) -> str:
+    url = one_line(source)
+    return url if re.fullmatch(r"https?://[^\s\"'#]+", url) else quoted(url)
+
+
 def fenced(text: str) -> str:
     run = max((len(m) for m in re.findall(r"`+", text)), default=0)
     fence = "`" * max(3, run + 1)
@@ -219,8 +224,6 @@ def fenced(text: str) -> str:
 
 
 def render_page(r: Report, transcript: str, author: str) -> str:
-    url = one_line(r.source)
-    url = url if re.fullmatch(r"https?://[^\s\"'#]+", url) else quoted(url)
     mode = f", {r.mode} mode" if r.mode else ""
     project = f", project: {one_line(r.project)}" if r.project else ""
     transcript_part = (
@@ -232,7 +235,7 @@ def render_page(r: Report, transcript: str, author: str) -> str:
         [
             "---",
             f"title: {quoted(r.title)}",
-            f"url: {url}",
+            f"url: {written_url(r.source)}",
             f"author: {quoted(author or 'unknown')}",
             f"captured: {r.judged}",
             "type: other",
@@ -361,7 +364,7 @@ def file_page(vault: Path, intake: Path, r: Report) -> str:
     transcript, author = transcript_of(intake, r.key)
     for rel in page_candidates(r):
         path = vault / rel
-        if path.exists() and page_url(path) != one_line(r.source):
+        if path.exists() and page_url(path) != written_url(r.source):
             continue
         if not path.exists():
             write_new(path, render_page(r, transcript, author))

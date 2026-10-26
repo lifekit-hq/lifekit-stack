@@ -353,6 +353,15 @@ def test_frontmatter_values_cannot_break_the_yaml(env):
     assert 'url: "not a url"' in head
 
 
+def test_a_source_with_a_quote_or_backslash_is_filed_once_across_runs(env):
+    vault, intake = env
+    add(intake, "AbcSynth_1", report(url='https://example.com/a"b\\c'))
+    assert itv.main() == 0
+    assert itv.main() == 0
+    assert len(list((vault / "sources").iterdir())) == 1
+    assert len(calls(vault, "index")) == 1
+
+
 def test_installer_installs_the_unit_and_enables_the_timer(tmp_path):
     root = tmp_path / "root"
     systemctl = tmp_path / "systemctl"
