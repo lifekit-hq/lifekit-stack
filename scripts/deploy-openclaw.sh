@@ -14,7 +14,8 @@
 #   configure  apply compose/openclaw-gateway/platform.patch.json, then reload
 #              and audit the gateway's SOPS-backed secrets
 #   post-up    reattach openclaw-cli, reset stuck sessions, skill native deps,
-#              the youtube-transcript skill, doctor / health / channels status
+#              the youtube-transcript and reel-claim-check skills, doctor /
+#              health / channels status
 #   smoke      one real agent turn per runtime, then the post-upgrade smoke
 #              check of each pillar the deployed range upgraded
 #
@@ -685,6 +686,17 @@ fi
 say "youtube-transcript skill -> ${OPENCLAW_CONFIG_DIR}/skills"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-youtube-transcript.sh" \
   || fail_later "youtube-transcript skill install failed (output above)"
+
+# ─── reel-claim-check skill ──────────────────────────────────────────────────
+#
+# skills/reel-claim-check lives in kit's workspace, so nothing else carries a
+# merged change to it there. It runs the yt-dlp the step above installed, so it
+# follows it. The script converges, skips a box with no kit workspace, and
+# reports kit's allowlist read-only (adding the skill to it stays an operator
+# patch, docs/runbook.md "Instagram reel claim check").
+say "reel-claim-check skill -> ${OPENCLAW_CONFIG_DIR}/agents/kit/workspace/skills"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-reel-claim-check.sh" \
+  || fail_later "reel-claim-check skill install failed (output above)"
 
 # ─── Skill CLI install (life-state etc.) ─────────────────────────────────────
 #
