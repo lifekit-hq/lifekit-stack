@@ -716,10 +716,10 @@ OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-job-que
 # skills/video-eval lives in kit's workspace, so nothing else carries a merged
 # change to it there. It imports youtube-transcript's media.py (yt-dlp, captions,
 # whisper) and queues on the job queue the steps above installed, so it follows
-# them. The
-# script converges, removes the reel-claim-check skill it replaced, skips a
-# box with no kit workspace, and reports kit's allowlist read-only (adding the
-# skill to it stays an operator patch, docs/runbook.md "Video evaluation").
+# them. The script converges, removes the reel-claim-check skill it replaced,
+# skips a box with no kit workspace, and reports kit's allowlist read-only
+# (adding the skill to it stays an operator patch, docs/runbook.md "Video
+# evaluation").
 say "video-eval skill -> ${OPENCLAW_CONFIG_DIR}/agents/kit/workspace/skills"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-video-eval.sh" \
   || fail_later "video-eval skill install failed (output above)"
