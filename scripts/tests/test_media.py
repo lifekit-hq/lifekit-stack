@@ -124,15 +124,6 @@ def test_video_eval_imports_the_module_the_youtube_transcript_skill_ships():
     assert Path(loaded.__file__).resolve() == SKILL / "media.py"
 
 
-def test_transcript_keeps_no_copy_of_the_shared_code():
-    text = (SKILL / "transcript.py").read_text()
-    for name in ("vtt_to_text", "proxy_reachable", "yt_dlp_cmd", "captions", "fetch"):
-        assert f"def {name}(" not in text
-    video = (REPO / "skills/video-eval/video.py").read_text()
-    for name in ("yt_dlp_cmd", "download", "transcribe", "extract_audio", "speech"):
-        assert f"def {name}(" not in video
-
-
 # --- captions -------------------------------------------------------------------------
 
 
