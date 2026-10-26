@@ -73,6 +73,9 @@ BRIDGE_PER_RUN = 5
 NOTE_MAX_BYTES = 16 * 1024
 LINE_MAX = 400
 QUEUE_GROUP_MAX = 30
+QUEUE_GROUPS_MAX = 10
+PAGE_LINE_BUDGET = 280
+PAGE_BYTE_BUDGET = 22 * 1024
 PR_MAX = 60
 GH_LIMIT = 100
 TIMEOUT = 60
@@ -343,7 +346,7 @@ def render_numbers(
     return out
 
 
-def render_calls(summary: dict[str, Any]) -> list[str]:
+def render_calls(summary: dict[str, Any], limit: int = QUEUE_GROUP_MAX) -> list[str]:
     calls = [d for d in summary.get("decisions_open") or [] if isinstance(d, dict)]
     out = [f"## Open captain calls ({len(calls)})", ""]
     if not calls:
@@ -359,10 +362,10 @@ def render_calls(summary: dict[str, Any]) -> list[str]:
         if call.get("reason"):
             text += f" - {clean(call['reason'], 240)}"
         lines.append(safe_line(clean(text, LINE_MAX + 100), clean(call.get("id"), 80)))
-    return out + cap(lines, QUEUE_GROUP_MAX)
+    return out + cap(lines, limit)
 
 
-def render_queue(summary: dict[str, Any]) -> list[str]:
+def render_queue(summary: dict[str, Any], limit: int = QUEUE_GROUP_MAX) -> list[str]:
     queued = [q for q in summary.get("queued") or [] if isinstance(q, dict)]
     out = [f"## Queued work ({len(queued)})", ""]
     groups: dict[str, list[str]] = {}
@@ -378,12 +381,19 @@ def render_queue(summary: dict[str, Any]) -> list[str]:
         groups.setdefault(label, []).append(safe_line(text, clean(item.get("id"), 80)))
     if not groups:
         return out + ["Nothing queued."]
-    for label in sorted(groups, key=lambda name: (name != "Ready (no hold)", name)):
+    labels = sorted(groups, key=lambda name: (name != "Ready (no hold)", name))
+    for label in labels[:QUEUE_GROUPS_MAX]:
         out += (
             [f"### {label} ({len(groups[label])})", ""]
-            + cap(groups[label], QUEUE_GROUP_MAX)
+            + cap(groups[label], limit)
             + [""]
         )
+    rest = labels[QUEUE_GROUPS_MAX:]
+    if rest:
+        out += [
+            f"- … and {len(rest)} more groups ({sum(len(groups[r]) for r in rest)} items)",
+            "",
+        ]
     return out[:-1]
 
 
@@ -392,6 +402,7 @@ def render_landed(
     prs: list[dict[str, Any]] | None,
     reason: str,
     now: int,
+    limit: int = QUEUE_GROUP_MAX,
 ) -> list[str]:
     out = [f"## Landed in the last {WINDOW_DAYS} days", "", "### Merged PRs", ""]
     if prs is None:
@@ -405,7 +416,7 @@ def render_landed(
             )
             for pr in prs
         ]
-        out += cap(lines, PR_MAX)
+        out += cap(lines, min(PR_MAX, limit))
     out += ["", "### Finished tasks", ""]
     cutoff = (
         (
@@ -426,9 +437,7 @@ def render_landed(
                     clean(item.get("id"), 80),
                 )
             )
-    return out + (
-        cap(sorted(done, reverse=True), QUEUE_GROUP_MAX) if done else ["None."]
-    )
+    return out + (cap(sorted(done, reverse=True), limit) if done else ["None."])
 
 
 def render_snapshot(
@@ -461,11 +470,7 @@ def render_snapshot(
         f"Generated {iso(now)} from {source} and `gh`. Overwritten every run; never edit it by hand.",
         "",
     ]
-    body: list[str] = render_numbers(summary, rows, prs, now) + [""]
-    if summary is not None:
-        body += render_calls(summary) + [""] + render_queue(summary) + [""]
-    body += render_landed(summary, prs, gh_reason, now) + [""]
-    body += [
+    tail = [
         "## How to send a proposal",
         "",
         "Add one line to `inbox.md` on your outbox branch (the gate merges it): "
@@ -474,7 +479,21 @@ def render_snapshot(
         "to be reviewed together on the Monday page, and marks the line forwarded. "
         "Lines without `chatgpt:` are not forwarded.",
     ]
-    return "\n".join(head + body) + "\n"
+    numbers = render_numbers(summary, rows, prs, now) + [""]
+    text = ""
+    for limit in range(QUEUE_GROUP_MAX, -1, -1):
+        body = list(numbers)
+        if summary is not None:
+            body += render_calls(summary, limit) + [""]
+            body += render_queue(summary, limit) + [""]
+        body += render_landed(summary, prs, gh_reason, now, limit) + [""]
+        text = "\n".join(head + body + tail) + "\n"
+        if (
+            len(text.splitlines()) <= PAGE_LINE_BUDGET
+            and len(text.encode()) <= PAGE_BYTE_BUDGET
+        ):
+            break
+    return text
 
 
 def snapshot() -> int:

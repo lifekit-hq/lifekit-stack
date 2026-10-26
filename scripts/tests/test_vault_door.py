@@ -473,6 +473,31 @@ def test_snapshot_caps_long_groups_and_lines(env):
     assert len(text.encode()) < 24 * 1024
 
 
+def test_snapshot_stays_inside_the_page_budget_with_many_groups(env):
+    many = {
+        **SUMMARY,
+        "queued": [
+            {"id": f"t{g}-{n}", "title": "x" * 300, "hold_kind": f"kind-{g:03d}"}
+            for g in range(60)
+            for n in range(vd.QUEUE_GROUP_MAX)
+        ],
+        "decisions_open": [
+            {"id": f"d{n}", "verb": "decide", "summary": "y" * 300}
+            for n in range(vd.QUEUE_GROUP_MAX)
+        ],
+    }
+    write_sources(env, summary=many)
+    vd.snapshot()
+    text = page(env)
+    assert len(text.splitlines()) <= 280
+    assert len(text.encode()) <= 22 * 1024
+    assert text.startswith("---\nname: fleet-snapshot\n")
+    assert "## How to send a proposal" in text
+    assert "## Queued work (1800)" in text
+    assert "more groups" in text
+    assert "- … and " in text
+
+
 def test_snapshot_passes_the_vault_lint_rules_it_can_check(env):
     write_sources(env)
     vd.snapshot()
