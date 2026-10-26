@@ -255,3 +255,34 @@ def test_openclaw_entrypoints_and_only_the_public_one_is_published():
     ports = [p for p in traefik["ports"] if "1889" in p]
     assert "127.0.0.1:18892:18892" in ports
     assert not any("18893" in p for p in traefik["ports"])
+
+
+def test_reply_hook_route_passes_only_post_to_the_one_hook_path():
+    r = ROUTERS["openclaw-reply-hook"]
+    assert r["entryPoints"] == ["openclaw-hook"]
+    assert r["rule"] == (
+        'Method(`POST`) && Path(`/{{ env "OPENCLAW_HOOK_PATH" | trimAll "/" }}/firstmate-reply`)'
+    )
+    # The identity headers are stripped, no sign-in, no service identity: the
+    # hook token the gateway checks is the only authentication.
+    assert r["middlewares"] == ["openclaw-no-identity"]
+    assert r["service"] == "openclaw"
+
+
+def test_reply_hook_entrypoint_has_exactly_that_one_router():
+    # Traefik answers 404 for anything no router on the entrypoint matches.
+    assert set(_entrypoint_routers("openclaw-hook")) == {"openclaw-reply-hook"}
+
+
+def test_reply_hook_entrypoint_is_loopback_published_and_trusts_no_forwarded_headers():
+    traefik = COMPOSE["services"]["traefik"]
+    cmd = traefik["command"]
+    assert "--entrypoints.openclaw-hook.address=:18894" in cmd
+    assert "--entrypoints.openclaw-hook.http.aliasHeadersStrategy=delete" in cmd
+    assert not any("openclaw-hook.forwardedHeaders" in c for c in cmd)
+    assert [p for p in traefik["ports"] if "18894" in p] == ["127.0.0.1:18894:18894"]
+
+
+def test_hook_path_reaches_traefik_from_the_rendered_env():
+    env = COMPOSE["services"]["traefik"]["environment"]
+    assert env["OPENCLAW_HOOK_PATH"] == "${OPENCLAW_HOOK_PATH:-}"

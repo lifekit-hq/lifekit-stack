@@ -32,7 +32,8 @@ Environment:
   REPLY_PUSHER_HOMES       space-separated absolute paths of the firstmate homes
   STATE_DIRECTORY          state root (systemd sets it); REPLY_PUSHER_STATE as fallback
   REPLY_PUSHER_STACK_ENV   rendered env file (default /srv/lifekit-secrets/stack.env)
-  REPLY_PUSHER_GATEWAY     gateway origin (default http://127.0.0.1:18789)
+  REPLY_PUSHER_GATEWAY     gateway origin (default http://127.0.0.1:18894,
+                           the edge's loopback hook route)
   REPLY_PUSHER_TIMEOUT     seconds per POST (default 30)
 
 Exit: 0 all homes clean; 1 some home failed (systemd retries with backoff);
@@ -57,7 +58,9 @@ from typing import Any
 ROUTES: dict[str, str] = {"kit-": "firstmate-reply"}
 
 STACK_ENV = "/srv/lifekit-secrets/stack.env"
-DEFAULT_GATEWAY = "http://127.0.0.1:18789"
+# The edge's `openclaw-hook` entrypoint (compose/edge/traefik/openclaw.yml): the
+# gateway's own loopback port is not published in trusted-proxy mode.
+DEFAULT_GATEWAY = "http://127.0.0.1:18894"
 TOKEN_KEY = "OPENCLAW_HOOK_TOKEN"
 PATH_KEY = "OPENCLAW_HOOK_PATH"
 ENV_KEYS = (TOKEN_KEY, PATH_KEY)

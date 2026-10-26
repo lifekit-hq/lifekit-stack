@@ -11,7 +11,10 @@
 #                   traefik/openclaw.yml. One more entrypoint, :18893, is
 #                   unpublished: OpenClaw's service clients (Prometheus,
 #                   finance-sentry) reach the gateway through it from
-#                   lifekit-shared.
+#                   lifekit-shared. Another, :18894, is published on loopback
+#                   only and passes POST to the `firstmate-reply` hook, nothing
+#                   else: the host reply pusher's way in (docs/runbook.md
+#                   "Reply pusher").
 #   oauth2-proxy  - a confidential OIDC client of Logto. It answers Traefik's
 #                   check from its session cookie, and on no session redirects
 #                   the browser to Logto and back. The cookie has no domain, so
@@ -89,6 +92,10 @@ services:
       - --entrypoints.devclaw.address=:18891
       - --entrypoints.openclaw.address=:18892
       - --entrypoints.openclaw-internal.address=:18893
+      # The reply pusher's way in: loopback-published, POST to one hook only
+      # (traefik/openclaw.yml). No forwardedHeaders trust, like the internal
+      # entrypoint: the pusher's own address is what the gateway attributes.
+      - --entrypoints.openclaw-hook.address=:18894
       # Tailscale Serve terminates HTTPS and sends X-Forwarded-Proto/-Host;
       # oauth2-proxy builds its callback URL from them. These ports bind only
       # to loopback, so only Serve (or a local process) can send them. The
@@ -103,6 +110,7 @@ services:
       - --entrypoints.devclaw.http.aliasHeadersStrategy=delete
       - --entrypoints.openclaw.http.aliasHeadersStrategy=delete
       - --entrypoints.openclaw-internal.http.aliasHeadersStrategy=delete
+      - --entrypoints.openclaw-hook.http.aliasHeadersStrategy=delete
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
       # Prometheus metrics on a dedicated entrypoint (Traefik serves them
@@ -128,11 +136,15 @@ services:
       # as a service identity (traefik/openclaw.yml); the gateway itself
       # stops accepting it in trusted-proxy mode.
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      # The hooks base path (non-guessable, a credential): the reply-pusher
+      # route matches `<path>/firstmate-reply` (traefik/openclaw.yml).
+      OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
       TZ: ${OPENCLAW_TZ:-UTC}
     ports:
       - "127.0.0.1:18890:18890"
       - "127.0.0.1:18891:18891"
       - "127.0.0.1:18892:18892"
+      - "127.0.0.1:18894:18894"
     volumes:
       # A directory, not the file: git replaces the file on deploy, and a
       # single-file bind mount would keep the old inode.
