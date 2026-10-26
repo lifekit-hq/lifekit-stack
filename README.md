@@ -72,7 +72,7 @@ Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded lo
 
 | Service | Image | Role |
 | --- | --- | --- |
-| `traefik` | `traefik:v3.7.14` | Forward-auth proxy. Loopback entrypoints `:18890` (dashboard) and `:18891` (devclaw), which Tailscale Serve's `18790` and `18791` point at after the cutover, and `:18892` (OpenClaw dashboard, behind Serve's `18789` after its cutover) plus an internal `openclaw-edge:18893` for Prometheus and finance-sentry, and an unpublished `:8083` Prometheus metrics entrypoint (job `traefik`). Routes in `compose/edge/traefik/dynamic.yml` and `openclaw.yml`. |
+| `traefik` | `traefik:v3.7.14` | Forward-auth proxy. Loopback entrypoints `:18890` (dashboard) and `:18891` (devclaw), which Tailscale Serve's `18790` and `18791` point at after the cutover, and `:18892` (OpenClaw dashboard, behind Serve's `18789` after its cutover) plus an internal `openclaw-edge:18893` for Prometheus and finance-sentry, a loopback `:18894` that passes only POST to the reply-pusher hook, and an unpublished `:8083` Prometheus metrics entrypoint (job `traefik`). Routes in `compose/edge/traefik/dynamic.yml` and `openclaw.yml`. |
 | `oauth2-proxy` | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.5` | Confidential OIDC client of Logto. Answers Traefik's check from a 30-day session cookie that it refreshes against Logto hourly. Only users with the Logto role `admin` get through. Reaches Logto's token endpoints over `identity-oidc`. No host port; its metrics listener (`:44180`, job `oauth2-proxy`) is reachable only over `lifekit-shared`. |
 
 ## Monitoring

@@ -30,6 +30,16 @@
 # entrypoint trusts no forwarded headers, so Traefik replaces a caller's
 # X-Forwarded-For with the caller's address, as the gateway requires.
 #
+# Entrypoint `openclaw-hook` (:18894, published on 127.0.0.1 only): the host
+# reply pusher's way in (scripts/reply-pusher/), which the gateway's own
+# loopback publish no longer gives in trusted-proxy mode. One route: POST to
+# `<OPENCLAW_HOOK_PATH>/firstmate-reply`. Every other method or path is a 404
+# from Traefik, so the gateway's UI, API and other hooks are not reachable
+# here. No sign-in and no service identity: the identity headers are stripped
+# and the hook token, which the gateway checks, is the only authentication.
+# Remove the route, the entrypoint and the port to take it away; the pusher
+# then fails with a transport error and keeps its outbox.
+#
 # The identity headers are stripped from every request first, so neither a
 # client nor the app route can present one: a header set to "" is removed.
 #
@@ -73,6 +83,13 @@ http:
         PathPrefix(`/v1/`)
         && Header(`Authorization`, `Bearer {{ env "OPENCLAW_GATEWAY_TOKEN" }}`)
       middlewares: [openclaw-service-finance-sentry]
+      service: openclaw
+    openclaw-reply-hook:
+      entryPoints: [openclaw-hook]
+      rule: >-
+        Method(`POST`)
+        && Path(`{{ env "OPENCLAW_HOOK_PATH" }}/firstmate-reply`)
+      middlewares: [openclaw-no-identity]
       service: openclaw
 
   middlewares:

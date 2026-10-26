@@ -681,3 +681,10 @@ def test_installer_needs_root_without_the_test_prefix():
     )
     if os.geteuid() != 0:
         assert proc.returncode == 1 and "root" in proc.stderr
+
+
+def test_default_gateway_is_the_edges_loopback_hook_route():
+    # Trusted-proxy mode drops the gateway's own loopback publish; the edge's
+    # openclaw-hook entrypoint (compose/edge) is the host's way in.
+    assert reply_pusher.DEFAULT_GATEWAY == "http://127.0.0.1:18894"
+    assert reply_pusher.GATEWAY_RE.match(reply_pusher.DEFAULT_GATEWAY)

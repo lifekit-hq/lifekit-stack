@@ -1845,6 +1845,20 @@ turn). The gateway keeps no durable queue, which is why the pusher owns the outb
 Exit 78 (no cursor, or the two secrets missing or malformed) is not retried: run the
 installer, or fix `stack.env`.
 
+**Route.** The pusher POSTs to `REPLY_PUSHER_GATEWAY`, default `http://127.0.0.1:18894`:
+the edge's `openclaw-hook` entrypoint (`compose/edge/traefik/openclaw.yml`), bound to
+loopback. In trusted-proxy mode the gateway's own `127.0.0.1:18789` is not published and the
+edge's `:18892` puts every path behind the sign-in, so this route is the host's way in. It
+passes exactly one request shape, `POST <OPENCLAW_HOOK_PATH>/firstmate-reply`; any other
+method or path answers 404 from Traefik and never reaches the gateway. It strips the
+identity headers and adds none, so the hook token (checked by the gateway) is the only
+authentication. Traefik reads `OPENCLAW_HOOK_PATH` once at start from the rendered env
+file (the value must start with `/`), so a rotation of the path needs the edge recreated
+by the next deploy. To remove the route, delete the `openclaw-reply-hook` router, the
+`openclaw-hook` entrypoint and the `127.0.0.1:18894` port; the pusher then fails with a
+transport error and keeps its outbox. A quick check from the host (a 404 with no token,
+never a gateway page): `curl -si -X POST http://127.0.0.1:18894/nothing | head -1`.
+
 The pusher reads exactly two keys, `OPENCLAW_HOOK_TOKEN` and `OPENCLAW_HOOK_PATH`, from
 `/srv/lifekit-secrets/stack.env` on each run, held in memory only (secrets inventory rows,
 boundary rule). A rotation of the hook token or path therefore needs no pusher step; a push
@@ -2970,6 +2984,8 @@ this before the change merged.
 | `openclaw-internal`, `openclaw-edge:18893` (`lifekit-shared` only, not published) | `/api/diagnostics/prometheus` with the gateway-token bearer | the gateway | `service:prometheus`, capped at `operator.read` |
 | | `/v1/*` with the gateway-token bearer | the gateway | `service:finance-sentry`, capped at `operator.write` |
 | | anything else | 404 | - |
+| `openclaw-hook`, `127.0.0.1:18894` (published on loopback only) | `POST <hook path>/firstmate-reply` | the gateway | no identity (any client-sent copy is removed); the hook token, checked by the gateway |
+| | any other method or path | 404 | - |
 
 The User-Agent match is not access control: requests on the app route carry
 no identity, so the gateway's device auth is their only gate, as it is today.
