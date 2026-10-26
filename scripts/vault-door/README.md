@@ -25,6 +25,10 @@ Behaviour worth knowing:
 - **Snapshot hygiene.** A line that looks like a credential, or restates a subject another vault
   page owns (`bin/subjects.txt`), is withheld; host paths become `<path>`. Without the fleet
   summary the page is left as it was and the unit fails.
+- **Page budget.** The page stays within 280 lines and 22 KiB (the vault lint refuses a page
+  past its own cap): at most 10 queue groups, and when still over budget the per-section item
+  cap shrinks, each trimmed list ending in `… and N more`. Frontmatter and the proposal
+  paragraph are kept.
 - **Vault etiquette.** Both jobs skip while `/srv/memory/.model-pass` is under an hour old (the
   rule `memory-sync.sh` follows) and write files in place, keeping their inode and ACL.
 
