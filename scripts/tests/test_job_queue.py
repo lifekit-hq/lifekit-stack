@@ -44,7 +44,7 @@ def _add(key="AAA111", now=1000.0, **kw):
     return jobq.add(
         "reel",
         key,
-        owner="reel-claim-check",
+        owner="video-eval",
         handler=HANDLER,
         probe="www.instagram.com",
         payload={"url": f"https://example/{key}"},
@@ -66,7 +66,7 @@ def test_add_keeps_one_private_file_per_job(q):
         assert stat.S_IMODE((q / name).stat().st_mode) == 0o600
     job = jobq.get("reel-AAA111")
     assert job["status"] == "queued" and job["attempts"] == 0
-    assert job["handler"] == HANDLER and job["owner"] == "reel-claim-check"
+    assert job["handler"] == HANDLER and job["owner"] == "video-eval"
 
 
 def test_a_second_add_while_it_waits_is_already_queued(q):
@@ -191,7 +191,7 @@ def test_next_hands_over_the_exact_handler_command(q):
     assert message.splitlines() == [
         "Job reel-AAA111 is ready (attempt 1 of 3, queued 1970-01-01 00:16 UTC).",
         "Run exactly: python3 /skills/x/x.py run reel-AAA111",
-        "Then answer as the reel-claim-check skill says for a queued job.",
+        "Then answer as the video-eval skill says for a queued job.",
     ]
 
 
@@ -200,6 +200,58 @@ def test_next_waits_while_the_egress_does_not_answer(q, monkeypatch):
     _add()
     assert jobq.next_job(now=1001.0) == ("wait", "")
     assert jobq.get("reel-AAA111").get("offers") is None  # a wait is no offer
+
+
+def test_a_job_with_no_probe_needs_no_egress(q, monkeypatch):
+    monkeypatch.setenv("LIFEKIT_EGRESS_PROXY", f"socks5h://127.0.0.1:{_closed_port()}")
+    jobq.add("video", "file-AAA111", owner="video-eval", handler=HANDLER, probe="")
+    assert jobq.next_job(now=1001.0)[0] == "ready"
+    assert jobq.get("video-file-AAA111")["probe"] == ""
+
+
+def test_a_file_behind_a_link_waiting_for_the_pc_is_offered_and_claimed(q, monkeypatch):
+    monkeypatch.setenv("LIFEKIT_EGRESS_PROXY", f"socks5h://127.0.0.1:{_closed_port()}")
+    _add("AAA111", now=1000.0)
+    jobq.add(
+        "video",
+        "file-BBB222",
+        owner="video-eval",
+        handler=HANDLER,
+        probe="",
+        now=1001.0,
+    )
+    state, message = jobq.next_job(now=1002.0)
+    assert state == "ready" and "video-file-BBB222" in message
+    assert jobq.get("reel-AAA111").get("offers") is None
+    assert jobq.claim("video-file-BBB222", now=1003.0)["attempts"] == 1
+    assert jobq.next_job(now=1004.0) == ("idle", "")  # one is running
+    jobq.finish("video-file-BBB222", "done", now=1005.0)
+    assert jobq.next_job(now=1006.0) == ("wait", "")  # the link still waits
+
+
+def test_files_keep_their_order_and_the_link_goes_first_once_the_egress_answers(q):
+    _add("AAA111", now=1000.0)
+    jobq.add(
+        "video",
+        "file-BBB222",
+        owner="video-eval",
+        handler=HANDLER,
+        probe="",
+        now=1001.0,
+    )
+    assert "reel-AAA111" in jobq.next_job(now=1002.0)[1]
+    assert jobq.claim("video-file-BBB222", now=1003.0) is None
+
+
+def test_a_quiet_job_gives_up_without_a_reply(q):
+    _add(quiet=True)
+    for _ in range(jobq.OFFER_LIMIT):
+        jobq.next_job(now=1001.0)
+    state, message = jobq.next_job(now=1002.0)
+    assert state == "ready" and message.splitlines()[1] == (
+        "Run nothing. Reply exactly NO_REPLY: whoever queued it reads its status."
+    )
+    assert jobq.get("reel-AAA111")["status"] == "failed"
 
 
 def test_next_gives_up_after_offers_no_turn_ran(q):

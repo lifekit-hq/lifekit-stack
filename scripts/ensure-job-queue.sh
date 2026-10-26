@@ -4,7 +4,7 @@
 # row exists and runs the gate this checkout ships.
 #
 # The queue holds work that waits for an egress (today the owner's PC, through
-# the yt-tunnel relay); skills such as reel-claim-check add jobs, and a cron
+# the yt-tunnel relay); skills such as video-eval add jobs, and a cron
 # row on kit, job-queue-drain, runs skills/job-queue/drain-gate.js as its
 # trigger script and hands kit one ready job per turn (docs/runbook.md,
 # "Shared job queue"). Cron rows are gateway host state, so this script only
