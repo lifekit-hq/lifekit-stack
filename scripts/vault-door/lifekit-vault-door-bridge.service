@@ -1,0 +1,18 @@
+[Unit]
+Description=Forward ChatGPT's vault inbox notes to the main firstmate captain inbox
+
+[Service]
+Type=oneshot
+# The account that owns the main firstmate home and holds the vault ACL
+# (README "VPS users"). The installer substitutes the placeholders.
+User=__ADMIN_USER__
+Environment="VAULT_DOOR_VAULT=/srv/memory" "VAULT_DOOR_FM_HOME=__FM_HOME__"
+ExecStart=/usr/bin/python3 /usr/local/libexec/lifekit-vault-door/vault_door.py bridge
+TimeoutStartSec=300
+# Exit 78 (no firstmate home configured) is an operator step, not a transient fault.
+# It writes captain-inbox notes through the home's own fm-inbox.sh and edits inbox.md in the vault.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
