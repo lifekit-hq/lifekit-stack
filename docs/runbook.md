@@ -349,9 +349,56 @@ rewrites the message with `openclaw cron edit --message` and the timeout with
 `--timeout-seconds`, each only when it differs. The edit hot-reloads and
 restarts nothing. The checklist's closing `Links:` paragraph has the pulse end
 a sent message with the matching app page as a plain URL (`/events`,
-`/alerts`, or the single event's own `appUrl`; none for the quiet-week digest
+`/alerts`, or the single event's own `appUrl`; none for the weekly positioning digest
 or a `NO_REPLY`); the app origin is not in git, so the paragraph tells the
 agent to take it from a returned `appUrl`.
+
+**The payload is stateless (the rule).** Every `agentTurn` cron run is a fresh
+session that receives only its `payload.message`, so a rule that needs to know
+what an earlier run sent ("no message in the last 7 days", "not yet delivered",
+"since the last digest") is answered by guessing, and the guess is almost always
+"nothing sent": the run sends again, every slot. The pulse did exactly that with
+the rebalance notice (about three a day for two weeks). A payload may decide only
+from its own inputs: acknowledged events, live tool data, the run's own date and
+time, or a state file the job itself writes and reads (the memory-vault cleanup's
+`audits/needs-denys-state.json`). So a notice that must reach the operator once
+rides on the event finance-sentry emits once per episode (the `RebalanceProposal`
+and `ThesisBreak` companion events, relayed and acknowledged in step 1;
+finance-sentry classifies a `ThesisBroken` alert as a `ThesisBreak` event, and the
+alert's default dedupe (an open alert on the same thesis suppresses a new one, then
+a 24 h silence window) gives one alert and one event per break, which step 1 relays
+once it is held for the digest or older than 6 h, so a break is never dropped), live
+state such as allocation drift is context for a message that is going out anyway,
+and a periodic digest is a fixed slot the run reads from its clock (the Sunday
+09:20 run, `session_status` for the time). `scripts/tests/test_cron_payloads_stateless.py`
+fails on memory-of-delivery phrasing in any declared cron payload
+(`scripts/finance-pulse.md`, the `ensure-*.sh` payloads, the runbook's `--message`
+examples). The test gate sees phrasing only; the rule is the review question
+"could a run with no memory answer this?".
+
+**A timed-out run that already sent is retried (not fixed here).** The scheduler
+re-runs a recurring job after an execution error (30 s, 1 m, 5 m backoff) as a new
+isolated session, so the retry cannot see that the first run's message settled; on
+2026-10-24 a run delivered and was then marked timed out, and the retry sent the
+same notice. Checked against OpenClaw 2026.10.5: no `cron` config key or `cron
+add`/`edit` flag turns the retry off or makes it conditional on a settled send, and
+a payload rule cannot cover it without reading run history, which the stateless rule
+forbids. With the repeating steps gone a retry finds less to send, but it can still
+resend: after a timed-out run that already sent, events still pending because the
+run was cut off between the send and the acknowledgement (the verdict is recorded
+before the acknowledge on purpose), and the Sunday digest when the first run fails
+fast near 09:20, since the first retry starts 30 s after a failure, before the
+09:22 cutoff of step 6. No guarantee covers these until the OpenClaw change below.
+Closing the gap properly takes an OpenClaw change: retry only when no outbound
+message settled in the failed run.
+
+**Rollout after a change to `scripts/finance-pulse.md`:** nothing to restart. Once
+the change is on `main` and deployed, run `/srv/lifekit-stack/scripts/ensure-finance-pulse.sh`
+on the host as `lifekit`; it rewrites the row's `payload.message` (hot-reload),
+and `docker exec <gateway> openclaw cron show <id>` confirms it. The rebalance
+episode already notified stays quiet until finance-sentry opens a new one. The
+mail-reader payload of the needs-you digest changed in the same release:
+re-run `/srv/lifekit-stack/scripts/ensure-needs-you-digest.sh` too.
 
 A pulse whose message carries no checklist still runs the model (scratch does
 not gate an agentTurn run), but only calls the companion pull by chance - the
@@ -453,8 +500,8 @@ available until scheduled runs are healthy again.
 The push path above and the pulse replace the polling scan. `ledger-scan` (two
 parked rows on the finance agent, every 2h 07:00-23:00 Dublin, disabled since
 2026-08-31) is retired, not re-enabled: finance-sentry's jobs detect, the hook
-wakes the agent with ids, the pulse carries the digest and the quiet-week
-check. `ledger-lit-digest` (Sunday 20:00 Dublin, two rows) is also parked; it
+wakes the agent with ids, the pulse carries the digest and the weekly
+positioning digest. `ledger-lit-digest` (Sunday 20:00 Dublin, two rows) is also parked; it
 is neither retired nor revived by this change. Neither the cron store nor the
 finance agent's workspace is in git, so this change is three operator steps on
 the host. Step 1 ran on 2026-09-19 against the live gateway: the two parked
@@ -520,10 +567,10 @@ rebuilt one.
      absolute path, workspace file tools cannot reach them; watchlist, theses,
      quotes and IPS live in Postgres via MCP, not on disk.
    - "Cadence": delete the `ledger-scan` `dry_run` bullet and the
-     "Silence-check" bullet (the pulse checklist owns the quiet-week digest).
+     "Silence-check" bullet (the pulse checklist owns the weekly positioning digest).
      Reword the first bullet to "Event-driven only. No polling scan, no daily
      digest, no morning brief. The pulse (`ledger-pulse` message) carries
-     the digest and the quiet-week check." and the THESIS BREAK bullet to
+     the digest and the Sunday positioning digest." and the THESIS BREAK bullet to
      "always notify - bypasses every silence rule." Keep the Delivery bullet.
 
    On a scratch copy of the 2026-09-19 file the three edits leave 18,169
