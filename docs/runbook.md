@@ -1424,6 +1424,75 @@ docker exec "$G" openclaw cron edit "$ID" \
   skill folder from kit's workspace. The CLI pin rolls back with the image ("Rolling back
   OpenClaw").
 
+### Instagram reel claim check
+
+The owner sends Kit an Instagram reel link in the Telegram chat; Kit downloads it, transcribes
+the speech locally, checks the factual claims against sources with the web tools it already
+has, and replies in the same chat with one short verdict. Free: no API key, no cookies, no
+Instagram login, no paid transcription.
+
+- **Skill:** `skills/reel-claim-check` (`SKILL.md` + `reel.py`, stdlib only). `reel.py`
+  keeps only the shortcode of the link and rebuilds the URL itself (a query string or account
+  name can never reach yt-dlp as an option), resolves `instagram.com/share/...` links by
+  following Instagram's redirect (yt-dlp does not read them), downloads audio with the pinned
+  yt-dlp that `scripts/ensure-youtube-transcript.sh` installs (one pin to bump), extracts 16 kHz
+  audio with `ffmpeg` and transcribes with the image's `whisper` (model `base`, language
+  detected). Reels over 15 minutes (`REEL_MAX_SECONDS`) or 100 MB are refused.
+- **No login, so it can fail:** Instagram serves some reels only to a logged-in browser, and
+  may rate-limit this host's IP. The skill never logs in; it prints `reel unavailable -
+  Instagram serves this reel only to a logged-in browser ...` (exit 0) and Kit says so in the
+  reply. That is the expected outcome for those reels, not a fault. The same exit-0 lines cover
+  a deleted post, a post with no video, a too-long reel, a reel with no speech and an
+  unresolvable share link. A real failure (yt-dlp or whisper crash, tool missing) is exit 1 with
+  `reel failed: ...` on stderr.
+- **Private path and retention:** the only copy this skill keeps is the transcript, as
+  `<shortcode>.txt` (mode 0600) in `~/.life-state/reel-claim-check/` in the gateway, i.e.
+  `/var/lib/lifekit/reel-claim-check/` on the host (directory mode 0700). It is not served, not
+  in git and not in the openclaw-config mirror. The transcript is also returned to kit as the
+  tool output, so it sits in kit's session history in the gateway state, which the encrypted
+  off-box backup covers. The download is deleted right after audio extraction and the work
+  directory at the end of every run. Transcripts older than 14 days (`REEL_RETENTION_DAYS`) are
+  deleted by the next run: there is no timer. Kit must not copy a transcript elsewhere (the
+  skill says so).
+- **Install:** the deploy. The OpenClaw post-up phase runs `scripts/ensure-reel-claim-check.sh`,
+  which copies the skill into kit's workspace (a box with no kit workspace skips) and reports
+  read-only whether kit's allowlist names the skill and whether `ffmpeg`, `whisper` and the
+  yt-dlp are present in the gateway. A change to `skills/reel-claim-check/` or to the script
+  triggers the OpenClaw phases (`scripts/lib/openclaw-paths.sh`); a failed install turns the
+  deploy red.
+
+Operator step, once per host, after the PR has deployed (a deploy run on the VPS shows the
+allowlist line `NOT on agent 'kit''s skills list` until it is done). Run as lifekit on the
+VPS; skip it when the deploy reported kit as unfiltered:
+
+```bash
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+# Kit's skill allowlist, derived from the live list as in "Kit's workout log and gym-day nudge" step 2.
+docker exec "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const s=c.agents.entries.kit.skills;if(!Array.isArray(s))process.exit(1);if(!s.includes("reel-claim-check"))s.push("reel-claim-check");process.stdout.write(JSON.stringify({agents:{entries:{kit:{skills:s}}}}))' > /tmp/kit-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/kit-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/kit-skills.patch.json
+rm /tmp/kit-skills.patch.json
+```
+
+- **Kit's `AGENTS.md`** is live host state: add a line that an Instagram reel link (with or
+  without "is this true") goes to the `reel-claim-check` skill. The skill's description
+  already matches it, so routing works without that line, but the line makes it certain.
+- **Verify:** `docker exec "$G" python3 /home/node/.openclaw/agents/kit/workspace/skills/reel-claim-check/reel.py '<a public reel link>'`
+  prints `Reel:` ... `Transcript:` lines and the text, and leaves one `<shortcode>.txt` in the
+  private directory. A made-up link prints the `reel unavailable` line, which proves the
+  yt-dlp and the route to Instagram. Then send Kit a reel link and check the one-message verdict.
+- **Delete a transcript early:** `rm /var/lib/lifekit/reel-claim-check/<shortcode>.txt` on
+  the host (or `rm -r` the directory for all of them). This removes only the file this skill
+  keeps: the copy in kit's session history and its encrypted off-box backup stays until those
+  rotate.
+- **yt-dlp stops working on Instagram:** bump the pin in `scripts/ensure-youtube-transcript.sh`
+  (version and SHA-256); the next deploy installs it and this skill picks it up.
+- **Rollback:** revert the PR (the deploy then stops installing the skill), remove
+  `reel-claim-check` from kit's workspace `skills/` on the host, and re-apply kit's old skills
+  list (the patch above without the name). Delete the private directory if the transcripts
+  are not wanted.
+
 ## Rolling back OpenClaw
 
 ### The one-rollback rule

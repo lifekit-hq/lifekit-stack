@@ -942,6 +942,16 @@ def post_up_ytt(env, tmp_path, ensure=None, curl_fail=False):
         fake / "skills/youtube-transcript",
         dirs_exist_ok=True,
     )
+    shutil.copytree(
+        REPO / "skills/reel-claim-check",
+        fake / "skills/reel-claim-check",
+        dirs_exist_ok=True,
+    )
+    (fake / "scripts").mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        REPO / "scripts/ensure-reel-claim-check.sh",
+        fake / "scripts/ensure-reel-claim-check.sh",
+    )
     script = fake / "scripts/ensure-youtube-transcript.sh"
     if ensure is None:
         text = (REPO / "scripts/ensure-youtube-transcript.sh").read_text()
@@ -1001,6 +1011,26 @@ def test_post_up_installs_the_repo_youtube_transcript_skill_into_the_shared_dir(
     curl = next(i for i, c in enumerate(calls) if c.startswith("curl "))
     doctor = next(i for i, c in enumerate(calls) if c.endswith("openclaw-cli doctor"))
     assert curl < doctor
+
+
+def test_post_up_installs_the_reel_claim_check_skill_into_kits_workspace(env, tmp_path):
+    kit = tmp_path / "gw-state/agents/kit/workspace"
+    kit.mkdir(parents=True)
+    r, failures, _ = post_up_ytt(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert failures == []
+    for f in ("SKILL.md", "reel.py"):
+        assert (kit / "skills/reel-claim-check" / f).read_bytes() == (
+            REPO / "skills/reel-claim-check" / f
+        ).read_bytes()
+
+
+def test_post_up_skips_the_reel_claim_check_skill_on_a_box_without_kit(env, tmp_path):
+    r, failures, state = post_up_ytt(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert failures == []
+    assert "no workspace for agent 'kit'" in r.stdout
+    assert not (state / "agents").exists()
 
 
 def test_post_up_youtube_transcript_install_converges_without_a_download(env, tmp_path):
@@ -1127,6 +1157,8 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/deploy-trusted-proxies.sh", True),
         ("scripts/memory-audit/run.sh", True),
         ("scripts/ensure-youtube-transcript.sh", True),
+        ("scripts/ensure-reel-claim-check.sh", True),
+        ("skills/reel-claim-check/reel.py", True),
         ("scripts/openclaw-smoke-verdict.py", True),
         ("skills/youtube-transcript/transcript.py", True),
         ("skills/youtube-transcript/SKILL.md", True),
