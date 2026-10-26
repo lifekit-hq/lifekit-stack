@@ -88,7 +88,7 @@ http:
       entryPoints: [openclaw-hook]
       rule: >-
         Method(`POST`)
-        && Path(`{{ env "OPENCLAW_HOOK_PATH" }}/firstmate-reply`)
+        && Path(`/{{ env "OPENCLAW_HOOK_PATH" | trimAll "/" }}/firstmate-reply`)
       middlewares: [openclaw-no-identity]
       service: openclaw
 

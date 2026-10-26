@@ -261,7 +261,7 @@ def test_reply_hook_route_passes_only_post_to_the_one_hook_path():
     r = ROUTERS["openclaw-reply-hook"]
     assert r["entryPoints"] == ["openclaw-hook"]
     assert r["rule"] == (
-        'Method(`POST`) && Path(`{{ env "OPENCLAW_HOOK_PATH" }}/firstmate-reply`)'
+        'Method(`POST`) && Path(`/{{ env "OPENCLAW_HOOK_PATH" | trimAll "/" }}/firstmate-reply`)'
     )
     # The identity headers are stripped, no sign-in, no service identity: the
     # hook token the gateway checks is the only authentication.

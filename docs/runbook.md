@@ -1853,7 +1853,7 @@ passes exactly one request shape, `POST <OPENCLAW_HOOK_PATH>/firstmate-reply`; a
 method or path answers 404 from Traefik and never reaches the gateway. It strips the
 identity headers and adds none, so the hook token (checked by the gateway) is the only
 authentication. Traefik reads `OPENCLAW_HOOK_PATH` once at start from the rendered env
-file (the value must start with `/`), so a rotation of the path needs the edge recreated
+file (slashes around the value are trimmed, as the pusher does), so a rotation of the path needs the edge recreated
 by the next deploy. To remove the route, delete the `openclaw-reply-hook` router, the
 `openclaw-hook` entrypoint and the `127.0.0.1:18894` port; the pusher then fails with a
 transport error and keeps its outbox. A quick check from the host (a 404 with no token,
