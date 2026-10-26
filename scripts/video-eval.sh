@@ -14,24 +14,30 @@
 #                                            and a finished job's three lines
 #   video-eval.sh report <job id>            the job's full report
 #   video-eval.sh index                      every item judged, one row each
+#   video-eval.sh idea [FILE]                file a judged idea's report (FILE,
+#                                            else stdin): no job, no fetch;
+#                                            always origin scout; prints its
+#                                            three lines at once
 #
 # Completion signal: `status` prints `done` or `failed` on its first line once
 # the job is finished, and a done job's last line is `report: <host path>`.
 # enqueue prints the job id (video-<key>). A link already judged prints its
-# earlier verdict instead, and nothing is queued.
+# earlier verdict instead, and nothing is queued. idea exits 3 with the reasons
+# when the report does not follow the rubric.
 #
 # Run as a user that may use docker (denys, or lifekit). Paths it prints are
 # host paths: the gateway's /home/node/.life-state is /var/lib/lifekit here,
 # readable by lifekit.
 #
 # Env overrides:
-#   VIDEO_EVAL_ORIGIN    who is asking, kit | firstmate | scout (default: firstmate)
+#   VIDEO_EVAL_ORIGIN    who is asking, kit | firstmate | scout (default: firstmate;
+#                        not used by idea, which is always scout)
 #   VIDEO_EVAL_AGENT     agent whose workspace has the skill (default: kit)
 #   DOCKER               the docker command (default: docker)
 set -euo pipefail
 
 usage() {
-  sed -n '7,17p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '7,20p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -82,6 +88,15 @@ case "$cmd" in
   report)
     [ $# -eq 1 ] || usage
     video show "$1"
+    ;;
+  idea)
+    [ $# -le 1 ] || usage
+    if [ $# -eq 1 ] && [ ! -f "$1" ]; then
+      echo "$1: no such file" >&2
+      exit 1
+    fi
+    $DOCKER exec -i "$GATEWAY" python3 "$SCRIPT" idea \
+      <"${1:-/dev/stdin}" | host_paths
     ;;
   *) usage ;;
 esac

@@ -422,7 +422,7 @@ def test_a_shared_reel_is_judged_and_indexed_as_the_reel(box, monkeypatch):
     code, _ = video.file_report(jid, report_text())
     assert code == 0
     assert box.index()[0]["source"] == REEL
-    assert (box.root / f"reports/ig-{CODE}.v1.md").is_file()
+    assert (box.root / f"reports/ig-{CODE}.v2.md").is_file()
 
 
 def test_an_unresolvable_share_link_is_a_normal_answer_without_a_download(
@@ -491,7 +491,7 @@ def test_a_kit_item_answers_the_owner_in_three_lines(box):
     assert lines[1] == (
         "video · dev-tooling · accept -> the agent fleet: try it on one job"
     )
-    assert lines[2] == f"report: {box.root}/reports/ig-{CODE}.v1.md"
+    assert lines[2] == f"report: {box.root}/reports/ig-{CODE}.v2.md"
 
 
 @pytest.mark.parametrize("origin", ["firstmate", "scout"])
@@ -506,7 +506,7 @@ def test_another_producers_item_says_nothing_and_is_polled(box, origin):
     status = box.cli("status", jid).stdout.strip().splitlines()
     assert status[0] == "done" and len(status) == 4
     assert status[2] == ("video · dev-tooling · drop (paid-funnel): It sells a course.")
-    assert status[3] == f"report: {box.root}/reports/yt-{VID}.v1.md"
+    assert status[3] == f"report: {box.root}/reports/yt-{VID}.v2.md"
     shown = box.cli("show", jid).stdout
     assert shown.startswith("Title: A talk about agents\n")
 
@@ -726,25 +726,25 @@ def test_the_report_is_stamped_with_the_rubric_version_and_mode(box):
     jid = _judged(box, YT, YT_CAPTIONS="yes")
     r = box.cli("report", jid, stdin=report_text("park"))
     assert r.returncode == 0, r.stderr
-    saved = box.root / f"reports/yt-{VID}.v1.md"
+    saved = box.root / f"reports/yt-{VID}.v2.md"
     head = saved.read_text().splitlines()[:5]
     today = time.strftime("%Y-%m-%d", time.gmtime())
     assert head == [
         "Title: A talk about agents",
         "Kind: video | Category: dev-tooling | Origin: kit",
         f"Source: {YT}",
-        f"Evaluated: {today} | Rubric: video-eval v1 (standard)",
+        f"Evaluated: {today} | Rubric: video-eval v2 (standard)",
         "Gist: a pitch that agents halve costs",
     ]
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     row = box.index()[0]
-    assert (row["rubric"], row["verdict"], row["recheck"]) == ("v1", "park", TOMORROW)
+    assert (row["rubric"], row["verdict"], row["recheck"]) == ("v2", "park", TOMORROW)
 
 
 def test_a_new_rubric_version_is_the_one_stamped(box, tmp_path):
     bumped = tmp_path / "rubric.md"
     bumped.write_text(
-        (SKILL / "rubric.md").read_text().replace("version: 1\n", "version: 7\n", 1)
+        (SKILL / "rubric.md").read_text().replace("version: 2\n", "version: 7\n", 1)
     )
     jid = _judged(box, VIDEO_RUBRIC=str(bumped))
     r = box.cli("report", jid, stdin=report_text(), VIDEO_RUBRIC=str(bumped))
@@ -757,8 +757,8 @@ def test_a_new_rubric_version_is_the_one_stamped(box, tmp_path):
 def test_a_claim_check_report_says_so(box):
     jid = _judged(box)
     box.cli("report", jid, stdin=report_text())
-    text = (box.root / f"reports/ig-{CODE}.v1.md").read_text()
-    assert "Rubric: video-eval v1 (claim-check)" in text
+    text = (box.root / f"reports/ig-{CODE}.v2.md").read_text()
+    assert "Rubric: video-eval v2 (claim-check)" in text
     assert '"Agents cut costs by half" - Partly true.' in text
 
 
@@ -825,7 +825,7 @@ def test_a_long_report_is_cut_to_the_cap_with_a_marker(box):
     claims = "\n".join(f'"Claim {i}" - Holds up. ' + "why " * 30 for i in range(40))
     r = box.cli("report", jid, stdin=report_text(claims=claims))
     assert r.returncode == 0, r.stderr
-    text = (box.root / f"reports/ig-{CODE}.v1.md").read_text()
+    text = (box.root / f"reports/ig-{CODE}.v2.md").read_text()
     rubric = video.load_rubric()
     # The cap is the judge's body; the stamp adds three header lines.
     assert len(text.splitlines()) <= rubric.list("max-lines") + 3
@@ -877,8 +877,8 @@ def test_the_index_columns_carry_the_intake_fields(box):
         "project": "",
         "recheck": "",
         "next step or why": "It sells a course.",
-        "rubric": "v1",
-        "report": f"reports/ig-{CODE}.v1.md",
+        "rubric": "v2",
+        "report": f"reports/ig-{CODE}.v2.md",
     }
     assert box.cli("index").stdout.startswith("# Intake index")
 
@@ -892,7 +892,7 @@ def test_a_video_judged_before_answers_with_the_earlier_verdict(box):
     assert r.stdout.strip().splitlines() == [
         "A talk about agents",
         f"video · dev-tooling · already judged {today}: drop (paid-funnel): It sells a course.",
-        f"report: {box.root}/reports/yt-{VID}.v1.md",
+        f"report: {box.root}/reports/yt-{VID}.v2.md",
     ]
     assert box.job(jid)["status"] == "done"  # not queued again
     assert box.log.read_text() == "" and len(box.index()) == 1
@@ -922,6 +922,151 @@ def test_a_generic_title_is_never_taken_for_a_repeat(box):
     other = "https://www.instagram.com/reel/OtherCode1/"
     r = box.run(other)
     assert r.stdout.startswith(f"Video: {other}\n")
+
+
+# --- ideas --------------------------------------------------------------------------
+
+IDEA_SOURCE = "https://github.com/example/tool"
+
+
+def idea_text(
+    verdict: str = "accept",
+    *,
+    claim: str = "Claim: one tool replaces two scripts",
+    source: str = f"Source: {IDEA_SOURCE}",
+    title: str = "Title: One tool for both scripts",
+    **kw,
+) -> str:
+    """A judged idea's report: the video template's, with its claim and source."""
+    lines = report_text(verdict, **kw).splitlines()
+    lines[0] = title
+    return "\n".join([*lines[:3], claim, source, *lines[3:]]) + "\n"
+
+
+def test_an_idea_is_filed_directly_as_its_own_kind(box):
+    r = box.cli("idea", stdin=idea_text())
+    assert r.returncode == 0, r.stderr
+    rows = box.index()
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["kind"], row["origin"], row["source"], row["verdict"]) == (
+        "idea",
+        "scout",
+        IDEA_SOURCE,
+        "accept",
+    )
+    assert row["rubric"] == f"v{video.load_rubric().version}"
+    saved = box.root / row["report"]
+    assert saved.parent == box.root / "reports/ideas"
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    assert saved.read_text().splitlines()[:6] == [
+        "Title: One tool for both scripts",
+        "Kind: idea | Category: dev-tooling | Origin: scout",
+        f"Source: {IDEA_SOURCE}",
+        f"Evaluated: {today} | Rubric: video-eval {row['rubric']} (claim-check)",
+        "Gist: a pitch that agents halve costs",
+        "Claim: one tool replaces two scripts",
+    ]
+    assert r.stdout.strip().splitlines() == [
+        "One tool for both scripts",
+        "idea · dev-tooling · accept -> the agent fleet: try it on one job",
+        f"report: {saved}",
+    ]
+    assert not box.queue.exists() or not list(box.queue.glob("*.json"))
+    assert box.log.read_text() == ""  # nothing fetched
+
+
+def test_an_idea_is_always_filed_as_the_scout_and_takes_no_origin(box):
+    assert box.cli("idea", stdin=idea_text()).returncode == 0
+    assert box.index()[0]["origin"] == "scout"
+    other = idea_text(source="Source: https://example.org/x")
+    r = box.cli("idea", "--origin", "kit", stdin=other)
+    assert r.returncode == 2
+    assert len(box.index()) == 1
+
+
+@pytest.mark.parametrize(
+    "text,why",
+    [
+        (idea_text(claim=""), "no Claim: line"),
+        (idea_text(source=""), "no Source: line"),
+        (idea_text(source="Source: the vendor docs"), "http(s) link"),
+        (
+            idea_text(source=f"Source: {IDEA_SOURCE}/{'a' * 140}"),
+            "at most 160 characters",
+        ),
+        (
+            idea_text(source=f"Source: {IDEA_SOURCE}/{'a' * 300}"),
+            "at most 160 characters",
+        ),
+        (idea_text(category="hobby"), "Category 'hobby' is not one of"),
+        (
+            idea_text("drop", extra="").replace("paid-funnel", "boring"),
+            "drop needs Reason",
+        ),
+        (
+            idea_text(
+                tests="evidence fail, cost pass, goal-trace pass, no-overengineering pass"
+            ),
+            "accept needs every test passed",
+        ),
+    ],
+)
+def test_an_idea_off_the_rubric_is_rejected_and_nothing_is_filed(box, text, why):
+    r = box.cli("idea", stdin=text)
+    assert r.returncode == 3 and why in r.stderr, r.stderr
+    assert box.index() == []
+
+
+def test_an_idea_source_that_fills_an_index_cell_is_kept_whole(box):
+    long = f"{IDEA_SOURCE}/" + "a" * (160 - len(IDEA_SOURCE) - 1)
+    r = box.cli("idea", stdin=idea_text(source=f"Source: {long}"))
+    assert r.returncode == 0, r.stderr
+    assert box.index()[0]["source"] == long
+
+
+def test_the_same_idea_filed_again_answers_with_its_earlier_verdict(box):
+    box.cli("idea", stdin=idea_text("park"))
+    again = idea_text("drop", source=f"Source: {IDEA_SOURCE}/?utm_source=x")
+    r = box.cli("idea", stdin=again)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.strip().splitlines()
+    assert "already judged" in lines[1] and f"park until {TOMORROW}" in lines[1]
+    assert len(box.index()) == 1
+
+
+def test_an_idea_with_an_earlier_items_title_is_its_duplicate(box):
+    box.cli("idea", stdin=idea_text())
+    other = "https://example.org/the-same-tool"
+    r = box.cli("idea", stdin=idea_text(source=f"Source: {other}"))
+    assert "already judged" in r.stdout
+    rows = box.index()
+    assert [(x["kind"], x["source"], x["verdict"], x["reason"]) for x in rows] == [
+        ("idea", IDEA_SOURCE, "accept", ""),
+        ("idea", other, "drop", "duplicate"),
+    ]
+    assert rows[1]["report"] == rows[0]["report"]
+
+
+def test_an_idea_whose_source_was_judged_as_a_video_is_not_filed_again(box):
+    jid = _judged(box, YT, YT_CAPTIONS="yes")
+    box.cli("report", jid, stdin=report_text("drop"))
+    r = box.cli("idea", stdin=idea_text(source=f"Source: https://youtu.be/{VID}"))
+    assert "video · dev-tooling · already judged" in r.stdout
+    assert len(box.index()) == 1
+
+
+def test_an_idea_needs_a_rubric_that_has_the_idea_kind(box, tmp_path):
+    old = tmp_path / "rubric.md"
+    old.write_text(
+        (SKILL / "rubric.md")
+        .read_text()
+        .replace("kinds: video, idea\n", "kinds: video\n")
+    )
+    r = box.cli("idea", stdin=idea_text(), VIDEO_RUBRIC=str(old))
+    assert r.returncode == 1 and "has no idea kind" in r.stderr
+    assert box.index() == []
 
 
 # --- files and backfill ---------------------------------------------------------------
@@ -1281,7 +1426,8 @@ def test_skill_frontmatter_parses_into_the_name_and_bins_openclaw_reads():
 
 def test_the_rubric_carries_the_intake_lists_and_the_four_tests():
     rubric = video.load_rubric()
-    assert rubric.version == 1
+    assert rubric.version == 2
+    assert rubric.list("kinds") == ["video", "idea"]
     assert rubric.list("categories") == [
         "persona",
         "channels",
@@ -1426,6 +1572,7 @@ case "$1" in
   exec)
     case "$*" in
       *" ingest "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "video queued - job video-x" ;;
+      *" idea"*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/ideas/idea-x.v2.md" ;;
       *" status "*) printf 'done\nt\nl\nreport: /home/node/.life-state/intake/reports/x.v1.md\n' ;;
       *) echo "ran" ;;
     esac ;;
@@ -1433,13 +1580,14 @@ esac
 """
 
 
-def _wrapper(tmp_path, *args):
+def _wrapper(tmp_path, *args, stdin=None, **extra):
     log = tmp_path / "docker.log"
     log.write_text("")
     docker = _stub(tmp_path / "docker", WRAPPER_DOCKER)
     r = subprocess.run(
         ["bash", str(WRAPPER), *args],
-        env={**os.environ, "DOCKER": str(docker), "DOCKER_LOG": str(log)},
+        env={**os.environ, "DOCKER": str(docker), "DOCKER_LOG": str(log), **extra},
+        input=stdin,
         capture_output=True,
         text=True,
         check=False,
@@ -1471,6 +1619,19 @@ def test_the_wrapper_backfills_files_without_downloading_them(tmp_path):
     assert "got 5 bytes" in calls
 
 
+def test_the_wrapper_files_an_idea_from_a_file_or_stdin(tmp_path):
+    report = tmp_path / "idea.txt"
+    report.write_text("12345")
+    for args, stdin in ((["idea", str(report)], None), (["idea"], "123")):
+        r, calls = _wrapper(tmp_path, *args, stdin=stdin, VIDEO_EVAL_ORIGIN="kit")
+        assert r.returncode == 0, r.stderr
+        assert f"docker exec -i gw1 python3 {SCRIPT} idea" in calls
+        assert f"got {len(stdin or '12345')} bytes" in calls
+        assert r.stdout.strip() == (
+            "report: /var/lib/lifekit/intake/reports/ideas/idea-x.v2.md"
+        )
+
+
 def test_the_wrapper_reports_a_missing_file_and_fails(tmp_path):
     r, _ = _wrapper(tmp_path, "backfill", str(tmp_path / "nope.mp4"))
     assert r.returncode == 1 and "no such file" in r.stderr
@@ -1483,7 +1644,9 @@ def test_the_wrapper_prints_host_paths(tmp_path):
     )
 
 
-@pytest.mark.parametrize("args", [[], ["bogus"], ["enqueue"], ["report"]])
+@pytest.mark.parametrize(
+    "args", [[], ["bogus"], ["enqueue"], ["report"], ["idea", "a", "b"]]
+)
 def test_the_wrapper_usage(tmp_path, args):
     r, _ = _wrapper(tmp_path, *args)
     assert r.returncode == 2

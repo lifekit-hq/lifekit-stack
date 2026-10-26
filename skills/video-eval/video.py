@@ -13,6 +13,7 @@ one index row.
     video.py status <job id>                  one job's state, for a producer that polls
     video.py show <job id>                    the job's report
     video.py index                            the index of every item judged
+    video.py idea [file]                      file a judged idea's report (scout)
     video.py door <message text>              Kit's drop door: queue a bare link (kit)
     video.py door-file <saved video>          Kit's drop door: queue a video file (kit)
 
@@ -54,6 +55,12 @@ appended to by this script only, never rewritten), transcripts/ and inbox/
 (files waiting for their run) VIDEO_RETENTION_DAYS (default 14) days, pruned
 at the start of every run. goals.md there, written by the operator, is the
 owner's standing goals the judge reads; without it the judge says so.
+
+`idea` files an item that is not a video: an idea the ideas scout proposes,
+already judged against the same rubric by its producer. Its report carries the
+idea's claim and the link of its primary source, the source it is recorded and
+matched under; it is checked, stamped and indexed like a video's, with no job
+and no fetch, and its three lines are printed at once.
 
 Exit 1 is an unexpected failure (reason on stderr), 2 a usage error, 3 a
 report that does not follow the rubric.
@@ -139,6 +146,10 @@ TOO_LONG_WORDS = re.compile(
 # The queue (skills/job-queue): the job kind, and the hosts the queue asks the
 # egress about before it starts a job ("" for a file here).
 KIND = "video"
+IDEA = "idea"
+IDEA_FIELDS = ("claim", "source")
+IDEA_MODE = "claim-check"
+IDEA_ORIGIN = "scout"
 OWNER = "video-eval"
 PROBE = {"instagram": "www.instagram.com", "youtube": "www.youtube.com", "file": ""}
 KEY_PREFIX = {"instagram": "ig", "youtube": "yt", "file": "file"}
@@ -153,6 +164,7 @@ USAGE = (
     "       video.py ingest <name> --origin kit|firstmate|scout [--check] < file\n"
     "       video.py run|status|show <job id> | part <job id> <n>\n"
     "       video.py report <job id> [file] | index\n"
+    "       video.py idea [file] < report\n"
     "       video.py door <message text> | door-file <saved video>"
 )
 
@@ -1029,7 +1041,7 @@ def run_job(jid: str) -> str:
         row = earlier(root, m.url, m.title)
         if row is not None:
             if normalize_url(row["source"]) != m.url:
-                _append_repeat(root, row, m, p, rubric)
+                _append_repeat(root, row, m.url, p.get("origin", ""), rubric)
             answer = repeat_reply(row)
             q.finish(jid, "\n".join(answer))
             return "\n".join(answer) if reply else NO_REPLY
@@ -1088,9 +1100,10 @@ TEST_LINE = re.compile(r"([a-z-]+)\s+(pass|fail)", re.IGNORECASE)
 
 
 def parse_report(
-    text: str, rubric: Rubric, today: datetime.date
+    text: str, rubric: Rubric, today: datetime.date, fields: tuple[str, ...] = ()
 ) -> tuple[Report | None, list[str]]:
-    """The judge's report against the rubric: (report, []) or (None, reasons)."""
+    """The judge's report against the rubric: (report, []) or (None, reasons).
+    fields are header lines the item's kind needs besides the three."""
     lines = [
         ln.rstrip() for ln in text.strip().splitlines() if not ln.startswith("```")
     ]
@@ -1105,8 +1118,9 @@ def parse_report(
                 sections[-1][1].append(ln)
         elif ": " in ln:
             k, v = ln.split(": ", 1)
-            head[k.strip().lower()] = v.strip()[:HEAD_LIMIT]
-    for k in ("title", "category", "gist"):
+            k, v = k.strip().lower(), v.strip()
+            head[k] = v if k == "source" else v[:HEAD_LIMIT]
+    for k in ("title", "category", "gist", *fields):
         if not head.get(k):
             errors.append(f"the header has no {k.capitalize()}: line")
     if head.get("category") and head["category"] not in rubric.list("categories"):
@@ -1253,18 +1267,26 @@ def fit(r: Report, max_lines: int, max_chars: int) -> bool:
 
 
 def stamp(
-    r: Report, item_url: str, origin: str, mode: str, rubric: Rubric, now: float
+    r: Report,
+    item_url: str,
+    origin: str,
+    mode: str,
+    rubric: Rubric,
+    now: float,
+    kind: str = KIND,
 ) -> str:
     day = time.strftime("%Y-%m-%d", time.gmtime(now))
     body = _render_body(r).split("\n", 3)
+    claim = [f"Claim: {r.head['claim']}"] if kind == IDEA else []
     return (
         "\n".join(
             [
                 body[0],
-                f"Kind: video | Category: {r.head['category']} | Origin: {origin}",
+                f"Kind: {kind} | Category: {r.head['category']} | Origin: {origin}",
                 f"Source: {item_url}",
                 f"Evaluated: {day} | Rubric: video-eval {rubric.stamp} ({mode})",
                 body[2],
+                *claim,
                 body[3] if len(body) > 3 else "",
             ]
         ).rstrip()
@@ -1301,10 +1323,27 @@ def file_report(jid: str, text: str, now: float | None = None) -> tuple[int, str
     origin, mode = p.get("origin", "kit"), p.get("mode", "standard")
     path = _report_path(root, item, rubric)
     _private_write(path, stamp(r, url, origin, mode, rubric, now))
+    row = _row(r, KIND, origin, url, rubric, root, path, now)
+    append_row(root, row)
+    answer = reply_lines(row, root)
+    q.finish(jid, "\n".join(answer))
+    return 0, "\n".join(answer) if origin in REPLY_ORIGINS else NO_REPLY
+
+
+def _row(
+    r: Report,
+    kind: str,
+    origin: str,
+    url: str,
+    rubric: Rubric,
+    root: Path,
+    path: Path,
+    now: float,
+) -> dict:
     v = r.verdict
-    row = {
+    return {
         "date": time.strftime("%Y-%m-%d", time.gmtime(now)),
-        "kind": "video",
+        "kind": kind,
         "origin": origin,
         "category": r.head["category"],
         "source": url,
@@ -1318,10 +1357,50 @@ def file_report(jid: str, text: str, now: float | None = None) -> tuple[int, str
         "rubric": rubric.stamp,
         "report": str(path.relative_to(root)),
     }
+
+
+def file_idea(text: str, now: float | None = None) -> tuple[int, str]:
+    """(exit code, output) for `idea`, always filed as the scout's: the three
+    lines, an earlier verdict for the same item, or the reasons the report does
+    not follow the rubric. The
+    idea is recorded under its primary source's link, and its report is kept in
+    reports/ideas/, out of reach of intake-to-vault, which files a video's
+    report with its transcript."""
+    origin = IDEA_ORIGIN
+    now = time.time() if now is None else now
+    rubric = load_rubric()
+    if IDEA not in rubric.list("kinds"):
+        raise ValueError(f"{rubric.path} has no {IDEA} kind")
+    today = datetime.date(*time.gmtime(now)[:3])
+    r, errors = parse_report(text, rubric, today, IDEA_FIELDS)
+    url = ""
+    if r is not None:
+        u = urlparse(r.head["source"])
+        if u.scheme not in ("http", "https") or not u.netloc:
+            r, errors = None, ["Source: must be the http(s) link of the primary source"]
+        else:
+            url = normalize_url(r.head["source"])
+            if _cell(url) != url:
+                why = f"Source: must fit an index cell: at most {CELL_LIMIT} characters, no |"
+                r, errors = None, [why]
+    if r is None:
+        return 3, "report rejected - fix it and file it again:\n" + "\n".join(
+            f"- {e}" for e in errors
+        )
+    root = private_root()
+    row = earlier(root, url, r.head["title"])
+    if row is not None:
+        if normalize_url(row["source"]) != url:
+            _append_repeat(root, row, url, origin, rubric, IDEA)
+        return 0, "\n".join(repeat_reply(row))
+    fit(r, rubric.list("max-lines"), rubric.list("max-chars"))
+    key = hashlib.sha256(url.encode()).hexdigest()[:16]
+    path = root / "reports" / "ideas" / f"{IDEA}-{key}.{rubric.stamp}.md"
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    _private_write(path, stamp(r, url, origin, IDEA_MODE, rubric, now, IDEA))
+    row = _row(r, IDEA, origin, url, rubric, root, path, now)
     append_row(root, row)
-    answer = reply_lines(row, root)
-    q.finish(jid, "\n".join(answer))
-    return 0, "\n".join(answer) if origin in REPLY_ORIGINS else NO_REPLY
+    return 0, "\n".join(reply_lines(row, root))
 
 
 # --- the index ----------------------------------------------------------------------
@@ -1391,17 +1470,19 @@ def earlier(root: Path, url: str, title: str) -> dict | None:
     return None
 
 
-def _append_repeat(root: Path, row: dict, m: Material, p: dict, rubric: Rubric) -> None:
+def _append_repeat(
+    root: Path, row: dict, url: str, origin: str, rubric: Rubric, kind: str = KIND
+) -> None:
     """The same item from another source: its own row, a duplicate of the
     earlier one, pointing at the earlier report."""
     append_row(
         root,
         {
             "date": time.strftime("%Y-%m-%d", time.gmtime()),
-            "kind": "video",
-            "origin": p.get("origin", ""),
+            "kind": kind,
+            "origin": origin,
             "category": row["category"],
-            "source": m.url,
+            "source": url,
             "title": row["title"],
             "gist": row["gist"],
             "verdict": "drop",
@@ -1521,6 +1602,11 @@ def main(argv: list[str]) -> int:
             code, out = file_report(rest[0], text)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
+        if cmd == "idea" and len(rest) <= 1 and "--origin" not in argv:
+            text = Path(rest[0]).read_text() if rest else sys.stdin.read()
+            code, out = file_idea(text)
+            print(out, file=sys.stderr if code else sys.stdout)
+            return code
         if cmd == "status" and len(rest) == 1:
             print(status(rest[0]))
             return 0
@@ -1554,6 +1640,7 @@ def main(argv: list[str]) -> int:
                 "status",
                 "show",
                 "index",
+                "idea",
                 "enqueue",
                 "ingest",
                 "door",

@@ -50,6 +50,19 @@ The job queue has already fetched and transcribed the video on its own; the drai
    Exit 3 lists what does not follow the rubric: fix those and file it again. A report over the cap is cut to fit with a marker; that is not an error.
 4. Your whole answer is what `report` printed: the three lines as they are, or `NO_REPLY` when it printed that. Never add the report, the transcript or the caption to it.
 
+## 4. An idea: file it directly
+
+An idea the ideas scout proposes is not a video: there is nothing to queue or fetch. Its judge reads the rubric the same way and writes the same template with the idea's two extra header lines, `Claim:` and `Source:` (the link of the primary source opened in this pass), then files it on stdin (it is always filed as origin `scout`; a `Source:` link over 160 characters is rejected):
+
+```
+python3 {baseDir}/video.py idea <<'REPORT'
+Title: ...
+...
+REPORT
+```
+
+It prints the three lines at once: the new verdict, or `already judged <date>` when that source or title was judged before (nothing new is filed). Exit 3 lists what does not follow the rubric, as for `report`. The report is kept in `reports/ideas/`, its row in the same `index.md`.
+
 ## Where things are kept
 
 Everything is on this server, in a private directory (`~/.life-state/intake/`, not served, not in git): `reports/` (the full report per item and rubric version) and `index.md` (one row per item judged, appended only) for good, `transcripts/` 14 days, files waiting to run in `inbox/` until their run. `goals.md` there is the owner's standing goals the run prints for you; it is written on the host, never by you. The text also reached you as tool output, so it stays in your session history after a file is gone. Do not paste the transcript or the report anywhere else: not a note to firstmate, not a GitHub issue, not the vault. An accepted report reaches the vault on its own: a host job files it there with its transcript within the hour, so never write it there yourself. The owner can ask for the full report; then send it (`python3 {baseDir}/video.py show video-<id>`). Deleting anything earlier is a host step (`docs/runbook.md`, "Video evaluation"); if the owner asks, say so rather than improvising a delete.
