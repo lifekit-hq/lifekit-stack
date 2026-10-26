@@ -349,7 +349,11 @@ from its own inputs: acknowledged events, live tool data, the run's own date and
 time, or a state file the job itself writes and reads (the memory-vault cleanup's
 `audits/needs-denys-state.json`). So a notice that must reach the operator once
 rides on the event finance-sentry emits once per episode (the `RebalanceProposal`
-and `ThesisBreak` companion events, relayed and acknowledged in step 1), live
+and `ThesisBreak` companion events, relayed and acknowledged in step 1;
+finance-sentry classifies a `ThesisBroken` alert as a `ThesisBreak` event, and the
+alert's default dedupe (an open alert on the same thesis suppresses a new one, then
+a 24 h silence window) gives one alert and one event per break, which step 1 relays
+once it is held for the digest or older than 6 h, so a break is never dropped), live
 state such as allocation drift is context for a message that is going out anyway,
 and a periodic digest is a fixed slot the run reads from its clock (the Sunday
 09:20 run, `session_status` for the time). `scripts/tests/test_cron_payloads_stateless.py`
@@ -365,10 +369,12 @@ isolated session, so the retry cannot see that the first run's message settled; 
 same notice. Checked against OpenClaw 2026.10.5: no `cron` config key or `cron
 add`/`edit` flag turns the retry off or makes it conditional on a settled send, and
 a payload rule cannot cover it without reading run history, which the stateless rule
-forbids. With the repeating steps gone a retry finds nothing new to send, except
-events still pending when the run was cut off between the send and the
-acknowledgement (the verdict is recorded before the acknowledge on purpose), and the
-Sunday digest, whose step 6 only fires at or before 09:22 so a retry skips it.
+forbids. With the repeating steps gone a retry finds less to send, but it can still
+resend: after a timed-out run that already sent, events still pending because the
+run was cut off between the send and the acknowledgement (the verdict is recorded
+before the acknowledge on purpose), and the Sunday digest when the first run fails
+fast near 09:20, since the first retry starts 30 s after a failure, before the
+09:22 cutoff of step 6. No guarantee covers these until the OpenClaw change below.
 Closing the gap properly takes an OpenClaw change: retry only when no outbound
 message settled in the failed run.
 

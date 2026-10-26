@@ -8,8 +8,9 @@ day for two weeks). docs/runbook.md, "The payload is stateless", has the rule an
 what to write instead: decide from acknowledged events, live tool data, the
 run's own clock, or a state file the job itself writes.
 
-This test reads every cron payload the repo declares and fails on phrasing that
-asks a run to remember its deliveries. It sees phrasing only; the review
+This is a lint-style guard over the declared payload text, not a behavioral
+test: it reads every cron payload the repo declares and fails on phrasing that
+asks a run to remember its deliveries. It checks phrasing only; the review
 question is "could a run with no memory answer this?".
 """
 
