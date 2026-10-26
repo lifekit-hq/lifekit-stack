@@ -1585,7 +1585,9 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
 
   None of it is served, in git or in the openclaw-config mirror. The transcript is also kit's
   tool output, so it sits in kit's session history, which the encrypted off-box backup covers;
-  Kit must not copy it elsewhere (the skill says so).
+  Kit must not copy it elsewhere (the skill says so). The one copy out is software: an
+  accepted item's report and transcript become a source page in the private memory vault
+  ("Intake to vault").
 - **Install:** the deploy. The OpenClaw post-up phase runs `scripts/ensure-job-queue.sh`, then
   `scripts/ensure-video-eval.sh`. The second copies the skill into kit's workspace (a box with
   no kit workspace skips) and removes the retired `reel-claim-check` skill there. It also
@@ -1659,7 +1661,9 @@ Then:
 - **Delete an item's private files early:** `rm` its files under
   `/var/lib/lifekit/intake/transcripts/` and `reports/` on the host, and run
   `jobq.py drop video-<key>` for its queue entry. The index row stays (append-only), and so do
-  the copy in kit's session history and its backup until those rotate.
+  the copy in kit's session history and its backup until those rotate. An accepted item is
+  also a vault source page ("Intake to vault"): delete that page and its log line in the vault
+  too.
 - **yt-dlp stops working on Instagram or YouTube:** bump the pin in
   `scripts/ensure-youtube-transcript.sh`; the next deploy installs it and this skill picks it
   up.
@@ -2334,6 +2338,66 @@ Then, in the vault, delete `system/fleet-snapshot.md` (and its line in `index.md
 index build). Notes already forwarded stay in the captain inbox like any other note;
 acknowledge or delete them there. `[forwarded: ...]` markers in `inbox.md` are inert and age out
 through the normal 30-day rotation.
+
+## Intake to vault
+
+The software half of "take the knowledge from a judged video as reference" (no model turn):
+`scripts/intake-to-vault/` files each accepted video-eval report into the memory vault, in
+the vault README's shape for raw evidence and through its `bin/` gates.
+`lifekit-intake-to-vault.timer` (hourly, as `lifekit`) runs `intake_to_vault.py`, which for
+each report under `/var/lib/lifekit/intake/reports/` whose `Verdict:` is `accept` writes:
+
+- one immutable source page `sources/<judged date>-video-<key>-v<rubric>.md`: clipper
+  frontmatter (`title`, `url`, `author`, `captured`, `type: other`, `summary`), then the report
+  and the transcript, both verbatim in fences. `bin/lint.sh --changed` must report no high or
+  medium finding on it, else the page is removed and the unit fails;
+- its index line, by `bin/index.sh`;
+- one line through `bin/log.sh` linking the page: on `projects/<p>/log.md` when the report's
+  `Project:` line names that project (the whole value, or its start followed by a non-name
+  character), else on the root `log.md` as kind `intake`. The link also keeps the page out of
+  the unreferenced-source rotation.
+
+A `park` or `drop` is not filed: the vault keeps only what the owner accepts (vault `CORE.md`),
+and the intake index already records every judgment. Every step is checked first, so a rerun
+writes nothing and a half-done run is finished by the next one. memory-sync commits the page
+and the index; `bin/log.sh` commits its own line as `Kit (lifekit-vps)`. The run skips while
+`/srv/memory/.model-pass` is under an hour old. Details: `scripts/intake-to-vault/README.md`.
+
+**Install (operator, `denys`):**
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/intake-to-vault/install-intake-to-vault.sh
+```
+
+`bootstrap-vps.sh` runs the same installer. The unit is skipped while `/srv/memory` has no
+clone, and the `lifekit-*.timer` glob in the unit gauge picks the timer up.
+
+**Rehearsal (before trusting it):**
+
+1. `sudo systemctl start lifekit-intake-to-vault.service`, then
+   `journalctl -u lifekit-intake-to-vault -n 20`: one `wrote sources/...` and one `logged on
+   ...` line per accepted report, and a closing count with `0 failed`.
+2. Read one new page under `/srv/memory/sources/` and its line at the end of the project's
+   `log.md` (or the root `log.md`); `sh /srv/memory/bin/index.sh --check` says up to date.
+3. Start the service again: the journal shows no `wrote` or `logged` line.
+
+The next `memory-sync` tick commits the pages and the index; `/srv/memory/.lint-failed` must
+not name them.
+
+**Reading a failure.** Exit 1: a report could not be filed; the journal names it and why (an
+unreadable report, a lint refusal with its findings, `bin/index.sh` or `bin/log.sh` refusing).
+The other reports are still filed and the next run retries. Exit 78: the vault has no `bin/`
+harness (`lint.sh`, `index.sh`, `log.sh`).
+
+**Undo:**
+
+```bash
+sudo systemctl disable --now lifekit-intake-to-vault.timer
+sudo rm /etc/systemd/system/lifekit-intake-to-vault.{service,timer} && sudo systemctl daemon-reload
+sudo rm -r /usr/local/libexec/lifekit-intake-to-vault
+```
+
+Pages already filed stay: they are vault sources like any other and rotate under its rules.
 
 ## Host unit gauge
 

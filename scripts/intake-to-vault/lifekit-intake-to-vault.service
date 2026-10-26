@@ -1,0 +1,25 @@
+[Unit]
+Description=File accepted video-eval reports into the /srv/memory vault as source pages
+# A fresh box has no vault clone until the operator copies it in; skip, not fail.
+ConditionPathExists=/srv/memory/.git
+
+[Service]
+Type=oneshot
+# lifekit owns the vault and is the gateway's uid, the only account that reads
+# the 0700 intake directory. bin/log.sh commits its line as memory-sync does.
+User=lifekit
+Group=lifekit
+Environment="INTAKE_TO_VAULT_VAULT=/srv/memory" "INTAKE_TO_VAULT_INTAKE=/var/lib/lifekit/intake"
+Environment="GIT_AUTHOR_NAME=Kit (lifekit-vps)" "GIT_AUTHOR_EMAIL=lifekit-vps@dsdevq.life"
+Environment="GIT_COMMITTER_NAME=Kit (lifekit-vps)" "GIT_COMMITTER_EMAIL=lifekit-vps@dsdevq.life"
+ExecStart=/usr/bin/python3 /usr/local/libexec/lifekit-intake-to-vault/intake_to_vault.py
+TimeoutStartSec=600
+# Exit 78 (no vault harness) is an operator step, not a transient fault.
+# It reads the intake directory and writes only inside the vault.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/memory
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
