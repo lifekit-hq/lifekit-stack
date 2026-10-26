@@ -320,6 +320,16 @@ ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" FM_HOMES="${FM_HOMES:-}" bash "$
 say "Installing reply pusher script + systemd units"
 ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" FM_HOMES="${FM_HOMES:-}" bash "$REPO_DIR/scripts/reply-pusher/install-reply-pusher.sh"
 
+# ─── Vault door ───────────────────────────────────────────────────────────────
+# ChatGPT reads and writes the memory vault, nothing else. A daily timer writes
+# the fleet snapshot page it reads; a 5-minute timer turns each `chatgpt:` note
+# it adds to the vault's inbox.md into one held proposal in the main firstmate
+# home's captain inbox. Skipped unless FM_HOME names the main fleet home; see
+# scripts/vault-door/ and docs/runbook.md "Vault door".
+
+say "Installing vault door script + systemd units"
+ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" bash "$REPO_DIR/scripts/vault-door/install-vault-door.sh"
+
 # ─── Identity database dump timer ─────────────────────────────────────────────
 # Nightly pg_dumpall of the identity provider's Postgres (compose project
 # identity) into /srv/openclaw/backups/identity, newest 14 kept. A no-op until

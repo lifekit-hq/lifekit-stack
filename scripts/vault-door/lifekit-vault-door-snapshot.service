@@ -1,0 +1,18 @@
+[Unit]
+Description=Write the daily fleet snapshot page into the memory vault for ChatGPT
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The account that reads the fleet publisher's files and holds the vault ACL
+# (README "VPS users"). The installer substitutes the placeholder.
+User=__ADMIN_USER__
+Environment="VAULT_DOOR_VAULT=/srv/memory"
+ExecStart=/usr/bin/python3 /usr/local/libexec/lifekit-vault-door/vault_door.py snapshot
+TimeoutStartSec=300
+# It reads the fleet files and gh, and writes one page in the vault.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
