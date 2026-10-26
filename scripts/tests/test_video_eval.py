@@ -961,6 +961,173 @@ def test_a_backfill_of_a_video_judged_before_queues_nothing(box):
     assert list((box.root / "inbox").iterdir()) == []
 
 
+# --- the drop door -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,ident",
+    [
+        (YT, VID),
+        (f"  https://youtu.be/{VID}?si=x\n", VID),
+        (f"https://www.youtube.com/shorts/{VID}", VID),
+        (f"HTTPS://M.YOUTUBE.COM/watch?v={VID}", VID),
+        (f"https://youtu.be:443/{VID}", VID),
+        (REEL, CODE),
+        (f"https://instagram.com/reel/{CODE}/?igsh=MWZ4eHh4", CODE),
+        ("https://www.instagram.com/share/reel/BAbcdEFgh/", "BAbcdEFgh"),
+    ],
+)
+def test_the_door_takes_a_message_that_is_one_bare_link(text, ident):
+    assert video.door_link(text).ident == ident
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "   ",
+        f"{REEL} is this true?",
+        f"is this true? {REEL}",
+        f"{YT} {REEL}",
+        f"{YT}\n{REEL}",
+        f"{YT}\tx",
+        f"youtube.com/watch?v={VID}",
+        f"www.youtube.com/watch?v={VID}",
+        f"ftp://youtu.be/{VID}",
+        f"https://user@youtu.be/{VID}",
+        f"https://user:pw@www.youtube.com/watch?v={VID}",
+        f"https://evil.com\\@youtu.be/{VID}",
+        f"https://youtu.be:8080/{VID}",
+        f"https://youtu.be:99999/{VID}",
+        f"https://youtu.be.evil.com/{VID}",
+        f"https://youtu.be/{VID}​",
+        f"https://youtu.be/{VID}?x=" + "a" * 2100,
+        "https://vimeo.com/123456",
+        "https://www.youtube.com/@some_channel",
+        "--check",
+        "/tmp/clip.mp4",
+    ],
+)
+def test_the_door_leaves_anything_else_to_the_model(text):
+    assert video.door_link(text) is None
+
+
+def _q(item, **kw):
+    return video.Queued(item, "video-x", **kw)
+
+
+@pytest.mark.parametrize(
+    "q,place,line",
+    [
+        (
+            _q(video.Item("youtube", VID), added=True),
+            (1, 3),
+            f"video queued: youtube video {VID} - position 1 of 3; "
+            "the verdict comes here once judged",
+        ),
+        (
+            _q(video.Item("instagram", CODE), added=False),
+            (2, 2),
+            f"video already queued: instagram reel {CODE} - position 2 of 2; "
+            "the verdict comes here once judged",
+        ),
+        (
+            _q(video.Item("instagram", "BAbcdEFgh", True), added=True),
+            None,
+            "video queued: instagram share link BAbcdEFgh - in the queue; "
+            "the verdict comes here once judged",
+        ),
+        (
+            _q(video.Item("file", "ab12", name="a\nb" + "x" * 80 + ".mp4"), added=True),
+            (1, 1),
+            "video queued: video file a?b" + "x" * 57 + " - position 1 of 1; "
+            "the verdict comes here once judged",
+        ),
+    ],
+)
+def test_the_receipt_is_one_line_naming_the_item_and_its_place(q, place, line):
+    assert video.receipt(q, place) == line
+
+
+def test_the_receipt_of_a_video_judged_before_is_its_verdict():
+    q = video.Queued(video.Item("youtube", VID), repeat=("title", "verdict", "report"))
+    assert video.receipt(q, (1, 1)) == "title\nverdict\nreport"
+
+
+def test_the_door_queues_a_bare_link_as_kit_and_answers_its_place(box):
+    r = box.cli("door", f" https://youtu.be/{VID}?si=x ")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == (
+        f"video queued: youtube video {VID} - position 1 of 1; "
+        "the verdict comes here once judged\n"
+    )
+    job = box.job(f"video-yt-{VID}")
+    assert job["payload"]["origin"] == "kit" and job["payload"]["mode"] == "standard"
+    r = box.cli("door", REEL)
+    assert f"instagram reel {CODE} - position 2 of 2" in r.stdout
+    r = box.cli("door", YT)
+    assert r.stdout.startswith(
+        f"video already queued: youtube video {VID} - position 1 of 2"
+    )
+
+
+@pytest.mark.parametrize("text", [f"{REEL} is this true?", "--check", "hello", ""])
+def test_the_door_refuses_what_is_not_one_bare_link_and_queues_nothing(box, text):
+    r = box.cli("door", text)
+    assert r.returncode == 2 and r.stdout == "" and "not for the door" in r.stderr
+    assert not box.queue.exists()
+
+
+def test_the_door_answers_a_video_judged_before_with_its_verdict(box):
+    jid = _judged(box, YT, origin="scout", YT_CAPTIONS="yes")
+    box.cli("report", jid, stdin=report_text("drop"))
+    r = box.cli("door", f"https://youtu.be/{VID}")
+    assert r.returncode == 0 and "already judged" in r.stdout
+    assert box.job(jid)["status"] == "done"
+
+
+def test_the_door_queues_a_saved_video_file_and_leaves_it_in_place(box, tmp_path):
+    clip = tmp_path / "0d3c-uuid.mp4"
+    clip.write_bytes(b"some video")
+    r = box.cli("door-file", str(clip))
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == (
+        "video queued: video file 0d3c-uuid.mp4 - position 1 of 1; "
+        "the verdict comes here once judged\n"
+    )
+    assert clip.read_bytes() == b"some video"
+    (kept,) = (box.root / "inbox").iterdir()
+    assert kept.read_bytes() == b"some video"
+    assert box.cli("door-file", str(clip)).stdout.startswith("video already queued")
+
+
+def test_the_door_refuses_a_link_a_directory_another_type_or_a_missing_file(
+    box, tmp_path
+):
+    real = tmp_path / "real.mp4"
+    real.write_bytes(b"v")
+    (tmp_path / "link.mp4").symlink_to(real)
+    (tmp_path / "dir.mp4").mkdir()
+    (tmp_path / "notes.txt").write_text("x")
+    for name in ("link.mp4", "dir.mp4", "notes.txt", "missing.mp4"):
+        r = box.cli("door-file", str(tmp_path / name))
+        assert r.returncode == 2 and "not for the door" in r.stderr, name
+    assert not box.queue.exists()
+
+
+def test_the_door_keeps_the_ingest_limits(box, tmp_path, monkeypatch):
+    empty = tmp_path / "empty.mp4"
+    empty.write_bytes(b"")
+    r = box.cli("door-file", str(empty))
+    assert r.returncode == 1 and r.stderr.startswith("video failed:")
+    big = tmp_path / "big.mp4"
+    big.write_bytes(b"12345")
+    monkeypatch.setattr(video, "MAX_INGEST_BYTES", 4)
+    with pytest.raises(ValueError, match="larger than"):
+        video.door_file(big)
+    assert not (box.root / "inbox").exists() or not any((box.root / "inbox").iterdir())
+
+
 # --- retention -------------------------------------------------------------------------
 
 

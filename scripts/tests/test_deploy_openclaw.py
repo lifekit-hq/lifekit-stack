@@ -1173,6 +1173,8 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("skills/video-eval/rubric.md", True),
         ("scripts/ensure-job-queue.sh", True),
         ("skills/job-queue/jobq.py", True),
+        ("scripts/ensure-video-drop-door.sh", True),
+        ("compose/openclaw-gateway/plugins/video-drop-door/index.js", True),
         ("scripts/openclaw-smoke-verdict.py", True),
         ("skills/youtube-transcript/transcript.py", True),
         ("skills/youtube-transcript/SKILL.md", True),

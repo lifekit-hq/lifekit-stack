@@ -397,6 +397,18 @@ rm -f "${up_log}"
 # ═══ configure ═══════════════════════════════════════════════════════════════
 openclaw_phase_configure() {
 
+# ─── video drop door plugin ──────────────────────────────────────────────────
+#
+# compose/openclaw-gateway/plugins/video-drop-door is a gateway plugin, loaded
+# from the global extensions directory; platform.patch.json below allows and
+# enables it. It is installed first, so the restart that patch asks for when it
+# first enables the plugin finds the files. The script converges and reloads
+# the plugin in the running gateway only when its files changed
+# (docs/runbook.md, "Video drop door").
+say "video drop door plugin -> ${OPENCLAW_CONFIG_DIR}/extensions"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-video-drop-door.sh" \
+  || fail_later "video drop door plugin install failed (output above)"
+
 # ─── OpenClaw platform config: the repo's half of openclaw.json ──────────────
 #
 # openclaw.json is host state (agents.entries, channels, auth profiles, MCP

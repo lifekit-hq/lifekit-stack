@@ -1522,6 +1522,8 @@ typed job from the host with `scripts/video-eval.sh`; a scout can file it with o
 Every item is one job on the shared job queue ("Shared job queue"), one Claude pass against one
 versioned rubric, one report and one index row. Free: no API key, no cookies, no login, no paid
 transcription. It replaced the Instagram reel claim check, which is now its `claim-check` mode.
+A bare link or a video file the owner sends Kit is queued by the drop door before Kit's model
+sees the message ("Video drop door"); a link inside prose still reaches Kit, which queues it.
 
 - **Skill:** `skills/video-eval` (`SKILL.md`, `video.py`, stdlib only, and `rubric.md`; needs
   the `job-queue` skill and the youtube-transcript skill's yt-dlp and `transcript.py`).
@@ -1672,6 +1674,58 @@ Then:
   Keep `/var/lib/lifekit/intake/` for the record, or delete it if the reports are not wanted.
 - **Follow-up, out of scope here:** move the youtube-transcript skill's own fetches onto the
   queue, so a transcript asked while the PC is off waits instead of failing.
+
+### Video drop door
+
+The owner's Telegram chat with Kit has a door in front of the model, so queueing a video is
+software, not a model turn. A message whose whole trimmed text is one YouTube or Instagram link,
+or that carries one video file, is queued for video evaluation and answered at once with one
+line: `video queued: youtube video <id> - position 2 of 3; the verdict comes here once judged`
+(`video already queued: ...` when it waits already; the earlier verdict when it was judged
+before). The verdict returns to the same chat by the existing path: the `job-queue-drain` turn
+announces it on the `default` account to `LIFEKIT_TELEGRAM_CHAT`. Everything else, a link inside
+prose included, reaches Kit's model unchanged.
+
+- **Seam:** the `video-drop-door` gateway plugin
+  (`compose/openclaw-gateway/plugins/video-drop-door`), a `before_dispatch` hook. A hook that
+  answers `handled` sends its text as the reply and no model turn runs. `before_dispatch`
+  carries no media, so the plugin's `message_received` hook, which the gateway runs for the same
+  message just before, notes the one `video/*` file's saved path under
+  `~/.openclaw/media/inbound/` for it. No parallel Telegram poller.
+- **Who it opens for:** Telegram, account `default`, agent `kit`, a direct (non-group) chat
+  whose id equals `LIFEKIT_TELEGRAM_CHAT` from the env file (passed into the gateway). The
+  drain announces to that chat, which is what makes "same chat" hold. With the variable empty
+  the door stays shut and Kit gets every message, as before.
+- **Deterministic and untrusted-safe:** the plugin runs
+  `python3 <kit workspace>/skills/video-eval/video.py door <text>` or `door-file <path>` with
+  `execFile` (no shell, the message one argument, 45s cap). `door` takes only printable ASCII
+  with no spaces, an http(s) scheme, no user or password, the default port, and a link
+  `parse_link` reads to a reel shortcode or YouTube id, so the URL is rebuilt from that id.
+  `door-file` takes only a regular file (not a symlink) with a media suffix, within the 200 MB
+  ingest cap, and keeps a private copy like `ingest`. Exit 0 is the receipt, exit 2 "not for
+  the door"; a `video failed: ...` line is sent as the answer, and any other failure, a timeout
+  or a missing script lets the message through to Kit.
+- **Position:** `jobq.py`'s `position()`: the running job first, then oldest first. A link
+  waiting for the PC can be passed by a file, so it is the queue's order, not a promise.
+- **Caveats:** a video file is queued whatever its caption says. A Telegram GIF arrives as an
+  mp4 and is queued like a video. The receipt does not depend on any model, so it keeps working
+  when the gateway's model credits end; the verdict does, because the drain hands the job to a
+  Kit turn, until a later item moves the judge off the gateway.
+- **Install:** the deploy. The configure phase runs `scripts/ensure-video-drop-door.sh`, which
+  copies the plugin to `/srv/openclaw/config/extensions/video-drop-door` (0644, owned by the
+  deploy account, which the gateway's loader requires) before `platform.patch.json` allows and
+  enables `video-drop-door`. On first enable the patch's restart hint recreates the gateway;
+  later changes to the plugin are applied with `openclaw plugins reload video-drop-door`. No
+  operator step: `LIFEKIT_TELEGRAM_CHAT` is already in the env file, and the first deploy
+  recreates the gateway for the new variable.
+- **Verify:** send Kit a bare YouTube link: the one-line receipt arrives within seconds and
+  `jobq.py list` shows the job; send the same link inside a sentence: Kit answers as before.
+  `docker exec "$G" openclaw plugins inspect video-drop-door` shows it loaded with its two
+  hooks.
+- **Turn it off:** remove `video-drop-door` from `plugins.allow` and its entry in
+  `platform.patch.json` (a PR), or, at once, `docker exec "$G" openclaw config patch` with
+  `{"plugins":{"entries":{"video-drop-door":{"enabled":false}}}}`; Kit then takes every message
+  again.
 
 ## Rolling back OpenClaw
 
