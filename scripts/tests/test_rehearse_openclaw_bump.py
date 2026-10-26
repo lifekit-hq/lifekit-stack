@@ -122,6 +122,7 @@ COMPOSE = {
         "openclaw-gateway": {
             "environment": {
                 "OPENCLAW_FINANCE_CHAT": "${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}",
+                "OPENCLAW_KIT_CHAT": "${OPENCLAW_KIT_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}",
                 "OPENCLAW_GATEWAY_TOKEN": "${OPENCLAW_GATEWAY_TOKEN}",
                 "TZ": "${TZ:-UTC}",
                 "HOME": "/home/node",
@@ -369,6 +370,7 @@ def test_env_carries_compose_derived_refs_not_literals(rig):
     assert run(rig, "--keep").returncode == 0
     lines = (rig["dest"] / "env.rehearsal").read_text().splitlines()
     assert "OPENCLAW_FINANCE_CHAT=rehearsal-placeholder" in lines
+    assert "OPENCLAW_KIT_CHAT=rehearsal-placeholder" in lines
     assert sum(ln.startswith("OPENCLAW_GATEWAY_TOKEN=") for ln in lines) == 1
     assert not any(ln.startswith(("HOME=", "TZ=")) for ln in lines)
     assert "OPENCLAW_STATE_DIR=/home/node/.openclaw" in lines
