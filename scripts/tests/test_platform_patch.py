@@ -54,6 +54,14 @@ def test_hook_path_is_not_in_git():
     assert ENV_REF.fullmatch(HOOKS["path"]), "a path committed to the repo is guessable"
 
 
+def test_code_mode_is_authored_on_the_quickjs_executor():
+    # Absent tools.codeMode means "auto" on the node:vm executor, which is not a
+    # security boundary; Kit reads untrusted mail, so the executor is pinned to
+    # the hardened QuickJS one and the activation is authored so a version bump
+    # cannot silently change the tool surface.
+    assert PATCH["tools"]["codeMode"] == {"enabled": "auto", "executor": "quickjs"}
+
+
 # What each hook mapping may do. The agents are the only ones hooks reach
 # (hooks.allowedAgentIds), the session mode is what the mapping was authorized
 # under, and the fields are the only payload values its template may splice in.

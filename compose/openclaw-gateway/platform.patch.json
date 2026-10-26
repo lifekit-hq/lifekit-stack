@@ -61,6 +61,12 @@
       }
     }
   },
+  "tools": {
+    "codeMode": {
+      "enabled": "auto",
+      "executor": "quickjs"
+    }
+  },
   "memory": {
     "search": {
       "enabled": true,

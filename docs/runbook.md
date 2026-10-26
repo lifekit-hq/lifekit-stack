@@ -149,7 +149,7 @@ file); rotating that token means recreating `prometheus` too. Check it with
 `/srv/openclaw/config/openclaw.json` has two halves. The platform keys -
 `logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
 `diagnostics-otel` plugin enables, memory-core dreaming off, `gateway.auth.rateLimit`, `memory.search`
-(`enabled` + `extraPaths`), `agents.defaults.heartbeat.every`, the inbound
+(`enabled` + `extraPaths`), `tools.codeMode`, `agents.defaults.heartbeat.every`, the inbound
 `hooks` block and the finance agent's heartbeat - live in
 `compose/openclaw-gateway/platform.patch.json`. On every OpenClaw deploy (see
 [Path-gated OpenClaw deploys](#path-gated-openclaw-deploys)) `deploy.sh`
@@ -163,6 +163,20 @@ in that file, never in a PR body; objects merge and scalars replace
 (`openclaw config patch --help`), and the file is strict JSON so the deploy
 can read it with stdlib Python. Check new keys against the installed schema
 (`openclaw config schema`).
+
+`tools.codeMode` is authored as `{ "enabled": "auto", "executor": "quickjs" }`.
+OpenClaw runs Code Mode with the key absent too (absent means `"auto"`), but on
+the default `node` executor, which uses `node:vm` and is not a security
+boundary; Kit reads untrusted mail through google-workspace, so the executor is
+pinned to the bundled QuickJS WASM one, and an authored value keeps a version
+bump from silently changing the tool surface. Selecting `quickjs` loads the
+bundled `code-mode-quickjs` plugin without a `plugins.allow` entry; an engaged
+run fails closed if that executor is unavailable. **Undo:** set `executor` back
+to `"node"` in the patch file (or delete the `tools` block to return to the
+runtime default) and merge; the deploy applies it. Because objects merge, a
+deleted block does not remove the live key - also run
+`openclaw config unset tools.codeMode` in the gateway container, or use the
+`"node"` edit instead.
 
 The deploy's CLI calls that touch live gateway state (this patch's dry run and
 apply, `secrets audit`, the `gateway.trustedProxies` write) go through
