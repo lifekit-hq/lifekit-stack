@@ -1,0 +1,12 @@
+[Unit]
+Description=Run lifekit-intake-to-vault hourly
+
+[Timer]
+# A judged video reaches the vault within the hour; memory-sync (every 15
+# minutes) carries the page and the index to GitHub.
+OnBootSec=10min
+OnUnitActiveSec=1h
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

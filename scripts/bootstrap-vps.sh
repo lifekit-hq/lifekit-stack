@@ -330,6 +330,15 @@ ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" FM_HOMES="${FM_HOMES:-}" bash "$
 say "Installing vault door script + systemd units"
 ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" bash "$REPO_DIR/scripts/vault-door/install-vault-door.sh"
 
+# ─── Intake to vault ──────────────────────────────────────────────────────────
+# Hourly, files each accepted video-eval report into the memory vault: one
+# source page (report + transcript), its index line and one log line, through
+# the vault's own bin/ gates. Skipped while there is no vault clone; see
+# scripts/intake-to-vault/ and docs/runbook.md "Intake to vault".
+
+say "Installing intake-to-vault script + systemd units"
+bash "$REPO_DIR/scripts/intake-to-vault/install-intake-to-vault.sh"
+
 # ─── Identity database dump timer ─────────────────────────────────────────────
 # Nightly pg_dumpall of the identity provider's Postgres (compose project
 # identity) into /srv/openclaw/backups/identity, newest 14 kept. A no-op until
