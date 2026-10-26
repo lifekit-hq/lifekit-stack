@@ -2260,11 +2260,12 @@ Rehearse before trusting it:
    no longer depends on a last route. (The owner's Telegram DM runs in its own per-peer
    session, `session.dmScope = per-channel-peer`, which is why `agent:kit:main` never had
    one: the earlier `channel: "last"` mapping ended in `Delivering to Telegram requires
-   target <chatId>`.) **One operator step before the deploy applies it:** place
-   `OPENCLAW_KIT_CHAT` (the owner's Kit DM chat id, a master setting) through the secrets
-   runbook, like `OPENCLAW_FINANCE_CHAT`. It has no fallback: while it is unset or empty
-   the deploy's dry run rejects the patch, the gateway keeps the old mapping and the
-   deploy ends red. Do not widen the mapping by hand.
+   target <chatId>`.) `OPENCLAW_KIT_CHAT` (a master setting) falls back to
+   `LIFEKIT_TELEGRAM_CHAT`, the owner's personal Telegram id, like `OPENCLAW_FINANCE_CHAT`,
+   so a host that already has that one needs no new setting; set `OPENCLAW_KIT_CHAT`
+   through the secrets runbook only to deliver to a different chat. While both are unset
+   or empty the deploy's dry run rejects the patch, the gateway keeps the old mapping and
+   the deploy ends red. Do not widen the mapping by hand.
 5. Retry check: with the gateway unreachable (a maintenance window, never a forced
    restart for this), answer another note: `outbox/` keeps one entry and the unit retries;
    once the gateway is back exactly one hook turn arrives.

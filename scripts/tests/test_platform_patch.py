@@ -132,16 +132,16 @@ def test_firstmate_reply_delivers_to_the_owners_kit_dm():
     assert mapping["to"] == "${OPENCLAW_KIT_CHAT}"
 
 
-def test_kit_chat_has_no_fallback_to_another_chat():
-    # Unlike OPENCLAW_FINANCE_CHAT, an unset OPENCLAW_KIT_CHAT must stay empty in
-    # the container so the deploy's dry run refuses the patch, rather than quietly
-    # routing the reply to some other chat.
+def test_kit_chat_falls_back_to_the_owners_telegram_chat_only():
+    # Same shape as OPENCLAW_FINANCE_CHAT: the owner's personal chat is the
+    # default, and with both unset the value stays empty in the container so the
+    # deploy's dry run refuses the patch (never a "last" fallback).
     for service in ("openclaw-gateway", "openclaw-cli"):
         assert re.search(
-            r"^\s+OPENCLAW_KIT_CHAT: \$\{OPENCLAW_KIT_CHAT:-\}$",
+            r"^\s+OPENCLAW_KIT_CHAT: \$\{OPENCLAW_KIT_CHAT:-\$\{LIFEKIT_TELEGRAM_CHAT:-\}\}$",
             service_block(service),
             re.M,
-        ), f"{service} must pass OPENCLAW_KIT_CHAT through with an empty default"
+        ), f"{service} must default OPENCLAW_KIT_CHAT to LIFEKIT_TELEGRAM_CHAT"
 
 
 def test_kit_chat_is_a_documented_master_setting():

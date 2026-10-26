@@ -122,7 +122,7 @@ COMPOSE = {
         "openclaw-gateway": {
             "environment": {
                 "OPENCLAW_FINANCE_CHAT": "${OPENCLAW_FINANCE_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}",
-                "OPENCLAW_KIT_CHAT": "${OPENCLAW_KIT_CHAT:-}",
+                "OPENCLAW_KIT_CHAT": "${OPENCLAW_KIT_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}",
                 "OPENCLAW_GATEWAY_TOKEN": "${OPENCLAW_GATEWAY_TOKEN}",
                 "TZ": "${TZ:-UTC}",
                 "HOME": "/home/node",
