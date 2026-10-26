@@ -1440,7 +1440,7 @@ answer once it is on. Video evaluations are its first kind ("Video evaluation").
   `~/.life-state/job-queue/` in the gateway, i.e. `/var/lib/lifekit/job-queue/` on the host
   (mode 0700). A job is keyed by its kind and key (a reel's shortcode, say), so the same reel
   sent twice is one job; it names the handler command the drain runs, the host its egress pre-check
-  connects to, its payload and a one-line label. Finished jobs are pruned after 14 days
+  connects to (none for a file already here), its payload and a one-line label. Finished jobs are pruned after 14 days
   (`JOBQ_KEEP_DAYS`). Nothing about a job's result beyond its first line is kept here.
 - **Egress, configured in one place:** `LIFEKIT_EGRESS_PROXY` in
   `/srv/lifekit-secrets/stack.env`, passed to the gateway by `compose/openclaw/docker-compose.yml`.
@@ -1451,10 +1451,12 @@ answer once it is on. Video evaluations are its first kind ("Video evaluation").
   the next deploy.
 - **Drain:** one cron row on kit, `job-queue-drain`, every 2 minutes. Its trigger script
   (`drain-gate.js`, stored in the cron row) runs `jobq.py next`, which never wakes the agent
-  unless a job can run now: nothing queued, a job already running, or an egress that does not
-  answer a real CONNECT to the job's host all skip the turn with no run history. When a job is
-  ready, the turn gets one appended instruction (`Run exactly: <handler> <job id>`) and the
-  owning skill says how to answer. Jobs run one at a time, oldest first.
+  unless a job can run now: nothing queued, a job already running, or no queued job whose
+  egress answers a real CONNECT to its host all skip the turn with no run history. A job with
+  no probe host (a file already on the server) needs no egress, so a link waiting for the PC
+  never holds it back. When a job is ready, the turn gets one appended instruction (`Run
+  exactly: <handler> <job id>`) and the owning skill says how to answer. Jobs run one at a
+  time, the oldest one whose egress answers first.
 - **Exactly one answer per job, bounded:** a run that fails while the egress answers counts an
   attempt and is retried quietly (`NO_REPLY`); the third failure (`JOBQ_MAX_ATTEMPTS`) is the
   one failure message. A run that fails because the egress went away mid-run gives its attempt
