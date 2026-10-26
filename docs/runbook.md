@@ -1740,7 +1740,7 @@ Then:
 - **Verify:**
   - Send Kit a public YouTube link. It answers `video queued` at once, and with the PC on the
     three-line answer arrives within a few minutes. Then `scripts/video-eval.sh index` shows
-    its row, and its report has a `Rubric: video-eval v1 (standard)` line.
+    its row, and its report has a `Rubric: video-eval v2 (standard)` line.
   - `scripts/video-eval.sh enqueue <the same link>` answers `already judged`.
   - A made-up reel link ends as an `unavailable` line, which proves the yt-dlp and the route
     to Instagram.
