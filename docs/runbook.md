@@ -3696,9 +3696,8 @@ command there.
   and only for `youtube.com`, `googlevideo.com`, `ytimg.com` or, for the queued reel checks
   ("Instagram reel claim check"), `instagram.com`, `cdninstagram.com` and `fbcdn.net`, or a
   subdomain of one of them (label-boundary match, case-insensitive). Everything else (other
-  names, lookalikes such
-  as `evilyoutube.com` or `youtube.com.evil.com`, IPv4/IPv6 address types, IP literals sent
-  as names) gets SOCKS reply `0x02` and a log line in `journalctl --user -u yt-relay`.
+  names, lookalikes such as `evilyoutube.com` or `youtube.com.evil.com`, IPv4/IPv6 address
+  types, IP literals sent as names) gets SOCKS reply `0x02` and a log line in `journalctl --user -u yt-relay`.
   Allowed names go on to the tunnel unresolved, so the PC resolves them. The handshake and
   idle time are bounded, so a stuck client cannot hold the relay.
 - **PC off:** ssh opens its listener only after it has connected, so with the PC off the

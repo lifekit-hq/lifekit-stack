@@ -4,8 +4,8 @@
 #
 # The allow-list SOCKS5 relay (yt-relay.py) and the ONLY listener on the docker
 # bridge address: the OpenClaw gateway reaches it as host.docker.internal. It
-# forwards YouTube hostnames only, through the loopback ssh forward of
-# yt-tunnel.service. It does not require that unit: with the PC off the relay
+# forwards the allow-listed YouTube and Instagram hostnames only, through the
+# loopback ssh forward of yt-tunnel.service. It does not require that unit: with the PC off the relay
 # stays up and answers a SOCKS failure, which the skill reads as "the PC is off".
 [Unit]
 Description=Allow-list SOCKS relay for the YouTube transcript skill

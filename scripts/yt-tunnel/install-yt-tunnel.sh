@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # install-yt-tunnel.sh - install and start the two systemd USER units behind
-# skills/youtube-transcript, which fetches YouTube captions from a home IP:
+# skills/youtube-transcript (and the shared job queue's reel downloads), which
+# fetch from a home IP:
 #   yt-tunnel.service  ssh -D SOCKS forward to the owner's PC, loopback only
 #   yt-relay.service   allow-list SOCKS5 relay (yt-relay.py) on the docker
 #                      bridge address; the only thing the skill talks to
