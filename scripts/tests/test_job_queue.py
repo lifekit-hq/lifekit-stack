@@ -209,6 +209,40 @@ def test_a_job_with_no_probe_needs_no_egress(q, monkeypatch):
     assert jobq.get("video-file-AAA111")["probe"] == ""
 
 
+def test_a_file_behind_a_link_waiting_for_the_pc_is_offered_and_claimed(q, monkeypatch):
+    monkeypatch.setenv("LIFEKIT_EGRESS_PROXY", f"socks5h://127.0.0.1:{_closed_port()}")
+    _add("AAA111", now=1000.0)
+    jobq.add(
+        "video",
+        "file-BBB222",
+        owner="video-eval",
+        handler=HANDLER,
+        probe="",
+        now=1001.0,
+    )
+    state, message = jobq.next_job(now=1002.0)
+    assert state == "ready" and "video-file-BBB222" in message
+    assert jobq.get("reel-AAA111").get("offers") is None
+    assert jobq.claim("video-file-BBB222", now=1003.0)["attempts"] == 1
+    assert jobq.next_job(now=1004.0) == ("idle", "")  # one is running
+    jobq.finish("video-file-BBB222", "done", now=1005.0)
+    assert jobq.next_job(now=1006.0) == ("wait", "")  # the link still waits
+
+
+def test_files_keep_their_order_and_the_link_goes_first_once_the_egress_answers(q):
+    _add("AAA111", now=1000.0)
+    jobq.add(
+        "video",
+        "file-BBB222",
+        owner="video-eval",
+        handler=HANDLER,
+        probe="",
+        now=1001.0,
+    )
+    assert "reel-AAA111" in jobq.next_job(now=1002.0)[1]
+    assert jobq.claim("video-file-BBB222", now=1003.0) is None
+
+
 def test_a_quiet_job_gives_up_without_a_reply(q):
     _add(quiet=True)
     for _ in range(jobq.OFFER_LIMIT):

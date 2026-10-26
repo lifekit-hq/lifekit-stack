@@ -16,8 +16,9 @@ gathered while the PC was off drains, one job and one owner message at a
 time, once it is on. The queue knows no kinds: a producer brings its own
 handler and owner skill, and the handler reports back with claim / finish /
 retry / release. A job whose input is already on this host (a file to
-evaluate) names no probe host: it needs no egress and runs whenever the queue
-reaches it, PC on or off.
+evaluate) names no probe host: it needs no egress, so the gate offers the
+oldest job whose egress answers, and that file runs PC on or off, even with
+a link waiting for the PC ahead of it.
 
 The egress is one setting, LIFEKIT_EGRESS_PROXY (the gateway's environment,
 compose/openclaw/docker-compose.yml): a socks5h:// or http:// proxy URL, or
@@ -215,23 +216,44 @@ def get(jid: str) -> dict | None:
         return _load(_path(d, jid))
 
 
-def _next(d: Path, now: float) -> dict | None:
-    """The oldest runnable job, or None while another is running: one at a
-    time, so a backlog never runs several downloads and transcriptions at once."""
+def _runnable(d: Path, now: float) -> list[dict]:
+    """The jobs that may run, oldest first; none while another is running: one
+    at a time, so a backlog never runs several downloads and transcriptions at
+    once."""
     jobs = [j for _, j in _jobs(d)]
     if any(j["status"] == RUNNING and not _stale(j, now) for j in jobs):
-        return None
+        return []
     ready = [j for j in jobs if j["status"] == QUEUED or _stale(j, now)]
-    return min(ready, key=lambda j: j["queued_at"], default=None)
+    return sorted(ready, key=lambda j: j["queued_at"])
+
+
+def _first_ready(jobs: list[dict]) -> dict | None:
+    """The oldest job whose egress answers; a job with no probe host always
+    does, so a job waiting for the PC never holds back a file already here."""
+    answered: dict[str, bool] = {}
+    for j in jobs:
+        if not j["probe"]:
+            return j
+        if j["probe"] not in answered:
+            answered[j["probe"]] = egress_ready(j["probe"])
+        if answered[j["probe"]]:
+            return j
+    return None
 
 
 def claim(jid: str, now: float | None = None) -> dict | None:
     """Mark the job running and count the attempt. None when it is not the
-    job to run (gone, finished, or another one is running)."""
+    job to run (gone, finished, another one is running, or an older job whose
+    egress answers goes first)."""
     now = time.time() if now is None else now
     with locked() as d:
-        job = _next(d, now)
-        if job is None or job["id"] != jid:
+        ready = _runnable(d, now)
+    ids = [j["id"] for j in ready]
+    if jid not in ids or _first_ready(ready[: ids.index(jid)]) is not None:
+        return None
+    with locked() as d:
+        job = next((j for j in _runnable(d, now) if j["id"] == jid), None)
+        if job is None:
             return None
         job.update(
             status=RUNNING, claimed_at=now, attempts=job["attempts"] + 1, offers=0
@@ -409,16 +431,18 @@ def next_job(now: float | None = None) -> tuple[str, str]:
     now = time.time() if now is None else now
     with locked() as d:
         _prune(d, now)
-        job = _next(d, now)
-        if job is not None and _stale(job, now) and job["attempts"] >= max_attempts():
-            reason = f"its last {job['attempts']} runs never reported back"
-            return "ready", _give_up(d, job, reason, now)
-    if job is None:
+        ready = _runnable(d, now)
+        for job in ready:
+            if _stale(job, now) and job["attempts"] >= max_attempts():
+                reason = f"its last {job['attempts']} runs never reported back"
+                return "ready", _give_up(d, job, reason, now)
+    if not ready:
         return "idle", ""
-    if job["probe"] and not egress_ready(job["probe"]):
+    picked = _first_ready(ready)
+    if picked is None:
         return "wait", ""
     with locked() as d:
-        job = _next(d, now)
+        job = next((j for j in _runnable(d, now) if j["id"] == picked["id"]), None)
         if job is None:
             return "idle", ""
         offers = job.get("offers", 0) + 1

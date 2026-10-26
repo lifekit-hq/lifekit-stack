@@ -1614,6 +1614,12 @@ rm /tmp/kit-skills.patch.json
    Instagram link the owner wants judged, or a video file, goes to the `video-eval` skill.
 4. The old transcripts: `rm -r /var/lib/lifekit/reel-claim-check` on the host. Nothing prunes
    them any more.
+5. Reels queued under the retired skill: each `reel-<shortcode>` job in the queue stores the
+   old `reel.py` handler, which no longer exists, so nothing would run it and the drain would
+   give up on it with a failure message. Right after the deploy list them, drop each, and
+   send the links again through `scripts/video-eval.sh enqueue <link>`:
+   `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py list`, then
+   `... jobq.py drop reel-<shortcode>` for each `reel-*` row that is not `done` or `failed`.
 
 From the host (firstmate, or the operator; any account in the `docker` group). Origin is
 `firstmate` unless `VIDEO_EVAL_ORIGIN` says otherwise (`scout` for the ideas scout):
@@ -1626,7 +1632,8 @@ From the host (firstmate, or the operator; any account in the `docker` group). O
   video file):
   `scripts/video-eval.sh backfill /path/reel-<shortcode>.mp4 /path/yt-<id>.en.vtt`.
   Each file's line says what was queued. The files are judged one per drain turn, with no
-  egress needed.
+  egress needed: the gate skips a link job waiting for the PC and offers the oldest job whose
+  egress answers.
 - **Completion signal:** `scripts/video-eval.sh status <job id>`. Its first line is `queued -
   attempt N` or `running - attempt N` while waiting. When finished it is `done` or `failed`,
   followed by the result. A judged job's result is the three-line answer, its last line

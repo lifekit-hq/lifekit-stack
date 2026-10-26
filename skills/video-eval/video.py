@@ -621,8 +621,8 @@ class Material:
         )
         return [
             f"Video: {self.url}",
-            f"Title: {self.title or 'unknown'}",
-            f"Author: {self.author or 'unknown'}",
+            f"Title: {' '.join(self.title.split()) or 'unknown'}",
+            f"Author: {' '.join(self.author.split()) or 'unknown'}",
             f"Duration: {round(self.duration)}s"
             if self.duration
             else "Duration: unknown",
@@ -1341,7 +1341,7 @@ def show(jid: str) -> str:
     job = jobq().get(jid)
     if job is None:
         raise ValueError(f"no job {jid}")
-    for line in job.get("result", "").splitlines():
+    for line in reversed(job.get("result", "").splitlines()):
         if line.startswith("report: "):
             return Path(line[8:]).read_text()
     raise ValueError(f"job {jid} has no report")
