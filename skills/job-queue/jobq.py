@@ -15,7 +15,9 @@ producing skill stored, and the skill whose rules shape the reply. So a backlog
 gathered while the PC was off drains, one job and one owner message at a
 time, once it is on. The queue knows no kinds: a producer brings its own
 handler and owner skill, and the handler reports back with claim / finish /
-retry / release.
+retry / release. A job whose input is already on this host (a file to
+evaluate) names no probe host: it needs no egress and runs whenever the queue
+reaches it, PC on or off.
 
 The egress is one setting, LIFEKIT_EGRESS_PROXY (the gateway's environment,
 compose/openclaw/docker-compose.yml): a socks5h:// or http:// proxy URL, or
@@ -33,6 +35,8 @@ taken up again after JOBQ_LEASE_MINUTES (default 30). The queue gives up on
 its own, and the gate hands kit a one-line report for the owner instead of a
 run, when a job used up its attempts that way, or when OFFER_LIMIT drain turns
 in a row were handed it and none ran it, so no job loops or ends unreported.
+A quiet job (one filed by an agent that reads its status, not by the owner)
+is given up with NO_REPLY instead: its producer polls the job.
 Finished jobs stay JOBQ_KEEP_DAYS (default 14) for `list`, then are pruned.
 
 `next` prints one line first, for the gate: "JOBQ ready" (the job's run
@@ -167,13 +171,16 @@ def add(
     probe: str,
     payload: dict | None = None,
     label: str = "",
+    quiet: bool = False,
     now: float | None = None,
 ) -> tuple[bool, int]:
     """Queue a job. Returns (added, jobs waiting): added is False when the
     same job is already queued or running. A finished one is queued again.
-    The label (such as the link the owner sent) names the job to the owner."""
+    The label (such as the link the owner sent) names the job to the owner.
+    An empty probe means the job needs no egress; a quiet job's give-up says
+    nothing to the owner."""
     now = time.time() if now is None else now
-    if not HOST.fullmatch(probe):
+    if probe and not HOST.fullmatch(probe):
         raise ValueError(f"bad probe host: {probe!r}")
     jid = job_id(kind, key)
     with locked() as d:
@@ -193,6 +200,7 @@ def add(
                     "probe": probe,
                     "payload": payload or {},
                     "label": " ".join(label.split())[:300],
+                    "quiet": quiet,
                     "status": QUEUED,
                     "queued_at": now,
                     "attempts": 0,
@@ -378,6 +386,11 @@ def run_message(job: dict) -> str:
 
 
 def give_up_message(job: dict, reason: str) -> str:
+    if job.get("quiet"):
+        return (
+            f"Job {job['id']} gave up: {reason}.\n"
+            "Run nothing. Reply exactly NO_REPLY: whoever queued it reads its status."
+        )
     return (
         f"Job {job['id']} gave up: {reason}.\n"
         f"Run nothing. Tell the owner in one short message that the queued "
@@ -402,7 +415,7 @@ def next_job(now: float | None = None) -> tuple[str, str]:
             return "ready", _give_up(d, job, reason, now)
     if job is None:
         return "idle", ""
-    if not egress_ready(job["probe"]):
+    if job["probe"] and not egress_ready(job["probe"]):
         return "wait", ""
     with locked() as d:
         job = _next(d, now)

@@ -1,6 +1,6 @@
 ---
 name: job-queue
-description: See or clear the jobs waiting for the owner's egress (today the PC), such as queued Instagram reel checks. Use when the owner asks what is waiting, queued or pending for the PC, or asks to cancel a queued job.
+description: See or clear the jobs waiting for the owner's egress (today the PC), such as queued video evaluations. Use when the owner asks what is waiting, queued or pending for the PC, or asks to cancel a queued job.
 metadata: { "openclaw": { "requires": { "bins": ["python3"] } } }
 ---
 

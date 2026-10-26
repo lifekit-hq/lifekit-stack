@@ -2,7 +2,7 @@
 """Allow-list SOCKS5 relay in front of the yt-tunnel ssh forward.
 
 skills/youtube-transcript and the job queue's egress (skills/job-queue, the
-reel-claim-check downloads) talk to this relay, never to the ssh -D listener.
+video-eval downloads) talk to this relay, never to the ssh -D listener.
 The relay is the only thing listening on the docker bridge address; the ssh
 forward (an open SOCKS proxy into the owner's PC network) binds loopback only,
 which no container can reach. The relay speaks SOCKS5 to its client: no auth,

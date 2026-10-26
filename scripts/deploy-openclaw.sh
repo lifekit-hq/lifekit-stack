@@ -14,7 +14,7 @@
 #   configure  apply compose/openclaw-gateway/platform.patch.json, then reload
 #              and audit the gateway's SOPS-backed secrets
 #   post-up    reattach openclaw-cli, reset stuck sessions, skill native deps,
-#              the youtube-transcript and reel-claim-check skills, doctor /
+#              the youtube-transcript and video-eval skills, doctor /
 #              health / channels status
 #   smoke      one real agent turn per runtime, then the post-upgrade smoke
 #              check of each pillar the deployed range upgraded
@@ -691,7 +691,7 @@ OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-youtube
 #
 # skills/job-queue lives in the gateway's shared skills directory, like
 # youtube-transcript: the queue's module and the drain cron's gate, for every
-# skill that queues work for the egress (reel-claim-check below). The script
+# skill that queues work for the egress (video-eval below). The script
 # converges and reports the drain cron row read-only (creating it, or
 # re-applying a changed gate, stays an operator step, docs/runbook.md "Shared
 # job queue").
@@ -699,17 +699,17 @@ say "job queue -> ${OPENCLAW_CONFIG_DIR}/skills"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-job-queue.sh" \
   || fail_later "job queue install failed (output above)"
 
-# ─── reel-claim-check skill ──────────────────────────────────────────────────
+# ─── video-eval skill ────────────────────────────────────────────────────────
 #
-# skills/reel-claim-check lives in kit's workspace, so nothing else carries a
-# merged change to it there. It runs the yt-dlp and queues on the job queue the
-# steps above installed, so it follows them. The script converges, skips a box
-# with no kit workspace, and reports kit's allowlist read-only (adding the
-# skill to it stays an operator patch, docs/runbook.md "Instagram reel claim
-# check").
-say "reel-claim-check skill -> ${OPENCLAW_CONFIG_DIR}/agents/kit/workspace/skills"
-OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-reel-claim-check.sh" \
-  || fail_later "reel-claim-check skill install failed (output above)"
+# skills/video-eval lives in kit's workspace, so nothing else carries a merged
+# change to it there. It runs the yt-dlp and captions of youtube-transcript and
+# queues on the job queue the steps above installed, so it follows them. The
+# script converges, removes the reel-claim-check skill it replaced, skips a
+# box with no kit workspace, and reports kit's allowlist read-only (adding the
+# skill to it stays an operator patch, docs/runbook.md "Video evaluation").
+say "video-eval skill -> ${OPENCLAW_CONFIG_DIR}/agents/kit/workspace/skills"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-video-eval.sh" \
+  || fail_later "video-eval skill install failed (output above)"
 
 # ─── Skill CLI install (life-state etc.) ─────────────────────────────────────
 #
