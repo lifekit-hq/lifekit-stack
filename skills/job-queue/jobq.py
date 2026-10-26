@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
 """The shared job queue: work that waits for an egress to the outside world.
 
-    jobq.py next        the drain gate's check (drain-gate.js): one job to run now?
+    jobq.py next        the drain gate's check (drain-gate.js): start a job, or
+                        hand an agent turn one that has run?
+    jobq.py output <id> what the job's run printed, for the turn that answers it
     jobq.py list        what is waiting, running, and recently finished
     jobq.py drop <id>   remove one job
+    jobq.py runner <id> the run itself, started by `next`, never by hand
 
 Some fetches cannot leave from this server (Instagram and YouTube refuse its
 IP), so they go out through an egress: today the owner's PC, reached by the
 yt-tunnel relay. A skill that needs one adds a job here and answers the owner
 at once; a cron row on kit (job-queue-drain, docs/runbook.md "Shared job
 queue") runs its gate every few minutes, and when the egress answers and
-nothing else is running, the gate hands kit one job: the handler command the
-producing skill stored, and the skill whose rules shape the reply. So a backlog
-gathered while the PC was off drains, one job and one owner message at a
-time, once it is on. The queue knows no kinds: a producer brings its own
-handler and owner skill, and the handler reports back with claim / finish /
-retry / release. A job whose input is already on this host (a file to
-evaluate) names no probe host: it needs no egress, so the gate offers the
-oldest job whose egress answers, and that file runs PC on or off, even with
-a link waiting for the PC ahead of it.
+nothing else is running, the gate starts one job: the queue runs the handler
+command the producing skill stored, on its own, for as long as it takes. Once
+the handler has ended, the gate hands kit one turn to answer from what it
+printed, as the owning skill's rules say. So a backlog gathered while the PC
+was off drains, one job and one owner message at a time, once it is on. The
+queue knows no kinds: a producer brings its own handler and owner skill, and
+the handler reports back with running / finish / retry / release. The agent
+never runs a handler: an agent turn is bounded (its tool calls time out, the
+turn ends), a download and a transcription on a busy host are not, and a
+handler killed mid-run never reports back. A job whose input is already on
+this host (a file to evaluate) names no probe host: it needs no egress, so the
+gate starts the oldest job whose egress answers, and that file runs PC on or
+off, even with a link waiting for the PC ahead of it.
 
 The egress is one setting, LIFEKIT_EGRESS_PROXY (the gateway's environment,
 compose/openclaw/docker-compose.yml): a socks5h:// or http:// proxy URL, or
@@ -31,19 +38,24 @@ Jobs are JSON files in a private directory (JOBQ_DIR, default
 second add of the same key while it waits is "already queued". A job is
 queued -> running -> done | failed; a run counts an attempt, and after
 JOBQ_MAX_ATTEMPTS (default 3) failures it is failed, which the handler
-reports to the owner once. A running job whose handler never reported back is
-taken up again after JOBQ_LEASE_MINUTES (default 30). The queue gives up on
-its own, and the gate hands kit a one-line report for the owner instead of a
-run, when a job used up its attempts that way, or when OFFER_LIMIT drain turns
-in a row were handed it and none ran it, so no job loops or ends unreported.
+reports to the owner once. The run is a detached runner process (its own
+session, so it outlives the gate's command), bounded by JOBQ_RUN_MINUTES
+(default 90); its output waits in <id>.out (0600) until a turn reads it. A
+running job nobody will report back for is taken up again at once when its
+runner died (a gateway restart) or its handler ended leaving nothing for a
+turn, and JOBQ_LEASE_MINUTES (default 30) after a turn read its output without
+finishing it. The queue gives up on its own, and the gate hands kit a
+one-line report for the owner instead of the output, when a job used up its
+attempts that way, or when OFFER_LIMIT drain turns in a row were handed its
+output and none read it, so no job loops or ends unreported.
 A quiet job (one filed by an agent that reads its status, not by the owner)
 is given up with NO_REPLY instead: its producer polls the job.
 Finished jobs stay JOBQ_KEEP_DAYS (default 14) for `list`, then are pruned.
 
-`next` prints one line first, for the gate: "JOBQ ready" (the job's run
-instructions follow), "JOBQ idle" (nothing to run, or one is running) or
-"JOBQ wait" (jobs wait, the egress does not answer). Anything else is a
-fault the gate surfaces.
+`next` prints one line first, for the gate: "JOBQ ready" (a turn's
+instructions follow), "JOBQ idle" (nothing to answer: nothing queued, one
+running, or one just started) or "JOBQ wait" (jobs wait, the egress does not
+answer). Anything else is a fault the gate surfaces.
 """
 
 from __future__ import annotations
@@ -54,7 +66,9 @@ import json
 import os
 import re
 import shlex
+import signal
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -63,8 +77,9 @@ from urllib.parse import urlparse
 DEFAULT_EGRESS = "socks5h://host.docker.internal:18081"
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_LEASE_MINUTES = 30
+DEFAULT_RUN_MINUTES = 90
 DEFAULT_KEEP_DAYS = 14
-# Drain turns in a row that may be handed a job without running it.
+# Drain turns in a row that may be handed a run's output without reading it.
 OFFER_LIMIT = 3
 
 KIND = re.compile(r"[a-z][a-z0-9-]{0,31}")
@@ -73,6 +88,9 @@ HOST = re.compile(r"[A-Za-z0-9.-]{1,253}")
 
 QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
 LOCK = ".lock"
+NO_REPLY = "NO_REPLY"
+# Set for the handler by its runner: the job this process was started for.
+RUN_ENV = "JOBQ_RUN_ID"
 
 
 def _int_env(name: str, default: int) -> int:
@@ -151,9 +169,41 @@ def _jobs(d: Path) -> list[tuple[Path, dict]]:
     return out
 
 
+def _out(d: Path, jid: str) -> Path:
+    return d / f"{jid}.out"
+
+
+def _proc_start(pid: int) -> str | None:
+    """When the process started (clock ticks after boot), or None when it is
+    gone or a zombie. With the pid it names one process, so a pid reused after
+    a gateway restart is never taken for the runner."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    fields = stat.rsplit(")", 1)[1].split()
+    return None if fields[0] in ("Z", "X") else fields[19]
+
+
 def _stale(job: dict, now: float) -> bool:
+    """A running job nobody will report back for: its runner died before the
+    handler ended (a gateway restart), the handler ended leaving nothing for a
+    turn to answer, or the turn that read its output did not finish it within
+    the lease. A job claimed without a runner keeps the lease from its claim."""
+    if job["status"] != RUNNING:
+        return False
     lease = _int_env("JOBQ_LEASE_MINUTES", DEFAULT_LEASE_MINUTES) * 60
-    return job["status"] == RUNNING and now - job.get("claimed_at", 0) > lease
+    run = job.get("run")
+    if run is None:
+        return now - job.get("claimed_at", 0) > lease
+    if "ran_at" not in run:
+        start = _proc_start(run["pid"])
+        return start is None or start != run["start"]
+    if run.get("unread"):
+        return False
+    if "read_at" in run:
+        return now - run["read_at"] > lease
+    return True
 
 
 def _prune(d: Path, now: float) -> None:
@@ -161,6 +211,7 @@ def _prune(d: Path, now: float) -> None:
     for p, job in _jobs(d):
         if job["status"] in (DONE, FAILED) and now - job.get("finished_at", 0) > keep:
             p.unlink(missing_ok=True)
+            _out(d, job["id"]).unlink(missing_ok=True)
 
 
 def add(
@@ -190,6 +241,7 @@ def add(
         old = _load(p)
         added = old is None or old["status"] in (DONE, FAILED)
         if added:
+            _out(d, jid).unlink(missing_ok=True)
             _save(
                 p,
                 {
@@ -256,10 +308,16 @@ def _first_ready(jobs: list[dict]) -> dict | None:
     return None
 
 
+def _claim(job: dict, now: float) -> None:
+    job.update(status=RUNNING, claimed_at=now, attempts=job["attempts"] + 1, offers=0)
+    job.pop("run", None)
+
+
 def claim(jid: str, now: float | None = None) -> dict | None:
-    """Mark the job running and count the attempt. None when it is not the
-    job to run (gone, finished, another one is running, or an older job whose
-    egress answers goes first)."""
+    """Mark the job running and count the attempt, with no runner: `next`
+    claims and starts a job in one step. None when it is not the job to run
+    (gone, finished, another one is running, or an older job whose egress
+    answers goes first)."""
     now = time.time() if now is None else now
     with locked() as d:
         ready = _runnable(d, now)
@@ -270,11 +328,107 @@ def claim(jid: str, now: float | None = None) -> dict | None:
         job = next((j for j in _runnable(d, now) if j["id"] == jid), None)
         if job is None:
             return None
-        job.update(
-            status=RUNNING, claimed_at=now, attempts=job["attempts"] + 1, offers=0
-        )
+        _claim(job, now)
         _save(_path(d, jid), job)
         return job
+
+
+def running(jid: str) -> dict | None:
+    """The job, for its handler: only when it is running and the queue's
+    runner started this process for it, so a handler run by hand never runs a
+    job beside the queue's own run."""
+    if os.environ.get(RUN_ENV) != jid:
+        return None
+    job = get(jid)
+    return job if job is not None and job["status"] == RUNNING else None
+
+
+def _spawn(jid: str, now: float) -> dict:
+    """Start the job's runner in a session of its own with its stdio closed,
+    so it outlives the gate's command and a tool that kills that command's
+    process group or children."""
+    p = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "runner", jid],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {"pid": p.pid, "start": _proc_start(p.pid), "started_at": now}
+
+
+def _mine(job: dict | None) -> bool:
+    return job is not None and (job.get("run") or {}).get("pid") == os.getpid()
+
+
+def run_handler(jid: str) -> None:
+    """The runner: run the job's handler to its end (at most JOBQ_RUN_MINUTES),
+    keep what it printed for the turn that answers it, and note that it ran.
+    It records under the lock `next` holds while it starts it, so the job
+    names this runner by then; a runner the job no longer names records
+    nothing."""
+    with locked() as d:
+        job = _load(_path(d, jid))
+    if not _mine(job):
+        return
+    out = _out(d, jid)
+    limit = _int_env("JOBQ_RUN_MINUTES", DEFAULT_RUN_MINUTES) * 60
+    try:
+        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            proc = subprocess.Popen(
+                [*job["handler"], jid],
+                stdin=subprocess.DEVNULL,
+                stdout=f,
+                stderr=subprocess.PIPE,
+                env={**os.environ, RUN_ENV: jid},
+                start_new_session=True,
+            )
+            try:
+                err = proc.communicate(timeout=limit)[1]
+                code = proc.returncode
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.communicate()
+                code, err = None, f"ran over {limit // 60} minutes".encode()
+    except OSError as e:
+        code, err = None, str(e).encode()
+    text = out.read_text(errors="replace").strip() if code == 0 else ""
+    with locked() as d:
+        p = _path(d, jid)
+        job = _load(p)
+        if not _mine(job):
+            return
+        job["run"].update(ran_at=time.time(), exit=code)
+        job["offers"] = 0
+        if text and text != NO_REPLY:
+            job["run"]["unread"] = True
+        else:
+            out.unlink(missing_ok=True)
+        if code != 0:
+            lines = err.decode(errors="replace").strip().splitlines()
+            job["last_error"] = (lines[-1] if lines else f"exit {code}")[:500]
+        _save(p, job)
+
+
+def output(jid: str, now: float | None = None) -> str:
+    """What the job's run printed, read once by the turn that answers it."""
+    now = time.time() if now is None else now
+    with locked() as d:
+        p = _path(d, jid)
+        job = _load(p)
+        if job is None or not (job.get("run") or {}).get("unread"):
+            return NO_REPLY
+        out = _out(d, jid)
+        try:
+            text = out.read_text(errors="replace").strip()
+        except OSError:
+            text = ""
+        out.unlink(missing_ok=True)
+        del job["run"]["unread"]
+        job["run"]["read_at"] = now
+        _save(p, job)
+    return text or NO_REPLY
 
 
 def _finish(jid: str, status: str, result: str, now: float | None) -> None:
@@ -412,12 +566,13 @@ def _name(job: dict) -> str:
     return job.get("label") or job["id"]
 
 
-def run_message(job: dict) -> str:
+def ready_message(job: dict) -> str:
     since = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(job["queued_at"]))
+    me = [sys.executable, str(Path(__file__).resolve())]
     return (
-        f"Job {job['id']} is ready (attempt {job['attempts'] + 1} of "
+        f"Job {job['id']} has run (attempt {job['attempts']} of "
         f"{max_attempts()}, queued {since}).\n"
-        f"Run exactly: {shlex.join([*job['handler'], job['id']])}\n"
+        f"Run exactly: {shlex.join([*me, 'output', job['id']])}\n"
         f"Then answer as the {job['owner']} skill says for a queued job."
     )
 
@@ -442,10 +597,32 @@ def _give_up(d: Path, job: dict, reason: str, now: float) -> str:
     return give_up_message(job, reason)
 
 
+def _deliver(d: Path, job: dict, now: float) -> str:
+    """Hand a turn the job's unread output, or give up after OFFER_LIMIT
+    turns in a row did not read it."""
+    offers = job.get("offers", 0) + 1
+    if offers <= OFFER_LIMIT:
+        job["offers"] = offers
+        _save(_path(d, job["id"]), job)
+        return ready_message(job)
+    del job["run"]["unread"]
+    _out(d, job["id"]).unlink(missing_ok=True)
+    reason = f"{OFFER_LIMIT} drain turns in a row did not read its result"
+    if job["status"] == RUNNING:
+        return _give_up(d, job, reason, now)
+    _save(_path(d, job["id"]), job)
+    return give_up_message(job, reason)
+
+
 def next_job(now: float | None = None) -> tuple[str, str]:
+    """("ready", a turn's instructions), ("started", "") when it started a
+    job, ("idle", "") or ("wait", "")."""
     now = time.time() if now is None else now
     with locked() as d:
         _prune(d, now)
+        for job in sorted((j for _, j in _jobs(d)), key=lambda j: j["queued_at"]):
+            if (job.get("run") or {}).get("unread"):
+                return "ready", _deliver(d, job, now)
         ready = _runnable(d, now)
         for job in ready:
             if _stale(job, now) and job["attempts"] >= max_attempts():
@@ -460,13 +637,11 @@ def next_job(now: float | None = None) -> tuple[str, str]:
         job = next((j for j in _runnable(d, now) if j["id"] == picked["id"]), None)
         if job is None:
             return "idle", ""
-        offers = job.get("offers", 0) + 1
-        if offers > OFFER_LIMIT:
-            reason = f"{OFFER_LIMIT} drain turns in a row did not run it"
-            return "ready", _give_up(d, job, reason, now)
-        job["offers"] = offers
+        run = _spawn(job["id"], now)
+        _claim(job, now)
+        job["run"] = run
         _save(_path(d, job["id"]), job)
-    return "ready", run_message(job)
+    return "started", ""
 
 
 def listing(now: float | None = None) -> str:
@@ -493,6 +668,7 @@ def drop(jid: str) -> bool:
         p = _path(d, jid)
         existed = p.exists()
         p.unlink(missing_ok=True)
+        _out(d, jid).unlink(missing_ok=True)
     return existed
 
 
@@ -502,7 +678,14 @@ def main(argv: list[str]) -> int:
     try:
         if cmd == "next" and len(argv) == 2:
             state, message = next_job()
+            state = "idle" if state == "started" else state
             print(f"JOBQ {state}" + (f"\n{message}" if message else ""))
+            return 0
+        if cmd == "output" and len(argv) == 3:
+            print(output(argv[2]))
+            return 0
+        if cmd == "runner" and len(argv) == 3:
+            run_handler(argv[2])
             return 0
         if cmd == "list" and len(argv) == 2:
             print(listing())
@@ -513,7 +696,7 @@ def main(argv: list[str]) -> int:
     except (OSError, ValueError) as e:
         print(f"jobq failed: {e}", file=sys.stderr)
         return 1
-    print("usage: jobq.py next | list | drop <id>", file=sys.stderr)
+    print("usage: jobq.py next | output <id> | list | drop <id>", file=sys.stderr)
     return 2
 
 

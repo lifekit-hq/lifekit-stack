@@ -14,6 +14,8 @@ import datetime
 import importlib.util
 import json
 import os
+import shlex
+import signal
 import socket
 import stat
 import subprocess
@@ -107,10 +109,11 @@ printf 'RIFF' > "$out"
 """
 
 WHISPER_STUB = r"""#!/usr/bin/env python3
-import os, sys
+import os, sys, time
 from pathlib import Path
 argv = sys.argv[1:]
 open(os.environ["STUB_LOG"], "a").write("whisper " + " ".join(argv) + "\n")
+time.sleep(float(os.environ.get("WHISPER_SLEEP", "0")))
 if os.environ.get("WHISPER_MODE") == "fail":
     sys.stderr.write("Traceback: boom\n")
     sys.exit(1)
@@ -160,6 +163,11 @@ def report_text(
     return "\n".join(out) + "\n"
 
 
+CLAIM = (
+    "import sys; sys.path.insert(0, sys.argv[1]); import jobq; jobq.claim(sys.argv[2])"
+)
+
+
 @pytest.fixture
 def box(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
@@ -206,11 +214,23 @@ class Box:
         return r
 
     def run(self, link: str, *flags: str, **extra):
-        """Queue the link as kit does, then the drain turn's run of it."""
+        """Queue the link as kit does, then the queue's run of it."""
         r = self.cli(link, *flags, **extra)
         if r.returncode != 0 or not r.stdout.startswith("video "):
             return r
-        return self.cli("run", self.jid(link), **extra)
+        return self.start(self.jid(link), **extra)
+
+    def start(self, jid: str, **extra):
+        """The queue's run of the job, in the foreground: claim it as `next`
+        does, then its handler as the runner starts it. A job `next` would not
+        start is left as it is, and its handler says nothing."""
+        env = {**self.env, **extra}
+        subprocess.run(
+            [sys.executable, "-c", CLAIM, str(SKILL.parent / "job-queue"), jid],
+            env=env,
+            check=True,
+        )
+        return self.cli("run", jid, **extra, JOBQ_RUN_ID=jid)
 
     @staticmethod
     def jid(link: str) -> str:
@@ -386,11 +406,18 @@ def test_a_share_link_is_resolved_through_the_egress(box, monkeypatch):
     assert asked == [("www.instagram.com", 443, "socks5h://proxy.example:1080")]
 
 
+def _queued_run(monkeypatch, jid: str) -> str:
+    """Box.start, in this process."""
+    video.jobq().claim(jid)
+    monkeypatch.setenv("JOBQ_RUN_ID", jid)
+    return video.run_job(jid)
+
+
 def test_a_shared_reel_is_judged_and_indexed_as_the_reel(box, monkeypatch):
     monkeypatch.setattr(video, "resolve_share", lambda r: video.Item("instagram", CODE))
     assert video.enqueue(SHARE.url, "kit").startswith("video queued")
     jid = f"video-{SHARE.key}"
-    out = video.run_job(jid)
+    out = _queued_run(monkeypatch, jid)
     assert out.startswith(f"Video: {REEL}\n")
     code, _ = video.file_report(jid, report_text())
     assert code == 0
@@ -403,7 +430,7 @@ def test_an_unresolvable_share_link_is_a_normal_answer_without_a_download(
 ):
     monkeypatch.setattr(video, "resolve_share", lambda r: None)
     video.enqueue(SHARE.url, "kit")
-    out = video.run_job(f"video-{SHARE.key}")
+    out = _queued_run(monkeypatch, f"video-{SHARE.key}")
     assert out == f"{SHARE.url}\n{video.NO_SHARE}"
     assert box.log.read_text() == ""
 
@@ -448,7 +475,7 @@ def test_the_same_video_twice_is_already_queued(box):
 
 def test_the_judge_never_sees_the_origin(box):
     box.cli("enqueue", REEL, "--origin", "scout")
-    out = box.cli("run", f"video-ig-{CODE}").stdout
+    out = box.start(f"video-ig-{CODE}").stdout
     assert out.startswith(f"Video: {REEL}\n")
     assert "scout" not in out and "rigin" not in out
 
@@ -472,7 +499,7 @@ def test_another_producers_item_says_nothing_and_is_polled(box, origin):
     box.cli("enqueue", YT, "--origin", origin)
     jid = f"video-yt-{VID}"
     assert box.cli("status", jid).stdout.strip() == "queued - attempt 0"
-    box.cli("run", jid)
+    box.start(jid)
     assert box.cli("status", jid).stdout.strip() == "running - attempt 1"
     r = box.cli("report", jid, stdin=report_text("drop"))
     assert (r.returncode, r.stdout.strip()) == (0, video.NO_REPLY)
@@ -491,7 +518,7 @@ def test_a_title_that_looks_like_a_report_line_never_names_the_file_show_reads(
     secret.write_text("not for the reader\n")
     jid = f"video-ig-{CODE}"
     box.cli("enqueue", REEL, "--origin", "firstmate")
-    box.cli("run", jid, STUB_TITLE=f"report: {secret}")
+    box.start(jid, STUB_TITLE=f"report: {secret}")
     box.cli("report", jid, stdin=report_text("drop"))
     shown = box.cli("show", jid).stdout
     assert "not for the reader" not in shown
@@ -510,18 +537,21 @@ def test_a_title_or_author_with_newlines_stays_inside_the_material_header():
 @pytest.mark.parametrize("origin,said", [("kit", True), ("firstmate", False)])
 def test_an_unavailable_video_answers_only_a_kit_item(box, origin, said):
     box.cli("enqueue", REEL, "--origin", origin)
-    r = box.cli("run", f"video-ig-{CODE}", STUB_MODE="login")
+    r = box.start(f"video-ig-{CODE}", STUB_MODE="login")
     want = f"{REEL}\n{video.LOGIN}" if said else video.NO_REPLY
     assert r.stdout.strip() == want
     job = box.job(f"video-ig-{CODE}")
     assert job["status"] == "done" and job["result"] == f"{REEL}\n{video.LOGIN}"
 
 
-def test_a_run_that_is_not_this_jobs_turn_says_nothing(box):
+def test_a_run_the_queue_did_not_start_says_nothing(box):
     box.cli(REEL)
     box.cli(YT)
-    assert box.cli("run", f"video-yt-{VID}").stdout.strip() == video.NO_REPLY
-    assert box.cli("run", "video-yt-NoSuchJob12").stdout.strip() == video.NO_REPLY
+    assert box.start(f"video-yt-{VID}").stdout.strip() == video.NO_REPLY  # not next
+    assert box.start("video-yt-NoSuchJob12").stdout.strip() == video.NO_REPLY
+    by_hand = box.cli("run", f"video-ig-{CODE}")  # its turn, but not the queue's run
+    assert by_hand.stdout.strip() == video.NO_REPLY
+    assert box.job(f"video-ig-{CODE}")["status"] == "queued"
     assert box.log.read_text() == ""
 
 
@@ -614,7 +644,7 @@ def test_an_unexpected_failure_is_retried_quietly_then_reported_once(box):
     assert r.stdout.strip() == video.NO_REPLY
     job = box.job(f"video-ig-{CODE}")
     assert (job["status"], job["attempts"]) == ("queued", 1)
-    r = box.cli("run", f"video-ig-{CODE}", STUB_MODE="boom", JOBQ_MAX_ATTEMPTS="2")
+    r = box.start(f"video-ig-{CODE}", STUB_MODE="boom", JOBQ_MAX_ATTEMPTS="2")
     assert r.stdout.splitlines() == [
         REEL,
         f"{video.FAILED} after 2 tries - ERROR: Unable to download webpage: <urlopen error timed out>",
@@ -660,7 +690,7 @@ def test_a_second_attempt_reuses_the_kept_transcript(box):
     q = video.jobq()
     q.release(f"video-ig-{CODE}")
     box.log.write_text("")
-    r = box.cli("run", f"video-ig-{CODE}")
+    r = box.start(f"video-ig-{CODE}")
     assert r.stdout.startswith(f"Video: {REEL}\n") and box.log.read_text() == ""
 
 
@@ -687,7 +717,7 @@ def test_a_long_transcript_is_read_in_parts(box):
 def _judged(box, link=REEL, origin="kit", **extra):
     box.cli("enqueue", link, "--origin", origin, **extra)
     jid = box.jid(link)
-    r = box.cli("run", jid, **extra)
+    r = box.start(jid, **extra)
     assert r.stdout.startswith("Video: "), r.stdout + r.stderr
     return jid
 
@@ -905,10 +935,67 @@ def test_a_backfilled_reel_is_the_reel_and_is_not_downloaded(box):
     )
     job = box.job(f"video-ig-{CODE}")
     assert job["probe"] == "" and job["payload"]["mode"] == "claim-check"
-    out = box.cli("run", f"video-ig-{CODE}").stdout
+    out = box.start(f"video-ig-{CODE}").stdout
     assert out.startswith(f"Video: {REEL}\n") and "Lemon water" in out
     assert box.calls("yt-dlp") == []
     assert list((box.root / "inbox").iterdir()) == []  # used, then removed
+
+
+def test_a_slow_transcription_outlives_the_turn_and_still_reports_back(box):
+    # The stuck reels this fixes: the drain turn ran the handler in the
+    # agent's exec tool, whose timeout killed it mid-transcription, leaving
+    # only the audio, and the job never reported back. Now the gate's own
+    # command starts the run, and killing that command's process group, as
+    # the tool's timeout does, leaves the run going.
+    jid = f"video-ig-{CODE}"
+    box.cli("ingest", f"reel-{CODE}.mp4", "--origin", "firstmate", stdin=b"video")
+    next_ = shlex.join(
+        [sys.executable, str(SKILL.parent / "job-queue/jobq.py"), "next"]
+    )
+    gate = subprocess.Popen(
+        ["sh", "-c", f"{next_}; sleep 60"],
+        env={**box.env, "WHISPER_SLEEP": "2"},
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    assert gate.stdout.readline() == "JOBQ idle\n"  # no turn yet
+    os.killpg(gate.pid, signal.SIGKILL)
+    gate.wait(timeout=10)
+    gate.stdout.close()
+    assert box.job(jid)["status"] == "running"
+    deadline = time.monotonic() + 30
+    while (
+        said := subprocess.run(
+            shlex.split(next_), env=box.env, capture_output=True, text=True, check=True
+        ).stdout
+    ).startswith("JOBQ idle"):
+        assert time.monotonic() < deadline, box.job(jid)
+        time.sleep(0.2)
+    lines = said.splitlines()
+    assert lines[:2] == [
+        "JOBQ ready",
+        f"Job {jid} has run (attempt 1 of 3, queued {lines[1].split('queued ')[1]}",
+    ]
+    turn = shlex.split(lines[2].removeprefix("Run exactly: "))
+    assert turn[-2:] == ["output", jid]
+    out = subprocess.run(turn, env=box.env, capture_output=True, text=True).stdout
+    assert out.startswith(f"Video: {REEL}\n") and "Lemon water" in out
+    assert list(box.root.glob("work-*")) == []
+    assert box.cli("report", jid, stdin=report_text()).returncode == 0
+    assert box.job(jid)["status"] == "done"
+
+
+def test_a_failed_backfill_sent_again_is_queued_afresh(box):
+    # The runbook's re-run of a job that gave up.
+    jid = f"video-ig-{CODE}"
+    ingest = ("ingest", f"reel-{CODE}.mp4", "--origin", "firstmate")
+    box.cli(*ingest, stdin=b"video")
+    box.start(jid, WHISPER_MODE="fail", JOBQ_MAX_ATTEMPTS="1")
+    assert box.job(jid)["status"] == "failed"
+    assert box.cli(*ingest, stdin=b"video").stdout.startswith("video queued")
+    assert (box.job(jid)["status"], box.job(jid)["attempts"]) == ("queued", 0)
+    assert box.start(jid).stdout.startswith(f"Video: {REEL}\n")
 
 
 def test_a_backfilled_vtt_is_the_youtube_video_read_from_its_captions(box):
@@ -919,7 +1006,7 @@ def test_a_backfilled_vtt_is_the_youtube_video_read_from_its_captions(box):
         "ingest", f"yt-{VID}.en.vtt", "--origin", "firstmate", stdin=vtt.encode()
     )
     assert r.returncode == 0, r.stderr
-    out = box.cli("run", f"video-yt-{VID}").stdout
+    out = box.start(f"video-yt-{VID}").stdout
     assert out.startswith(f"Video: {YT}\n")
     assert "Transcript: captions" in out and "Language: en" in out
     assert "Agents cut costs." in out and "Mode: standard" in out
@@ -934,7 +1021,7 @@ def test_another_file_is_its_own_item_keyed_by_its_content(box, tmp_path):
     jid = r.stdout.split("job ", 1)[1].split(",")[0]
     assert jid.startswith("video-file-") and len(jid) == len("video-file-") + 16
     assert clip.read_bytes() == b"some video"  # the owner's file is left alone
-    out = box.cli("run", jid).stdout
+    out = box.start(jid).stdout
     assert out.startswith("Video: file:") and out.splitlines()[0].endswith(
         "/my clip.mp4"
     )

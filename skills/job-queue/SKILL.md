@@ -22,4 +22,4 @@ python3 {baseDir}/jobq.py drop <id>
 
 Removes one job, only when the owner asks to cancel it. Never drop a job to "fix" the queue.
 
-`jobq.py next` is the drain cron's check, not for you.
+`jobq.py next` is the drain cron's check, and it starts each run itself; `jobq.py runner` is that run. Neither is for you. A drain turn's `Run exactly: ... jobq.py output <id>` prints a finished run's output once, for the skill that owns the job to answer.

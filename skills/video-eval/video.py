@@ -7,7 +7,7 @@ one index row.
     video.py <media file> [--check]           queue a video file the owner sent (kit)
     video.py enqueue <link> --origin O [--check]   the same from another producer
     video.py ingest <name> --origin O [--check]    queue a file read from stdin (backfill)
-    video.py run <job id>                     the queued run, started by the drain turn
+    video.py run <job id>                     the queued run, started by the queue's runner
     video.py part <job id> <n>                part n of a long transcript
     video.py report <job id> [file]           file the judge's report (else stdin)
     video.py status <job id>                  one job's state, for a producer that polls
@@ -39,12 +39,14 @@ Before a fresh judgment the index is searched for the same item (its
 normalized URL, or once fetched its title): a repeat answers with the earlier
 verdict, date and reason, and is not judged again.
 
-`run` prints the material and leaves the job running; the judge writes the
-report the rubric defines and files it with `report`, which checks it against
-the rubric (exit 3 and the reasons: fix it and file it again), cuts a report
-over the rubric's length cap with a marker, stamps the rubric version, saves
-it, appends the index row and finishes the job. A report never filed is run
-again when the queue's lease runs out.
+`run` is the queue's handler: the queue runs it on its own, never an agent
+turn, since a fetch and a transcription can outlast any turn's tool timeout.
+It prints the material and leaves the job running; the queue hands that to a
+drain turn, whose judge writes the report the rubric defines and files it with
+`report`, which checks it against the rubric (exit 3 and the reasons: fix it
+and file it again), cuts a report over the rubric's length cap with a marker,
+stamps the rubric version, saves it, appends the index row and finishes the
+job. A report never filed is run again when the queue's lease runs out.
 
 Everything is kept on this host in a private directory (INTAKE_DIR, default
 ~/.life-state/intake, mode 0700): reports/ and index.md for good (index.md is
@@ -135,7 +137,7 @@ TOO_LONG_WORDS = re.compile(
 )
 
 # The queue (skills/job-queue): the job kind, and the hosts the queue asks the
-# egress about before it hands a job to the drain turn ("" for a file here).
+# egress about before it starts a job ("" for a file here).
 KIND = "video"
 OWNER = "video-eval"
 PROBE = {"instagram": "www.instagram.com", "youtube": "www.youtube.com", "file": ""}
@@ -1001,12 +1003,13 @@ def material_text(jid: str, root: Path, m: Material, mode: str, rubric: Rubric) 
 
 
 def run_job(jid: str) -> str:
-    """The queued run: what the drain turn answers. NO_REPLY when there is
-    nothing to tell anyone yet (not this job's turn, or it will be tried
-    again); a repeat's earlier verdict; the material for the judge; or the
-    item's line and a normal 'unavailable' answer or the final failure."""
+    """The queued run, what the drain turn answers from. NO_REPLY when there
+    is nothing to tell anyone yet (not the queue's run of this job, or it will
+    be tried again); a repeat's earlier verdict; the material for the judge;
+    or the item's line and a normal 'unavailable' answer or the final
+    failure."""
     q = jobq()
-    job = q.claim(jid)
+    job = q.running(jid)
     if job is None or job.get("kind") != KIND:
         return NO_REPLY
     p = job["payload"]
