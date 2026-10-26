@@ -313,9 +313,9 @@ agents, and gives the finance agent a heartbeat:
   platform file; every other per-agent key stays host state.
 - **No value is in git or in `openclaw.json`.** The file holds the literal
   references `${OPENCLAW_HOOK_TOKEN}`, `${OPENCLAW_HOOK_PATH}`,
-  `${OPENCLAW_FINANCE_CHAT}` and `${OPENCLAW_KIT_CHAT}`; OpenClaw resolves them from the container
-  environment, which compose fills from `/srv/lifekit-secrets/stack.env` (see
-  `.env.example`). `config patch` writes the reference back verbatim, so the
+  `${OPENCLAW_FINANCE_CHAT}` and `${OPENCLAW_KIT_CHAT}`; OpenClaw resolves
+  them from the container environment, which compose fills from
+  `/srv/lifekit-secrets/stack.env` (see `.env.example`). `config patch` writes the reference back verbatim, so the
   deploy's compare sees equal strings and stays idempotent. The hook token is
   its own secret, never the gateway token (the gateway warns at startup if
   they match).
