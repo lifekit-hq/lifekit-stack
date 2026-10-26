@@ -1,0 +1,13 @@
+[Unit]
+Description=Run lifekit-vault-audit weekly
+
+[Timer]
+# The OpenClaw cron's slot: Sunday 03:30 London (same offset as Dublin). The
+# memory-vault-cleanup model pass reads the report 20 minutes later.
+OnCalendar=Sun *-*-* 03:30:00 Europe/London
+# A Sunday the box was off is run at the next boot.
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

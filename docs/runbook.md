@@ -621,8 +621,8 @@ Exec policy per agent:
   with bash (2160 exec calls in 30 days, counted before `ledger-scan` was
   retired).
 
-Command-kind crons (`memory_vault_audit`, `weekly_log_summary`) bypass exec
-policy.
+Command-kind crons (`weekly_log_summary`, and `memory_vault_audit` until it moved to a host
+timer) bypass exec policy.
 
 Expected `openclaw security audit` after the patch: `gateway.auth_no_rate_limit`
 and `models.weak_tier` cleared; `security_full_configured` (devclaw, until it was retired) and
@@ -669,8 +669,8 @@ agent's entry and bindings.
 ### The memory-vault-cleanup cron
 
 The vault's model pass: an agent-turn job named `memory-vault-cleanup` on the
-`kit` agent, 20 minutes after the command-kind `memory_vault_audit` cron
-(`scripts/memory-audit/`). It runs the vault design's model jobs, and only on the
+`kit` agent, 20 minutes after the weekly vault audit
+(`scripts/memory-audit/`, "Weekly vault audit (host timer)" below). It runs the vault design's model jobs, and only on the
 findings that audit just wrote (`audits/findings.json`, plus the contradiction
 candidates and the Rotation section of `audits/latest.md`):
 
@@ -749,7 +749,81 @@ Either way, check `audits/needs-denys-state.json` holds the run's owner calls, a
 that a notify-relay call only happened when that list changed.
 
 **Rollback:** `openclaw cron rm <id>` (or `cron edit <id> --disable`). Nothing else
-depends on this row - `memory_vault_audit` keeps running unchanged either way.
+depends on this row - the weekly audit keeps running unchanged either way.
+
+### Weekly vault audit (host timer)
+
+The mechanical half of the vault's upkeep: lint, index, rotation and the report
+`audits/latest.md`, once a week. `scripts/memory-audit/memory-vault-audit.sh` runs the vault's
+own `bin/audit.sh --rotate --log` (the logic lives in the vault, see
+`scripts/memory-audit/README.md`) and checks a fresh report for today exists.
+It ran as the OpenClaw command-kind cron `memory_vault_audit` until the gateway's API credits
+ran out (2026-11-09); the scheduler is now `lifekit-vault-audit.timer`, the audit itself is
+unchanged.
+
+| What | Value |
+| --- | --- |
+| Schedule | Sunday 03:30 `Europe/London` (the cron's slot; the model pass follows at 03:50), `Persistent=true`: a Sunday the box was off runs at the next boot |
+| Runs as | `lifekit` (owns `/srv/memory`; in the `docker` group for the notification) |
+| Command | `run-vault-audit.py` from the checkout in `/srv/lifekit-stack`, which runs the wrapper with `MEMORY_VAULT=/srv/memory`. A merge changes the next run; only the two unit files are installed |
+| Output | `audits/latest.md`, `audits/findings.json`, the rotation moves and one `audit` line in the vault `log.md`; `memory-sync.timer` commits and pushes them |
+| Notification | one `info` envelope through notify-relay with the wrapper's summary line (`Vault audit \| 0 high / ...`); on failure an `act` envelope with the `AUDIT FAIL:` line and the service fails, which the unit gauge and the "host systemd unit is down or failed" rule report. The cron's Telegram announce and its failure alert are replaced by these two |
+
+What changed in the wrapper for the host: its temp file is a `mktemp` file instead of a fixed
+`/tmp` path (a host `/tmp` is shared, the container's was not), and `jq` exists on the host,
+so `findings.json` is written by the `jq` branch of `audit.sh` instead of the `awk` one (same
+shape). The `/home/node/memory` default stays so the cron keeps working until it is removed.
+
+**Install (operator, `denys`, once, after the merge has deployed):**
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/memory-audit/install-vault-audit.sh
+systemctl list-timers lifekit-vault-audit.timer    # NEXT = the coming Sunday 03:30
+```
+
+`bootstrap-vps.sh` runs the same installer, and the `lifekit-*.timer` glob in the unit gauge
+picks the timer up. The unit is skipped while `/srv/memory` has no clone.
+
+**Rehearsal and cutover.** Both schedulers fire at Sunday 03:30, and two audits must never
+write the vault at once, so the cron is switched off before the first Sunday, not after:
+
+1. `sudo systemctl start lifekit-vault-audit.service`, then
+   `journalctl -u lifekit-vault-audit -n 20`: one `Vault audit | N high / ...` line and no
+   `AUDIT FAIL`. A run takes one to three minutes. It is a real run: it rotates and logs.
+2. `head -12 /srv/memory/audits/latest.md` shows `# Vault audit - <today>`; `log.md` ends with
+   one `audit |` line; the Telegram `info` message arrived.
+3. Park the cron, reversibly: `docker exec openclaw-openclaw-gateway-1 openclaw cron list --all
+   --json` for the id of `memory_vault_audit`, then `... openclaw cron edit <id> --disable`.
+4. After the first **scheduled** run (the Sunday after install) the journal shows the same
+   success and `systemctl list-timers` has moved NEXT a week on: remove the cron with
+   `... openclaw cron rm <id>`. Leave `memory-vault-cleanup` alone; it only reads the report.
+
+`deploy.sh` still rsyncs `scripts/memory-audit/` into the gateway workspace for the cron; that
+copy is dead weight once the cron is removed and goes in a follow-up.
+
+**Reading a failure.** `journalctl -u lifekit-vault-audit -n 40` has the `AUDIT FAIL:` line and
+the audit's own stderr. `bin/audit.sh not found`: the vault clone is behind or missing. `no fresh
+report written`: `audits/latest.md` is not writable by `lifekit` (it needs the `user:lifekit:rw-`
+ACL on files another account created) or the date rolled over mid-run. A rerun is
+`sudo systemctl start lifekit-vault-audit.service`; it is idempotent for a day.
+
+**Rollback:**
+
+```bash
+sudo systemctl disable --now lifekit-vault-audit.timer
+sudo rm /etc/systemd/system/lifekit-vault-audit.{service,timer} && sudo systemctl daemon-reload
+```
+
+If the cron is only parked, `openclaw cron edit <id> --enable` brings it back. If it was
+removed, recreate it (checked against 2026.10.5; `OWNER_CHAT` is `LIFEKIT_TELEGRAM_CHAT` from the
+host env file, never written into git), then add the failure alert as in "The career weekly cron":
+
+```bash
+docker exec openclaw-openclaw-gateway-1 openclaw cron add --name memory_vault_audit --agent kit \
+  --cron "30 3 * * 0" --tz Europe/Dublin --session isolated \
+  --command "sh /home/node/.openclaw/workspace/memory-audit/memory-vault-audit.sh" \
+  --output-max-bytes 4000 --announce --channel telegram --to "$OWNER_CHAT" --json
+```
 
 ### Agent memory in the vault
 
@@ -810,7 +884,7 @@ SH
 `bin/log.sh` commits only its own `log.md` line. The copied notes are
 committed by the next `memory-sync.timer` run, never by hand. An exact
 `YYYY-MM-DD.md` daily note older than 90 days is retired by the next Sunday
-`memory_vault_audit` rotation, and git history keeps it; session-memory notes
+weekly vault-audit rotation, and git history keeps it; session-memory notes
 with a suffix after the date are not matched by the rotate glob and stay. The
 originals stay in the workspace, hidden under the mount, which is what makes
 the rollback lossless.
@@ -4127,7 +4201,7 @@ straight from the repo checkout:
   line in `/var/lib/lifekit/rotation/`.
 
 The vault rotates its own pages (its `bin/rotate.sh`, from the weekly
-`memory_vault_audit` cron); nothing here edits `/srv/memory`. The closed
+vault audit, `lifekit-vault-audit.timer`); nothing here edits `/srv/memory`. The closed
 proposals archive the old `rotate-extras.py` did is the vault's job too.
 
 **Morning-brief inputs.** `inbox.md`, `inbox-archive.md` and `topics.yaml`
