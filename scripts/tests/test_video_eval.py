@@ -4,7 +4,7 @@
 yt-dlp, ffmpeg and whisper are replaced by stubs that write the files a real
 run would, and Instagram's share-link redirect by a fake opener, so nothing
 here touches the network or needs the models. The queue is the real one
-(skills/job-queue), and so is the captions code (skills/youtube-transcript),
+(skills/job-queue), and so is the media code (skills/youtube-transcript/media.py),
 in a temporary directory with the "direct" egress unless a test sets another.
 """
 
@@ -45,7 +45,7 @@ VID = "bQPU6UJ4iCw"
 YT = f"https://www.youtube.com/watch?v={VID}"
 TOMORROW = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
 
-# A yt-dlp stand-in. The captions call (transcript.py: --print-to-file) writes
+# A yt-dlp stand-in. The captions call (media.py: --print-to-file) writes
 # a title and, when YT_CAPTIONS=yes, an English track; the info call
 # (--skip-download --write-info-json) writes the info; a download writes the
 # audio and the info. STUB_MODE picks a failure; argv is logged for the test.

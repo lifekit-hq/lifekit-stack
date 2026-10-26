@@ -36,6 +36,9 @@ no egress. A YouTube video is read from its captions when it has them, else
 its audio is downloaded and transcribed like a reel's: yt-dlp, ffmpeg and the
 image's local whisper, no API key, no paid service, no login, no cookies.
 
+The fetching, captions and transcription are the youtube-transcript skill's
+media.py, shared by both skills; this file is what video-eval adds to them.
+
 Before a fresh judgment the index is searched for the same item (its
 normalized URL, or once fetched its title): a repeat answers with the earlier
 verdict, date and reason, and is not judged again.
@@ -71,9 +74,9 @@ Env: INTAKE_DIR            private directory
      VIDEO_WHISPER_MODEL   whisper model (default base, the one baked in the image)
      VIDEO_WHISPER_LANG    force a spoken language (default: whisper detects it)
      YT_TRANSCRIPT_LANGS   human caption languages (default en.*)
-     YT_DLP, VIDEO_FFMPEG, VIDEO_WHISPER   the tools to run (default: yt-dlp
-                           beside this file, else the youtube-transcript
-                           skill's, else PATH; ffmpeg and whisper from PATH)
+     YT_DLP, VIDEO_FFMPEG, VIDEO_WHISPER   the tools to run (default: the
+                           youtube-transcript skill's yt-dlp, else PATH;
+                           ffmpeg and whisper from PATH)
 """
 
 from __future__ import annotations
@@ -83,12 +86,10 @@ import datetime
 import fcntl
 import hashlib
 import http.client
-import json
 import os
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
@@ -139,9 +140,6 @@ GONE_WORDS = re.compile(
     re.IGNORECASE,
 )
 NO_VIDEO_WORDS = re.compile(r"no video in this post", re.IGNORECASE)
-TOO_LONG_WORDS = re.compile(
-    r"does not pass filter|larger than max-filesize", re.IGNORECASE
-)
 
 # The queue (skills/job-queue): the job kind, and the hosts the queue asks the
 # egress about before it starts a job ("" for a file here).
@@ -454,84 +452,6 @@ def resolve_share(reel: Item, hops: int = 3) -> Item | None:
     return None
 
 
-def yt_dlp_cmd() -> list[str]:
-    explicit = os.environ.get("YT_DLP")
-    if explicit:
-        return [explicit]
-    here = Path(__file__).resolve().parent
-    # The pinned yt-dlp the youtube-transcript skill ships: one pin to bump.
-    for candidate in (
-        here / "yt-dlp",
-        Path.home() / ".openclaw" / "skills" / "youtube-transcript" / "yt-dlp",
-    ):
-        if candidate.is_file():
-            return [sys.executable, str(candidate)]
-    found = shutil.which("yt-dlp")
-    return [found] if found else []
-
-
-def download(
-    url: str, work: Path, max_seconds: int, media: bool = True
-) -> tuple[Path | None, dict, str]:
-    """(audio file, yt-dlp's info, error). With media=False only the info is
-    fetched. No file and no error means the video was skipped for its length;
-    the error is yt-dlp's own text otherwise."""
-    base = yt_dlp_cmd()
-    if not base:
-        return None, {}, "yt-dlp is not installed"
-    cmd = base + [
-        "--ignore-config",
-        "--no-playlist",
-        "--no-cache-dir",
-        "--no-part",
-        "--socket-timeout",
-        "20",
-        "--retries",
-        "2",
-        "--write-info-json",
-    ]
-    if media:
-        cmd += ["--max-filesize", "100M", "--match-filter", f"duration<=?{max_seconds}"]
-        cmd += ["--format", "ba/b"]
-    else:
-        cmd += ["--skip-download"]
-    cmd += ["-o", str(work / "%(id)s.%(ext)s")]
-    # The egress is the job queue's one setting (LIFEKIT_EGRESS_PROXY).
-    proxy = jobq().egress_proxy()
-    if proxy:
-        cmd += ["--proxy", proxy]
-    cmd += ["--", url]
-    try:
-        r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=240, check=False
-        )
-    except subprocess.TimeoutExpired:
-        return None, {}, "yt-dlp timed out"
-    said = f"{r.stdout}\n{r.stderr}".strip()
-    info: dict = {}
-    for f in work.glob("*.info.json"):
-        try:
-            info = json.loads(f.read_text())
-        except ValueError:
-            info = {}
-        f.unlink(missing_ok=True)
-    files = [p for p in work.iterdir() if p.is_file() and p.suffix != ".wav"]
-    if files:
-        return files[0], info, ""
-    if not media and info:
-        return None, info, ""
-    if TOO_LONG_WORDS.search(said):
-        return None, info, ""
-    return None, info, last_error(said)
-
-
-def last_error(said: str) -> str:
-    lines = [ln for ln in said.splitlines() if ln.strip()]
-    return next((ln for ln in reversed(lines) if ln.startswith("ERROR")), "") or (
-        lines[-1] if lines else "yt-dlp produced no file"
-    )
-
-
 def unavailable_line(error: str, source: str) -> str | None:
     """The normal-answer line for a yt-dlp error, or None for a real failure."""
     if source == "youtube":
@@ -549,75 +469,20 @@ def unavailable_line(error: str, source: str) -> str | None:
     return None
 
 
-def extract_audio(media: Path, wav: Path) -> bool:
-    ffmpeg = os.environ.get("VIDEO_FFMPEG", "ffmpeg")
-    try:
-        subprocess.run(
-            [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
-            + ["-i", str(media), "-vn", "-ar", "16000", "-ac", "1", "-f", "wav"]
-            + [str(wav)],
-            capture_output=True,
-            timeout=600,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return False
-    return wav.is_file() and wav.stat().st_size > 0
-
-
-def transcribe(wav: Path, out: Path) -> tuple[str, str, str]:
-    """(text, detected language, error). Whisper prints the language it detected
-    on stdout; a forced VIDEO_WHISPER_LANG is reported as given."""
-    cmd = [
-        os.environ.get("VIDEO_WHISPER", "whisper"),
-        "--model",
-        os.environ.get("VIDEO_WHISPER_MODEL", "base"),
-        "--fp16",
-        "False",
-        "--output_format",
-        "txt",
-        "--output_dir",
-        str(out),
-    ]
-    forced = os.environ.get("VIDEO_WHISPER_LANG", "")
-    if forced:
-        cmd += ["--language", forced]
-    cmd.append(str(wav))
-    try:
-        r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=1800, check=False
-        )
-    except subprocess.TimeoutExpired:
-        return "", "", "whisper timed out"
-    txt = out / f"{wav.stem}.txt"
-    if r.returncode != 0 or not txt.is_file():
-        return "", "", last_error(r.stderr or r.stdout or "whisper produced no text")
-    seen = re.search(r"Detected language:\s*(\S+)", r.stdout)
-    language = forced or (seen.group(1) if seen else "unknown")
-    return " ".join(txt.read_text(errors="replace").split()), language, ""
-
-
-def speech(media: Path, work: Path) -> tuple[str, str, str]:
-    """(text, language, error) for a media file; empty text means no speech."""
-    wav = work / "audio.wav"
-    if not extract_audio(media, wav):
-        return "", "", ""
-    return transcribe(wav, work)
-
-
-def ytt():
-    """The youtube-transcript skill's module (captions, .vtt to text): beside
-    this skill, else the gateway's shared skills directory."""
+def media():
+    """The media code shared with the youtube-transcript skill (its media.py:
+    the egress fetch, captions, .vtt to text, the pinned yt-dlp and whisper):
+    beside this skill, else the gateway's shared skills directory."""
     for d in (
         Path(__file__).resolve().parent.parent / "youtube-transcript",
         Path.home() / ".openclaw" / "skills" / "youtube-transcript",
     ):
-        if (d / "transcript.py").is_file():
+        if (d / "media.py").is_file():
             sys.path.insert(0, str(d))
-            import transcript as module
+            import media as module
 
             return module
-    raise FileNotFoundError(None, None, "the youtube-transcript skill (transcript.py)")
+    raise FileNotFoundError(None, None, "the youtube-transcript skill (media.py)")
 
 
 @dataclass
@@ -691,27 +556,30 @@ def gather(
     if path is not None:  # a file already on this host: no download
         if path.suffix == ".vtt":
             m.text = " ".join(
-                ytt().vtt_to_text(path.read_text(errors="replace")).split()
+                media().vtt_to_text(path.read_text(errors="replace")).split()
             )
             parts = path.name.split(".")
             m.language = parts[-2] if len(parts) > 2 else "unknown"
             m.captions = True
         else:
-            m.text, m.language, error = speech(path, work)
+            m.text, m.language, error = media().speech(path, work)
             if error:
                 return None, "", error
         if not m.text.strip():
             return None, NO_SPEECH, ""
         return m, "", ""
+    # The egress is the job queue's one setting (LIFEKIT_EGRESS_PROXY).
+    proxy = jobq().egress_proxy()
     if item.source == "youtube":
-        _, info, error = download(item.url, work, max_seconds, media=False)
+        _, info, error = media().download(
+            item.url, work, max_seconds, proxy, media=False
+        )
         if error:
             line = unavailable_line(error, "youtube")
             return (None, line, "") if line else (None, "", error)
         _from_info(m, info)
-        proxy = jobq().egress_proxy() or ""
-        text, title, lang, err = ytt().fetch(
-            item.ident, proxy, os.environ.get("YT_TRANSCRIPT_LANGS", "en.*")
+        text, title, lang, err = media().captions(
+            item.ident, proxy or "", os.environ.get("YT_TRANSCRIPT_LANGS", "en.*")
         )
         if err == "unreachable":
             return None, "", "the egress did not answer while fetching captions"
@@ -724,15 +592,15 @@ def gather(
         # No captions (or none this route could read): the audio, like a reel.
         if (m.duration or 0) > max_seconds:
             return None, TOO_LONG, ""
-    media, info, error = download(item.url, work, max_seconds)
-    if not media:
+    media_file, info, error = media().download(item.url, work, max_seconds, proxy)
+    if not media_file:
         if not error:
             return None, TOO_LONG, ""
         line = unavailable_line(error, item.source)
         return (None, line, "") if line else (None, "", error)
     _from_info(m, info)
-    text, m.language, error = speech(media, work)
-    media.unlink(missing_ok=True)  # the download is not kept past this point
+    text, m.language, error = media().speech(media_file, work)
+    media_file.unlink(missing_ok=True)  # the download is not kept past this point
     if error:
         return None, "", error
     if not text:
