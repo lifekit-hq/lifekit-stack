@@ -514,6 +514,7 @@ done
 publish_remote_home() {
   local file="${PC_SUMMARY_FILE:-}" home cache found=()
   echo '[]' > "$work/remote.json"
+  echo '[]' > "$work/remote-status.json"
   [[ " ${ids[*]} " != *" $PC_HOME_ID "* && "$PC_HOME_ID" =~ $SLUG_RE ]] || return 0
   for home in "${homes[@]}"; do
     [[ -z "$file" && -n "$home" ]] || break
@@ -533,7 +534,16 @@ publish_remote_home() {
         last_seen_epoch: $seen,
         state: (if $seen == null or ($now - $seen) > $stale then "off"
                 elif ((($s.counts.active_children // ($s.active_children | length? // 0)) // 0) > 0) then "working"
-                else "idle" end)}]' > "$work/remote.json" || echo '[]' > "$work/remote.json"
+                else "idle" end),
+        # For the status page row only, dropped from homes[]: the lane capacity
+        # the PC publishes in its summary (null when it publishes none) and its
+        # queued items split by hold (null without a queued list).
+        lane_capacity: (if $seen == null then null else (($s.lane_capacity | objects) // null) end),
+        queued: (($s.queued | arrays | [.[] | objects | select(.hold_kind == null and .hold_bucket == null)] | length) // null),
+        held: (($s.queued | arrays | [.[] | objects | select(.hold_kind != null or .hold_bucket != null)] | length) // null)}]' \
+    > "$work/remote-status.json" || echo '[]' > "$work/remote-status.json"
+  jq -c 'map(del(.lane_capacity, .queued, .held))' "$work/remote-status.json" > "$work/remote.json" ||
+    echo '[]' > "$work/remote.json"
 }
 publish_remote_home
 
@@ -541,7 +551,7 @@ publish_remote_home
 # projects, capacity, queue, intake and how-it-works, built by fleet_status.py
 # beside this script (FLEET_STATUS overrides it) from each on-host home's
 # backlog and capacity, gh, the job queue and the daily metrics. The PC is
-# never read here: it shows only through its summary. A helper that fails or
+# never read here: its capacity row comes from its cached summary alone. A helper that fails or
 # overruns, or output that looks like a credential, publishes status_page as
 # null; it never stops the summary.
 publish_status_page() {
@@ -562,7 +572,8 @@ publish_status_page() {
   done
   CREDENTIAL_RE="$CREDENTIAL_RE" TASKS_AXI="$TASKS_AXI" timeout 50 python3 "$helper" "${args[@]}" \
     --now "$NOW" --state-dir "${FLEET_STATE_DIR:-${STATE_DIRECTORY:-$HOME/.local/state/lifekit-fleet-publisher}}" \
-    --daily "$OUT_DIR/metrics/daily.jsonl" --daily "$work/daily-source.jsonl" > "$work/status.out" || {
+    --daily "$OUT_DIR/metrics/daily.jsonl" --daily "$work/daily-source.jsonl" \
+    --remote "$work/remote-status.json" > "$work/status.out" || {
     echo "fleet-publisher: fleet_status.py failed; status_page not published" >&2
     return 0
   }
@@ -594,13 +605,7 @@ jq -s --slurpfile homes "$work/homes.jsonl" --slurpfile remote "$work/remote.jso
         else . end
     end
   | .homes = ($homes + $remote[0]) | .published_epoch = $now
-  # The PC has no capacity document here: its row says only whether it is on.
-  | .status_page = ($status[0][0] // null
-      | if . == null then null
-        else .capacity += [$remote[0][] | {home_id: .id, machine: null, running: null, allowed: null,
-                                           cap_status: null, quota: null, generated_epoch: .last_seen_epoch,
-                                           idle_reason: (if .state == "off" then "host-offline" else null end)}]
-        end)' "$work/published.jsonl" > "$summary_tmp"
+  | .status_page = ($status[0][0] // null)' "$work/published.jsonl" > "$summary_tmp"
 grep -Eq "$CREDENTIAL_RE" "$summary_tmp" && {
   echo "fleet-publisher: the published summary looks like it holds a credential; not publishing" >&2
   exit 3

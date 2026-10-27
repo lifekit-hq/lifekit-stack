@@ -2256,11 +2256,125 @@ def test_capacity_is_published_per_home_with_an_idle_reason(homes):
         None,
         "all-held",
     )
+    # The PC is on but its summary carries no capacity: a reason, not nulls.
     assert caps["pc"]["running"] is None
-    assert caps["pc"]["idle_reason"] is None
+    assert caps["pc"]["idle_reason"] == "capacity-unpublished"
     result = homes.run(vps, main, FLEET_NOW=str(NOW + 5000))
     caps = {c["home_id"]: c for c in status(homes)["capacity"]}
     assert caps["pc"]["idle_reason"] == "host-offline"
+
+
+def lane_capacity(**over):
+    return {
+        "schema": "fm-lane-capacity.v1",
+        "generated_epoch": NOW - 20,
+        "machine": "pc-box",
+        "lanes": {"count": 1, "ids": ["a"]},
+        "cap": {"target": 3, "status": "ok"},
+        "quota": {"runway": "ok"},
+        **over,
+    }
+
+
+def pc_status_row(homes, **pc):
+    vps = status_home(homes.tmp, "fm-vps", [task("q1")])
+    pc_cache_in(vps).write_text(
+        json.dumps(
+            summary(generated_epoch=NOW - 60, counts={"active_children": 1}, **pc)
+        )
+    )
+    result = homes.run(vps)
+    assert result.returncode == 0, result.stderr
+    page = status(homes)
+    (row,) = [c for c in page["capacity"] if c["home_id"] == "pc"]
+    return row, page
+
+
+def test_pc_row_is_filled_from_the_capacity_its_summary_publishes(homes):
+    row, _ = pc_status_row(
+        homes,
+        lane_capacity=lane_capacity(),
+        queued=[{"id": "q"}, {"id": "h", "hold_kind": "captain"}],
+    )
+    assert row == {
+        "home_id": "pc",
+        "machine": "pc-box",
+        "running": 1,
+        "allowed": 3,
+        "cap_status": "ok",
+        "quota": "ok",
+        "generated_epoch": NOW - 20,
+        "idle_reason": None,
+    }
+    # The capacity feeds the row only; homes[] keeps state and last-seen.
+    (entry,) = homes_pc_entry(homes)
+    assert set(entry) == {
+        "id",
+        "path",
+        "published",
+        "remote",
+        "valid",
+        "reason",
+        "last_seen_epoch",
+        "state",
+    }
+
+
+@pytest.mark.parametrize(
+    ("lanes", "cap", "queued", "reason"),
+    [
+        (3, {"target": 3, "status": "ok"}, [{"id": "q"}], "cap-reached"),
+        (
+            0,
+            {"target": 3, "status": "ok"},
+            [{"id": "h", "hold_bucket": "x"}],
+            "all-held",
+        ),
+        (0, {"target": None, "status": "none"}, [], "queue-empty"),
+        # No queued list: nothing is known about the queue, so no queue reason.
+        (0, {"target": 3, "status": "ok"}, None, None),
+    ],
+)
+def test_pc_row_idle_reason_uses_its_cap_and_its_queue(
+    homes, lanes, cap, queued, reason
+):
+    extra = {} if queued is None else {"queued": queued}
+    row, _ = pc_status_row(
+        homes,
+        lane_capacity=lane_capacity(lanes={"count": lanes}, cap=cap, quota=None),
+        **extra,
+    )
+    assert row["idle_reason"] == reason
+
+
+def test_pc_row_with_an_unreadable_capacity_is_unpublished_and_an_error(homes):
+    row, page = pc_status_row(homes, lane_capacity={"schema": "other"})
+    assert (row["running"], row["idle_reason"]) == (None, "capacity-unpublished")
+    assert any("pc: published capacity unreadable" in e for e in page["errors"])
+
+
+def test_an_off_pc_is_host_offline_even_with_a_published_capacity(homes):
+    vps = status_home(homes.tmp, "fm-vps", [task("q1")])
+    pc_cache_in(vps).write_text(
+        json.dumps(summary(generated_epoch=NOW - 99_999, lane_capacity=lane_capacity()))
+    )
+    assert homes.run(vps).returncode == 0
+    (row,) = [c for c in status(homes)["capacity"] if c["home_id"] == "pc"]
+    assert (row["running"], row["idle_reason"]) == (None, "host-offline")
+    assert row["generated_epoch"] == NOW - 99_999
+
+
+def test_a_home_with_no_cap_declared_is_never_cap_reached(homes):
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [task("q1")],
+        capacity={"lanes": {"count": 9}, "cap": {"target": None, "status": "none"}},
+    )
+    assert homes.run(vps).returncode == 0
+    (row,) = status(homes)["capacity"]
+    assert (row["running"], row["allowed"], row["cap_status"]) == (9, None, "none")
+    assert row["idle_reason"] is None
 
 
 @pytest.mark.parametrize(
@@ -2272,6 +2386,9 @@ def test_capacity_is_published_per_home_with_an_idle_reason(homes):
         (0, None, None, 0, 0, "queue-empty"),
         (1, 2, None, 4, 0, None),
         (1, None, "projected_exhaustion", 4, 0, None),
+        (5, None, None, 0, 0, "queue-empty"),
+        (2, 2, None, None, 0, "cap-reached"),
+        (0, 2, None, None, 0, None),
     ],
 )
 def test_idle_reason_is_one_of_the_fixed_list(

@@ -10,14 +10,15 @@ sections"). Everything is read from structured sources, never from prose:
                 cells the list truncated)
   projects      the records grouped by their own `repo` (none: the "no project"
                 group), open PRs per repo from `gh` (cached), plan links
-  capacity      each on-host home's bin/fm-capacity.sh --json
+  capacity      each on-host home's bin/fm-capacity.sh --json, then each remote
+                home (the PC) from the publisher's read of its cached summary
   queue         the open queued records, and the 7-day throughput from the
                 fleet-metrics daily rows
   intake        the shared job queue's depth (`jobq.py depth` in the gateway)
   how_it_works  one owner page per workflow, linked only once it exists
 
 Usage: fleet_status.py --home <id>=<path> [--home ...] --now <epoch>
-         --state-dir <dir> [--daily <jsonl> ...]
+         --state-dir <dir> [--daily <jsonl> ...] [--remote <json> ...]
 
 Env: TASKS_AXI (absolute tasks-axi; its directory goes on PATH so the home's
 wrapper finds it and node), CREDENTIAL_RE (a record whose text matches it is
@@ -397,26 +398,29 @@ def projects(
 # --- capacity, queue, intake ----------------------------------------------------
 
 
-def idle_reason(cap: dict[str, Any], queued: int, held: int) -> str | None:
+def idle_reason(cap: dict[str, Any], queued: int | None, held: int) -> str | None:
     """Why a home runs fewer workers than it may, from the fixed list; None when
-    nothing explains it (room and open work: it should dispatch)."""
+    nothing explains it (room and open work: it should dispatch). A home with no
+    declared cap never reads as cap-reached; one whose queue is not known
+    (queued None) gets no queue-based reason."""
     running, allowed = cap["running"], cap["allowed"]
     if allowed is not None and running >= allowed:
         return "cap-reached"
     if cap["quota"] == "exhausted_now":
         return "quota"
+    if queued is None:
+        return None
     if queued == 0:
         return "all-held" if held else "queue-empty"
     return None
 
 
-def capacity(
-    home_id: str, home: str, records: list[dict[str, Any]] | None
+def capacity_row(
+    home_id: str, doc: Any, queued: int | None, held: int
 ) -> dict[str, Any]:
-    script = Path(home) / "bin/fm-capacity.sh"
-    doc = json.loads(
-        run([str(script), "--json"], env={**os.environ, "FM_HOME": home}, timeout=30)
-    )
+    """One capacity row from an fm-lane-capacity.v1 document. `allowed` is the
+    declared cap; with none declared it is None and `cap_status` says "none"
+    (the page shows "no cap declared"), never an invented count."""
     if not isinstance(doc, dict) or doc.get("schema") != "fm-lane-capacity.v1":
         raise ValueError("not an fm-lane-capacity.v1 document")
     lanes, cap, quota = doc.get("lanes") or {}, doc.get("cap") or {}, doc.get("quota")
@@ -430,13 +434,76 @@ def capacity(
         "generated_epoch": doc.get("generated_epoch"),
         "idle_reason": None,
     }
-    if records is not None:
-        out["idle_reason"] = idle_reason(
-            out,
-            sum(r["state"] == "queued" for r in records),
-            sum(r["state"] == "held" for r in records),
-        )
+    out["idle_reason"] = idle_reason(out, queued, held)
     return out
+
+
+def capacity(
+    home_id: str, home: str, records: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    script = Path(home) / "bin/fm-capacity.sh"
+    doc = json.loads(
+        run([str(script), "--json"], env={**os.environ, "FM_HOME": home}, timeout=30)
+    )
+    if records is None:  # an unreadable backlog explains nothing
+        row = capacity_row(home_id, doc, None, 0)
+        return {**row, "idle_reason": None}
+    return capacity_row(
+        home_id,
+        doc,
+        sum(r["state"] == "queued" for r in records),
+        sum(r["state"] == "held" for r in records),
+    )
+
+
+def remote_capacity(entry: dict[str, Any], errors: list[str]) -> dict[str, Any]:
+    """A remote home's row (the PC), from what the publisher read of its cached
+    summary: off is host-offline; on, the lane capacity its summary carries, or,
+    when it carries none, capacity-unpublished rather than a row of nulls."""
+    home_id = str(entry.get("id"))
+    seen = entry.get("last_seen_epoch")
+    blank = {
+        "home_id": home_id,
+        "machine": None,
+        "running": None,
+        "allowed": None,
+        "cap_status": None,
+        "quota": None,
+        "generated_epoch": seen,
+        "idle_reason": "host-offline",
+    }
+    if entry.get("state") == "off":
+        return blank
+    doc = entry.get("lane_capacity")
+    if doc is not None:
+        queued = entry.get("queued")
+        try:
+            return capacity_row(
+                home_id,
+                doc,
+                queued if isinstance(queued, int) else None,
+                entry.get("held") if isinstance(entry.get("held"), int) else 0,
+            )
+        except (ValueError, TypeError, AttributeError) as exc:
+            errors.append(
+                f"{home_id}: published capacity unreadable ({exc.__class__.__name__})"
+            )
+    return {**blank, "idle_reason": "capacity-unpublished"}
+
+
+def remote_entries(paths: list[str], errors: list[str]) -> list[dict[str, Any]]:
+    entries = []
+    for path in paths:
+        try:
+            doc = json.loads(Path(path).read_text())
+        except (OSError, ValueError) as exc:
+            errors.append(f"remote homes unreadable ({exc.__class__.__name__})")
+            continue
+        if not isinstance(doc, list):
+            errors.append("remote homes unreadable (not a list)")
+            continue
+        entries.extend(e for e in doc if isinstance(e, dict))
+    return entries
 
 
 def daily_rows(paths: list[str]) -> dict[tuple[str, str], dict[str, Any]]:
@@ -598,6 +665,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             caps.append(capacity(home_id, home, by_home.get(home_id)))
         except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
             errors.append(f"{home_id}: capacity unreadable ({exc.__class__.__name__})")
+    caps.extend(remote_capacity(e, errors) for e in remote_entries(args.remote, errors))
     rows = projects(records, homes, pr_cache, args.now, errors)
     depth: dict[str, Any] | None = None
     if os.environ.get("FLEET_INTAKE_CMD") != "":
@@ -643,6 +711,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--now", type=int, required=True)
     parser.add_argument("--state-dir", required=True)
     parser.add_argument("--daily", action="append", default=[])
+    parser.add_argument("--remote", action="append", default=[])
     args = parser.parse_args(argv)
     json.dump(build(args), sys.stdout, separators=(",", ":"))
     print()
