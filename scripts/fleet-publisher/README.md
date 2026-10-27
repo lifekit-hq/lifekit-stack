@@ -101,9 +101,9 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
   `state` is `working` (the summary has active children), `idle`, or `off`
   (older than `PC_STALE_SECONDS`, default 1200, or missing, unreadable, not a
   home summary, or credential-bearing; then `last_seen_epoch` is the summary's
-  time, or `null`). It carries no counts and contributes no list items. It never
-  affects the fleet's `valid`, `reason`, `counts` or `generated_epoch`, never
-  fails the run, and is left out of the `fleet_home_summary_*` metrics: a PC
+  time, or `null`). It carries no counts and contributes no list items (its
+  status page capacity row is below). It never affects the fleet's `valid`,
+  `reason`, `counts` or `generated_epoch`, never fails the run, and is left out of the `fleet_home_summary_*` metrics: a PC
   that is off is normal.
 
 ## Status page sections (`status_page`)
@@ -112,9 +112,9 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
 `/usr/local/bin/lifekit-fleet-status.py`; `FLEET_STATUS` overrides it) builds
 the sections the dashboard landing renders. It reads structured sources only,
 and only the on-host homes in `FM_HOMES`: the PC appears through its summary
-alone. Each home is read with `FM_HOME` set to it, through its own
-`bin/fm-tasks-axi.sh` (with `TASKS_AXI`'s directory on `PATH`) and
-`bin/fm-capacity.sh --json`. Per-home freshness stays in `homes[]` (above).
+alone, which the publisher hands it as `--remote`. Each home is read with
+`FM_HOME` set to it, through its own `bin/fm-tasks-axi.sh` (with `TASKS_AXI`'s
+directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays in `homes[]` (above).
 
 | Field | Meaning |
 | --- | --- |
@@ -122,7 +122,7 @@ alone. Each home is read with `FM_HOME` set to it, through its own
 | `records[]` | Every open record each home's backlog lists, and each done record closed within the last 7 days (`list --limit 1000`; a list that fills the limit adds an `errors[]` line): `id`, `home_id`, `title`, `state` (`queued`, `held`, `in_flight`, `done`), `repo` (the record's own, `null` when it has none), `kind`, `priority` (number or `null`), `blocked`, `closed` (date or `null`), `pr_url` (its first `pr:` link), `hold` |
 | `records[].hold` | `null` unless held: `{kind, owner, until, reason}`. `owner` is `captain` (a captain call), `external` (an outside wait), else `firstmate` (parked, or a kind it does not know); `until` and `reason` are the restart condition |
 | `projects[]` | One row per `repo` value, then `name: "no project"` (`repo: null`) for records without one: `github` (owner/name), `in_flight`, `queued`, `held`, `last_landed` (`{id, home_id, title, closed, pr_url}` of the latest done record closed in the last 7 days, else `null`), `open_prs` and `open_prs_as_of` (epoch), `plan_url`. Busiest first, "no project" last |
-| `capacity[]` | Per on-host home: `home_id`, `machine`, `running` (lanes), `allowed` (the declared cap, `null` when none is), `cap_status`, `quota` (runway status or `null`), `generated_epoch`, `idle_reason`; then one PC row (`running`/`allowed` `null`, `generated_epoch` its last-seen time) |
+| `capacity[]` | Per on-host home: `home_id`, `machine`, `running` (lanes), `allowed` (the declared cap, `null` when none is), `cap_status` (`ok`, `none` for no cap declared, which the page shows as "no cap declared", or `invalid`), `quota` (runway status or `null`), `generated_epoch`, `idle_reason`; then one PC row (below) |
 | `queue` | `count` (open queued records, all homes), `held`, `top` (10: `id`, `home_id`, `title`, `repo`, `priority`, `blocked`), `throughput` (`{days: 7, from, to, days_with_data, merged_prs, runs}` over the 7 whole UTC days before today, from the daily metrics), from which the dashboard computes an ETA |
 | `intake` | The shared job queue's depth: `{waiting, running, done_24h, failed_24h}`, or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page, `url: null` until that page exists |
@@ -152,10 +152,20 @@ alone. Each home is read with `FM_HOME` set to it, through its own
   its entry in `FLEET_PLAN_MAP` (`"<repo>=<project> ..."`, host config), linked
   on GitHub from the vault's own `origin`; `null` when there is no such page.
 - **Idle reason**, the first that holds: `cap-reached` (running at or over a
-  declared cap), `quota` (runway `exhausted_now`), `all-held` (nothing queued,
-  something held), `queue-empty`; else `null` (room and open work). A home whose
-  backlog is unreadable gets `null`. The PC row is `host-offline` when its
-  state is `off`, else `null`.
+  declared cap; a home with no cap declared never reads as this), `quota`
+  (runway `exhausted_now`), `all-held` (nothing queued, something held),
+  `queue-empty`; else `null` (room and open work). A home whose backlog is
+  unreadable gets `null`.
+- **The PC row** comes from the publisher's read of the PC's cached summary
+  (`--remote`), never from the PC itself. Its state `off` gives a row of nulls
+  with `idle_reason` `host-offline` and `generated_epoch` its last-seen time.
+  On, a summary that carries `lane_capacity` (the PC home's
+  `fm-lane-capacity.v1` document, as its `fm-capacity.sh --publish` writes it)
+  fills the row like an on-host home's, with the idle reason's queue counts
+  from the summary's `queued` list (an item with `hold_kind` or `hold_bucket`
+  is held; no list, no queue-based reason). A summary with no `lane_capacity`
+  gives the row of nulls with `idle_reason` `capacity-unpublished`; one that
+  is not that document does the same and adds an `errors[]` line.
 - **Intake** runs `jobq.py depth` in the running `openclaw-gateway` container
   (found by compose labels) with `docker exec`; `FLEET_INTAKE_CMD` replaces
   that command (empty skips intake). Counts only: no job, label or result.
