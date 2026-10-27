@@ -144,8 +144,9 @@ alone. Each home is read with `FM_HOME` set to it, through its own
   repo are two rows; the fix is at the record.
 - **Open PRs**: `FLEET_GH` (default `gh`; empty skips) `pr list -R <owner/name>
   --state open`, cached per repo for `FLEET_PR_TTL` seconds (default 600) in
-  `status-open-prs.json`. A failed refresh keeps the last count and its
-  `open_prs_as_of`.
+  `status-open-prs.json`. Refreshes share a 15 s budget per run; a failed or
+  skipped refresh keeps the last count and its `open_prs_as_of` and adds an
+  `errors[]` line.
 - **Plan link**: the vault (`FLEET_VAULT`, default `/srv/memory`) page
   `projects/<p>/plan.md`, where `<p>` is the repo's name (after any owner/) or
   its entry in `FLEET_PLAN_MAP` (`"<repo>=<project> ..."`, host config), linked
