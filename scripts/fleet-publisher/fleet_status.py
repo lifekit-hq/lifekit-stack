@@ -68,14 +68,20 @@ GATEWAY_LABELS = (
     "label=com.docker.compose.service=openclaw-gateway",
 )
 GATEWAY_JOBQ = "/home/node/.openclaw/skills/job-queue/jobq.py"
-# The workflows the page explains, each by the vault owner page that will own
-# it. None until that page is written: the link is left out and the publisher
-# lists it under `follow_ups`, never a guessed path.
+# The workflows the page explains, each by its vault owner page. A page missing
+# from the vault leaves the link out and lists it under `follow_ups`.
 WORKFLOWS = (
-    ("intake", "Reel and video intake", None),
-    ("queue-to-merge", "A task from queue to merge", None),
-    ("monday-loop", "The Monday loop", None),
+    ("intake", "Reel and video intake", "system/workflows/intake.md"),
+    (
+        "queue-to-merge",
+        "A task from queue to merge",
+        "system/workflows/queue-to-merge.md",
+    ),
+    ("monday-loop", "The Monday loop", "system/workflows/monday-loop.md"),
 )
+# Repo spellings whose vault project is not their own name; FLEET_PLAN_MAP adds
+# to and overrides these.
+PLAN_MAP = {"vault": "memory"}
 
 
 def run(cmd: list[str], *, env: dict[str, str] | None = None, timeout: int = 20) -> str:
@@ -343,7 +349,7 @@ def plan_map() -> dict[str, str]:
         for p in os.environ.get("FLEET_PLAN_MAP", "").split()
         if "=" in p
     )
-    return {repo: project for repo, project in pairs if repo and project}
+    return PLAN_MAP | {repo: project for repo, project in pairs if repo and project}
 
 
 def projects(
