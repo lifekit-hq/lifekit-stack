@@ -147,10 +147,15 @@ def write_in_place(path: Path, text: str) -> bool:
 
 
 def clean(text: Any, limit: int = LINE_MAX) -> str:
-    """One printable line: no control characters, host paths or runs of space."""
+    """One printable line: no control characters, host paths or runs of space.
+
+    A double bracket from outside text is backslash-escaped ("[\\[x]\\]", which
+    markdown shows as "[[x]]") so the vault lint never reads it as a wikilink.
+    """
     text = HOST_PATH_RE.sub("<path>", CONTROL_RE.sub(" ", str(text)))
     text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+    text = text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+    return text.replace("[[", "[\\[").replace("]]", "]\\]")
 
 
 # Regexes of the vault's bin/subjects.txt that another page owns: the vault lint

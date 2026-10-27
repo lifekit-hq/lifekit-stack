@@ -458,6 +458,27 @@ def test_snapshot_withholds_lines_that_restate_an_owned_subject(env):
     )  # the page's own subject is not withheld from itself
 
 
+def test_snapshot_escapes_wikilinks_in_outside_text(env):
+    outside = {
+        **SUMMARY,
+        "decisions_open": [
+            {"id": "d1", "verb": "decide", "summary": "see [[x]]", "reason": "[[y|z]]"}
+        ],
+        "queued": [{"id": "t1", "title": "queue [[x]]", "hold_kind": "captain"}],
+        "landed": [
+            {"id": "t2", "title": "landed [[x]]", "completion": {"date": "2026-10-24"}}
+        ],
+    }
+    write_sources(
+        env, summary=outside, prs=[pr(36, "fix: lint [[x]]", "2026-10-25T10:00:00Z")]
+    )
+    vd.snapshot()
+    text = page(env)
+    links = re.findall(r"\[\[[^]]*\]\]", re.sub(r"`[^`]*`", "", text))
+    assert links == []  # the vault lint's own wikilink pattern finds nothing
+    assert "org/repo#36 fix: lint [\\[x]\\]" in text
+
+
 def test_snapshot_caps_long_groups_and_lines(env):
     many = {
         **SUMMARY,
