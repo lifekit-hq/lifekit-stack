@@ -63,7 +63,8 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
 - **`board_url`**: an open Lavish session fed by the home's captain-hold binding
   (`fm-captain-hold.sh binding lavish-<session id>`, run with `FM_HOME` set to that
   home, succeeds) whose file lives under the hold's origin task directory
-  (`Captain hold origin:` in `tasks-axi show`), or whose binding names the
+  (`Captain hold origin:` in `tasks-axi show`, run only for decisions the home's own
+  `tasks-axi list` returned, so one with no backlog record is silent), or whose binding names the
   decision. Falls back to the newest open session under the home's
   `data/<decision id>/`, else `null`. `tasks-axi` finds the backlog from its
   working directory, so the publisher runs it from the home, at the absolute

@@ -259,7 +259,15 @@ HOLD_BINDS_BOUND_AND_WRONG = (
     'case "$1 $2" in "binding lavish-bound"|"binding lavish-wrong") echo "(any)";;'
     " *) exit 1;; esac"
 )
+# `list` answers the ids in LISTED_IDS (default: both decisions) from anywhere;
+# every `show` is recorded in SHOW_LOG when set, and answers only from the home.
 TASKS_AXI_ONLY_FROM_FM_HOME = (
+    'if [[ "$1" == list ]]; then\n'
+    '  echo "count: 0"; echo "tasks[0]{id,state,kind,repo,title,priority}:"\n'
+    '  for i in ${LISTED_IDS-held-call other-call}; do echo "  $i,queued,ship,r,\\"T\\",-"; done\n'
+    "  exit 0\n"
+    "fi\n"
+    '[[ -z "${SHOW_LOG:-}" ]] || echo "$2" >> "$SHOW_LOG"\n'
     '[[ "$PWD" == "$EXPECTED_PWD" ]] || { echo "NOT_FOUND" >&2; exit 1; }\n'
     'echo "body: \\"Captain hold origin: scout-origin\\n\\nRouted by x\\""'
 )
@@ -314,6 +322,47 @@ def test_hold_origin_lookup_runs_from_the_fleet_home(fleet, tmp_path):
     assert {d["board_url"] for d in fleet.published()["decisions_open"]} == {
         "http://board/bound"
     }
+
+
+def test_decisions_without_a_backlog_record_are_not_looked_up_or_logged(
+    fleet, tmp_path
+):
+    hold = stub(fleet.tmp / "hold.sh", HOLD_BINDS_BOUND_AND_WRONG)
+    tasks = stub(fleet.tmp / "tasks.sh", TASKS_AXI_ONLY_FROM_FM_HOME)
+    shows = tmp_path / "shows.log"
+    bound_board_fleet(fleet)
+    env = {
+        "CAPTAIN_HOLD": hold,
+        "TASKS_AXI": tasks,
+        "FM_HOME": str(fleet.tmp),
+        "EXPECTED_PWD": str(fleet.tmp),
+        "LISTED_IDS": "held-call",
+        "SHOW_LOG": str(shows),
+    }
+    for _ in range(3):
+        result = fleet.run(**env)
+        assert result.returncode == 0, result.stderr
+        assert "tasks-axi" not in result.stderr
+    assert set(shows.read_text().split()) == {"held-call"}
+    urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_open"]}
+    # The decision with a record is still placed under its origin's board.
+    assert urls["held-call"] == "http://board/bound"
+
+
+def test_a_failing_show_for_a_listed_decision_is_still_logged(fleet):
+    hold = stub(fleet.tmp / "hold.sh", HOLD_BINDS_BOUND_AND_WRONG)
+    tasks = stub(fleet.tmp / "tasks.sh", TASKS_AXI_ONLY_FROM_FM_HOME)
+    bound_board_fleet(fleet)
+    result = fleet.run(
+        CAPTAIN_HOLD=hold,
+        TASKS_AXI=tasks,
+        FM_HOME=str(fleet.tmp),
+        EXPECTED_PWD=str(fleet.tmp / "not-the-home"),
+        LISTED_IDS="held-call",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "tasks-axi show held-call failed: NOT_FOUND" in result.stderr
+    assert "other-call" not in result.stderr
 
 
 def test_hold_origin_lookup_puts_the_tasks_axi_directory_on_path(fleet, tmp_path):
