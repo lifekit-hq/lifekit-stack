@@ -2052,13 +2052,18 @@ def test_a_stalled_gh_cannot_starve_the_other_sources(homes, monkeypatch):
     fleet_status.open_prs({"o/a", "o/b", "o/c"}, cache, NOW, errors)
     assert errors == []
     assert set(cache) == {"o/a", "o/b", "o/c"}
-    monkeypatch.setattr(fleet_status, "PR_BUDGET", 1)
-    stall = stub(homes.tmp / "gh2", "sleep 5\n")
+    monkeypatch.setattr(fleet_status, "PR_BUDGET", 2)
+    stall = stub(homes.tmp / "gh2", "sleep 30\n")
     monkeypatch.setenv("FLEET_GH", stall)
-    errors, cache = [], {}
+    errors, cache = [], {"o/c": {"count": 4, "as_of": NOW - 3600}}
+    started = time.monotonic()
     fleet_status.open_prs({"o/a", "o/b", "o/c"}, cache, NOW, errors)
-    assert cache == {}
-    assert any("time budget" in e for e in errors)
+    assert time.monotonic() - started < 3
+    assert cache == {"o/c": {"count": 4, "as_of": NOW - 3600}}
+    assert errors == [
+        "open PRs of o/a unreadable (TimeoutExpired)",
+        "open PRs not refreshed: the time budget ran out",
+    ]
 
 
 def test_a_cut_row_is_shown_once_and_then_served_from_the_cache(homes):
@@ -2099,6 +2104,17 @@ def test_cut_rows_past_the_show_budget_keep_the_list_cells(homes):
     )
     assert (got[0]["title"], unresolved) == ("Short and then the rest", 0)
     assert errors == []
+    stub(
+        vps / "bin/fm-tasks-axi.sh",
+        'case "$1" in list) cat "$FM_HOME/list.txt";; show) sleep 30;; esac\n',
+    )
+    cache = {}
+    started = time.monotonic()
+    got, unresolved = fleet_status.read_records(
+        "fm-vps", str(vps), "", cache, NOW, errors, time.monotonic() + 2
+    )
+    assert time.monotonic() - started < 3
+    assert (got[0]["title"], unresolved, cache) == (cut, 1, {})
 
 
 def test_a_failing_show_keeps_the_home_and_the_list_cells(homes):
