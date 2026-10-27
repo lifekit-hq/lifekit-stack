@@ -1453,6 +1453,44 @@ def test_installer_defaults_the_home_list_to_fm_home(tmp_path):
     assert '"FM_HOMES=/srv/fleet-home" ' in unit.read_text()
 
 
+def installed_environment(tmp_path):
+    unit = tmp_path / "root/etc/systemd/system/lifekit-fleet-publisher.service"
+    service = configparser.ConfigParser(interpolation=None)
+    service.optionxform = str
+    service.read_string(unit.read_text())
+    return service["Service"]["Environment"]
+
+
+def test_installer_carries_the_plan_map_into_the_unit(tmp_path):
+    result = run_installer(
+        tmp_path, FM_HOMES="/srv/fleet-home", FLEET_PLAN_MAP="alias=project other=thing"
+    )
+    assert result.returncode == 0, result.stderr
+    assert installed_environment(tmp_path) == (
+        '"FM_HOMES=/srv/fleet-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
+        ' "FLEET_PLAN_MAP=alias=project other=thing"'
+    )
+
+
+@pytest.mark.parametrize("plan_map", [None, ""])
+def test_installer_leaves_the_plan_map_out_of_the_unit_when_unset(tmp_path, plan_map):
+    env = {} if plan_map is None else {"FLEET_PLAN_MAP": plan_map}
+    result = run_installer(tmp_path, FM_HOMES="/srv/fleet-home", **env)
+    assert result.returncode == 0, result.stderr
+    assert installed_environment(tmp_path) == (
+        '"FM_HOMES=/srv/fleet-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
+    )
+
+
+@pytest.mark.parametrize("plan_map", ['a="b', "a=b|c", "a=b&c"])
+def test_installer_refuses_a_plan_map_it_cannot_render(tmp_path, plan_map):
+    result = run_installer(
+        tmp_path, FM_HOMES="/srv/fleet-home", FLEET_PLAN_MAP=plan_map
+    )
+    assert result.returncode == 1
+    assert not (tmp_path / "root/etc/systemd").exists()
+
+
 @pytest.mark.parametrize("home", ["relative/home", '/srv/a"b', "/srv/a|b"])
 def test_installer_refuses_a_home_it_cannot_render(tmp_path, home):
     result = run_installer(tmp_path, FM_HOMES=f"/srv/ok {home}")

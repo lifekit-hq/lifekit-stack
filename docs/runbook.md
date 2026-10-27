@@ -2289,8 +2289,12 @@ runs `jobq.py depth` in the gateway container (the admin account's `docker`
 group); a source it cannot read leaves a line in `status_page.errors`, never a
 failed run. The new output appears only once the
 installed script is refreshed: re-run the install command below (it
-re-installs the script, the helper and the units, idempotent; the unit's
-environment is unchanged).
+re-installs the script, the helper and the units, idempotent). The unit's
+environment gains `FLEET_PLAN_MAP` only when the installer is given one
+(`FLEET_PLAN_MAP="<repo>=<project> ..."` beside `FM_HOMES`; README "One row per
+project"): the alias list that folds a repo spelling naming no project, such as
+the vault's, into its project's row. It is host config, so a re-install without
+it drops the line.
 
 **Alerts:** *fleet summary is stale* fires when the oldest home summary's
 `generated_epoch` is over 15 minutes old (that home's watch loop died; the
