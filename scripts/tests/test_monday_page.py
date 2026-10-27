@@ -310,6 +310,14 @@ def test_live_pace_is_read_even_when_starts_are_held(tmp_path):
             ["option id reconcile is reserved"],
         ),
         (
+            "rec=go opts: go=Ship it - now; stop=Wait - asked",
+            ["options ambiguous"],
+        ),
+        (
+            "rec=stop opts: go=Ship it - now; stop=Wait - asked",
+            ["options ambiguous"],
+        ),
+        (
             "rec=go opts: go=Go; stop=Stop; kee…",
             ["options cut off in the summary", "no context"],
         ),
@@ -506,4 +514,27 @@ def test_an_open_decision_is_not_charted_again_and_a_repeated_key_is_refused():
     ]
     assert [(r["id"], r["reason"]) for r in p["charted"]] == [
         ("refused-ship-it", "refused: duplicate key")
+    ]
+
+
+def test_refused_rows_get_distinct_ids_when_keys_repeat_or_collide():
+    bad = "rec=go - asked"
+    s = summary(
+        decisions_open=[
+            decision("k", bad),
+            {**decision("k", bad), "home_id": "firstmate"},
+            decision("k", GOOD),
+            decision("k", GOOD),
+            decision("a b", bad),
+            decision("a/b", bad),
+        ]
+    )
+    p = payload(s)
+    ids = [r["id"] for r in p["charted"] if r["kind"] == "warning"]
+    assert ids == [
+        "refused-k",
+        "refused-k-2",
+        "refused-k-3",
+        "refused-a-b",
+        "refused-a-b-2",
     ]

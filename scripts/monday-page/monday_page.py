@@ -105,7 +105,8 @@ def parse_reason(reason: str) -> dict[str, Any]:
     `[Tier ...] [P1 ...] rec=ID opts: ID=LABEL; ID=LABEL - context`.
 
     Options run to the first " - "; everything after it is context. A reason the
-    publisher cut short ("…") inside the options leaves them unreadable.
+    publisher cut short ("…") inside the options leaves them unreadable, and so
+    does an option label holding " - " (more `; ID=` options past the split).
     """
     rest = reason.strip()
     while m := BRACKET_RE.match(rest):
@@ -116,17 +117,24 @@ def parse_reason(reason: str) -> dict[str, Any]:
     elif m := REC_RE.search(rest):
         rec = m.group(1)
     options: list[tuple[str, str]] = []
-    cut = False
+    cut = ambiguous = False
     if rest.startswith("opts:"):
         body, sep, context = rest[len("opts:") :].strip().partition(" - ")
         cut = not sep and body.endswith("…")
+        ambiguous = bool(re.search(r"; [A-Za-z0-9._-]+=", context))
         for part in body.split("; "):
             value, eq, label = part.partition("=")
             if eq and value.strip() and label.strip():
                 options.append((value.strip(), label.strip()))
     else:
         context = rest[2:] if rest.startswith("- ") else rest
-    return {"rec": rec, "options": options, "context": context.strip(), "cut": cut}
+    return {
+        "rec": rec,
+        "options": options,
+        "context": context.strip(),
+        "cut": cut,
+        "ambiguous": ambiguous,
+    }
 
 
 def judge_call(call: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
@@ -139,6 +147,8 @@ def judge_call(call: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         why.append("no board key")
     if parsed["cut"]:
         why.append("options cut off in the summary")
+    elif parsed["ambiguous"]:
+        why.append("options ambiguous")
     elif not parsed["options"]:
         why.append("no options")
     values = [value for value, _ in parsed["options"]]
@@ -150,7 +160,12 @@ def judge_call(call: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         why.append("duplicate option ids")
     if not parsed["rec"]:
         why.append("no recommendation")
-    elif values and not parsed["cut"] and parsed["rec"] not in values:
+    elif (
+        values
+        and not parsed["cut"]
+        and not parsed["ambiguous"]
+        and parsed["rec"] not in values
+    ):
         why.append("recommendation is not one of the options")
     if not parsed["context"]:
         why.append("no context")
@@ -178,11 +193,18 @@ def judge_call(call: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
     }, []
 
 
-def refused_row(call: dict[str, Any], why: list[str], filed: str) -> dict[str, Any]:
+def refused_row(
+    call: dict[str, Any], why: list[str], filed: str, taken: set[str]
+) -> dict[str, Any]:
     ident = str(call.get("key") or call.get("id") or "")
     slug = re.sub(r"[^A-Za-z0-9._-]", "-", ident)[:120] or "unnamed"
+    row_id, n = f"refused-{slug}", 1
+    while row_id in taken:
+        n += 1
+        row_id = f"refused-{slug}-{n}"
+    taken.add(row_id)
     return {
-        "id": f"refused-{slug}",
+        "id": row_id,
         "repo": call.get("repo") if isinstance(call.get("repo"), str) else None,
         "title": "Refused call: "
         + (text(call.get("summary")) or text(ident) or "unnamed"),
@@ -299,7 +321,7 @@ def build(
     today = dt.datetime.fromtimestamp(now, dt.timezone.utc).date()
     monday = (today - dt.timedelta(days=today.weekday())).isoformat()
 
-    calls, refused, keys = [], [], set()
+    calls, refused, keys, refused_ids = [], [], set(), set()
     decisions = dicts(summary, "decisions_open")
     for call in decisions:
         card, why = judge_call(call)
@@ -309,7 +331,7 @@ def build(
             keys.add(card["key"])
             calls.append(card)
         else:
-            refused.append(refused_row(call, why, generated))
+            refused.append(refused_row(call, why, generated, refused_ids))
     # An open decision shows as its call or its refusal, never again as queued work.
     open_ids = {str(d.get(k)) for d in decisions for k in ("id", "key") if d.get(k)}
 
