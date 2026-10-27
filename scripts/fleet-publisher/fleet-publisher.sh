@@ -236,7 +236,7 @@ JQ
 # and copies its reports into $reports_tmp.
 publish_home() {
   local home="$1" id="$2" summary_file="$3" ledger_file="$4" data_dir="$5" hold="$6" report_root="$7"
-  local hw="$work/home-$id" seg origin out data_real src path rid seen kept
+  local hw="$work/home-$id" seg origin out listed data_real src path rid seen kept
   mkdir "$hw"
   # Secondmate ids whose home is another published home: their decisions are
   # that home's own, folded into this one by the parent.
@@ -317,14 +317,21 @@ publish_home() {
   # records the origin task whose directory holds it. Look that up only for
   # decisions the directory lookup cannot place, and only when a board is
   # bound. tasks-axi finds the backlog from its working directory, so it runs
-  # from the home; a failed lookup is logged and the decision falls back to
-  # the directory lookup.
+  # from the home. A decision with no backlog record in this home is normal and
+  # is not asked about: show runs only for ids the home's own list returned. A
+  # failed list or show is logged and the decision falls back to the directory
+  # lookup.
   : > "$hw/origins.tsv"
   if [[ -s "$hw/bound.tsv" ]]; then
     if [[ -z "$home" || ! -x "$TASKS_AXI" ]]; then
       echo "fleet-publisher: $id: no home or executable TASKS_AXI; hold origins are not looked up" >&2
+    elif ! listed="$(cd "$home" && FM_HOME="$home" PATH="$(dirname "$TASKS_AXI"):$PATH" timeout 20 "$TASKS_AXI" list --limit 1000 --fields priority 2> "$hw/tasks-axi.err")"; then
+      echo "fleet-publisher: $id: tasks-axi list failed: $(head -c 200 "$hw/tasks-axi.err")" >&2
     else
+      # Row ids lead their line and are slugs; titles are quoted, never at the margin.
+      sed -n 's/^  \([A-Za-z0-9][A-Za-z0-9._-]*\),.*/\1/p' <<< "$listed" > "$hw/backlog-ids.txt"
       while IFS= read -r rid; do
+        grep -Fxq -- "$rid" "$hw/backlog-ids.txt" || continue
         if out="$(cd "$home" && FM_HOME="$home" PATH="$(dirname "$TASKS_AXI"):$PATH" timeout 10 "$TASKS_AXI" show "$rid" --full 2> "$hw/tasks-axi.err")"; then
           origin="$(sed -n 's/.*Captain hold origin: \([A-Za-z0-9._-]*\).*/\1/p' <<< "$out" | head -n 1)"
           [[ -z "$origin" ]] || printf '%s\t%s\n' "$rid" "$origin" >> "$hw/origins.tsv"
