@@ -148,8 +148,8 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
   summed; a spelling with no slug joins the project's only known slug, while
   `a/x` and `b/x` stay two rows. The row's `repo`/`name` is its owner/name
   spelling when a record used one, else the alphabetically first short name.
-  Vault aliases are host config (`FLEET_PLAN_MAP`), never names in code: the
-  installer carries it into the unit like `FM_HOMES`
+  `vault=memory` is built in; further aliases are host config (`FLEET_PLAN_MAP`),
+  which the installer carries into the unit like `FM_HOMES`
   (`sudo FM_HOMES="..." FLEET_PLAN_MAP="<repo>=<project> ..." bash install-fleet-publisher.sh`),
   and a re-install without it leaves the unit with none.
 - **Open PRs**: `FLEET_GH` (default `gh`; empty skips) `pr list -R <owner/name>
