@@ -15,6 +15,8 @@ one index row.
     video.py index                            the index of every item judged
     video.py idea [file]                      file a judged idea's report (scout)
     video.py link [file] --origin O [--check] file a judged link's or article's report
+    video.py note [file] --origin O [--check] file a judged text note's report
+    video.py voice <name> --origin O [--check] queue a voice note read from stdin
     video.py door <message text>              Kit's drop door: queue a bare link (kit)
     video.py door-file <saved video>          Kit's drop door: queue a video file (kit)
 
@@ -72,6 +74,15 @@ report carries the item's own link, the source it is recorded and matched
 under (a YouTube or Instagram video is refused: queue it instead). It is
 judged in the standard mode, or claim-check with --check, and its three lines
 are printed at once whatever the origin, since there is no job to poll.
+
+A note is the owner's own text or voice note, judged as kind note. `note`
+files a text note its producer has judged, the same way as a link: its report
+carries the note's text, and it is recorded and matched under that text's
+digest (note:<digest>). `voice` queues a voice note like a video file: the
+same job, the same local whisper, then a drain turn judges the transcript and
+files it with `report`; it is recorded under the audio's digest. Either is
+judged in the standard mode, or claim-check with --check, and its report is
+kept in reports/notes/.
 
 Exit 1 is an unexpected failure (reason on stderr), 2 a usage error, 3 a
 report that does not follow the rubric.
@@ -158,6 +169,9 @@ IDEA_MODE = "claim-check"
 IDEA_ORIGIN = "scout"
 LINK = "link"
 LINK_FIELDS = ("source",)
+NOTE = "note"
+NOTE_FIELDS = ("note",)
+NOTE_LIMIT = 4096
 OWNER = "video-eval"
 PROBE = {"instagram": "www.instagram.com", "youtube": "www.youtube.com", "file": ""}
 KEY_PREFIX = {"instagram": "ig", "youtube": "yt", "file": "file"}
@@ -174,6 +188,8 @@ USAGE = (
     "       video.py report <job id> [file] | index\n"
     "       video.py idea [file] < report\n"
     "       video.py link [file] --origin kit|firstmate|scout [--check] < report\n"
+    "       video.py note [file] --origin kit|firstmate|scout [--check] < report\n"
+    "       video.py voice <name> --origin kit|firstmate|scout [--check] < audio\n"
     "       video.py door <message text> | door-file <saved video>"
 )
 
@@ -188,6 +204,7 @@ HEAD_LIMIT = 200
 WORK_PREFIX = "work-"
 CUT = "[cut to fit the rubric's one-screen cap]"
 MEDIA_SUFFIXES = {".mp4", ".m4a", ".mp3", ".mov", ".webm", ".mkv", ".ogg", ".wav"}
+AUDIO_SUFFIXES = {".ogg", ".oga", ".opus", ".m4a", ".mp3", ".wav"}
 
 INDEX_COLUMNS = (
     "date",
@@ -307,7 +324,7 @@ def normalize_url(url: str) -> str:
     item = parse_link(url)
     if item is not None:
         return item.url
-    if url.startswith("file:"):
+    if url.startswith(("file:", "note:")):
         return url
     u = urlparse(url.strip() if "//" in url else "https://" + url.strip())
     query = urlencode(
@@ -655,8 +672,10 @@ class Queued:
     repeat: tuple[str, ...] = ()
 
 
-def _queue(item: Item, origin: str, mode: str, path: Path | None = None) -> str:
-    q = _file_job(item, origin, mode, path)
+def _queue(
+    item: Item, origin: str, mode: str, path: Path | None = None, kind: str = KIND
+) -> str:
+    q = _file_job(item, origin, mode, path, kind)
     if q.repeat:
         return "\n".join(q.repeat)
     when = (
@@ -664,13 +683,16 @@ def _queue(item: Item, origin: str, mode: str, path: Path | None = None) -> str:
         if path is not None
         else "judged once the download route is up"
     )
-    head = "video queued" if q.added else "video already queued"
+    head = f"{kind} queued" if q.added else f"{kind} already queued"
     return f"{head} - job {q.jid}, {when} ({q.waiting} waiting)"
 
 
-def _file_job(item: Item, origin: str, mode: str, path: Path | None = None) -> Queued:
+def _file_job(
+    item: Item, origin: str, mode: str, path: Path | None = None, kind: str = KIND
+) -> Queued:
     """Queue an item, unless the index already holds its verdict: then that
-    verdict is the answer, and nothing is queued."""
+    verdict is the answer, and nothing is queued. kind is what it is judged
+    as; the queue's job kind is always video."""
     if origin not in ORIGINS:
         raise ValueError(f"unknown origin {origin!r}: one of {', '.join(ORIGINS)}")
     root = private_root()
@@ -688,6 +710,8 @@ def _file_job(item: Item, origin: str, mode: str, path: Path | None = None) -> Q
         "origin": origin,
         "mode": mode,
     }
+    if kind != KIND:
+        payload["kind"] = kind
     if path is not None:
         payload["path"] = str(path)
     jid = f"{KIND}-{item.key}"
@@ -722,21 +746,33 @@ def ingest(name: str, data: bytes, origin: str, check: bool = False) -> str:
     return _queue(item, origin, default_mode(item, check), kept)
 
 
-def _kept(name: str, data: bytes) -> tuple[Item, Path]:
+def voice(name: str, data: bytes, origin: str, check: bool = False) -> str:
+    """Queue a voice note: transcribed like a video file, judged as a note."""
+    rubric = load_rubric()
+    if NOTE not in rubric.list("kinds"):
+        raise ValueError(f"{rubric.path} has no {NOTE} kind")
+    mode = _producer_mode(origin, check)
+    item, kept = _kept(name, data, NOTE)
+    return _queue(item, origin, mode, kept, NOTE)
+
+
+def _kept(name: str, data: bytes, kind: str = KIND) -> tuple[Item, Path]:
     """Keep a file for its run, in the private inbox. reel-<shortcode>.<ext>
     is that reel and yt-<id>.<lang>.vtt that video's captions, so they are
-    recorded and matched under their link; any other name is a file of its
-    own."""
+    recorded and matched under their link; any other name, and any voice
+    note, is a file of its own."""
     name = Path(name).name
     suffix = Path(name).suffix.lower()
-    if suffix not in MEDIA_SUFFIXES | {".vtt"}:
+    if kind == NOTE and suffix not in AUDIO_SUFFIXES:
+        raise ValueError(f"not an audio file: {name}")
+    if kind != NOTE and suffix not in MEDIA_SUFFIXES | {".vtt"}:
         raise ValueError(f"not a media or .vtt file: {name}")
     if not data:
         raise ValueError(f"{name} is empty")
     if len(data) > MAX_INGEST_BYTES:
         raise ValueError(f"{name} is larger than {MAX_INGEST_BYTES >> 20} MB")
-    reel = re.fullmatch(r"reel-([A-Za-z0-9_-]{6,60})\.\w+", name)
-    yt = re.fullmatch(r"yt-([A-Za-z0-9_-]{11})(\.[\w-]+)?\.vtt", name)
+    reel = kind != NOTE and re.fullmatch(r"reel-([A-Za-z0-9_-]{6,60})\.\w+", name)
+    yt = kind != NOTE and re.fullmatch(r"yt-([A-Za-z0-9_-]{11})(\.[\w-]+)?\.vtt", name)
     if reel and suffix != ".vtt":
         item = Item("instagram", reel.group(1))
     elif yt:
@@ -843,8 +879,10 @@ def _transcript_path(root: Path, item: Item) -> Path:
     return root / "transcripts" / f"{item.key}.txt"
 
 
-def _report_path(root: Path, item: Item, rubric: Rubric) -> Path:
-    return root / "reports" / f"{item.key}.{rubric.stamp}.md"
+def _report_path(root: Path, item: Item, rubric: Rubric, kind: str = KIND) -> Path:
+    # A note is kept out of intake-to-vault's reach, which files reports/*.md.
+    reports = root / "reports" / "notes" if kind == NOTE else root / "reports"
+    return reports / f"{item.key}.{rubric.stamp}.md"
 
 
 def _goals(root: Path) -> str:
@@ -870,10 +908,13 @@ def parts(text: str) -> list[str]:
     return out
 
 
-def material_text(jid: str, root: Path, m: Material, mode: str, rubric: Rubric) -> str:
+def material_text(
+    jid: str, root: Path, m: Material, mode: str, rubric: Rubric, kind: str = KIND
+) -> str:
     me = f"python3 {Path(__file__).resolve()}"
     chunks = parts(m.text)
     lines = m.header() + [
+        f"Kind: {kind}",
         f"Rubric: {rubric.path} (video-eval {rubric.stamp}) - read it before judging",
         f"Mode: {mode}",
         "Goals:",
@@ -920,11 +961,13 @@ def run_job(jid: str) -> str:
         row = earlier(root, m.url, m.title)
         if row is not None:
             if normalize_url(row["source"]) != m.url:
-                _append_repeat(root, row, m.url, p.get("origin", ""), rubric)
+                kind = p.get("kind", KIND)
+                _append_repeat(root, row, m.url, p.get("origin", ""), rubric, kind)
             answer = repeat_reply(row)
             q.finish(jid, "\n".join(answer))
             return "\n".join(answer) if reply else NO_REPLY
-        return material_text(jid, root, m, p.get("mode", "standard"), rubric)
+        mode = p.get("mode", "standard")
+        return material_text(jid, root, m, mode, rubric, p.get("kind", KIND))
     if line:
         q.finish(jid, f"{p['url']}\n{line}")
         return f"{p['url']}\n{line}" if reply else NO_REPLY
@@ -998,7 +1041,7 @@ def parse_report(
         elif ": " in ln:
             k, v = ln.split(": ", 1)
             k, v = k.strip().lower(), v.strip()
-            head[k] = v if k == "source" else v[:HEAD_LIMIT]
+            head[k] = v if k in ("source", "note") else v[:HEAD_LIMIT]
     for k in ("title", "category", "gist", *fields):
         if not head.get(k):
             errors.append(f"the header has no {k.capitalize()}: line")
@@ -1156,7 +1199,8 @@ def stamp(
 ) -> str:
     day = time.strftime("%Y-%m-%d", time.gmtime(now))
     body = _render_body(r).split("\n", 3)
-    claim = [f"Claim: {r.head['claim']}"] if kind == IDEA else []
+    field = {IDEA: "claim", NOTE: "note"}.get(kind, "")
+    extra = [f"{field.capitalize()}: {r.head[field]}"] if r.head.get(field) else []
     return (
         "\n".join(
             [
@@ -1165,7 +1209,7 @@ def stamp(
                 f"Source: {item_url}",
                 f"Evaluated: {day} | Rubric: video-eval {rubric.stamp} ({mode})",
                 body[2],
-                *claim,
+                *extra,
                 body[3] if len(body) > 3 else "",
             ]
         ).rstrip()
@@ -1200,9 +1244,11 @@ def file_report(jid: str, text: str, now: float | None = None) -> tuple[int, str
     r.head["title"] = m.title[:HEAD_LIMIT] or r.head["title"]
     fit(r, rubric.list("max-lines"), rubric.list("max-chars"))
     origin, mode = p.get("origin", "kit"), p.get("mode", "standard")
-    path = _report_path(root, item, rubric)
-    _private_write(path, stamp(r, url, origin, mode, rubric, now))
-    row = _row(r, KIND, origin, url, rubric, root, path, now)
+    kind = p.get("kind", KIND)
+    path = _report_path(root, item, rubric, kind)
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    _private_write(path, stamp(r, url, origin, mode, rubric, now, kind))
+    row = _row(r, kind, origin, url, rubric, root, path, now)
     append_row(root, row)
     answer = reply_lines(row, root)
     q.finish(jid, "\n".join(answer))
@@ -1249,10 +1295,23 @@ def file_link(
 ) -> tuple[int, str]:
     """(exit code, output) for `link`: a link or an article, recorded under its
     own link."""
+    mode = _producer_mode(origin, check)
+    return _file_direct(text, LINK, LINK_FIELDS, origin, mode, now)
+
+
+def file_note(
+    text: str, origin: str, check: bool = False, now: float | None = None
+) -> tuple[int, str]:
+    """(exit code, output) for `note`: a text note, recorded under its text's
+    digest."""
+    mode = _producer_mode(origin, check)
+    return _file_direct(text, NOTE, NOTE_FIELDS, origin, mode, now)
+
+
+def _producer_mode(origin: str, check: bool) -> str:
     if origin not in ORIGINS:
         raise ValueError(f"unknown origin {origin!r}: one of {', '.join(ORIGINS)}")
-    mode = "claim-check" if check else "standard"
-    return _file_direct(text, LINK, LINK_FIELDS, origin, mode, now)
+    return "claim-check" if check else "standard"
 
 
 def _file_direct(
@@ -1275,7 +1334,14 @@ def _file_direct(
     today = datetime.date(*time.gmtime(now)[:3])
     r, errors = parse_report(text, rubric, today, fields)
     url = ""
-    if r is not None:
+    if r is not None and kind == NOTE:
+        note = " ".join(r.head["note"].split())
+        if len(note) > NOTE_LIMIT:
+            r, errors = None, [f"Note: must be at most {NOTE_LIMIT} characters"]
+        else:
+            digest = hashlib.sha256(note.casefold().encode()).hexdigest()[:16]
+            url = f"note:{digest}"
+    elif r is not None:
         u = urlparse(r.head["source"])
         if u.scheme not in ("http", "https") or not u.netloc:
             what = "the primary source" if kind == IDEA else "the item"
@@ -1293,7 +1359,7 @@ def _file_direct(
             f"- {e}" for e in errors
         )
     root = private_root()
-    row = earlier(root, url, r.head["title"])
+    row = earlier(root, url, "" if kind == NOTE else r.head["title"])
     if row is not None:
         if normalize_url(row["source"]) != url:
             _append_repeat(root, row, url, origin, rubric, kind)
@@ -1364,13 +1430,14 @@ def append_row(root: Path, row: dict) -> bool:
 
 def earlier(root: Path, url: str, title: str) -> dict | None:
     """The first index row for the same item: its normalized URL, else its
-    normalized title. Any producer's row counts: the index is shared."""
+    normalized title. Any producer's row counts: the index is shared. A note
+    is matched by its source only: its title is the judge's own wording."""
     url = normalize_url(url)
     title = normalize_title(_cell(title))
     for row in read_index(root):
         if normalize_url(row["source"]) == url:
             return row
-        if title and normalize_title(row["title"]) == title:
+        if title and row["kind"] != NOTE and normalize_title(row["title"]) == title:
             return row
     return None
 
@@ -1512,9 +1579,10 @@ def main(argv: list[str]) -> int:
             code, out = file_idea(text)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
-        if cmd == "link" and len(rest) <= 1:
+        if cmd in ("link", "note") and len(rest) <= 1:
             text = Path(rest[0]).read_text() if rest else sys.stdin.read()
-            code, out = file_link(text, origin, check)
+            filer = file_link if cmd == "link" else file_note
+            code, out = filer(text, origin, check)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
         if cmd == "status" and len(rest) == 1:
@@ -1541,6 +1609,9 @@ def main(argv: list[str]) -> int:
         if cmd == "ingest" and len(rest) == 1:
             print(ingest(rest[0], sys.stdin.buffer.read(), origin, check))
             return 0
+        if cmd == "voice" and len(rest) == 1:
+            print(voice(rest[0], sys.stdin.buffer.read(), origin, check))
+            return 0
         if (
             cmd
             in (
@@ -1552,6 +1623,8 @@ def main(argv: list[str]) -> int:
                 "index",
                 "idea",
                 "link",
+                "note",
+                "voice",
                 "enqueue",
                 "ingest",
                 "door",
