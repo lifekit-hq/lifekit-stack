@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import configparser
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,13 @@ REPO = Path(__file__).resolve().parents[2]
 DIR = REPO / "scripts/fleet-publisher"
 SCRIPT = DIR / "fleet-publisher.sh"
 NOW = 1_800_000_000
+# The status page's live sources stay off unless a test stubs one: no gh, no
+# docker exec into a gateway, no host vault.
+NO_LIVE_SOURCES = {
+    "FLEET_GH": "",
+    "FLEET_INTAKE_CMD": "",
+    "FLEET_VAULT": "/nonexistent",
+}
 
 
 def decision(id_, key=None, **extra):
@@ -85,6 +94,7 @@ def fleet(tmp_path):
                 "LAVISH_STATE": str(tmp_path / "lavish.json"),
                 "FLEET_NOW": str(NOW),
                 "FLEET_STATE_DIR": str(tmp_path / "state"),
+                **NO_LIVE_SOURCES,
                 **env,
             },
             capture_output=True,
@@ -814,6 +824,7 @@ def homes(tmp_path):
                 "LAVISH_STATE": str(tmp_path / "lavish.json"),
                 "FLEET_NOW": str(NOW),
                 "FLEET_STATE_DIR": str(tmp_path / "state"),
+                **NO_LIVE_SOURCES,
                 **env,
             },
             capture_output=True,
@@ -1334,6 +1345,9 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     script = root / "usr/local/bin/lifekit-fleet-publisher.sh"
     assert os.access(script, os.X_OK)
     assert script.read_text() == SCRIPT.read_text()
+    helper = root / "usr/local/bin/lifekit-fleet-status.py"
+    assert os.access(helper, os.X_OK)
+    assert helper.read_text() == (DIR / "fleet_status.py").read_text()
     assert service["Service"]["ExecStart"].startswith(
         "/usr/local/bin/lifekit-fleet-publisher.sh "
     )
@@ -1836,3 +1850,577 @@ def test_quota_snapshot_comes_from_the_gauge_textfile(fleet):
     assert snap["runway_status"] == "projected_exhaustion"
     assert snap["limiting_window"] == "seven_day"
     assert isinstance(snap["generated_epoch"], int)
+
+
+# --- status page sections -----------------------------------------------------
+
+_SPEC = importlib.util.spec_from_file_location("fleet_status", DIR / "fleet_status.py")
+fleet_status = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(fleet_status)
+
+LIST_COLUMNS = (
+    "id,state,kind,repo,title,held,hold_kind,hold_until,hold_reason,priority,"
+    "closed,links,blocked"
+)
+
+
+def task(id_, state="queued", repo="alpha", title=None, **extra):
+    base = {
+        "id": id_,
+        "state": state,
+        "kind": "ship",
+        "repo": repo,
+        "title": title or f"Task {id_}",
+        "held": "no",
+        "hold_kind": None,
+        "hold_until": None,
+        "hold_reason": None,
+        "priority": None,
+        "closed": None,
+        "links": None,
+        "blocked": "no",
+    }
+    return {**base, **extra}
+
+
+def toon_cell(value):
+    if value is None:
+        return '"-"'
+    text = str(value)
+    return json.dumps(text) if any(c in text for c in ',"\n ') else text
+
+
+def toon_list(tasks):
+    cols = LIST_COLUMNS.split(",")
+    rows = "".join(
+        "  " + ",".join(toon_cell(t.get(c)) for c in cols) + "\n" for t in tasks
+    )
+    return f"count: {len(tasks)}\ntasks[{len(tasks)}]{{{LIST_COLUMNS}}}:\n{rows}"
+
+
+def status_home(root, name, tasks, shows=None, capacity=None, ledger=()):
+    """A fleet home with a backlog wrapper and a capacity script. `list` prints
+    the tasks; `show <id> --full` prints shows[id]; every call is logged."""
+    home = make_home(root, name, summary(), ledger=ledger)
+    (home / "bin").mkdir(exist_ok=True)
+    (home / "list.txt").write_text(toon_list(tasks))
+    for id_, fields in (shows or {}).items():
+        body = "".join(f"  {k}: {json.dumps(v)}\n" for k, v in fields.items())
+        (home / f"show-{id_}.txt").write_text(f"task:\n  id: {id_}\n{body}")
+    stub(
+        home / "bin/fm-tasks-axi.sh",
+        'echo "$*" >> "$FM_HOME/calls.log"\n'
+        'case "$1" in list) cat "$FM_HOME/list.txt";; '
+        'show) cat "$FM_HOME/show-$2.txt";; *) exit 2;; esac\n',
+    )
+    cap = {
+        "schema": "fm-lane-capacity.v1",
+        "generated_epoch": NOW - 5,
+        "machine": "box",
+        "lanes": {"count": 1, "ids": ["x"]},
+        "cap": {"target": None, "status": "none"},
+        "quota": None,
+        **(capacity or {}),
+    }
+    (home / "capacity.json").write_text(json.dumps(cap))
+    stub(home / "bin/fm-capacity.sh", 'cat "$FM_HOME/capacity.json"\n')
+    return home
+
+
+def clone(home, repo, origin):
+    path = home / "projects" / repo
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "remote", "add", "origin", origin], check=True
+    )
+
+
+def vault(root, *plans):
+    path = root / "vault"
+    path.mkdir()
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(path),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/o/vault.git",
+        ],
+        check=True,
+    )
+    for project in plans:
+        (path / "projects" / project).mkdir(parents=True)
+        (path / "projects" / project / "plan.md").write_text("# plan\n")
+    return path
+
+
+def fake_gh(root, counts):
+    """gh that answers `pr list -R <slug>` with counts[slug] PRs, logging each call."""
+    (root / "gh-counts.json").write_text(json.dumps(counts))
+    return stub(
+        root / "gh",
+        f'echo "$*" >> {root}/gh.log\n'
+        f'python3 -c \'import json,sys; n=json.load(open("{root}/gh-counts.json"))'
+        '[sys.argv[1]]; print(json.dumps([{"number": i} for i in range(n)]))\' "$4"\n',
+    )
+
+
+def status(homes):
+    return homes.published()["status_page"]
+
+
+def test_records_come_whole_from_each_home_backlog_with_their_own_repo(homes):
+    long = "A title long enough that the list cuts it " + "x" * 80
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [
+            task("q1", priority=2),
+            task(
+                "cut",
+                title=long[:60]
+                + "\n... (truncated, 130 chars total - use show cut --full)",
+            ),
+            task(
+                "h1",
+                held="yes",
+                hold_kind="captain",
+                hold_until="2026-11-02",
+                hold_reason="Pick a or b",
+            ),
+            task("p1", held="yes", hold_kind="parked", hold_reason="after the bump"),
+            task("f1", state="in_flight", repo="beta"),
+            task(
+                "d1",
+                state="done",
+                closed="2027-01-14",
+                links="pr:https://github.com/o/alpha/pull/7",
+            ),
+            task("old", state="done", closed="2027-01-07"),
+            task("orphan", repo=None),
+        ],
+        shows={"cut": {"title": long}},
+    )
+    main = status_home(homes.tmp, "firstmate", [task("m1", repo="beta")])
+    result = homes.run(vps, main)
+    assert result.returncode == 0, result.stderr
+    page = status(homes)
+    assert page["schema"] == "fleet-status-page.v1"
+    assert page["errors"] == []
+    got = {(r["home_id"], r["id"]): r for r in page["records"]}
+    assert set(got) == {
+        ("fm-vps", i) for i in ("q1", "cut", "h1", "p1", "f1", "d1", "orphan")
+    } | {("firstmate", "m1")}
+    assert got["fm-vps", "cut"]["title"] == long
+    assert got["fm-vps", "q1"]["priority"] == 2
+    assert got["fm-vps", "h1"]["state"] == "held"
+    assert got["fm-vps", "h1"]["hold"] == {
+        "kind": "captain",
+        "owner": "captain",
+        "until": "2026-11-02",
+        "reason": "Pick a or b",
+    }
+    assert got["fm-vps", "p1"]["hold"]["owner"] == "firstmate"
+    assert got["fm-vps", "f1"]["state"] == "in_flight"
+    assert got["fm-vps", "d1"]["pr_url"] == "https://github.com/o/alpha/pull/7"
+    assert got["fm-vps", "orphan"]["repo"] is None
+    assert ("fm-vps", "old") not in got
+    # The backlog is read through the home's own wrapper, from the home.
+    assert "list --limit 1000 --fields" in (vps / "calls.log").read_text()
+
+
+def test_a_full_backlog_list_is_reported_as_possibly_incomplete(homes):
+    vps = status_home(
+        homes.tmp, "fm-vps", [task(f"t{i}") for i in range(fleet_status.LIST_LIMIT)]
+    )
+    assert homes.run(vps).returncode == 0
+    page = status(homes)
+    assert len(page["records"]) == fleet_status.LIST_LIMIT
+    assert any("row limit" in e for e in page["errors"])
+
+
+def test_a_stalled_gh_cannot_starve_the_other_sources(homes, monkeypatch):
+    monkeypatch.setattr(fleet_status, "PR_BUDGET", 5)
+    gh = stub(homes.tmp / "gh", "sleep 0.1\necho '[]'\n")
+    errors: list[str] = []
+    cache: dict = {}
+    monkeypatch.setenv("FLEET_GH", gh)
+    fleet_status.open_prs({"o/a", "o/b", "o/c"}, cache, NOW, errors)
+    assert errors == []
+    assert set(cache) == {"o/a", "o/b", "o/c"}
+    monkeypatch.setattr(fleet_status, "PR_BUDGET", 2)
+    stall = stub(homes.tmp / "gh2", "sleep 30\n")
+    monkeypatch.setenv("FLEET_GH", stall)
+    errors, cache = [], {"o/c": {"count": 4, "as_of": NOW - 3600}}
+    started = time.monotonic()
+    fleet_status.open_prs({"o/a", "o/b", "o/c"}, cache, NOW, errors)
+    assert time.monotonic() - started < 3
+    assert cache == {"o/c": {"count": 4, "as_of": NOW - 3600}}
+    assert errors == [
+        "open PRs of o/a unreadable (TimeoutExpired)",
+        "open PRs not refreshed: the time budget ran out",
+    ]
+
+
+def test_a_cut_row_is_shown_once_and_then_served_from_the_cache(homes):
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [
+            task(
+                "cut",
+                title="Short\n... (truncated, 90 chars total - use show cut --full)",
+            )
+        ],
+        shows={"cut": {"title": "Short and then the rest"}},
+    )
+    for _ in range(2):
+        assert homes.run(vps).returncode == 0
+    assert (vps / "calls.log").read_text().count("show cut --full") == 1
+    assert status(homes)["records"][0]["title"] == "Short and then the rest"
+
+
+def test_cut_rows_past_the_show_budget_keep_the_list_cells(homes):
+    cut = "Short\n... (truncated, 90 chars total - use show cut --full)"
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [task("cut", title=cut)],
+        shows={"cut": {"title": "Short and then the rest"}},
+    )
+    cache: dict = {}
+    errors: list[str] = []
+    got, unresolved = fleet_status.read_records(
+        "fm-vps", str(vps), "", cache, NOW, errors, time.monotonic() - 1
+    )
+    assert (got[0]["title"], unresolved, cache) == (cut, 1, {})
+    assert not (vps / "calls.log").read_text().count("show")
+    got, unresolved = fleet_status.read_records(
+        "fm-vps", str(vps), "", cache, NOW, errors, time.monotonic() + 30
+    )
+    assert (got[0]["title"], unresolved) == ("Short and then the rest", 0)
+    assert errors == []
+    stub(
+        vps / "bin/fm-tasks-axi.sh",
+        'case "$1" in list) cat "$FM_HOME/list.txt";; show) sleep 30;; esac\n',
+    )
+    cache = {}
+    started = time.monotonic()
+    got, unresolved = fleet_status.read_records(
+        "fm-vps", str(vps), "", cache, NOW, errors, time.monotonic() + 2
+    )
+    assert time.monotonic() - started < 3
+    assert (got[0]["title"], unresolved, cache) == (cut, 1, {})
+
+
+def test_a_failing_show_keeps_the_home_and_the_list_cells(homes):
+    gone = "Gone\n... (truncated, 90 chars total - use show gone --full)"
+    bare = "Bare\n... (truncated, 90 chars total - use show bare --full)"
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [task("q1"), task("gone", title=gone), task("bare", title=bare)],
+        shows={"bare": {"kind": "ship"}},
+    )
+    assert homes.run(vps).returncode == 0
+    page = status(homes)
+    titles = {r["id"]: r["title"] for r in page["records"]}
+    assert titles == {"q1": "Task q1", "gone": gone, "bare": bare}
+    assert [e for e in page["errors"] if "not shown in full" in e] == [
+        "1 cut record(s) not shown in full: show failed or ran out of time"
+    ]
+    assert homes.run(vps).returncode == 0
+    assert (vps / "calls.log").read_text().count("show gone --full") == 2
+
+
+def test_projects_roll_up_by_repo_with_no_project_last(homes):
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [
+            task("a1"),
+            task("a2", held="yes", hold_kind="external"),
+            task("a3", state="in_flight"),
+            task("a4", state="done", closed="2027-01-09"),
+            task(
+                "a5",
+                state="done",
+                closed="2027-01-14",
+                links="pr:https://github.com/o/alpha/pull/9",
+            ),
+            task("b1", repo="o/beta"),
+            task("n1", repo=None),
+        ],
+    )
+    clone(vps, "alpha", "git@github.com:o/alpha.git")
+    plans = vault(homes.tmp, "alpha")
+    gh = fake_gh(homes.tmp, {"o/alpha": 3, "o/beta": 0})
+    result = homes.run(vps, FLEET_GH=gh, FLEET_VAULT=str(plans))
+    assert result.returncode == 0, result.stderr
+    rows = {p["name"]: p for p in status(homes)["projects"]}
+    assert [p["name"] for p in status(homes)["projects"]] == [
+        "alpha",
+        "o/beta",
+        "no project",
+    ]
+    assert rows["alpha"] | {"last_landed": None} == {
+        "repo": "alpha",
+        "name": "alpha",
+        "github": "o/alpha",
+        "in_flight": 1,
+        "queued": 1,
+        "held": 1,
+        "last_landed": None,
+        "open_prs": 3,
+        "open_prs_as_of": NOW,
+        "plan_url": "https://github.com/o/vault/blob/HEAD/projects/alpha/plan.md",
+    }
+    assert rows["alpha"]["last_landed"] == {
+        "id": "a5",
+        "home_id": "fm-vps",
+        "title": "Task a5",
+        "closed": "2027-01-14",
+        "pr_url": "https://github.com/o/alpha/pull/9",
+    }
+    assert (rows["o/beta"]["open_prs"], rows["o/beta"]["plan_url"]) == (0, None)
+    assert rows["no project"] | {"queued": 0} == {
+        "repo": None,
+        "name": "no project",
+        "github": None,
+        "in_flight": 0,
+        "queued": 0,
+        "held": 0,
+        "last_landed": None,
+        "open_prs": None,
+        "open_prs_as_of": None,
+        "plan_url": None,
+    }
+    assert rows["no project"]["queued"] == 1
+
+
+def test_open_prs_are_cached_and_a_failed_refresh_keeps_the_last_count(homes):
+    vps = status_home(homes.tmp, "fm-vps", [task("b1", repo="o/beta")])
+    gh = fake_gh(homes.tmp, {"o/beta": 2})
+    assert homes.run(vps, FLEET_GH=gh).returncode == 0
+    assert homes.run(vps, FLEET_GH=gh, FLEET_NOW=str(NOW + 60)).returncode == 0
+    assert (homes.tmp / "gh.log").read_text().count("pr list") == 1
+    # Past the TTL gh is asked again; when it fails the last count stays.
+    broken = stub(homes.tmp / "gh-broken", "exit 1\n")
+    result = homes.run(vps, FLEET_GH=broken, FLEET_NOW=str(NOW + 700))
+    assert result.returncode == 0, result.stderr
+    (row,) = status(homes)["projects"]
+    assert (row["open_prs"], row["open_prs_as_of"]) == (2, NOW)
+    assert status(homes)["errors"] == [
+        "open PRs of o/beta unreadable (CalledProcessError)"
+    ]
+
+
+def test_plan_map_names_the_vault_project_when_it_differs(homes):
+    vps = status_home(homes.tmp, "fm-vps", [task("a1", repo="alpha-repo")])
+    plans = vault(homes.tmp, "alpha")
+    result = homes.run(vps, FLEET_VAULT=str(plans), FLEET_PLAN_MAP="alpha-repo=alpha")
+    assert result.returncode == 0, result.stderr
+    (row,) = status(homes)["projects"]
+    assert row["plan_url"].endswith("/projects/alpha/plan.md")
+
+
+def test_capacity_is_published_per_home_with_an_idle_reason(homes):
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [task("q1")],
+        capacity={"lanes": {"count": 2}, "cap": {"target": 2, "status": "ok"}},
+    )
+    main = status_home(
+        homes.tmp, "firstmate", [task("h1", held="yes", hold_kind="captain")]
+    )
+    pc_cache_in(vps)
+    result = homes.run(vps, main)
+    assert result.returncode == 0, result.stderr
+    caps = {c["home_id"]: c for c in status(homes)["capacity"]}
+    assert caps["fm-vps"] == {
+        "home_id": "fm-vps",
+        "machine": "box",
+        "running": 2,
+        "allowed": 2,
+        "cap_status": "ok",
+        "quota": None,
+        "generated_epoch": NOW - 5,
+        "idle_reason": "cap-reached",
+    }
+    assert (caps["firstmate"]["allowed"], caps["firstmate"]["idle_reason"]) == (
+        None,
+        "all-held",
+    )
+    assert caps["pc"]["running"] is None
+    assert caps["pc"]["idle_reason"] is None
+    result = homes.run(vps, main, FLEET_NOW=str(NOW + 5000))
+    caps = {c["home_id"]: c for c in status(homes)["capacity"]}
+    assert caps["pc"]["idle_reason"] == "host-offline"
+
+
+@pytest.mark.parametrize(
+    ("running", "allowed", "quota", "queued", "held", "reason"),
+    [
+        (2, 2, None, 5, 0, "cap-reached"),
+        (0, 2, "exhausted_now", 5, 0, "quota"),
+        (0, 2, None, 0, 3, "all-held"),
+        (0, None, None, 0, 0, "queue-empty"),
+        (1, 2, None, 4, 0, None),
+        (1, None, "projected_exhaustion", 4, 0, None),
+    ],
+)
+def test_idle_reason_is_one_of_the_fixed_list(
+    running, allowed, quota, queued, held, reason
+):
+    cap = {"running": running, "allowed": allowed, "quota": quota}
+    assert fleet_status.idle_reason(cap, queued, held) == reason
+
+
+def test_queue_has_its_count_top_ten_and_seven_day_throughput(homes):
+    tasks = [task(f"q{i:02}", priority=(None if i % 3 else 1)) for i in range(14)]
+    tasks.append(task("held", held="yes", hold_kind="captain"))
+    daily = [
+        daily_row(date, merged_prs=n, runs=n + 1)
+        for date, n in [
+            ("2027-01-07", 99),  # eight days back: outside the window
+            ("2027-01-08", 2),
+            ("2027-01-14", 3),
+            ("2027-01-15", 50),  # today: not a whole day yet
+        ]
+    ]
+    vps = status_home(homes.tmp, "fm-vps", tasks)
+    (vps / "data/fleet-metrics").mkdir()
+    (vps / "data/fleet-metrics/daily.jsonl").write_text(
+        "".join(json.dumps(r | {"home": "fm-vps"}) + "\n" for r in daily)
+    )
+    result = homes.run(vps)
+    assert result.returncode == 0, result.stderr
+    q = status(homes)["queue"]
+    assert (q["count"], q["held"]) == (14, 1)
+    # Priority first, the backlog's order within it, unprioritised last.
+    assert [t["id"] for t in q["top"]] == [
+        "q00",
+        "q03",
+        "q06",
+        "q09",
+        "q12",
+        "q01",
+        "q02",
+        "q04",
+        "q05",
+        "q07",
+    ]
+    assert q["throughput"] == {
+        "days": 7,
+        "from": "2027-01-08",
+        "to": "2027-01-14",
+        "days_with_data": 2,
+        "merged_prs": 5,
+        "runs": 7,
+    }
+
+
+def test_intake_is_the_job_queue_depth(homes):
+    vps = status_home(homes.tmp, "fm-vps", [])
+    depth = stub(
+        homes.tmp / "depth",
+        'echo \'{"schema":"jobq-depth.v1","waiting":3,"running":1,"done_24h":4,"failed_24h":0}\'\n',
+    )
+    assert homes.run(vps, FLEET_INTAKE_CMD=depth).returncode == 0
+    assert status(homes)["intake"] == {
+        "waiting": 3,
+        "running": 1,
+        "done_24h": 4,
+        "failed_24h": 0,
+    }
+    junk = stub(homes.tmp / "junk", "echo '{\"waiting\": -1}'\n")
+    assert homes.run(vps, FLEET_INTAKE_CMD=junk).returncode == 0
+    assert status(homes)["intake"] is None
+    assert status(homes)["errors"] == ["intake depth unreadable (ValueError)"]
+
+
+def test_how_it_works_lists_each_workflow_and_its_missing_owner_pages(homes):
+    vps = status_home(homes.tmp, "fm-vps", [])
+    assert homes.run(vps).returncode == 0
+    page = status(homes)
+    assert [w["id"] for w in page["how_it_works"]] == [
+        "intake",
+        "queue-to-merge",
+        "monday-loop",
+    ]
+    assert all(w["url"] is None for w in page["how_it_works"])
+    assert len(page["follow_ups"]) == 3
+
+
+def test_a_record_that_looks_like_a_credential_is_withheld(homes):
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [task("ok"), task("leak", hold_reason="token ghp_" + "a" * 30, held="yes")],
+    )
+    result = homes.run(vps)
+    assert result.returncode == 0, result.stderr
+    page = status(homes)
+    assert [r["id"] for r in page["records"]] == ["ok"]
+    assert page["errors"] == [
+        "1 record(s) withheld: they look like they hold a credential"
+    ]
+
+
+def test_an_unreadable_backlog_is_an_error_line_not_a_failure(homes):
+    vps = status_home(homes.tmp, "fm-vps", [task("a1")])
+    stub(vps / "bin/fm-tasks-axi.sh", "echo boom >&2; exit 1\n")
+    result = homes.run(vps)
+    assert result.returncode == 0, result.stderr
+    page = status(homes)
+    assert page["records"] == []
+    assert page["errors"][0].startswith(
+        "fm-vps: backlog unreadable (CalledProcessError"
+    )
+    # Capacity still reads; with no records it names no idle reason.
+    assert page["capacity"][0]["idle_reason"] is None
+
+
+def test_a_failing_helper_publishes_the_summary_with_a_null_status_page(homes):
+    vps = status_home(homes.tmp, "fm-vps", [])
+    broken = homes.tmp / "broken.py"
+    broken.write_text("raise SystemExit(1)\n")
+    result = homes.run(vps, FLEET_STATUS=str(broken))
+    assert result.returncode == 0, result.stderr
+    assert "fleet_status.py failed" in result.stderr
+    assert homes.published()["status_page"] is None
+    assert homes.published()["homes"][0]["published"] is True
+
+
+def test_an_installed_publisher_finds_the_helper_beside_itself(homes, tmp_path):
+    bindir = tmp_path / "usr-local-bin"
+    bindir.mkdir()
+    shutil.copy(SCRIPT, bindir / "lifekit-fleet-publisher.sh")
+    shutil.copy(DIR / "fleet_status.py", bindir / "lifekit-fleet-status.py")
+    vps = status_home(homes.tmp, "fm-vps", [task("a1")])
+    result = subprocess.run(
+        [
+            "bash",
+            str(bindir / "lifekit-fleet-publisher.sh"),
+            str(homes.out),
+            str(homes.prom),
+        ],
+        env={
+            **os.environ,
+            "FM_HOMES": str(vps),
+            "FLEET_NOW": str(NOW),
+            "FLEET_STATE_DIR": str(tmp_path / "state"),
+            "LAVISH_STATE": str(tmp_path / "lavish.json"),
+            **NO_LIVE_SOURCES,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert [r["id"] for r in status(homes)["records"]] == ["a1"]

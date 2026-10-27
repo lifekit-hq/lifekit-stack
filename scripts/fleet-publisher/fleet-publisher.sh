@@ -48,6 +48,11 @@
 # secondmate summary as state and last-seen only. OUT_DIR/metrics also gets
 # quota.jsonl and quota-snapshot.json: percentages and reset times only, never
 # an account identifier (contract in README.md).
+# status_page holds the living status page's sections, from fleet_status.py
+# beside this script (FLEET_STATUS overrides; installed as
+# lifekit-fleet-status.py): each on-host home's backlog records whole, a
+# per-repo rollup, capacity, queue, intake depth and how-it-works links. It is
+# null when the helper fails; the rest of the summary publishes regardless.
 # The dashboard never reads Lavish or fleet-home state. Writes TEXTFILE_DIR/fleet.prom:
 #   fleet_workers{state}                          active children by state, all homes
 #   fleet_decisions_open                          open captain decisions, all homes
@@ -532,9 +537,48 @@ publish_remote_home() {
 }
 publish_remote_home
 
+# The living status page's sections (README "Status page sections"): records,
+# projects, capacity, queue, intake and how-it-works, built by fleet_status.py
+# beside this script (FLEET_STATUS overrides it) from each on-host home's
+# backlog and capacity, gh, the job queue and the daily metrics. The PC is
+# never read here: it shows only through its summary. A helper that fails or
+# overruns, or output that looks like a credential, publishes status_page as
+# null; it never stops the summary.
+publish_status_page() {
+  local here helper="${FLEET_STATUS:-}" args=() i
+  here="$(dirname "$(realpath "$0")")"
+  echo '[]' > "$work/status.json"
+  if [[ -z "$helper" ]]; then
+    for helper in "$here/fleet_status.py" "$here/lifekit-fleet-status.py" ""; do
+      [[ -z "$helper" || -r "$helper" ]] && break
+    done
+  fi
+  [[ -n "$helper" ]] || {
+    echo "fleet-publisher: no fleet_status.py; status_page not published" >&2
+    return 0
+  }
+  for i in "${!homes[@]}"; do
+    [[ -n "${homes[$i]}" ]] && args+=(--home "${ids[$i]}=${homes[$i]}")
+  done
+  CREDENTIAL_RE="$CREDENTIAL_RE" TASKS_AXI="$TASKS_AXI" timeout 50 python3 "$helper" "${args[@]}" \
+    --now "$NOW" --state-dir "${FLEET_STATE_DIR:-${STATE_DIRECTORY:-$HOME/.local/state/lifekit-fleet-publisher}}" \
+    --daily "$OUT_DIR/metrics/daily.jsonl" --daily "$work/daily-source.jsonl" > "$work/status.out" || {
+    echo "fleet-publisher: fleet_status.py failed; status_page not published" >&2
+    return 0
+  }
+  if grep -Eq "$CREDENTIAL_RE" "$work/status.out"; then
+    echo "fleet-publisher: status_page looks like it holds a credential; not publishing it" >&2
+  elif ! jq -c 'objects | [.]' "$work/status.out" > "$work/status.json" 2> /dev/null; then
+    echo "fleet-publisher: fleet_status.py printed no JSON object; status_page not published" >&2
+    echo '[]' > "$work/status.json"
+  fi
+}
+publish_status_page
+
 # One home: its summary as-is. More: the lists concatenated, and the fields
 # that describe the whole fleet aggregated over every home.
-jq -s --slurpfile homes "$work/homes.jsonl" --slurpfile remote "$work/remote.json" --argjson now "$NOW" '
+jq -s --slurpfile homes "$work/homes.jsonl" --slurpfile remote "$work/remote.json" \
+  --slurpfile status "$work/status.json" --argjson now "$NOW" '
   . as $parts
   | if ($homes | length) == 1 then $parts[0]
     else ([$parts[] | to_entries[] | select(.value | type == "array") | .key] | unique) as $lists
@@ -549,7 +593,14 @@ jq -s --slurpfile homes "$work/homes.jsonl" --slurpfile remote "$work/remote.jso
             ({}; .[$e.key] += $e.value)
         else . end
     end
-  | .homes = ($homes + $remote[0]) | .published_epoch = $now' "$work/published.jsonl" > "$summary_tmp"
+  | .homes = ($homes + $remote[0]) | .published_epoch = $now
+  # The PC has no capacity document here: its row says only whether it is on.
+  | .status_page = ($status[0][0] // null
+      | if . == null then null
+        else .capacity += [$remote[0][] | {home_id: .id, machine: null, running: null, allowed: null,
+                                           cap_status: null, quota: null, generated_epoch: .last_seen_epoch,
+                                           idle_reason: (if .state == "off" then "host-offline" else null end)}]
+        end)' "$work/published.jsonl" > "$summary_tmp"
 grep -Eq "$CREDENTIAL_RE" "$summary_tmp" && {
   echo "fleet-publisher: the published summary looks like it holds a credential; not publishing" >&2
   exit 3
