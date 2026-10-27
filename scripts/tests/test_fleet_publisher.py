@@ -2228,6 +2228,18 @@ def test_plan_map_names_the_vault_project_when_it_differs(homes):
     assert row["plan_url"].endswith("/projects/alpha/plan.md")
 
 
+def test_the_vault_repo_links_the_memory_plan(homes):
+    records = [task(f"v{i}", repo=r) for i, r in enumerate(("vault", "memory"))]
+    vps = status_home(homes.tmp, "fm-vps", records)
+    plans = vault(homes.tmp, "memory")
+    assert homes.run(vps, FLEET_VAULT=str(plans)).returncode == 0
+    rows = status(homes)["projects"]
+    assert {r["repo"]: r["plan_url"] for r in rows} == {
+        r: "https://github.com/o/vault/blob/HEAD/projects/memory/plan.md"
+        for r in ("vault", "memory")
+    }
+
+
 def test_capacity_is_published_per_home_with_an_idle_reason(homes):
     vps = status_home(
         homes.tmp,
@@ -2461,17 +2473,21 @@ def test_intake_is_the_job_queue_depth(homes):
     assert status(homes)["errors"] == ["intake depth unreadable (ValueError)"]
 
 
-def test_how_it_works_lists_each_workflow_and_its_missing_owner_pages(homes):
+def test_how_it_works_links_each_owner_page_the_vault_has(homes):
     vps = status_home(homes.tmp, "fm-vps", [])
-    assert homes.run(vps).returncode == 0
+    plans = vault(homes.tmp)
+    (plans / "system" / "workflows").mkdir(parents=True)
+    for wid in ("intake", "monday-loop"):
+        (plans / "system" / "workflows" / f"{wid}.md").write_text("# owner\n")
+    assert homes.run(vps, FLEET_VAULT=str(plans)).returncode == 0
     page = status(homes)
-    assert [w["id"] for w in page["how_it_works"]] == [
-        "intake",
-        "queue-to-merge",
-        "monday-loop",
+    blob = "https://github.com/o/vault/blob/HEAD/system/workflows"
+    assert [(w["id"], w["url"]) for w in page["how_it_works"]] == [
+        ("intake", f"{blob}/intake.md"),
+        ("queue-to-merge", None),
+        ("monday-loop", f"{blob}/monday-loop.md"),
     ]
-    assert all(w["url"] is None for w in page["how_it_works"])
-    assert len(page["follow_ups"]) == 3
+    assert page["follow_ups"] == ["owner page for a task from queue to merge"]
 
 
 def test_a_record_that_looks_like_a_credential_is_withheld(homes):

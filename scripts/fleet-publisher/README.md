@@ -125,7 +125,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `capacity[]` | Per on-host home: `home_id`, `machine`, `running` (lanes), `allowed` (the declared cap, `null` when none is), `cap_status` (`ok`, `none` for no cap declared, which the page shows as "no cap declared", or `invalid`), `quota` (runway status or `null`), `generated_epoch`, `idle_reason`; then one PC row (below) |
 | `queue` | `count` (open queued records, all homes), `held`, `top` (10: `id`, `home_id`, `title`, `repo`, `priority`, `blocked`), `throughput` (`{days: 7, from, to, days_with_data, merged_prs, runs}` over the 7 whole UTC days before today, from the daily metrics), from which the dashboard computes an ETA |
 | `intake` | The shared job queue's depth: `{waiting, running, done_24h, failed_24h}`, or `null` |
-| `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page, `url: null` until that page exists |
+| `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `follow_ups[]` | The owner pages still to be written |
 | `errors[]` | One line per source that could not be read this run |
 
@@ -149,7 +149,8 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
   `errors[]` line.
 - **Plan link**: the vault (`FLEET_VAULT`, default `/srv/memory`) page
   `projects/<p>/plan.md`, where `<p>` is the repo's name (after any owner/) or
-  its entry in `FLEET_PLAN_MAP` (`"<repo>=<project> ..."`, host config), linked
+  its entry in `FLEET_PLAN_MAP` (`"<repo>=<project> ..."`, host config; built
+  in: `vault=memory`), linked
   on GitHub from the vault's own `origin`; `null` when there is no such page.
 - **Idle reason**, the first that holds: `cap-reached` (running at or over a
   declared cap; a home with no cap declared never reads as this), `quota`
