@@ -32,8 +32,9 @@ Mapping, each pinned by scripts/tests/test_monday_page.py:
   board shows `detail` only on merge cards, so the short lines ride `about` and
   `decide` too). A missing or unreadable audit or pace says so there.
 - active_children -> `underway`, queued -> `charted` (minus the open decisions,
-  already shown above), landed -> `landed`. A second call with a key already on
-  the page is refused as a duplicate.
+  already shown above), landed -> `landed`. A call repeated under one key with
+  the same reason (a task held in two homes) is shown once; repeats whose reasons
+  differ are refused as one row, "conflicting reasons for one key".
 - A `[[`/`]]` in outside text is backslash-escaped, as vault-door does, so it
   never reads as a wikilink.
 
@@ -454,7 +455,7 @@ def build(
     today = dt.datetime.fromtimestamp(now, dt.timezone.utc).date()
     monday = (today - dt.timedelta(days=today.weekday())).isoformat()
 
-    calls, refused, keys, refused_ids = [], [], set(), set()
+    calls, refused, refused_ids = [], [], set()
     decisions = [
         (call, False) for home_calls in backlog.values() for call in home_calls
     ] + [
@@ -462,12 +463,17 @@ def build(
         for call in dicts(summary, "decisions_open")
         if call.get("home_id") not in backlog
     ]
-    for call, published in decisions:
-        card, why = judge_call(call, published)
-        if card and card["key"] in keys:
-            card, why = None, ["duplicate key"]
+    by_key: dict[str, list[tuple[dict[str, Any], bool]]] = {}
+    for n, (call, published) in enumerate(decisions):
+        ident = str(call.get("key") or call.get("id") or "") or f"\0{n}"
+        by_key.setdefault(ident, []).append((call, published))
+    for copies in by_key.values():
+        call, published = copies[0]
+        if len({str(c.get("reason") or "").strip() for c, _ in copies}) > 1:
+            card, why = None, ["conflicting reasons for one key"]
+        else:
+            card, why = judge_call(call, published)
         if card:
-            keys.add(card["key"])
             calls.append(card)
         else:
             refused.append(refused_row(call, why, generated, refused_ids))

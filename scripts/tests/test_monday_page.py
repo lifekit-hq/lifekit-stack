@@ -504,7 +504,7 @@ def test_payload_satisfies_the_board_validator(tmp_path):
     assert check.returncode == 0, check.stderr
 
 
-def test_an_open_decision_is_not_charted_again_and_a_repeated_key_is_refused():
+def test_an_open_decision_is_not_charted_again_and_a_repeated_key_shows_once():
     s = summary(
         decisions_open=[
             decision("ship-it", GOOD),
@@ -524,32 +524,64 @@ def test_an_open_decision_is_not_charted_again_and_a_repeated_key_is_refused():
         "weekly-scope-2026-11-02",
         "ship-it",
     ]
-    assert [(r["id"], r["reason"]) for r in p["charted"]] == [
-        ("refused-ship-it", "refused: duplicate key")
+    assert p["charted"] == []
+
+
+def test_one_key_with_differing_reasons_is_one_refusal_and_no_card():
+    other = GOOD.replace("Stop here", "Hold off")
+    s = summary(
+        decisions_open=[
+            decision("ship-it", GOOD),
+            {**decision("ship-it", other), "home_id": "firstmate"},
+            decision("ship-it", GOOD),
+        ]
+    )
+    p = payload(s)
+    assert [c["key"] for c in p["captains_call"]] == ["weekly-scope-2026-11-02"]
+    assert [(r["id"], r["reason"]) for r in refused(p)] == [
+        ("refused-ship-it", "refused: conflicting reasons for one key")
     ]
 
 
-def test_refused_rows_get_distinct_ids_when_keys_repeat_or_collide():
+def test_a_repeated_refused_call_is_one_refusal_with_its_own_reasons():
     bad = "rec=go - asked"
     s = summary(
         decisions_open=[
             decision("k", bad),
             {**decision("k", bad), "home_id": "firstmate"},
-            decision("k", GOOD),
-            decision("k", GOOD),
-            decision("a b", bad),
-            decision("a/b", bad),
         ]
     )
-    p = payload(s)
-    ids = [r["id"] for r in p["charted"] if r["kind"] == "warning"]
-    assert ids == [
-        "refused-k",
-        "refused-k-2",
-        "refused-k-3",
-        "refused-a-b",
-        "refused-a-b-2",
+    assert [(r["id"], r["reason"]) for r in refused(payload(s))] == [
+        ("refused-k", "refused: no options")
     ]
+
+
+def test_refused_rows_get_distinct_ids_when_keys_collide_as_slugs():
+    bad = "rec=go - asked"
+    s = summary(
+        decisions_open=[
+            decision("a b", bad),
+            decision("a/b", bad),
+            decision("a?b", bad),
+        ]
+    )
+    ids = [r["id"] for r in refused(payload(s))]
+    assert ids == ["refused-a-b", "refused-a-b-2", "refused-a-b-3"]
+
+
+def test_a_call_held_in_two_homes_backlogs_shows_once():
+    held = decision("ship-it", GOOD, source="backlog")
+    p = payload(backlog={"firstmate": [held], "fm-vps": [dict(held)]})
+    assert [c["key"] for c in p["captains_call"]] == [
+        "weekly-scope-2026-11-02",
+        "ship-it",
+    ]
+    assert refused(p) == []
+
+    bad = decision("k", "rec=go - asked")
+    p = payload(backlog={"firstmate": [bad], "fm-vps": [dict(bad)]})
+    assert [r["id"] for r in refused(p)] == ["refused-k"]
+    assert [c["key"] for c in p["captains_call"]] == ["weekly-scope-2026-11-02"]
 
 
 # --- calls read whole from the backlog of a home on this host ---------------------
