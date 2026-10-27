@@ -102,9 +102,8 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
   (older than `PC_STALE_SECONDS`, default 1200, or missing, unreadable, not a
   home summary, or credential-bearing; then `last_seen_epoch` is the summary's
   time, or `null`). It carries no counts and contributes no list items (its
-  status page capacity row is below). It never
-  affects the fleet's `valid`, `reason`, `counts` or `generated_epoch`, never
-  fails the run, and is left out of the `fleet_home_summary_*` metrics: a PC
+  status page capacity row is below). It never affects the fleet's `valid`,
+  `reason`, `counts` or `generated_epoch`, never fails the run, and is left out of the `fleet_home_summary_*` metrics: a PC
   that is off is normal.
 
 ## Status page sections (`status_page`)
@@ -113,9 +112,9 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
 `/usr/local/bin/lifekit-fleet-status.py`; `FLEET_STATUS` overrides it) builds
 the sections the dashboard landing renders. It reads structured sources only,
 and only the on-host homes in `FM_HOMES`: the PC appears through its summary
-alone, which the publisher hands it as `--remote`. Each home is read with `FM_HOME` set to it, through its own
-`bin/fm-tasks-axi.sh` (with `TASKS_AXI`'s directory on `PATH`) and
-`bin/fm-capacity.sh --json`. Per-home freshness stays in `homes[]` (above).
+alone, which the publisher hands it as `--remote`. Each home is read with
+`FM_HOME` set to it, through its own `bin/fm-tasks-axi.sh` (with `TASKS_AXI`'s
+directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays in `homes[]` (above).
 
 | Field | Meaning |
 | --- | --- |
