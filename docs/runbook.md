@@ -1653,7 +1653,7 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
   once fetched, by normalized title (generic titles such as "Video by <account>" never match).
   A repeat answers with the earlier verdict, date and reason and is not judged again; one
   matched by title from another source gets a `drop`/`duplicate` row pointing at the earlier
-  report.
+  report. A note (kind `note`) is matched by its source alone, never by title.
 - **Private path and retention:** everything lives in `~/.life-state/intake/` in the gateway,
   i.e. `/var/lib/lifekit/intake/` on the host (mode 0700, files 0600):
   - `index.md` is the index: one markdown table row per item, columns `date`, `kind`,

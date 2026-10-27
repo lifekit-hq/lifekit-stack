@@ -1430,7 +1430,8 @@ def append_row(root: Path, row: dict) -> bool:
 
 def earlier(root: Path, url: str, title: str) -> dict | None:
     """The first index row for the same item: its normalized URL, else its
-    normalized title. Any producer's row counts: the index is shared."""
+    normalized title. Any producer's row counts: the index is shared. A note
+    is matched by its source only: its title is the judge's own wording."""
     url = normalize_url(url)
     title = normalize_title(_cell(title))
     for row in read_index(root):
