@@ -14,6 +14,7 @@ one index row.
     video.py show <job id>                    the job's report
     video.py index                            the index of every item judged
     video.py idea [file]                      file a judged idea's report (scout)
+    video.py link [file] --origin O [--check] file a judged link's or article's report
     video.py door <message text>              Kit's drop door: queue a bare link (kit)
     video.py door-file <saved video>          Kit's drop door: queue a video file (kit)
 
@@ -64,6 +65,13 @@ already judged against the same rubric by its producer. Its report carries the
 idea's claim and the link of its primary source, the source it is recorded and
 matched under; it is checked, stamped and indexed like a video's, with no job
 and no fetch, and its three lines are printed at once.
+
+`link` files a link or an article that is not a video the same way, from any
+origin: its producer has read it and judged it against the same rubric. Its
+report carries the item's own link, the source it is recorded and matched
+under (a YouTube or Instagram video is refused: queue it instead). It is
+judged in the standard mode, or claim-check with --check, and its three lines
+are printed at once whatever the origin, since there is no job to poll.
 
 Exit 1 is an unexpected failure (reason on stderr), 2 a usage error, 3 a
 report that does not follow the rubric.
@@ -148,6 +156,8 @@ IDEA = "idea"
 IDEA_FIELDS = ("claim", "source")
 IDEA_MODE = "claim-check"
 IDEA_ORIGIN = "scout"
+LINK = "link"
+LINK_FIELDS = ("source",)
 OWNER = "video-eval"
 PROBE = {"instagram": "www.instagram.com", "youtube": "www.youtube.com", "file": ""}
 KEY_PREFIX = {"instagram": "ig", "youtube": "yt", "file": "file"}
@@ -163,6 +173,7 @@ USAGE = (
     "       video.py run|status|show <job id> | part <job id> <n>\n"
     "       video.py report <job id> [file] | index\n"
     "       video.py idea [file] < report\n"
+    "       video.py link [file] --origin kit|firstmate|scout [--check] < report\n"
     "       video.py door <message text> | door-file <saved video>"
 )
 
@@ -1228,24 +1239,50 @@ def _row(
 
 
 def file_idea(text: str, now: float | None = None) -> tuple[int, str]:
-    """(exit code, output) for `idea`, always filed as the scout's: the three
-    lines, an earlier verdict for the same item, or the reasons the report does
-    not follow the rubric. The
-    idea is recorded under its primary source's link, and its report is kept in
-    reports/ideas/, out of reach of intake-to-vault, which files a video's
-    report with its transcript."""
-    origin = IDEA_ORIGIN
+    """(exit code, output) for `idea`, always filed as the scout's. The idea is
+    recorded under its primary source's link."""
+    return _file_direct(text, IDEA, IDEA_FIELDS, IDEA_ORIGIN, IDEA_MODE, now)
+
+
+def file_link(
+    text: str, origin: str, check: bool = False, now: float | None = None
+) -> tuple[int, str]:
+    """(exit code, output) for `link`: a link or an article, recorded under its
+    own link."""
+    if origin not in ORIGINS:
+        raise ValueError(f"unknown origin {origin!r}: one of {', '.join(ORIGINS)}")
+    mode = "claim-check" if check else "standard"
+    return _file_direct(text, LINK, LINK_FIELDS, origin, mode, now)
+
+
+def _file_direct(
+    text: str,
+    kind: str,
+    fields: tuple[str, ...],
+    origin: str,
+    mode: str,
+    now: float | None = None,
+) -> tuple[int, str]:
+    """(exit code, output) for an item its producer has judged already: the
+    three lines, an earlier verdict for the same item, or the reasons the
+    report does not follow the rubric. Its report is kept in reports/<kind>s/,
+    out of reach of intake-to-vault, which files a video's report with its
+    transcript."""
     now = time.time() if now is None else now
     rubric = load_rubric()
-    if IDEA not in rubric.list("kinds"):
-        raise ValueError(f"{rubric.path} has no {IDEA} kind")
+    if kind not in rubric.list("kinds"):
+        raise ValueError(f"{rubric.path} has no {kind} kind")
     today = datetime.date(*time.gmtime(now)[:3])
-    r, errors = parse_report(text, rubric, today, IDEA_FIELDS)
+    r, errors = parse_report(text, rubric, today, fields)
     url = ""
     if r is not None:
         u = urlparse(r.head["source"])
         if u.scheme not in ("http", "https") or not u.netloc:
-            r, errors = None, ["Source: must be the http(s) link of the primary source"]
+            what = "the primary source" if kind == IDEA else "the item"
+            r, errors = None, [f"Source: must be the http(s) link of {what}"]
+        elif kind == LINK and parse_link(r.head["source"]) is not None:
+            why = "Source: is a YouTube or Instagram video: queue it with enqueue"
+            r, errors = None, [why]
         else:
             url = normalize_url(r.head["source"])
             if _cell(url) != url:
@@ -1259,14 +1296,14 @@ def file_idea(text: str, now: float | None = None) -> tuple[int, str]:
     row = earlier(root, url, r.head["title"])
     if row is not None:
         if normalize_url(row["source"]) != url:
-            _append_repeat(root, row, url, origin, rubric, IDEA)
+            _append_repeat(root, row, url, origin, rubric, kind)
         return 0, "\n".join(repeat_reply(row))
     fit(r, rubric.list("max-lines"), rubric.list("max-chars"))
     key = hashlib.sha256(url.encode()).hexdigest()[:16]
-    path = root / "reports" / "ideas" / f"{IDEA}-{key}.{rubric.stamp}.md"
+    path = root / "reports" / f"{kind}s" / f"{kind}-{key}.{rubric.stamp}.md"
     path.parent.mkdir(mode=0o700, exist_ok=True)
-    _private_write(path, stamp(r, url, origin, IDEA_MODE, rubric, now, IDEA))
-    row = _row(r, IDEA, origin, url, rubric, root, path, now)
+    _private_write(path, stamp(r, url, origin, mode, rubric, now, kind))
+    row = _row(r, kind, origin, url, rubric, root, path, now)
     append_row(root, row)
     return 0, "\n".join(reply_lines(row, root))
 
@@ -1475,6 +1512,11 @@ def main(argv: list[str]) -> int:
             code, out = file_idea(text)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
+        if cmd == "link" and len(rest) <= 1:
+            text = Path(rest[0]).read_text() if rest else sys.stdin.read()
+            code, out = file_link(text, origin, check)
+            print(out, file=sys.stderr if code else sys.stdout)
+            return code
         if cmd == "status" and len(rest) == 1:
             print(status(rest[0]))
             return 0
@@ -1509,6 +1551,7 @@ def main(argv: list[str]) -> int:
                 "show",
                 "index",
                 "idea",
+                "link",
                 "enqueue",
                 "ingest",
                 "door",
