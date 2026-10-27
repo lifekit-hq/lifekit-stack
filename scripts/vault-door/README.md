@@ -23,7 +23,8 @@ Behaviour worth knowing:
 - **Limits.** 5 new notes per run, 16 KiB per note; an empty or oversize note is marked
   `[not forwarded: <reason>]`. Lines in `inbox.md` without `chatgpt:` are never touched.
 - **Snapshot hygiene.** A line that looks like a credential, or restates a subject another vault
-  page owns (`bin/subjects.txt`), is withheld; host paths become `<path>`. Without the fleet
+  page owns (`bin/subjects.txt`), is withheld; host paths become `<path>`; a `[[`/`]]` in copied
+  titles or summaries is backslash-escaped so it never reads as a wikilink. Without the fleet
   summary the page is left as it was and the unit fails.
 - **Page budget.** The page stays within 280 lines and 22 KiB (the vault lint refuses a page
   past its own cap): at most 10 queue groups, and when still over budget the per-section item
