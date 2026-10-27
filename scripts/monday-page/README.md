@@ -23,10 +23,12 @@ p=$(mktemp) && python3 /srv/lifekit-stack/scripts/monday-page/monday_page.py --a
 **Refusals.** A decision missing options, a recommendation or context is never a call. It
 becomes a Charted Next row of kind `warning` (shown "needs repair", never dispatchable), titled
 `Refused call: ...`, whose reason lists every missing piece: `no options`, `no recommendation`,
-`no context`, `options cut off in the summary` (the published reason was truncated inside its
-options), `recommendation is not one of the options`, `option id reconcile is reserved`,
-`duplicate key`. Its `filed` is the generation time, so refusals sort above all queued work.
-Each refusal is also named on stderr.
+`no context`, `no board key`, `options cut off in the summary` (the published reason was
+truncated inside its options), `options ambiguous` (an option label held ` - `, so the options
+cannot be told from the context), `an option id is not a slug`, `duplicate option ids`,
+`recommendation is not one of the options`, `option id reconcile is reserved`, `duplicate key`.
+Its `filed` is the generation time, so refusals sort above all queued work. Row ids are
+`refused-<key>`, suffixed `-2`, `-3` ... when a key repeats. Each refusal is also named on stderr.
 
 **Missing sources.** Without the summary nothing is printed and the exit is 1. A missing or
 unreadable audit or pace still prints the page; the weekly card says which source is
