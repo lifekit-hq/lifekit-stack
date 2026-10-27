@@ -122,7 +122,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `schema`, `generated_epoch` | `fleet-status-page.v1`, the publish time |
 | `records[]` | Every open record each home's backlog lists, and each done record closed within the last 7 days (`list --limit 1000`; a list that fills the limit adds an `errors[]` line): `id`, `home_id`, `title`, `state` (`queued`, `held`, `in_flight`, `done`), `repo` (the record's own, `null` when it has none), `kind`, `priority` (number or `null`), `blocked`, `closed` (date or `null`), `pr_url` (its first `pr:` link), `hold` |
 | `records[].hold` | `null` unless held: `{kind, owner, until, reason}`. `owner` is `captain` (a captain call), `external` (an outside wait), else `firstmate` (parked, or a kind it does not know); `until` and `reason` are the restart condition |
-| `projects[]` | One row per `repo` value, then `name: "no project"` (`repo: null`) for records without one: `github` (owner/name), `in_flight`, `queued`, `held`, `last_landed` (`{id, home_id, title, closed, pr_url}` of the latest done record closed in the last 7 days, else `null`), `open_prs` and `open_prs_as_of` (epoch), `plan_url`. Busiest first, "no project" last |
+| `projects[]` | One row per project (see "One row per project"), then `name: "no project"` (`repo: null`) for records without one: `github` (owner/name), `in_flight`, `queued`, `held`, `last_landed` (`{id, home_id, title, closed, pr_url}` of the latest done record closed in the last 7 days, else `null`), `open_prs` and `open_prs_as_of` (epoch), `plan_url`. Busiest first, "no project" last |
 | `capacity[]` | Per on-host home: `home_id`, `machine`, `running` (lanes), `allowed` (the declared cap, `null` when none is), `cap_status` (`ok`, `none` for no cap declared, which the page shows as "no cap declared", or `invalid`), `quota` (runway status or `null`), `generated_epoch`, `idle_reason`; then one PC row (below) |
 | `queue` | `count` (open queued records, all homes), `held`, `top` (10: `id`, `home_id`, `title`, `repo`, `priority`, `blocked`), `throughput` (`{days: 7, from, to, days_with_data, merged_prs, runs}` over the 7 whole UTC days before today, from the daily metrics), from which the dashboard computes an ETA |
 | `intake` | The shared job queue's depth: `{waiting, running, done_24h, failed_24h}`, or `null` |
@@ -141,8 +141,14 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
   never an error: the record shows under "no project".
 - **Repo to GitHub**: a `repo` already of the form owner/name is used as is;
   any other is the `origin` of the first home's `projects/<repo>` clone. No
-  clone means `github`, `open_prs` and so on are `null`. Two spellings of one
-  repo are two rows; the fix is at the record.
+  clone means `github`, `open_prs` and so on are `null`.
+- **One row per project**: spellings of one repo are one row. A project is the
+  repo's name (after any owner/) or its `FLEET_PLAN_MAP` entry, so `x`, `owner/x`
+  and an alias mapped to `x` (`"vault=x"`) count together, with their counts
+  summed; a spelling with no slug joins the project's only known slug, while
+  `a/x` and `b/x` stay two rows. The row's `repo`/`name` is its owner/name
+  spelling when a record used one, else the alphabetically first short name.
+  Vault aliases are host config (`FLEET_PLAN_MAP`), never names in code.
 - **Open PRs**: `FLEET_GH` (default `gh`; empty skips) `pr list -R <owner/name>
   --state open`, cached per repo for `FLEET_PR_TTL` seconds (default 600) in
   `status-open-prs.json`. Refreshes share a 15 s budget per run; a failed or

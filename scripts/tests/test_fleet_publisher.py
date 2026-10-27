@@ -2277,16 +2277,71 @@ def test_plan_map_names_the_vault_project_when_it_differs(homes):
     assert row["plan_url"].endswith("/projects/alpha/plan.md")
 
 
-def test_the_vault_repo_links_the_memory_plan(homes):
+def test_spellings_of_one_repo_are_one_row_with_summed_counts(homes):
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [
+            task("s1", repo="sentry"),
+            task("s2", repo="o/sentry", state="in_flight"),
+            task("s3", repo="sentry", held="yes", hold_kind="external"),
+            task("s4", repo="p/sentry"),
+        ],
+    )
+    clone(vps, "sentry", "git@github.com:o/sentry.git")
+    gh = fake_gh(homes.tmp, {"o/sentry": 4, "p/sentry": 1})
+    assert homes.run(vps, FLEET_GH=gh).returncode == 0
+    rows = {p["name"]: p for p in status(homes)["projects"]}
+    assert sorted(rows) == ["o/sentry", "p/sentry"]
+    row = rows["o/sentry"]
+    assert (row["repo"], row["github"], row["open_prs"]) == ("o/sentry", "o/sentry", 4)
+    assert (row["in_flight"], row["queued"], row["held"]) == (1, 1, 1)
+    assert rows["p/sentry"]["queued"] == 1
+
+
+def test_a_short_name_without_a_clone_joins_the_only_owner_spelling(homes):
+    vps = status_home(
+        homes.tmp, "fm-vps", [task("s1", repo="sentry"), task("s2", repo="o/sentry")]
+    )
+    assert homes.run(vps).returncode == 0
+    (row,) = status(homes)["projects"]
+    assert (row["name"], row["github"], row["queued"]) == ("o/sentry", "o/sentry", 2)
+
+
+def test_plan_map_aliases_fold_vault_spellings_into_one_row(homes):
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [
+            task("v1", repo="vault"),
+            task("v2", repo="memory", state="in_flight"),
+            task("v3", repo="o/memory"),
+            task("x1", repo="o/other"),
+        ],
+    )
+    plans = vault(homes.tmp, "memory")
+    gh = fake_gh(homes.tmp, {"o/memory": 2, "o/other": 0})
+    result = homes.run(
+        vps, FLEET_GH=gh, FLEET_VAULT=str(plans), FLEET_PLAN_MAP="vault=memory"
+    )
+    assert result.returncode == 0, result.stderr
+    rows = {p["name"]: p for p in status(homes)["projects"]}
+    assert sorted(rows) == ["o/memory", "o/other"]
+    row = rows["o/memory"]
+    assert (row["in_flight"], row["queued"], row["open_prs"]) == (1, 2, 2)
+    assert row["plan_url"].endswith("/projects/memory/plan.md")
+
+
+def test_the_vault_spellings_are_one_row_linking_the_memory_plan(homes):
     records = [task(f"v{i}", repo=r) for i, r in enumerate(("vault", "memory"))]
     vps = status_home(homes.tmp, "fm-vps", records)
     plans = vault(homes.tmp, "memory")
     assert homes.run(vps, FLEET_VAULT=str(plans)).returncode == 0
-    rows = status(homes)["projects"]
-    assert {r["repo"]: r["plan_url"] for r in rows} == {
-        r: "https://github.com/o/vault/blob/HEAD/projects/memory/plan.md"
-        for r in ("vault", "memory")
-    }
+    (row,) = status(homes)["projects"]
+    assert (row["name"], row["queued"]) == ("memory", 2)
+    assert row["plan_url"] == (
+        "https://github.com/o/vault/blob/HEAD/projects/memory/plan.md"
+    )
 
 
 def test_capacity_is_published_per_home_with_an_idle_reason(homes):
