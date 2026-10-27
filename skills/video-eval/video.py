@@ -16,6 +16,7 @@ one index row.
     video.py idea [file]                      file a judged idea's report (scout)
     video.py link [file] --origin O [--check] file a judged link's or article's report
     video.py note [file] --origin O [--check] file a judged text note's report
+    video.py repo [file] --origin O [--check] file a judged repo's or tool's report
     video.py voice <name> --origin O [--check] queue a voice note read from stdin
     video.py door <message text>              Kit's drop door: queue a bare link (kit)
     video.py door-file <saved video>          Kit's drop door: queue a video file (kit)
@@ -83,6 +84,12 @@ same job, the same local whisper, then a drain turn judges the transcript and
 files it with `report`; it is recorded under the audio's digest. Either is
 judged in the standard mode, or claim-check with --check, and its report is
 kept in reports/notes/.
+
+`repo` files a repo or a tool the same way as a link: its producer has read
+the repo or the tool's page and judged it, and its report carries the item's
+own link (the repo, else the tool's homepage), the source it is recorded and
+matched under, so a repo sent once as a link answers with that verdict. Its
+report is kept in reports/repos/.
 
 Exit 1 is an unexpected failure (reason on stderr), 2 a usage error, 3 a
 report that does not follow the rubric.
@@ -172,6 +179,8 @@ LINK_FIELDS = ("source",)
 NOTE = "note"
 NOTE_FIELDS = ("note",)
 NOTE_LIMIT = 4096
+REPO = "repo"
+REPO_FIELDS = ("source",)
 OWNER = "video-eval"
 PROBE = {"instagram": "www.instagram.com", "youtube": "www.youtube.com", "file": ""}
 KEY_PREFIX = {"instagram": "ig", "youtube": "yt", "file": "file"}
@@ -189,6 +198,7 @@ USAGE = (
     "       video.py idea [file] < report\n"
     "       video.py link [file] --origin kit|firstmate|scout [--check] < report\n"
     "       video.py note [file] --origin kit|firstmate|scout [--check] < report\n"
+    "       video.py repo [file] --origin kit|firstmate|scout [--check] < report\n"
     "       video.py voice <name> --origin kit|firstmate|scout [--check] < audio\n"
     "       video.py door <message text> | door-file <saved video>"
 )
@@ -1308,6 +1318,15 @@ def file_note(
     return _file_direct(text, NOTE, NOTE_FIELDS, origin, mode, now)
 
 
+def file_repo(
+    text: str, origin: str, check: bool = False, now: float | None = None
+) -> tuple[int, str]:
+    """(exit code, output) for `repo`: a repo or a tool, recorded under its
+    own link."""
+    mode = _producer_mode(origin, check)
+    return _file_direct(text, REPO, REPO_FIELDS, origin, mode, now)
+
+
 def _producer_mode(origin: str, check: bool) -> str:
     if origin not in ORIGINS:
         raise ValueError(f"unknown origin {origin!r}: one of {', '.join(ORIGINS)}")
@@ -1346,7 +1365,7 @@ def _file_direct(
         if u.scheme not in ("http", "https") or not u.netloc:
             what = "the primary source" if kind == IDEA else "the item"
             r, errors = None, [f"Source: must be the http(s) link of {what}"]
-        elif kind == LINK and parse_link(r.head["source"]) is not None:
+        elif kind in (LINK, REPO) and parse_link(r.head["source"]) is not None:
             why = "Source: is a YouTube or Instagram video: queue it with enqueue"
             r, errors = None, [why]
         else:
@@ -1579,9 +1598,9 @@ def main(argv: list[str]) -> int:
             code, out = file_idea(text)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
-        if cmd in ("link", "note") and len(rest) <= 1:
+        if cmd in ("link", "note", "repo") and len(rest) <= 1:
             text = Path(rest[0]).read_text() if rest else sys.stdin.read()
-            filer = file_link if cmd == "link" else file_note
+            filer = {"link": file_link, "note": file_note, "repo": file_repo}[cmd]
             code, out = filer(text, origin, check)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
@@ -1624,6 +1643,7 @@ def main(argv: list[str]) -> int:
                 "idea",
                 "link",
                 "note",
+                "repo",
                 "voice",
                 "enqueue",
                 "ingest",

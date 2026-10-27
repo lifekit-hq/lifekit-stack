@@ -423,7 +423,7 @@ def test_a_shared_reel_is_judged_and_indexed_as_the_reel(box, monkeypatch):
     code, _ = video.file_report(jid, report_text())
     assert code == 0
     assert box.index()[0]["source"] == REEL
-    assert (box.root / f"reports/ig-{CODE}.v4.md").is_file()
+    assert (box.root / f"reports/ig-{CODE}.v5.md").is_file()
 
 
 def test_an_unresolvable_share_link_is_a_normal_answer_without_a_download(
@@ -492,7 +492,7 @@ def test_a_kit_item_answers_the_owner_in_three_lines(box):
     assert lines[1] == (
         "video · dev-tooling · accept -> the agent fleet: try it on one job"
     )
-    assert lines[2] == f"report: {box.root}/reports/ig-{CODE}.v4.md"
+    assert lines[2] == f"report: {box.root}/reports/ig-{CODE}.v5.md"
 
 
 @pytest.mark.parametrize("origin", ["firstmate", "scout"])
@@ -507,7 +507,7 @@ def test_another_producers_item_says_nothing_and_is_polled(box, origin):
     status = box.cli("status", jid).stdout.strip().splitlines()
     assert status[0] == "done" and len(status) == 4
     assert status[2] == ("video · dev-tooling · drop (paid-funnel): It sells a course.")
-    assert status[3] == f"report: {box.root}/reports/yt-{VID}.v4.md"
+    assert status[3] == f"report: {box.root}/reports/yt-{VID}.v5.md"
     shown = box.cli("show", jid).stdout
     assert shown.startswith("Title: A talk about agents\n")
 
@@ -727,25 +727,25 @@ def test_the_report_is_stamped_with_the_rubric_version_and_mode(box):
     jid = _judged(box, YT, YT_CAPTIONS="yes")
     r = box.cli("report", jid, stdin=report_text("park"))
     assert r.returncode == 0, r.stderr
-    saved = box.root / f"reports/yt-{VID}.v4.md"
+    saved = box.root / f"reports/yt-{VID}.v5.md"
     head = saved.read_text().splitlines()[:5]
     today = time.strftime("%Y-%m-%d", time.gmtime())
     assert head == [
         "Title: A talk about agents",
         "Kind: video | Category: dev-tooling | Origin: kit",
         f"Source: {YT}",
-        f"Evaluated: {today} | Rubric: video-eval v4 (standard)",
+        f"Evaluated: {today} | Rubric: video-eval v5 (standard)",
         "Gist: a pitch that agents halve costs",
     ]
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     row = box.index()[0]
-    assert (row["rubric"], row["verdict"], row["recheck"]) == ("v4", "park", TOMORROW)
+    assert (row["rubric"], row["verdict"], row["recheck"]) == ("v5", "park", TOMORROW)
 
 
 def test_a_new_rubric_version_is_the_one_stamped(box, tmp_path):
     bumped = tmp_path / "rubric.md"
     bumped.write_text(
-        (SKILL / "rubric.md").read_text().replace("version: 4\n", "version: 7\n", 1)
+        (SKILL / "rubric.md").read_text().replace("version: 5\n", "version: 7\n", 1)
     )
     jid = _judged(box, VIDEO_RUBRIC=str(bumped))
     r = box.cli("report", jid, stdin=report_text(), VIDEO_RUBRIC=str(bumped))
@@ -758,8 +758,8 @@ def test_a_new_rubric_version_is_the_one_stamped(box, tmp_path):
 def test_a_claim_check_report_says_so(box):
     jid = _judged(box)
     box.cli("report", jid, stdin=report_text())
-    text = (box.root / f"reports/ig-{CODE}.v4.md").read_text()
-    assert "Rubric: video-eval v4 (claim-check)" in text
+    text = (box.root / f"reports/ig-{CODE}.v5.md").read_text()
+    assert "Rubric: video-eval v5 (claim-check)" in text
     assert '"Agents cut costs by half" - Partly true.' in text
 
 
@@ -826,7 +826,7 @@ def test_a_long_report_is_cut_to_the_cap_with_a_marker(box):
     claims = "\n".join(f'"Claim {i}" - Holds up. ' + "why " * 30 for i in range(40))
     r = box.cli("report", jid, stdin=report_text(claims=claims))
     assert r.returncode == 0, r.stderr
-    text = (box.root / f"reports/ig-{CODE}.v4.md").read_text()
+    text = (box.root / f"reports/ig-{CODE}.v5.md").read_text()
     rubric = video.load_rubric()
     # The cap is the judge's body; the stamp adds three header lines.
     assert len(text.splitlines()) <= rubric.list("max-lines") + 3
@@ -878,8 +878,8 @@ def test_the_index_columns_carry_the_intake_fields(box):
         "project": "",
         "recheck": "",
         "next step or why": "It sells a course.",
-        "rubric": "v4",
-        "report": f"reports/ig-{CODE}.v4.md",
+        "rubric": "v5",
+        "report": f"reports/ig-{CODE}.v5.md",
     }
     assert box.cli("index").stdout.startswith("# Intake index")
 
@@ -893,7 +893,7 @@ def test_a_video_judged_before_answers_with_the_earlier_verdict(box):
     assert r.stdout.strip().splitlines() == [
         "A talk about agents",
         f"video · dev-tooling · already judged {today}: drop (paid-funnel): It sells a course.",
-        f"report: {box.root}/reports/yt-{VID}.v4.md",
+        f"report: {box.root}/reports/yt-{VID}.v5.md",
     ]
     assert box.job(jid)["status"] == "done"  # not queued again
     assert box.log.read_text() == "" and len(box.index()) == 1
@@ -1063,7 +1063,7 @@ def test_an_idea_needs_a_rubric_that_has_the_idea_kind(box, tmp_path):
     old.write_text(
         (SKILL / "rubric.md")
         .read_text()
-        .replace("kinds: video, idea, link, note\n", "kinds: video\n")
+        .replace("kinds: video, idea, link, note, repo\n", "kinds: video\n")
     )
     r = box.cli("idea", stdin=idea_text(), VIDEO_RUBRIC=str(old))
     assert r.returncode == 1 and "has no idea kind" in r.stderr
@@ -1199,7 +1199,7 @@ def test_a_link_needs_a_rubric_that_has_the_link_kind(box, tmp_path):
     old.write_text(
         (SKILL / "rubric.md")
         .read_text()
-        .replace("kinds: video, idea, link, note\n", "kinds: video, idea\n")
+        .replace("kinds: video, idea, link, note, repo\n", "kinds: video, idea\n")
     )
     r = box.cli(
         "link", "--origin", "firstmate", stdin=link_text(), VIDEO_RUBRIC=str(old)
@@ -1352,7 +1352,7 @@ def test_a_note_needs_a_rubric_that_has_the_note_kind(box, tmp_path):
     old.write_text(
         (SKILL / "rubric.md")
         .read_text()
-        .replace("kinds: video, idea, link, note\n", "kinds: video, idea, link\n")
+        .replace("kinds: video, idea, link, note, repo\n", "kinds: video, idea, link\n")
     )
     r = box.cli("note", "--origin", "kit", stdin=note_text(), VIDEO_RUBRIC=str(old))
     assert r.returncode == 1 and "has no note kind" in r.stderr
@@ -1421,6 +1421,129 @@ def test_the_same_voice_note_sent_again_answers_with_its_earlier_verdict(box):
 def test_voice_refuses_what_is_not_an_audio_file(box, name, data, why):
     r = box.cli("voice", name, "--origin", "kit", stdin=data)
     assert r.returncode == 1 and why in r.stderr
+    assert box.index() == []
+
+
+# --- repos and tools ----------------------------------------------------------------
+
+REPO = "https://github.com/example/agent-runner"
+
+
+def repo_text(
+    verdict: str = "accept",
+    *,
+    source: str = f"Source: {REPO}",
+    title: str = "Title: agent-runner, a job runner for agents",
+    **kw,
+) -> str:
+    """A judged repo's report: a link's, with the repo's own link."""
+    return link_text(verdict, source=source, title=title, **kw)
+
+
+def test_a_repo_is_filed_directly_as_its_own_kind(box):
+    r = box.cli("repo", "--origin", "firstmate", stdin=repo_text())
+    assert r.returncode == 0, r.stderr
+    rows = box.index()
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["kind"], row["origin"], row["source"], row["verdict"]) == (
+        "repo",
+        "firstmate",
+        REPO,
+        "accept",
+    )
+    assert row["rubric"] == f"v{video.load_rubric().version}"
+    saved = box.root / row["report"]
+    assert saved.parent == box.root / "reports/repos"
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    assert saved.read_text().splitlines()[:5] == [
+        "Title: agent-runner, a job runner for agents",
+        "Kind: repo | Category: dev-tooling | Origin: firstmate",
+        f"Source: {REPO}",
+        f"Evaluated: {today} | Rubric: video-eval {row['rubric']} (standard)",
+        "Gist: a pitch that agents halve costs",
+    ]
+    assert r.stdout.strip().splitlines() == [
+        "agent-runner, a job runner for agents",
+        "repo · dev-tooling · accept -> the agent fleet: try it on one job",
+        f"report: {saved}",
+    ]
+    assert not box.queue.exists() or not list(box.queue.glob("*.json"))
+    assert box.log.read_text() == ""  # nothing fetched
+
+
+def test_a_tool_homepage_asked_to_be_checked_is_filed_in_claim_check(box):
+    page = "https://tool.example.com/"
+    r = box.cli(
+        "repo", "--origin", "kit", "--check", stdin=repo_text(source=f"Source: {page}")
+    )
+    assert r.returncode == 0, r.stderr
+    row = box.index()[0]
+    assert (row["kind"], row["origin"]) == ("repo", "kit")
+    assert f"Rubric: video-eval {row['rubric']} (claim-check)" in (
+        (box.root / row["report"]).read_text()
+    )
+
+
+def test_a_repo_from_an_unknown_origin_is_refused(box):
+    r = box.cli("repo", "--origin", "someone", stdin=repo_text())
+    assert r.returncode == 1 and "unknown origin" in r.stderr
+    assert box.index() == []
+
+
+@pytest.mark.parametrize(
+    "text,why",
+    [
+        (repo_text(source=""), "no Source: line"),
+        (repo_text(source="Source: the repo"), "http(s) link of the item"),
+        (repo_text(source=f"Source: {YT}"), "is a YouTube or Instagram video"),
+        (repo_text(source=f"Source: {REPO}/{'a' * 140}"), "at most 160 characters"),
+        (repo_text(category="hobby"), "Category 'hobby' is not one of"),
+    ],
+)
+def test_a_repo_off_the_rubric_is_rejected_and_nothing_is_filed(box, text, why):
+    r = box.cli("repo", "--origin", "firstmate", stdin=text)
+    assert r.returncode == 3 and why in r.stderr, r.stderr
+    assert box.index() == []
+
+
+def test_a_repo_sent_before_as_a_link_answers_with_that_verdict(box):
+    box.cli(
+        "link", "--origin", "kit", stdin=link_text("park", source=f"Source: {REPO}")
+    )
+    again = repo_text("drop", source=f"Source: {REPO}/?utm_source=x#readme")
+    r = box.cli("repo", "--origin", "firstmate", stdin=again)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.strip().splitlines()
+    assert "link · dev-tooling · already judged" in lines[1]
+    assert f"park until {TOMORROW}" in lines[1]
+    assert len(box.index()) == 1
+
+
+def test_a_repo_that_is_an_earlier_ideas_source_answers_with_its_verdict(box):
+    box.cli("idea", stdin=idea_text())
+    r = box.cli(
+        "repo", "--origin", "kit", stdin=repo_text(source=f"Source: {IDEA_SOURCE}")
+    )
+    assert r.returncode == 0, r.stderr
+    assert "idea · dev-tooling · already judged" in r.stdout
+    assert [row["kind"] for row in box.index()] == ["idea"]
+
+
+def test_a_repo_needs_a_rubric_that_has_the_repo_kind(box, tmp_path):
+    old = tmp_path / "rubric.md"
+    old.write_text(
+        (SKILL / "rubric.md")
+        .read_text()
+        .replace(
+            "kinds: video, idea, link, note, repo\n", "kinds: video, idea, link, note\n"
+        )
+    )
+    r = box.cli(
+        "repo", "--origin", "firstmate", stdin=repo_text(), VIDEO_RUBRIC=str(old)
+    )
+    assert r.returncode == 1 and "has no repo kind" in r.stderr
     assert box.index() == []
 
 
@@ -1781,8 +1904,8 @@ def test_skill_frontmatter_parses_into_the_name_and_bins_openclaw_reads():
 
 def test_the_rubric_carries_the_intake_lists_and_the_four_tests():
     rubric = video.load_rubric()
-    assert rubric.version == 4
-    assert rubric.list("kinds") == ["video", "idea", "link", "note"]
+    assert rubric.version == 5
+    assert rubric.list("kinds") == ["video", "idea", "link", "note", "repo"]
     assert rubric.list("categories") == [
         "persona",
         "channels",
@@ -1928,8 +2051,9 @@ case "$1" in
     case "$*" in
       *" ingest "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "video queued - job video-x" ;;
       *" idea"*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/ideas/idea-x.v2.md" ;;
-      *" link "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/links/link-x.v4.md" ;;
-      *" note "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/notes/note-x.v4.md" ;;
+      *" link "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/links/link-x.v5.md" ;;
+      *" note "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/notes/note-x.v5.md" ;;
+      *" repo "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "report: /home/node/.life-state/intake/reports/repos/repo-x.v5.md" ;;
       *" voice "*) n=$(wc -c); echo "got $n bytes" >> "$DOCKER_LOG"; echo "note queued - job video-file-x" ;;
       *" status "*) printf 'done\nt\nl\nreport: /home/node/.life-state/intake/reports/x.v1.md\n' ;;
       *) echo "ran" ;;
@@ -2007,7 +2131,7 @@ def test_the_wrapper_files_a_link_as_its_origin_from_a_file_or_stdin(tmp_path):
         )
         assert f"got {len(stdin or '12345')} bytes" in calls
         assert r.stdout.strip() == (
-            "report: /var/lib/lifekit/intake/reports/links/link-x.v4.md"
+            "report: /var/lib/lifekit/intake/reports/links/link-x.v5.md"
         )
     r, calls = _wrapper(tmp_path, "link", str(report), VIDEO_EVAL_ORIGIN="kit")
     assert f"docker exec -i gw1 python3 {SCRIPT} link --origin kit" in calls
@@ -2034,9 +2158,33 @@ def test_the_wrapper_files_a_text_note_as_its_origin_from_a_file_or_stdin(tmp_pa
         )
         assert f"got {len(stdin or '12345')} bytes" in calls
         assert r.stdout.strip() == (
-            "report: /var/lib/lifekit/intake/reports/notes/note-x.v4.md"
+            "report: /var/lib/lifekit/intake/reports/notes/note-x.v5.md"
         )
     r, _ = _wrapper(tmp_path, "note", str(tmp_path / "nope.txt"))
+    assert r.returncode == 1 and "no such file" in r.stderr
+
+
+def test_the_wrapper_files_a_repo_as_its_origin_from_a_file_or_stdin(tmp_path):
+    report = tmp_path / "repo.txt"
+    report.write_text("12345")
+    for args, stdin in (
+        (["repo", str(report)], None),
+        (["repo", "--check"], "123"),
+    ):
+        r, calls = _wrapper(tmp_path, *args, stdin=stdin)
+        assert r.returncode == 0, r.stderr
+        check = " --check" if "--check" in args else ""
+        assert (
+            f"docker exec -i gw1 python3 {SCRIPT} repo --origin firstmate{check}"
+            in calls
+        )
+        assert f"got {len(stdin or '12345')} bytes" in calls
+        assert r.stdout.strip() == (
+            "report: /var/lib/lifekit/intake/reports/repos/repo-x.v5.md"
+        )
+    r, calls = _wrapper(tmp_path, "repo", str(report), VIDEO_EVAL_ORIGIN="kit")
+    assert f"docker exec -i gw1 python3 {SCRIPT} repo --origin kit" in calls
+    r, _ = _wrapper(tmp_path, "repo", str(tmp_path / "nope.txt"))
     assert r.returncode == 1 and "no such file" in r.stderr
 
 
@@ -2073,7 +2221,15 @@ def test_the_wrapper_prints_host_paths(tmp_path):
 
 @pytest.mark.parametrize(
     "args",
-    [[], ["bogus"], ["enqueue"], ["report"], ["idea", "a", "b"], ["link", "a", "b"]],
+    [
+        [],
+        ["bogus"],
+        ["enqueue"],
+        ["report"],
+        ["idea", "a", "b"],
+        ["link", "a", "b"],
+        ["repo", "a", "b"],
+    ],
 )
 def test_the_wrapper_usage(tmp_path, args):
     r, _ = _wrapper(tmp_path, *args)
