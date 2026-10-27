@@ -119,9 +119,9 @@ alone. Each home is read with `FM_HOME` set to it, through its own
 | Field | Meaning |
 | --- | --- |
 | `schema`, `generated_epoch` | `fleet-status-page.v1`, the publish time |
-| `records[]` | Every record each home's backlog lists (`list --limit 1000`): `id`, `home_id`, `title`, `state` (`queued`, `held`, `in_flight`, `done`), `repo` (the record's own, `null` when it has none), `kind`, `priority` (number or `null`), `blocked`, `closed` (date or `null`), `pr_url` (its first `pr:` link), `hold` |
+| `records[]` | Every open record each home's backlog lists, and each done record closed within the last 7 days (`list --limit 1000`; a list that fills the limit adds an `errors[]` line): `id`, `home_id`, `title`, `state` (`queued`, `held`, `in_flight`, `done`), `repo` (the record's own, `null` when it has none), `kind`, `priority` (number or `null`), `blocked`, `closed` (date or `null`), `pr_url` (its first `pr:` link), `hold` |
 | `records[].hold` | `null` unless held: `{kind, owner, until, reason}`. `owner` is `captain` (a captain call), `external` (an outside wait), else `firstmate` (parked, or a kind it does not know); `until` and `reason` are the restart condition |
-| `projects[]` | One row per `repo` value, then `name: "no project"` (`repo: null`) for records without one: `github` (owner/name), `in_flight`, `queued`, `held`, `last_landed` (`{id, home_id, title, closed, pr_url}` of the latest closed done record, else `null`), `open_prs` and `open_prs_as_of` (epoch), `plan_url`. Busiest first, "no project" last |
+| `projects[]` | One row per `repo` value, then `name: "no project"` (`repo: null`) for records without one: `github` (owner/name), `in_flight`, `queued`, `held`, `last_landed` (`{id, home_id, title, closed, pr_url}` of the latest done record closed in the last 7 days, else `null`), `open_prs` and `open_prs_as_of` (epoch), `plan_url`. Busiest first, "no project" last |
 | `capacity[]` | Per on-host home: `home_id`, `machine`, `running` (lanes), `allowed` (the declared cap, `null` when none is), `cap_status`, `quota` (runway status or `null`), `generated_epoch`, `idle_reason`; then one PC row (`running`/`allowed` `null`, `generated_epoch` its last-seen time) |
 | `queue` | `count` (open queued records, all homes), `held`, `top` (10: `id`, `home_id`, `title`, `repo`, `priority`, `blocked`), `throughput` (`{days: 7, from, to, days_with_data, merged_prs, runs}` over the 7 whole UTC days before today, from the daily metrics), from which the dashboard computes an ETA |
 | `intake` | The shared job queue's depth: `{waiting, running, done_24h, failed_24h}`, or `null` |
@@ -148,7 +148,7 @@ alone. Each home is read with `FM_HOME` set to it, through its own
   its entry in `FLEET_PLAN_MAP` (`"<repo>=<project> ..."`, host config), linked
   on GitHub from the vault's own `origin`; `null` when there is no such page.
 - **Idle reason**, the first that holds: `cap-reached` (running at or over a
-  declared cap), `quota` (runway `exhausted`), `all-held` (nothing queued,
+  declared cap), `quota` (runway `exhausted_now`), `all-held` (nothing queued,
   something held), `queue-empty`; else `null` (room and open work). A home whose
   backlog is unreadable gets `null`. The PC row is `host-offline` when its
   state is `off`, else `null`.

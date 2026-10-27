@@ -38,6 +38,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,8 @@ SCHEMA = "fleet-status-page.v1"
 NO_PROJECT = "no project"
 TOP_QUEUE = 10
 THROUGHPUT_DAYS = 7
+LIST_LIMIT = 1000
+PR_BUDGET = 15
 LIST_FIELDS = "held,hold_kind,hold_until,hold_reason,priority,closed,links,blocked"
 TRUNCATED = "\n... (truncated, "
 TOON_TABLE_RE = re.compile(r"^tasks\[\d+\]\{([^}]*)\}:$")
@@ -174,9 +177,15 @@ def record(home_id: str, row: dict[str, str | None]) -> dict[str, Any]:
 
 
 def read_records(
-    home_id: str, home: str, tasks_axi: str, cache: dict[str, Any]
+    home_id: str,
+    home: str,
+    tasks_axi: str,
+    cache: dict[str, Any],
+    now: int,
+    errors: list[str],
 ) -> list[dict[str, Any]]:
-    """The home's backlog, whole. A row whose cells the list truncated is read
+    """The home's open backlog, whole, and the records done within the throughput
+    window. A row whose cells the list truncated is read
     again with `show --full`, unless the cache holds the same row already
     resolved (titles rarely change, and each show costs a node start)."""
     wrapper = Path(home) / "bin/fm-tasks-axi.sh"
@@ -189,10 +198,24 @@ def read_records(
     def axi(*args: str) -> str:
         return run([str(wrapper), *args], env=env, timeout=30)
 
-    rows = toon_rows(axi("list", "--limit", "1000", "--fields", LIST_FIELDS))
+    rows = toon_rows(axi("list", "--limit", str(LIST_LIMIT), "--fields", LIST_FIELDS))
+    if len(rows) >= LIST_LIMIT:
+        errors.append(
+            f"{home_id}: backlog list hit its {LIST_LIMIT}-row limit; records may be missing"
+        )
+    since = (
+        (
+            dt.datetime.fromtimestamp(now, dt.timezone.utc)
+            - dt.timedelta(days=THROUGHPUT_DAYS)
+        )
+        .date()
+        .isoformat()
+    )
     records = []
     for line, row in rows:
         if not row.get("id"):
+            continue
+        if row.get("state") == "done" and (row.get("closed") or "")[:10] < since:
             continue
         key = f"{home_id}\t{row['id']}"
         if any(TRUNCATED in (v or "") for v in row.values()):
@@ -201,7 +224,9 @@ def read_records(
                 full = hit.get("fields") or {}
             else:
                 shown = toon_fields(axi("show", str(row["id"]), "--full"))
-                full = {k: shown.get(k) for k, v in row.items() if TRUNCATED in (v or "")}
+                full = {
+                    k: shown.get(k) for k, v in row.items() if TRUNCATED in (v or "")
+                }
             cache[key] = {"line": line, "fields": full}
             row = {**row, **full}
         records.append(record(home_id, row))
@@ -226,7 +251,9 @@ def repo_slug(repo: str, homes: list[tuple[str, str]]) -> str | None:
         if not clone.is_dir():
             continue
         try:
-            remote = run(["git", "-C", str(clone), "remote", "get-url", "origin"], timeout=5)
+            remote = run(
+                ["git", "-C", str(clone), "remote", "get-url", "origin"], timeout=5
+            )
         except (OSError, subprocess.SubprocessError):
             continue
         if slug := github_slug(remote):
@@ -237,21 +264,38 @@ def repo_slug(repo: str, homes: list[tuple[str, str]]) -> str | None:
 def open_prs(
     slugs: set[str], cache: dict[str, Any], now: int, errors: list[str]
 ) -> None:
-    """Refresh cache[slug] = {count, as_of} for slugs older than FLEET_PR_TTL. A
-    failed refresh keeps the last count, so one bad minute never blanks a row."""
+    """Refresh cache[slug] = {count, as_of} for slugs older than FLEET_PR_TTL, within
+    PR_BUDGET seconds in all. A failed or skipped refresh keeps the last count, so
+    one bad minute never blanks a row."""
     gh = os.environ.get("FLEET_GH", "gh")
     if not gh:
         return
     ttl = int(os.environ.get("FLEET_PR_TTL") or 600)
+    deadline = time.monotonic() + PR_BUDGET
     for slug in sorted(slugs):
         hit = cache.get(slug)
         if isinstance(hit, dict) and now - int(hit.get("as_of") or 0) < ttl:
             continue
+        left = deadline - time.monotonic()
+        if left < 1:
+            errors.append("open PRs not refreshed: the time budget ran out")
+            return
         try:
             out = run(
-                [gh, "pr", "list", "-R", slug, "--state", "open", "--limit", "200",
-                 "--json", "number"],
-                timeout=20,
+                [
+                    gh,
+                    "pr",
+                    "list",
+                    "-R",
+                    slug,
+                    "--state",
+                    "open",
+                    "--limit",
+                    "200",
+                    "--json",
+                    "number",
+                ],
+                timeout=min(20, int(left)),
             )
             cache[slug] = {"count": len(json.loads(out)), "as_of": now}
         except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
@@ -264,7 +308,9 @@ def vault_page_url(vault: Path, page: str) -> str | None:
     if not (vault / page).is_file():
         return None
     try:
-        remote = run(["git", "-C", str(vault), "remote", "get-url", "origin"], timeout=5)
+        remote = run(
+            ["git", "-C", str(vault), "remote", "get-url", "origin"], timeout=5
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     slug = github_slug(remote)
@@ -272,7 +318,11 @@ def vault_page_url(vault: Path, page: str) -> str | None:
 
 
 def plan_map() -> dict[str, str]:
-    pairs = (p.split("=", 1) for p in os.environ.get("FLEET_PLAN_MAP", "").split() if "=" in p)
+    pairs = (
+        p.split("=", 1)
+        for p in os.environ.get("FLEET_PLAN_MAP", "").split()
+        if "=" in p
+    )
     return {repo: project for repo, project in pairs if repo and project}
 
 
@@ -307,7 +357,9 @@ def projects(
                 "held": sum(r["state"] == "held" for r in items),
                 "last_landed": None
                 if last is None
-                else {k: last[k] for k in ("id", "home_id", "title", "closed", "pr_url")},
+                else {
+                    k: last[k] for k in ("id", "home_id", "title", "closed", "pr_url")
+                },
                 "open_prs": prs.get("count") if isinstance(prs, dict) else None,
                 "open_prs_as_of": prs.get("as_of") if isinstance(prs, dict) else None,
                 "plan_url": vault_page_url(vault, f"projects/{project}/plan.md")
@@ -316,7 +368,9 @@ def projects(
             }
         )
     # Busiest first; "no project" last, so a missing repo stays visible but apart.
-    rows.sort(key=lambda p: (p["repo"] is None, -(p["in_flight"] + p["queued"]), p["name"]))
+    rows.sort(
+        key=lambda p: (p["repo"] is None, -(p["in_flight"] + p["queued"]), p["name"])
+    )
     return rows
 
 
@@ -329,7 +383,7 @@ def idle_reason(cap: dict[str, Any], queued: int, held: int) -> str | None:
     running, allowed = cap["running"], cap["allowed"]
     if allowed is not None and running >= allowed:
         return "cap-reached"
-    if cap["quota"] == "exhausted":
+    if cap["quota"] == "exhausted_now":
         return "quota"
     if queued == 0:
         return "all-held" if held else "queue-empty"
@@ -409,7 +463,8 @@ def queue(records: list[dict[str, Any]], paths: list[str], now: int) -> dict[str
     open_ = [r for r in records if r["state"] == "queued"]
     # The backlog's own order within a priority; unprioritised work last.
     ranked = sorted(
-        enumerate(open_), key=lambda e: (e[1]["priority"] is None, e[1]["priority"] or 0, e[0])
+        enumerate(open_),
+        key=lambda e: (e[1]["priority"] is None, e[1]["priority"] or 0, e[0]),
     )
     return {
         "count": len(open_),
@@ -426,7 +481,12 @@ def intake() -> dict[str, Any]:
     cmd = os.environ.get("FLEET_INTAKE_CMD")
     if cmd is None:
         found = run(
-            ["docker", "ps", "-q", *(a for f in GATEWAY_LABELS for a in ("--filter", f))],
+            [
+                "docker",
+                "ps",
+                "-q",
+                *(a for f in GATEWAY_LABELS for a in ("--filter", f)),
+            ],
             timeout=10,
         ).split()
         if not found:
@@ -482,9 +542,11 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     kept = 0
     for home_id, home in homes:
         try:
-            got = read_records(home_id, home, tasks_axi, record_cache)
+            got = read_records(home_id, home, tasks_axi, record_cache, args.now, errors)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            errors.append(f"{home_id}: backlog unreadable ({exc.__class__.__name__}: {exc})"[:300])
+            errors.append(
+                f"{home_id}: backlog unreadable ({exc.__class__.__name__}: {exc})"[:300]
+            )
             by_home[home_id] = None
             continue
         safe = [r for r in got if not withheld(r, pattern)]
@@ -492,7 +554,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         by_home[home_id] = safe
         records.extend(safe)
     if kept:
-        errors.append(f"{kept} record(s) withheld: they look like they hold a credential")
+        errors.append(
+            f"{kept} record(s) withheld: they look like they hold a credential"
+        )
     # Ids no longer listed drop out of the cache; an unreadable home keeps its own.
     listed = {f"{r['home_id']}\t{r['id']}" for r in records}
     record_cache = {
@@ -529,7 +593,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "queue": queue(records, args.daily, args.now),
         "intake": depth,
         "how_it_works": how,
-        "follow_ups": [f"owner page for {h['title'].lower()}" for h in how if not h["url"]],
+        "follow_ups": [
+            f"owner page for {h['title'].lower()}" for h in how if not h["url"]
+        ],
         "errors": errors,
     }
 
@@ -537,7 +603,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
 def home_arg(value: str) -> tuple[str, str]:
     home_id, sep, path = value.partition("=")
     if not sep or not home_id or not path.startswith("/"):
-        raise argparse.ArgumentTypeError(f"--home wants <id>=<absolute path>, not {value!r}")
+        raise argparse.ArgumentTypeError(
+            f"--home wants <id>=<absolute path>, not {value!r}"
+        )
     return home_id, path
 
 

@@ -1996,9 +1996,10 @@ def test_records_come_whole_from_each_home_backlog_with_their_own_repo(homes):
             task(
                 "d1",
                 state="done",
-                closed="2026-10-26",
+                closed="2027-01-14",
                 links="pr:https://github.com/o/alpha/pull/7",
             ),
+            task("old", state="done", closed="2027-01-07"),
             task("orphan", repo=None),
         ],
         shows={"cut": {"title": long}},
@@ -2026,8 +2027,37 @@ def test_records_come_whole_from_each_home_backlog_with_their_own_repo(homes):
     assert got["fm-vps", "f1"]["state"] == "in_flight"
     assert got["fm-vps", "d1"]["pr_url"] == "https://github.com/o/alpha/pull/7"
     assert got["fm-vps", "orphan"]["repo"] is None
+    assert ("fm-vps", "old") not in got
     # The backlog is read through the home's own wrapper, from the home.
     assert "list --limit 1000 --fields" in (vps / "calls.log").read_text()
+
+
+def test_a_full_backlog_list_is_reported_as_possibly_incomplete(homes):
+    vps = status_home(
+        homes.tmp, "fm-vps", [task(f"t{i}") for i in range(fleet_status.LIST_LIMIT)]
+    )
+    assert homes.run(vps).returncode == 0
+    page = status(homes)
+    assert len(page["records"]) == fleet_status.LIST_LIMIT
+    assert any("row limit" in e for e in page["errors"])
+
+
+def test_a_stalled_gh_cannot_starve_the_other_sources(homes, monkeypatch):
+    monkeypatch.setattr(fleet_status, "PR_BUDGET", 5)
+    gh = stub(homes.tmp / "gh", "sleep 0.1\necho '[]'\n")
+    errors: list[str] = []
+    cache: dict = {}
+    monkeypatch.setenv("FLEET_GH", gh)
+    fleet_status.open_prs({"o/a", "o/b", "o/c"}, cache, NOW, errors)
+    assert errors == []
+    assert set(cache) == {"o/a", "o/b", "o/c"}
+    monkeypatch.setattr(fleet_status, "PR_BUDGET", 1)
+    stall = stub(homes.tmp / "gh2", "sleep 5\n")
+    monkeypatch.setenv("FLEET_GH", stall)
+    errors, cache = [], {}
+    fleet_status.open_prs({"o/a", "o/b", "o/c"}, cache, NOW, errors)
+    assert cache == {}
+    assert any("time budget" in e for e in errors)
 
 
 def test_a_cut_row_is_shown_once_and_then_served_from_the_cache(homes):
@@ -2056,11 +2086,11 @@ def test_projects_roll_up_by_repo_with_no_project_last(homes):
             task("a1"),
             task("a2", held="yes", hold_kind="external"),
             task("a3", state="in_flight"),
-            task("a4", state="done", closed="2026-10-20"),
+            task("a4", state="done", closed="2027-01-09"),
             task(
                 "a5",
                 state="done",
-                closed="2026-10-25",
+                closed="2027-01-14",
                 links="pr:https://github.com/o/alpha/pull/9",
             ),
             task("b1", repo="o/beta"),
@@ -2094,7 +2124,7 @@ def test_projects_roll_up_by_repo_with_no_project_last(homes):
         "id": "a5",
         "home_id": "fm-vps",
         "title": "Task a5",
-        "closed": "2026-10-25",
+        "closed": "2027-01-14",
         "pr_url": "https://github.com/o/alpha/pull/9",
     }
     assert (rows["o/beta"]["open_prs"], rows["o/beta"]["plan_url"]) == (0, None)
@@ -2178,7 +2208,7 @@ def test_capacity_is_published_per_home_with_an_idle_reason(homes):
     ("running", "allowed", "quota", "queued", "held", "reason"),
     [
         (2, 2, None, 5, 0, "cap-reached"),
-        (0, 2, "exhausted", 5, 0, "quota"),
+        (0, 2, "exhausted_now", 5, 0, "quota"),
         (0, 2, None, 0, 3, "all-held"),
         (0, None, None, 0, 0, "queue-empty"),
         (1, 2, None, 4, 0, None),
