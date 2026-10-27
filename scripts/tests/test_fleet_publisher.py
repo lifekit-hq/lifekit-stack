@@ -1612,6 +1612,60 @@ def test_no_pc_cache_means_no_pc_entry(fleet):
     assert pc_entry(fleet) == []
 
 
+def pc_cache_in(home, name="61ab.json"):
+    cache = home / "state" / "secondmate-summary-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / name).write_text(
+        json.dumps(summary(generated_epoch=NOW - 60, counts={"active_children": 0}))
+    )
+    return cache / name
+
+
+def homes_pc_entry(homes):
+    return [h for h in homes.published()["homes"] if h["id"] == "pc"]
+
+
+def test_pc_cache_in_a_later_home_is_published(homes):
+    first = make_home(homes.tmp, "fm-vps", summary(home_id="vps"))
+    main = make_home(homes.tmp, "firstmate", summary(home_id="main"))
+    pc_cache_in(main)
+    result = homes.run(first, main)
+    assert result.returncode == 0, result.stderr
+    pc = homes_pc_entry(homes)
+    assert len(pc) == 1 and pc[0]["state"] == "idle"
+    assert pc[0]["last_seen_epoch"] == NOW - 60
+
+
+def test_first_home_with_exactly_one_cached_summary_wins(homes):
+    first = make_home(homes.tmp, "fm-vps", summary(home_id="vps"))
+    main = make_home(homes.tmp, "firstmate", summary(home_id="main"))
+    pc_cache_in(first, "a.json")
+    pc_cache_in(first, "b.json")
+    pc_cache_in(main).write_text(
+        json.dumps(summary(generated_epoch=NOW - 90, counts={"active_children": 1}))
+    )
+    assert homes.run(first, main).returncode == 0
+    pc = homes_pc_entry(homes)
+    assert pc[0]["last_seen_epoch"] == NOW - 90 and pc[0]["state"] == "working"
+
+
+def test_pc_summary_file_overrides_every_home_cache(homes, tmp_path_factory):
+    first = make_home(homes.tmp, "fm-vps", summary(home_id="vps"))
+    main = make_home(homes.tmp, "firstmate", summary(home_id="main"))
+    pc_cache_in(main)
+    named = tmp_path_factory.mktemp("pc") / "pc.json"
+    named.write_text(json.dumps(summary(generated_epoch=NOW - 120)))
+    assert homes.run(first, main, PC_SUMMARY_FILE=str(named)).returncode == 0
+    assert homes_pc_entry(homes)[0]["last_seen_epoch"] == NOW - 120
+
+
+def test_no_pc_cache_in_any_home_means_no_pc_entry(homes):
+    first = make_home(homes.tmp, "fm-vps", summary(home_id="vps"))
+    main = make_home(homes.tmp, "firstmate", summary(home_id="main"))
+    assert homes.run(first, main).returncode == 0
+    assert homes_pc_entry(homes) == []
+
+
 # --- quota history and snapshot ------------------------------------------
 
 

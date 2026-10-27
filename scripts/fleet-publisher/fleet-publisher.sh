@@ -498,21 +498,25 @@ for i in "${!homes[@]}"; do
 done
 [[ -s "$work/published.jsonl" ]] || exit "$rc"
 
-# A remote home (the PC) is not a fleet home this host owns: the first home
+# A remote home (the PC) is not a fleet home this host owns: a fleet home
 # caches its secondmate summary, and only its state and last-seen time are
 # published. It is appended to homes[] after the aggregation, so it never
 # changes the fleet's valid, reason, counts or generated_epoch, and it is
 # "off" rather than an error when its cache is missing, stale or unreadable.
-# PC_SUMMARY_FILE names the cache file; unset, the only *.json in the first
-# home's state/secondmate-summary-cache/ is used.
+# PC_SUMMARY_FILE names the cache file; unset, the first home in FM_HOMES
+# order whose state/secondmate-summary-cache/ holds exactly one *.json gives
+# that file (a home with none, or several, is skipped).
 publish_remote_home() {
-  local file="${PC_SUMMARY_FILE:-}" cache="${homes[0]:+${homes[0]}/state/secondmate-summary-cache}" found=()
+  local file="${PC_SUMMARY_FILE:-}" home cache found=()
   echo '[]' > "$work/remote.json"
   [[ " ${ids[*]} " != *" $PC_HOME_ID "* && "$PC_HOME_ID" =~ $SLUG_RE ]] || return 0
-  if [[ -z "$file" && -n "$cache" && -d "$cache" ]]; then
+  for home in "${homes[@]}"; do
+    [[ -z "$file" && -n "$home" ]] || break
+    cache="$home/state/secondmate-summary-cache"
+    [[ -d "$cache" ]] || continue
     found=("$cache"/*.json)
     [[ ${#found[@]} -eq 1 && -f "${found[0]}" ]] && file="${found[0]}"
-  fi
+  done
   [[ -n "$file" ]] || return 0
   jq -n --arg id "$PC_HOME_ID" --argjson now "$NOW" --argjson stale "$PC_STALE_SECONDS" --slurpfile s <(
     if [[ -r "$file" ]] && ! grep -Eq "$CREDENTIAL_RE" "$file"; then jq -c 'objects' "$file" 2> /dev/null || true; fi
