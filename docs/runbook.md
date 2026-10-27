@@ -2314,7 +2314,8 @@ cat /var/lib/node_exporter/textfile/fleet.prom
 ```
 
 `bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
-set and skips it otherwise. Re-running the installer is how a home is added or
+set and skips it otherwise (it passes no `FLEET_PLAN_MAP`, so re-run the
+installer by hand to restore one). Re-running the installer is how a home is added or
 removed: it reinstalls the script and rewrites the unit's `FM_HOMES`. The `lifekit-*.timer` glob in the unit gauge picks the timer up with
 no further change. Merge deploys the Grafana rule and dashboard.
 
