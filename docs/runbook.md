@@ -1761,13 +1761,20 @@ From the host (firstmate, or the operator; any account in the `docker` group). O
   Both kinds of note are stamped `standard`, or `claim-check` with `--check`, and their reports
   are kept in `/var/lib/lifekit/intake/reports/notes/`, which intake-to-vault does not file into
   the vault.
+- **File a judged repo or tool** (a code repository or a tool's own page, read and judged by its
+  producer): `scripts/video-eval.sh repo <report file> [--check]` (or the report on stdin)
+  files it the same way as a link, under `VIDEO_EVAL_ORIGIN`, with the repo's link (else the
+  tool's homepage) as its `Source:` line, so a repo sent once as a link answers with that
+  verdict. It is stamped `standard`, or `claim-check` with `--check`; a YouTube or Instagram
+  video link is rejected. The report is kept in `/var/lib/lifekit/intake/reports/repos/`, which
+  intake-to-vault does not file into the vault.
 
 Then:
 
 - **Verify:**
   - Send Kit a public YouTube link. It answers `video queued` at once, and with the PC on the
     three-line answer arrives within a few minutes. Then `scripts/video-eval.sh index` shows
-    its row, and its report has a `Rubric: video-eval v4 (standard)` line.
+    its row, and its report has a `Rubric: video-eval v5 (standard)` line.
   - `scripts/video-eval.sh enqueue <the same link>` answers `already judged`.
   - A made-up reel link ends as an `unavailable` line, which proves the yt-dlp and the route
     to Instagram.
