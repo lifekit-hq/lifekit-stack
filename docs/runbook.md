@@ -1575,7 +1575,8 @@ docker exec "$G" openclaw cron edit "$ID" \
 
 - **A changed gate:** the row stores the script, so when a deploy reports the gate `DIFFERS`,
   re-apply it: `docker exec "$G" openclaw cron edit "$ID" --trigger-script /home/node/.openclaw/skills/job-queue/drain-gate.js`.
-- **What is waiting:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py list`.
+- **What is waiting:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py list`
+  (`depth` prints the counts only, as JSON: what the fleet status page shows).
   Do not run `jobq.py next` by hand while the egress answers: it starts the next job, and each
   `next` that hands out a run's output counts as an offer, the third unread one giving it up.
 - **Drop a job:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py drop <job id>`
@@ -2260,9 +2261,18 @@ are logged to the unit's journal and skipped. The same run publishes the PC's
 state and last-seen time (from a fleet home's cached secondmate summary),
 per-item `started_at`, `landed_at`, `priority` and `ask` fields, and sanitised
 `metrics/quota.jsonl` / `metrics/quota-snapshot.json` (contract in the README).
-The new output appears only once the
+It also adds `status_page`, the living status page's sections (records,
+projects, capacity, queue, intake, how-it-works; README "Status page
+sections"), built by `fleet_status.py`, installed beside the script as
+`/usr/local/bin/lifekit-fleet-status.py`. That helper reads each home's backlog
+through its `bin/fm-tasks-axi.sh` and its `bin/fm-capacity.sh --json`, asks
+`gh` for open PRs (cached ten minutes in the publisher's state directory), and
+runs `jobq.py depth` in the gateway container (the admin account's `docker`
+group); a source it cannot read leaves a line in `status_page.errors`, never a
+failed run. The new output appears only once the
 installed script is refreshed: re-run the install command below (it
-re-installs the script and units, idempotent).
+re-installs the script, the helper and the units, idempotent; the unit's
+environment is unchanged).
 
 **Alerts:** *fleet summary is stale* fires when the oldest home summary's
 `generated_epoch` is over 15 minutes old (that home's watch loop died; the

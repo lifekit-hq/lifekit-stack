@@ -255,6 +255,33 @@ def test_listing_names_each_job_with_its_label_and_result(q):
     assert "https://example/AAA111" in line and "Account" not in line
 
 
+def test_depth_counts_jobs_by_state_and_names_none(q):
+    for key in ("AAA111", "BBB222", "CCC333", "DDD444"):
+        _add(key, now=1000.0)
+    jobq.claim("reel-AAA111", now=1001.0)
+    jobq.claim("reel-BBB222", now=1001.0)
+    jobq.finish("reel-BBB222", "Reel: https://example/BBB222", now=1002.0)
+    jobq.claim("reel-CCC333", now=1001.0)
+    jobq.finish("reel-CCC333", "Reel: old", now=1002.0 - 86400 - 1)
+    got = jobq.depth(now=1003.0)
+    assert got == {
+        "schema": "jobq-depth.v1",
+        "waiting": 1,
+        "running": 1,
+        "done_24h": 1,
+        "failed_24h": 0,
+    }
+    # Counts only: no id, label or result leaves the queue.
+    assert "example" not in json.dumps(got) and "reel-" not in json.dumps(got)
+    out = subprocess.run(
+        [sys.executable, str(SKILL / "jobq.py"), "depth"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert json.loads(out)["waiting"] == 1
+
+
 def test_drop_removes_one_job(q):
     _add()
     assert jobq.drop("reel-AAA111") is True

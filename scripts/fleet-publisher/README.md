@@ -13,11 +13,13 @@ this output, not to the source summaries. Operations (install, alerts, metrics) 
 Every source field passes through unchanged, except that `counts.decisions_open`
 no longer includes a child home's folded decisions (below); the fields below are
 added or, with more than one home, aggregated. The fleet homes are only ever read (files,
-`fm-captain-hold.sh binding`, `tasks-axi show`).
+`fm-captain-hold.sh binding`, `tasks-axi show`, and for the status page
+`fm-tasks-axi.sh list`/`show` and `fm-capacity.sh --json`).
 
 | Where | Field | Meaning |
 | --- | --- | --- |
 | top | `published_epoch` | Publish time |
+| top | `status_page` | The living status page's sections (schema `fleet-status-page.v1`, below), or `null` when they could not be built |
 | top | `homes[]` | One entry per home, in `FM_HOMES` order: `id`, `path`, `published`, `valid`, `reason`, and for a published home its `schema`, `generated_epoch`, `state`, `counts`, `invalidity` |
 | every item of every top-level list | `home_id` | The id of the home the item came from (`active_children`, `decisions_open`, `holds`, `queued`, `landed`, `endpoints`, `omitted`) |
 | `homes[]` | `invalidity` | The home summary's own `invalidity` (`{kind, ids}`: why `valid` is false, e.g. kind `terminal_in_flight` for finished work still waiting on validation or merge), passed through as-is; `null` when the summary has none |
@@ -103,6 +105,60 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
   affects the fleet's `valid`, `reason`, `counts` or `generated_epoch`, never
   fails the run, and is left out of the `fleet_home_summary_*` metrics: a PC
   that is off is normal.
+
+## Status page sections (`status_page`)
+
+`fleet_status.py` (beside the script; installed as
+`/usr/local/bin/lifekit-fleet-status.py`; `FLEET_STATUS` overrides it) builds
+the sections the dashboard landing renders. It reads structured sources only,
+and only the on-host homes in `FM_HOMES`: the PC appears through its summary
+alone. Each home is read with `FM_HOME` set to it, through its own
+`bin/fm-tasks-axi.sh` (with `TASKS_AXI`'s directory on `PATH`) and
+`bin/fm-capacity.sh --json`. Per-home freshness stays in `homes[]` (above).
+
+| Field | Meaning |
+| --- | --- |
+| `schema`, `generated_epoch` | `fleet-status-page.v1`, the publish time |
+| `records[]` | Every record each home's backlog lists (`list --limit 1000`): `id`, `home_id`, `title`, `state` (`queued`, `held`, `in_flight`, `done`), `repo` (the record's own, `null` when it has none), `kind`, `priority` (number or `null`), `blocked`, `closed` (date or `null`), `pr_url` (its first `pr:` link), `hold` |
+| `records[].hold` | `null` unless held: `{kind, owner, until, reason}`. `owner` is `captain` (a captain call), `external` (an outside wait), else `firstmate` (parked, or a kind it does not know); `until` and `reason` are the restart condition |
+| `projects[]` | One row per `repo` value, then `name: "no project"` (`repo: null`) for records without one: `github` (owner/name), `in_flight`, `queued`, `held`, `last_landed` (`{id, home_id, title, closed, pr_url}` of the latest closed done record, else `null`), `open_prs` and `open_prs_as_of` (epoch), `plan_url`. Busiest first, "no project" last |
+| `capacity[]` | Per on-host home: `home_id`, `machine`, `running` (lanes), `allowed` (the declared cap, `null` when none is), `cap_status`, `quota` (runway status or `null`), `generated_epoch`, `idle_reason`; then one PC row (`running`/`allowed` `null`, `generated_epoch` its last-seen time) |
+| `queue` | `count` (open queued records, all homes), `held`, `top` (10: `id`, `home_id`, `title`, `repo`, `priority`, `blocked`), `throughput` (`{days: 7, from, to, days_with_data, merged_prs, runs}` over the 7 whole UTC days before today, from the daily metrics), from which the dashboard computes an ETA |
+| `intake` | The shared job queue's depth: `{waiting, running, done_24h, failed_24h}`, or `null` |
+| `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page, `url: null` until that page exists |
+| `follow_ups[]` | The owner pages still to be written |
+| `errors[]` | One line per source that could not be read this run |
+
+- **Records** are read whole. A row the list truncates (a long title) is read
+  again with `show <id> --full`; the resolved row is cached in the publisher's
+  state directory (`status-records.json`) against the list line, so an
+  unchanged record is not shown again. A record whose text matches a
+  credential pattern is left out and counted in `errors`. A missing `repo` is
+  never an error: the record shows under "no project".
+- **Repo to GitHub**: a `repo` already of the form owner/name is used as is;
+  any other is the `origin` of the first home's `projects/<repo>` clone. No
+  clone means `github`, `open_prs` and so on are `null`. Two spellings of one
+  repo are two rows; the fix is at the record.
+- **Open PRs**: `FLEET_GH` (default `gh`; empty skips) `pr list -R <owner/name>
+  --state open`, cached per repo for `FLEET_PR_TTL` seconds (default 600) in
+  `status-open-prs.json`. A failed refresh keeps the last count and its
+  `open_prs_as_of`.
+- **Plan link**: the vault (`FLEET_VAULT`, default `/srv/memory`) page
+  `projects/<p>/plan.md`, where `<p>` is the repo's name (after any owner/) or
+  its entry in `FLEET_PLAN_MAP` (`"<repo>=<project> ..."`, host config), linked
+  on GitHub from the vault's own `origin`; `null` when there is no such page.
+- **Idle reason**, the first that holds: `cap-reached` (running at or over a
+  declared cap), `quota` (runway `exhausted`), `all-held` (nothing queued,
+  something held), `queue-empty`; else `null` (room and open work). A home whose
+  backlog is unreadable gets `null`. The PC row is `host-offline` when its
+  state is `off`, else `null`.
+- **Intake** runs `jobq.py depth` in the running `openclaw-gateway` container
+  (found by compose labels) with `docker exec`; `FLEET_INTAKE_CMD` replaces
+  that command (empty skips intake). Counts only: no job, label or result.
+- **Failure** of any source empties its own part and adds an `errors` line.
+  The helper is bounded to 50 s; if it fails, overruns, prints no JSON object,
+  or prints anything matching a credential pattern, `status_page` is `null` and
+  the rest of the summary publishes as before.
 
 ## Daily fleet metrics (`OUT_DIR/metrics/daily.jsonl`)
 

@@ -5,6 +5,7 @@
                         hand an agent turn one that has run?
     jobq.py output <id> what the job's run printed, for the turn that answers it
     jobq.py list        what is waiting, running, and recently finished
+    jobq.py depth       counts only, as JSON, for the fleet status page
     jobq.py drop <id>   remove one job
     jobq.py runner <id> the run itself, started by `next`, never by hand
 
@@ -663,6 +664,29 @@ def listing(now: float | None = None) -> str:
     return "\n".join(lines)
 
 
+def depth(now: float | None = None) -> dict:
+    """How many jobs wait, run, and finished in the last 24 h: counts only, no
+    job id, label or result, so the fleet publisher can show them anywhere.
+    Read-only: it takes no lock and prunes nothing (each job file is replaced
+    whole, so a read never sees half of one)."""
+    now = time.time() if now is None else now
+    jobs = [j for _, j in _jobs(root())]
+
+    def finished(status: str) -> int:
+        return sum(
+            j["status"] == status and now - j.get("finished_at", 0) <= 86400
+            for j in jobs
+        )
+
+    return {
+        "schema": "jobq-depth.v1",
+        "waiting": sum(j["status"] == QUEUED for j in jobs),
+        "running": sum(j["status"] == RUNNING for j in jobs),
+        "done_24h": finished(DONE),
+        "failed_24h": finished(FAILED),
+    }
+
+
 def drop(jid: str) -> bool:
     with locked() as d:
         p = _path(d, jid)
@@ -690,13 +714,18 @@ def main(argv: list[str]) -> int:
         if cmd == "list" and len(argv) == 2:
             print(listing())
             return 0
+        if cmd == "depth" and len(argv) == 2:
+            print(json.dumps(depth()))
+            return 0
         if cmd == "drop" and len(argv) == 3:
             print(f"dropped {argv[2]}" if drop(argv[2]) else f"no job {argv[2]}")
             return 0
     except (OSError, ValueError) as e:
         print(f"jobq failed: {e}", file=sys.stderr)
         return 1
-    print("usage: jobq.py next | output <id> | list | drop <id>", file=sys.stderr)
+    print(
+        "usage: jobq.py next | output <id> | list | depth | drop <id>", file=sys.stderr
+    )
     return 2
 
 
