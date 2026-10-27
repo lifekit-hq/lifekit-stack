@@ -8,8 +8,10 @@ sections"). Everything is read from structured sources, never from prose:
   records       each on-host home's backlog, whole, through the home's own
                 bin/fm-tasks-axi.sh (`list`, then `show --full` for a row whose
                 cells the list truncated)
-  projects      the records grouped by their own `repo` (none: the "no project"
-                group), open PRs per repo from `gh` (cached), plan links
+  projects      the records grouped by their `repo`, one group per project
+                whatever spelling (short name, owner/name, FLEET_PLAN_MAP alias;
+                none: the "no project" group), open PRs per repo from `gh`
+                (cached), plan links
   capacity      each on-host home's bin/fm-capacity.sh --json, then each remote
                 home (the PC) from the publisher's read of its cached summary
   queue         the open queued records, and the 7-day throughput from the
@@ -353,6 +355,35 @@ def plan_map() -> dict[str, str]:
     return PLAN_MAP | {repo: project for repo, project in pairs if repo and project}
 
 
+def canonical_repos(
+    repos: list[str], slugs: dict[str, str | None], mapped: dict[str, str]
+) -> dict[str, str]:
+    """Each spelling of a repo -> the one spelling its row is published under.
+
+    A project is its name (the repo part of owner/name, or the short name as
+    written), or the FLEET_PLAN_MAP entry when the repo has one - so `x`,
+    `owner/x` and a mapped alias of either are one project. Two known slugs that
+    differ (owner/x, other/x) stay apart; a spelling with no slug joins the
+    project's only slug. The row is named by its owner/name spelling when one
+    exists, else its alphabetically first short name."""
+    keys: dict[str, tuple[str, str | None]] = {
+        repo: (mapped.get(repo, repo.rsplit("/", 1)[-1]), slugs.get(repo))
+        for repo in repos
+    }
+    for project in {k[0] for k in keys.values()}:
+        known = {k[1] for k in keys.values() if k[0] == project and k[1]}
+        if len(known) == 1:
+            (only,) = known
+            keys = {r: (p, only if p == project else s) for r, (p, s) in keys.items()}
+    best: dict[tuple[str, str | None], str] = {}
+    for repo in sorted(repos):
+        key = keys[repo]
+        held = best.get(key)
+        if held is None or ("/" in repo) > ("/" in held):
+            best[key] = repo
+    return {repo: best[keys[repo]] for repo in repos}
+
+
 def projects(
     records: list[dict[str, Any]],
     homes: list[tuple[str, str]],
@@ -360,13 +391,20 @@ def projects(
     now: int,
     errors: list[str],
 ) -> list[dict[str, Any]]:
+    spellings = sorted({r["repo"] for r in records if r["repo"]})
+    spelt = {repo: repo_slug(repo, homes) for repo in spellings}
+    mapped = plan_map()
+    canon = canonical_repos(spellings, spelt, mapped)
     groups: dict[str | None, list[dict[str, Any]]] = {}
     for r in records:
-        groups.setdefault(r["repo"], []).append(r)
-    slugs = {repo: repo_slug(repo, homes) for repo in groups if repo}
+        groups.setdefault(canon.get(r["repo"]), []).append(r)
+    slugs: dict[str, str | None] = {
+        repo: next((spelt[s] for s in spellings if canon[s] == repo and spelt[s]), None)
+        for repo in groups
+        if repo
+    }
     open_prs({s for s in slugs.values() if s}, pr_cache, now, errors)
     vault = Path(os.environ.get("FLEET_VAULT") or "/srv/memory")
-    mapped = plan_map()
     rows = []
     for repo, items in groups.items():
         done = [r for r in items if r["state"] == "done" and r["closed"]]

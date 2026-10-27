@@ -11,6 +11,11 @@
 # up as the admin account (login shell, then an interactive one for a node
 # version manager set up in .bashrc).
 #
+# FLEET_PLAN_MAP (optional) is the publisher's "<repo>=<project> ..." alias
+# list, which folds a repo spelling that names no project (host config, never
+# in code) into its project's status-page row; unset or empty, the unit carries
+# no FLEET_PLAN_MAP.
+#
 # Tests set INSTALL_ROOT (a prefix for every installed path), SYSTEMCTL and SU; an
 # INSTALL_ROOT run needs no root and does not chown.
 
@@ -36,6 +41,15 @@ for home in "${homes[@]}"; do
   }
 done
 FM_HOMES="${homes[*]}"
+FLEET_PLAN_MAP="${FLEET_PLAN_MAP:-}"
+plan_map_env=""
+if [[ -n "$FLEET_PLAN_MAP" ]]; then
+  [[ "$FLEET_PLAN_MAP" =~ ^[A-Za-z0-9._/=\ -]+$ ]] || {
+    echo "FLEET_PLAN_MAP must be \"<repo>=<project> ...\" of [A-Za-z0-9._/= -]" >&2
+    exit 1
+  }
+  plan_map_env=" \"FLEET_PLAN_MAP=${FLEET_PLAN_MAP}\""
+fi
 owner=(-o "$ADMIN_USER" -g "$ADMIN_USER")
 if [[ -n "$INSTALL_ROOT" ]]; then
   owner=()
@@ -68,6 +82,7 @@ install -m 755 "$HERE/fleet-publisher.sh" "$INSTALL_ROOT/usr/local/bin/lifekit-f
 # The status page helper; the publisher finds it beside itself under this name.
 install -m 755 "$HERE/fleet_status.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-status.py"
 sed -e "s|__ADMIN_USER__|${ADMIN_USER}|" -e "s|__FM_HOMES__|${FM_HOMES}|" -e "s|__TASKS_AXI__|${TASKS_AXI}|" \
+  -e "s|__FLEET_PLAN_MAP_ENV__|${plan_map_env}|" \
   "$HERE/lifekit-fleet-publisher.service" > "$UNIT_DIR/lifekit-fleet-publisher.service"
 install -m 644 "$HERE/lifekit-fleet-publisher.timer" "$UNIT_DIR/lifekit-fleet-publisher.timer"
 "$SYSTEMCTL" daemon-reload
