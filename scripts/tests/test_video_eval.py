@@ -1317,6 +1317,36 @@ def test_the_same_note_sent_again_answers_with_its_earlier_verdict(box):
     assert len(box.index()) == 1
 
 
+def test_two_different_notes_sharing_a_title_are_judged_and_indexed_separately(box):
+    other = "Move the weekly digest onto the same queue as well."
+    first = box.cli("note", "--origin", "kit", stdin=note_text("park"))
+    second = box.cli(
+        "note", "--origin", "kit", stdin=note_text("drop", note=f"Note: {other}")
+    )
+    assert first.returncode == 0 and second.returncode == 0, second.stderr
+    rows = box.index()
+    assert [(r["source"], r["verdict"]) for r in rows] == [
+        (_note_source(NOTE_TEXT), "park"),
+        (_note_source(other), "drop"),
+    ]
+    assert "duplicate" not in [r["reason"] for r in rows]
+    assert rows[0]["report"] != rows[1]["report"]
+    assert "already judged" not in second.stdout
+
+
+def test_a_judged_note_is_not_matched_by_a_later_links_title(box):
+    box.cli("note", "--origin", "kit", stdin=note_text("park"))
+    r = box.cli(
+        "link",
+        "--origin",
+        "kit",
+        stdin=link_text(title="Title: Backups on the job queue"),
+    )
+    assert r.returncode == 0, r.stderr
+    assert "already judged" not in r.stdout
+    assert [row["kind"] for row in box.index()] == ["note", "link"]
+
+
 def test_a_note_needs_a_rubric_that_has_the_note_kind(box, tmp_path):
     old = tmp_path / "rubric.md"
     old.write_text(

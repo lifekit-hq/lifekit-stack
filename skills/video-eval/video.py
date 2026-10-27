@@ -1359,7 +1359,7 @@ def _file_direct(
             f"- {e}" for e in errors
         )
     root = private_root()
-    row = earlier(root, url, r.head["title"])
+    row = earlier(root, url, "" if kind == NOTE else r.head["title"])
     if row is not None:
         if normalize_url(row["source"]) != url:
             _append_repeat(root, row, url, origin, rubric, kind)
@@ -1436,7 +1436,7 @@ def earlier(root: Path, url: str, title: str) -> dict | None:
     for row in read_index(root):
         if normalize_url(row["source"]) == url:
             return row
-        if title and normalize_title(row["title"]) == title:
+        if title and row["kind"] != NOTE and normalize_title(row["title"]) == title:
             return row
     return None
 
