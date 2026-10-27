@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """monday-page - the Monday page's board payload, built from the fleet's own records.
 
-Reads three sources and prints one fm-bearings-board.v1 payload to stdout, for the
+Reads its sources and prints one fm-bearings-board.v1 payload to stdout, for the
 firstmate `bin/fm-bearings-board.sh build` that turns it into the page unchanged:
 
   summary  the fleet publisher's merged summary (scripts/fleet-publisher/):
            decisions_open, active_children, queued, landed, counts
+  backlog  the calls of each home on this host, read whole from that home's
+           backlog through firstmate's `bin/fm-tasks-axi.sh` (`list --state held`,
+           then `show <id> --full`): the summary cuts hold reasons at 160
+           characters, the backlog holds the record `fleet-policy decide` wrote
   audit    the newest `fleet-policy audit` report (a dated .md file, or the
            directory that holds them)
   pace     `fleet-policy pace --json` (a file, or the command run live)
@@ -16,6 +20,9 @@ Mapping, each pinned by scripts/tests/test_monday_page.py:
   recommendation come from the tokens `fleet-policy decide` writes into the hold
   reason (`rec=ID opts: ID=LABEL; ID=LABEL - context`), `about` is the origin
   plus that context, `detail` the full reason. Nothing else in the reason is read.
+  A home read from its backlog takes its calls from there (held, hold kind
+  captain); every other home's calls, such as a remote PC home's, come from the
+  summary, where a reason the publisher cut short ("…") is refused as truncated.
 - A decision lacking options, a recommendation or context is never a call: it is
   a `charted` row of kind `warning` (not dispatchable, filed at generation time so
   it sorts first in Charted Next), titled `Refused call: ...`, whose reason lists
@@ -37,6 +44,10 @@ Environment (flags override):
   MONDAY_PAGE_AUDIT         audit report file or directory (no default: unset reads as missing)
   MONDAY_PAGE_PACE          file holding `fleet-policy pace --json` output (default: run it)
   MONDAY_PAGE_FLEET_POLICY  fleet-policy binary for the live pace (default fleet-policy)
+  MONDAY_PAGE_TASKS_AXI     firstmate bin/fm-tasks-axi.sh (no default: unset reads calls
+                            from the summary alone)
+  MONDAY_PAGE_HOMES         ':'-separated home directories to read from their backlogs
+                            (default: every summary home whose path exists on this host)
   MONDAY_PAGE_NOW           pin the clock (epoch seconds), for tests
 
 Exit: 0 payload printed; 1 the summary is missing or unreadable (nothing printed).
@@ -67,6 +78,11 @@ BRACKET_RE = re.compile(r"\[[^\]]*\]\s*")
 AUDIT_HEAD_RE = re.compile(r"^# Policy audit (\S+)")
 AUDIT_WINDOW_RE = re.compile(r"^Window: (\S+) to (\S+)\. Violations: (\d+)\.")
 AUDIT_REPORT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+TRUNCATED = "…"
+HOLD_SET_RE = re.compile(r"^Captain hold set: (\S+)$", re.M)
+ORIGIN_RE = re.compile(r"^(?:Captain hold origin|Origin): (\S+)$", re.M)
+TOON_TABLE_RE = re.compile(r"^tasks\[\d+\]\{([^}]*)\}:$")
+TOON_FIELD_RE = re.compile(r"^  ([a-z_]+): (.*)$")
 RESERVED_OPTION = "reconcile"
 WEEKLY_OPTIONS = [
     {"value": "accept", "label": "Accept this week's scope"},
@@ -104,9 +120,10 @@ def parse_reason(reason: str) -> dict[str, Any]:
     """The tokens `fleet-policy decide` writes:
     `[Tier ...] [P1 ...] rec=ID opts: ID=LABEL; ID=LABEL - context`.
 
-    Options run to the first " - "; everything after it is context. A reason the
-    publisher cut short ("…") inside the options leaves them unreadable, and so
-    does an option label holding " - " (more `; ID=` options past the split).
+    Options run to the first " - "; everything after it is context. A part with
+    no `=` continues the label before it (a label may hold "; "). An option label
+    holding " - " leaves the options unreadable (more `; ID=` options past the
+    split).
     """
     rest = reason.strip()
     while m := BRACKET_RE.match(rest):
@@ -117,37 +134,41 @@ def parse_reason(reason: str) -> dict[str, Any]:
     elif m := REC_RE.search(rest):
         rec = m.group(1)
     options: list[tuple[str, str]] = []
-    cut = ambiguous = False
+    ambiguous = False
     if rest.startswith("opts:"):
-        body, sep, context = rest[len("opts:") :].strip().partition(" - ")
-        cut = not sep and body.endswith("…")
+        body, _, context = rest[len("opts:") :].strip().partition(" - ")
         ambiguous = bool(re.search(r"; [A-Za-z0-9._-]+=", context))
         for part in body.split("; "):
             value, eq, label = part.partition("=")
             if eq and value.strip() and label.strip():
                 options.append((value.strip(), label.strip()))
+            elif options and part.strip():
+                options[-1] = (options[-1][0], f"{options[-1][1]}; {part.strip()}")
     else:
         context = rest[2:] if rest.startswith("- ") else rest
     return {
         "rec": rec,
         "options": options,
         "context": context.strip(),
-        "cut": cut,
         "ambiguous": ambiguous,
     }
 
 
-def judge_call(call: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
-    """A decision's call, or the reasons it is refused."""
+def judge_call(
+    call: dict[str, Any], published: bool = True
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """A decision's call, or the reasons it is refused. `published` marks a call
+    read from the summary, whose publisher cuts long reasons short with "…"."""
     reason = str(call.get("reason") or "")
     parsed = parse_reason(reason)
     key = str(call.get("key") or call.get("id") or "")
     why = []
     if not SLUG_RE.match(key):
         why.append("no board key")
-    if parsed["cut"]:
-        why.append("options cut off in the summary")
-    elif parsed["ambiguous"]:
+    if published and reason.rstrip().endswith(TRUNCATED):
+        # Whatever the cut left can't be judged: options and context may be gone.
+        return None, why + ["reason truncated in the published summary"]
+    if parsed["ambiguous"]:
         why.append("options ambiguous")
     elif not parsed["options"]:
         why.append("no options")
@@ -160,12 +181,7 @@ def judge_call(call: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         why.append("duplicate option ids")
     if not parsed["rec"]:
         why.append("no recommendation")
-    elif (
-        values
-        and not parsed["cut"]
-        and not parsed["ambiguous"]
-        and parsed["rec"] not in values
-    ):
+    elif values and not parsed["ambiguous"] and parsed["rec"] not in values:
         why.append("recommendation is not one of the options")
     if not parsed["context"]:
         why.append("no context")
@@ -213,6 +229,119 @@ def refused_row(
         "kind": "warning",
         "filed": filed,
     }
+
+
+# --- the backlog of a home on this host ---------------------------------------
+
+
+def toon_value(raw: str) -> str | None:
+    """One TOON scalar as tasks-axi prints it: quoted JSON string, or bare; "-" is none."""
+    raw = raw.strip()
+    if raw.startswith('"'):
+        raw = json.loads(raw)
+    return None if raw in ("", "-") else raw
+
+
+def toon_rows(out: str) -> list[dict[str, str | None]]:
+    """The rows of the `tasks[N]{cols}:` table `tasks-axi list` prints."""
+    lines = out.splitlines()
+    for at, line in enumerate(lines):
+        if m := TOON_TABLE_RE.match(line):
+            columns = m.group(1).split(",")
+            break
+    else:
+        return []  # `list` prints no table when nothing matches
+    rows = []
+    for line in lines[at + 1 :]:
+        if not line.startswith("  "):
+            break
+        cells, cell, quoted, escaped = [], "", False, False
+        for ch in line.strip():
+            if escaped:
+                cell, escaped = cell + ch, False
+            elif ch == "\\" and quoted:
+                cell, escaped = cell + ch, True
+            elif ch == '"':
+                cell, quoted = cell + ch, not quoted
+            elif ch == "," and not quoted:
+                cells.append(cell)
+                cell = ""
+            else:
+                cell += ch
+        cells.append(cell)
+        if len(cells) == len(columns):
+            rows.append(dict(zip(columns, map(toon_value, cells))))
+    return rows
+
+
+def toon_fields(out: str) -> dict[str, str | None]:
+    """The `key: value` lines `tasks-axi show` prints under `task:`."""
+    return {
+        m.group(1): toon_value(m.group(2))
+        for m in map(TOON_FIELD_RE.match, out.splitlines())
+        if m
+    }
+
+
+def read_backlog(
+    home: str, home_id: str, tasks_axi: str, now: int
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """(the home's open calls, shaped like summary decisions; why they are unreadable).
+
+    A call is a held task of hold kind captain; `show --full` gives its whole title,
+    reason and body (origin, hold time)."""
+    env = {**os.environ, "FM_HOME": home}
+
+    def axi(*args: str) -> str:
+        return subprocess.run(
+            [tasks_axi, *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        ).stdout
+
+    try:
+        held = toon_rows(
+            axi(
+                "list",
+                "--state",
+                "held",
+                "--fields",
+                "hold_reason,hold_kind,hold_until",
+            )
+        )
+        calls = []
+        for row in held:
+            if row.get("hold_kind") != "captain" or not row.get("id"):
+                continue
+            task = toon_fields(axi("show", str(row["id"]), "--full"))
+            body = task.get("body") or ""
+            call: dict[str, Any] = {
+                "id": task.get("id") or row["id"],
+                "key": task.get("id") or row["id"],
+                "summary": task.get("title"),
+                "reason": task.get("hold_reason"),
+                "hold_until": task.get("hold_until"),
+                "repo": task.get("repo"),
+                "home_id": home_id,
+                "source": "backlog",
+            }
+            if m := ORIGIN_RE.search(body):
+                call["origin"] = m.group(1)
+            if m := HOLD_SET_RE.search(body):
+                try:
+                    since = dt.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%SZ")
+                except ValueError:
+                    pass
+                else:
+                    since = since.replace(tzinfo=dt.timezone.utc).timestamp()
+                    call["hold_age_days"] = max(0, int((now - since) // 86400))
+            calls.append(call)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        return None, f"backlog of {home_id} unreadable ({exc.__class__.__name__})"
+    return calls, ""
 
 
 # --- weekly numbers ----------------------------------------------------------
@@ -316,15 +445,25 @@ def build(
     audit: tuple[str | None, str],
     pace: tuple[str | None, str],
     now: int,
+    backlog: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
+    """`backlog` maps a home id to the calls read whole from its backlog; those
+    replace that home's summary decisions."""
+    backlog = backlog or {}
     generated = iso(now)
     today = dt.datetime.fromtimestamp(now, dt.timezone.utc).date()
     monday = (today - dt.timedelta(days=today.weekday())).isoformat()
 
     calls, refused, keys, refused_ids = [], [], set(), set()
-    decisions = dicts(summary, "decisions_open")
-    for call in decisions:
-        card, why = judge_call(call)
+    decisions = [
+        (call, False) for home_calls in backlog.values() for call in home_calls
+    ] + [
+        (call, True)
+        for call in dicts(summary, "decisions_open")
+        if call.get("home_id") not in backlog
+    ]
+    for call, published in decisions:
+        card, why = judge_call(call, published)
         if card and card["key"] in keys:
             card, why = None, ["duplicate key"]
         if card:
@@ -333,7 +472,7 @@ def build(
         else:
             refused.append(refused_row(call, why, generated, refused_ids))
     # An open decision shows as its call or its refusal, never again as queued work.
-    open_ids = {str(d.get(k)) for d in decisions for k in ("id", "key") if d.get(k)}
+    open_ids = {str(d.get(k)) for d, _ in decisions for k in ("id", "key") if d.get(k)}
 
     underway = []
     for child in dicts(summary, "active_children"):
@@ -418,6 +557,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--audit", default=os.environ.get("MONDAY_PAGE_AUDIT"))
     parser.add_argument("--pace", default=os.environ.get("MONDAY_PAGE_PACE"))
+    parser.add_argument(
+        "--tasks-axi",
+        default=os.environ.get("MONDAY_PAGE_TASKS_AXI"),
+        help="firstmate bin/fm-tasks-axi.sh; unset reads calls from the summary alone",
+    )
+    parser.add_argument(
+        "--home",
+        action="append",
+        help="a home directory to read calls from its backlog (repeatable; default: "
+        "every summary home whose path exists on this host)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -433,6 +583,23 @@ def main(argv: list[str] | None = None) -> int:
         os.environ.get("MONDAY_PAGE_NOW")
         or dt.datetime.now(dt.timezone.utc).timestamp()
     )
+    backlog: dict[str, list[dict[str, Any]]] = {}
+    if args.tasks_axi:
+        known = {
+            str(h.get("path")): str(h.get("id"))
+            for h in dicts(summary, "homes")
+            if h.get("path") and h.get("id")
+        }
+        env_homes = [h for h in os.environ.get("MONDAY_PAGE_HOMES", "").split(":") if h]
+        homes = args.home or env_homes or [p for p in known if Path(p).is_dir()]
+        for home in homes:
+            home_id = known.get(home) or Path(home).name
+            calls, why = read_backlog(home, home_id, args.tasks_axi, now)
+            if calls is None:
+                # Its summary calls stand in; truncated ones refuse as such.
+                print(f"monday-page: {why}; using the summary", file=sys.stderr)
+            else:
+                backlog[home_id] = calls
     payload = build(
         summary,
         read_audit(args.audit),
@@ -440,6 +607,7 @@ def main(argv: list[str] | None = None) -> int:
             args.pace, os.environ.get("MONDAY_PAGE_FLEET_POLICY", "fleet-policy")
         ),
         now,
+        backlog,
     )
     refused = [row for row in payload["charted"] if row["kind"] == "warning"]
     for row in refused:

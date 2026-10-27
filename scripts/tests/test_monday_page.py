@@ -5,7 +5,9 @@ recommendation preselected, or a refused row at the top of Charted Next naming
 each missing piece; the weekly scope call always exists and says when the audit
 or the pace is missing; outside text never reads as a wikilink; and the payload
 satisfies the board's fm-bearings-board.v1 validator when one is available
-(MONDAY_PAGE_BOARD_SH names a firstmate bin/fm-bearings-board.sh).
+(MONDAY_PAGE_BOARD_SH names a firstmate bin/fm-bearings-board.sh). Calls of a home
+on this host come whole from its backlog, read through a fake fm-tasks-axi.sh
+that prints what the real one prints; other homes' calls come from the summary.
 """
 
 from __future__ import annotations
@@ -140,8 +142,8 @@ def summary(**overrides):
     return {**base, **overrides}
 
 
-def payload(s=None, audit=("Audit line", ""), pace=("Pace line", "")):
-    return mp.build(s or summary(), audit, pace, NOW)
+def payload(s=None, audit=("Audit line", ""), pace=("Pace line", ""), backlog=None):
+    return mp.build(s or summary(), audit, pace, NOW, backlog)
 
 
 def refused(p):
@@ -319,7 +321,11 @@ def test_live_pace_is_read_even_when_starts_are_held(tmp_path):
         ),
         (
             "rec=go opts: go=Go; stop=Stop; kee…",
-            ["options cut off in the summary", "no context"],
+            ["reason truncated in the published summary"],
+        ),
+        (
+            "rec=go opts: go=Go; stop=Stop - the captain asked whether to sh…",
+            ["reason truncated in the published summary"],
         ),
     ],
 )
@@ -425,7 +431,7 @@ def test_double_brackets_in_outside_text_never_read_as_wikilinks():
 # --- CLI and the board's own validator --------------------------------------------
 
 
-def run_cli(tmp_path, summary_path=None, audit=True, pace=True):
+def run_cli(tmp_path, summary_path=None, audit=True, pace=True, extra=()):
     if summary_path is None:
         summary_path = tmp_path / "summary.json"
         summary_path.write_text(json.dumps(summary()))
@@ -439,7 +445,7 @@ def run_cli(tmp_path, summary_path=None, audit=True, pace=True):
         (tmp_path / "pace.json").write_text(json.dumps(PACE))
         env["MONDAY_PAGE_PACE"] = str(tmp_path / "pace.json")
     return subprocess.run(
-        [sys.executable, str(SCRIPT)], env=env, capture_output=True, text=True
+        [sys.executable, str(SCRIPT), *extra], env=env, capture_output=True, text=True
     )
 
 
@@ -472,7 +478,13 @@ def test_payload_satisfies_the_board_validator(tmp_path):
         ]
     )
     (tmp_path / "summary.json").write_text(json.dumps(s))
-    r = run_cli(tmp_path, summary_path=tmp_path / "summary.json")
+    axi, _ = fake_tasks_axi(tmp_path)
+    r = run_cli(
+        tmp_path,
+        summary_path=tmp_path / "summary.json",
+        extra=["--tasks-axi", str(axi), "--home", str(tmp_path / "firstmate")],
+    )
+    assert "long-call" in [c["key"] for c in json.loads(r.stdout)["captains_call"]]
     data = tmp_path / "payload.json"
     data.write_text(r.stdout)
     script = Path(BOARD_SH).read_text()
@@ -538,3 +550,180 @@ def test_refused_rows_get_distinct_ids_when_keys_repeat_or_collide():
         "refused-a-b",
         "refused-a-b-2",
     ]
+
+
+# --- calls read whole from the backlog of a home on this host ---------------------
+
+# `fm-tasks-axi.sh list --state held --fields hold_reason,hold_kind,hold_until` and
+# `show <id> --full`, in the TOON shape the real command prints (titles in `list`
+# are cut, quoted strings carry JSON escapes, "-" is none).
+LIST_OUT = """count: 3
+tasks[3]{id,state,kind,repo,title,hold_reason,hold_kind,hold_until}:
+  long-call,queued,captain,lifekit-stack,"A title cut in the list\\n... (truncated, 90 chars total - use show long-call --full to see complete text)","[Tier 2 reversible] [P1 monday=2026-11-02] rec=go opts: go=Go ahead; stop=Stop here","captain",2026-11-02
+  waits-on-pr,queued,ship,fleet-policy,"Waits, \\"quoted\\"","waits on upstream PR 7, the maintainer's call",external,"-"
+  parked-one,queued,task,clip,Parked,Captain parked it,parked,2026-11-02
+help[1]:
+  - Run `tasks-axi show <id>` for full notes on a task
+"""
+
+SHOW_OUT = """task:
+  id: long-call
+  title: "A whole title that the list cut short, with \\"quotes\\""
+  state: queued
+  held: yes
+  hold_reason: "[Tier 2 reversible] [P1 monday=2026-11-02] rec=go opts: go=Go ahead; stop=Skip it; count it by hand - Captain 2026-10-26: decide by Monday, the whole reason well past the summary's 160 characters"
+  hold_kind: captain
+  hold_until: 2026-11-02
+  kind: captain
+  repo: lifekit-stack
+  priority: "-"
+  body: "Captain hold set: 2026-10-26T10:10:16Z\\nCaptain hold origin: kit-review-2026-10-26\\n\\nOrigin: kit-review-2026-10-26"
+"""
+
+
+def fake_tasks_axi(tmp_path, list_out=LIST_OUT, fail=False):
+    """A stand-in fm-tasks-axi.sh: logs FM_HOME and its arguments, prints the outputs above."""
+    (tmp_path / "list.out").write_text(list_out)
+    (tmp_path / "show.out").write_text(SHOW_OUT)
+    log = tmp_path / "axi.log"
+    script = tmp_path / "fm-tasks-axi.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'echo "$FM_HOME $*" >> "{log}"\n'
+        + ("exit 2\n" if fail else "")
+        + f'case "$1" in list) cat "{tmp_path}/list.out";; show) cat "{tmp_path}/show.out";; esac\n'
+    )
+    script.chmod(0o755)
+    return script, log
+
+
+def test_backlog_calls_are_whole_and_only_captain_holds_count(tmp_path):
+    axi, log = fake_tasks_axi(tmp_path)
+    calls, why = mp.read_backlog("/homes/vps", "fm-vps", str(axi), NOW)
+    assert why == ""
+    assert calls == [
+        {
+            "id": "long-call",
+            "key": "long-call",
+            "summary": 'A whole title that the list cut short, with "quotes"',
+            "reason": "[Tier 2 reversible] [P1 monday=2026-11-02] rec=go opts: go=Go ahead; "
+            "stop=Skip it; count it by hand - Captain 2026-10-26: decide by Monday, "
+            "the whole reason well past the summary's 160 characters",
+            "hold_until": "2026-11-02",
+            "repo": "lifekit-stack",
+            "home_id": "fm-vps",
+            "source": "backlog",
+            "origin": "kit-review-2026-10-26",
+            "hold_age_days": 6,  # 2026-10-26T10:10Z to 2026-11-02T08:00Z
+        }
+    ]
+    assert log.read_text().splitlines() == [
+        "/homes/vps list --state held --fields hold_reason,hold_kind,hold_until",
+        "/homes/vps show long-call --full",
+    ]
+
+
+def test_a_backlog_call_keeps_a_label_that_holds_a_semicolon(tmp_path):
+    axi, _ = fake_tasks_axi(tmp_path)
+    calls, _ = mp.read_backlog("/homes/vps", "fm-vps", str(axi), NOW)
+    card = payload(backlog={"fm-vps": calls})["captains_call"][1]
+    assert card["options"] == [
+        {"value": "go", "label": "Go ahead"},
+        {"value": "stop", "label": "Skip it; count it by hand"},
+    ]
+    assert card["about"] == (
+        "kit-review-2026-10-26 (fm-vps): Captain 2026-10-26: decide by Monday, "
+        "the whole reason well past the summary's 160 characters"
+    )
+    assert card["detail"].endswith(" · due 2026-11-02 · held 6 days")
+
+
+def test_an_empty_backlog_list_reads_as_no_calls(tmp_path):
+    axi, log = fake_tasks_axi(
+        tmp_path, list_out="count: 0\ntasks: 0 held tasks in this backlog\n"
+    )
+    assert mp.read_backlog("/homes/vps", "fm-vps", str(axi), NOW) == ([], "")
+    assert "show" not in log.read_text()
+
+
+def test_an_unreadable_backlog_says_why(tmp_path):
+    axi, _ = fake_tasks_axi(tmp_path, fail=True)
+    assert mp.read_backlog("/homes/vps", "fm-vps", str(axi), NOW) == (
+        None,
+        "backlog of fm-vps unreadable (CalledProcessError)",
+    )
+
+
+def test_backlog_calls_replace_their_home_and_remote_truncated_calls_refuse():
+    cut = GOOD[:60] + "…"
+    s = summary(
+        decisions_open=[
+            decision("vps-stale", cut),  # fm-vps: its backlog replaces this
+            {**decision("pc-cut", cut), "home_id": "pc"},
+            {**decision("pc-whole", GOOD), "home_id": "pc"},
+        ]
+    )
+    whole = {
+        **decision("vps-call", GOOD + ", with the rest of the reason"),
+        "origin": "o",
+    }
+    p = payload(s, backlog={"fm-vps": [whole]})
+    assert [c["key"] for c in p["captains_call"]] == [
+        "weekly-scope-2026-11-02",
+        "vps-call",
+        "pc-whole",
+    ]
+    assert [(r["id"], r["reason"]) for r in refused(p)] == [
+        ("refused-pc-cut", "refused: reason truncated in the published summary")
+    ]
+
+
+def test_a_backlog_reason_ending_in_an_ellipsis_is_not_read_as_truncated():
+    call = decision("vps-call", GOOD + " and then…")
+    p = payload(backlog={"fm-vps": [call]})
+    assert [c["key"] for c in p["captains_call"]] == [
+        "weekly-scope-2026-11-02",
+        "vps-call",
+    ]
+    assert refused(p) == []
+
+
+def test_cli_reads_the_backlog_of_each_summary_home_on_this_host(tmp_path):
+    axi, log = fake_tasks_axi(tmp_path)
+    here = tmp_path / "vps-home"
+    here.mkdir()
+    s = summary(
+        decisions_open=[decision("vps-stale", GOOD[:60] + "…")],
+        homes=[
+            {"id": "fm-vps", "path": str(here)},
+            {"id": "pc", "path": str(tmp_path / "not-on-this-host")},
+        ],
+    )
+    (tmp_path / "summary.json").write_text(json.dumps(s))
+    r = run_cli(
+        tmp_path,
+        summary_path=tmp_path / "summary.json",
+        extra=["--tasks-axi", str(axi)],
+    )
+    assert r.returncode == 0, r.stderr
+    p = json.loads(r.stdout)
+    assert [c["key"] for c in p["captains_call"]] == [
+        "weekly-scope-2026-11-02",
+        "long-call",
+    ]
+    assert {line.split()[0] for line in log.read_text().splitlines()} == {str(here)}
+
+
+def test_cli_falls_back_to_the_summary_when_a_backlog_is_unreadable(tmp_path):
+    axi, _ = fake_tasks_axi(tmp_path, fail=True)
+    r = run_cli(tmp_path, extra=["--tasks-axi", str(axi), "--home", str(tmp_path)])
+    assert r.returncode == 0, r.stderr
+    p = json.loads(r.stdout)
+    assert [c["key"] for c in p["captains_call"]] == [
+        "weekly-scope-2026-11-02",
+        "ship-it",
+    ]
+    assert (
+        f"backlog of {tmp_path.name} unreadable (CalledProcessError); using the summary"
+        in r.stderr
+    )
