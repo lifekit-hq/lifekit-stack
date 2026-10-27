@@ -190,7 +190,8 @@ def read_records(
     window, with the count of cut rows left unresolved. A row whose cells the
     list truncated is read again with `show --full`, unless the cache holds the
     same row already resolved (titles rarely change, and each show costs a node
-    start), and only until `deadline`: a cut row past it keeps the list's cells."""
+    start), and only until `deadline`: a cut row past it, or whose show fails,
+    keeps the list's cells and is not cached."""
     wrapper = Path(home) / "bin/fm-tasks-axi.sh"
     if not os.access(wrapper, os.X_OK):
         raise OSError("no bin/fm-tasks-axi.sh")
@@ -198,8 +199,8 @@ def read_records(
     if tasks_axi:
         env["PATH"] = f"{os.path.dirname(tasks_axi)}:{env.get('PATH', '')}"
 
-    def axi(*args: str) -> str:
-        return run([str(wrapper), *args], env=env, timeout=30)
+    def axi(*args: str, timeout: int = 30) -> str:
+        return run([str(wrapper), *args], env=env, timeout=timeout)
 
     rows = toon_rows(axi("list", "--limit", str(LIST_LIMIT), "--fields", LIST_FIELDS))
     if len(rows) >= LIST_LIMIT:
@@ -224,16 +225,27 @@ def read_records(
         key = f"{home_id}\t{row['id']}"
         if any(TRUNCATED in (v or "") for v in row.values()):
             hit = cache.get(key)
+            left = deadline - time.monotonic()
             if isinstance(hit, dict) and hit.get("line") == line:
                 full = hit.get("fields") or {}
-            elif time.monotonic() >= deadline:
+            elif left < 1:
                 unresolved += 1
                 records.append(record(home_id, row))
                 continue
             else:
-                shown = toon_fields(axi("show", str(row["id"]), "--full"))
+                try:
+                    out = axi(
+                        "show", str(row["id"]), "--full", timeout=min(30, int(left))
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    unresolved += 1
+                    records.append(record(home_id, row))
+                    continue
+                shown = toon_fields(out)
                 full = {
-                    k: shown.get(k) for k, v in row.items() if TRUNCATED in (v or "")
+                    k: shown[k]
+                    for k, v in row.items()
+                    if TRUNCATED in (v or "") and shown.get(k) is not None
                 }
             cache[key] = {"line": line, "fields": full}
             row = {**row, **full}
@@ -567,7 +579,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         records.extend(safe)
     if unresolved:
         errors.append(
-            f"{unresolved} cut record(s) not shown in full: the show time budget ran out"
+            f"{unresolved} cut record(s) not shown in full: show failed or ran out of time"
         )
     if kept:
         errors.append(

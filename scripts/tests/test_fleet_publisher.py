@@ -2101,6 +2101,26 @@ def test_cut_rows_past_the_show_budget_keep_the_list_cells(homes):
     assert errors == []
 
 
+def test_a_failing_show_keeps_the_home_and_the_list_cells(homes):
+    gone = "Gone\n... (truncated, 90 chars total - use show gone --full)"
+    bare = "Bare\n... (truncated, 90 chars total - use show bare --full)"
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [task("q1"), task("gone", title=gone), task("bare", title=bare)],
+        shows={"bare": {"kind": "ship"}},
+    )
+    assert homes.run(vps).returncode == 0
+    page = status(homes)
+    titles = {r["id"]: r["title"] for r in page["records"]}
+    assert titles == {"q1": "Task q1", "gone": gone, "bare": bare}
+    assert [e for e in page["errors"] if "not shown in full" in e] == [
+        "1 cut record(s) not shown in full: show failed or ran out of time"
+    ]
+    assert homes.run(vps).returncode == 0
+    assert (vps / "calls.log").read_text().count("show gone --full") == 2
+
+
 def test_projects_roll_up_by_repo_with_no_project_last(homes):
     vps = status_home(
         homes.tmp,
