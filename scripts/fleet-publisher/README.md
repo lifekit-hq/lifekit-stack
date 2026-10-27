@@ -89,9 +89,11 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
   an optional `https://` `link`. It is published normalised (`recommended`
   always a boolean, `link` `null` when absent). An invalid file is logged and
   skipped; the decision then carries no `ask`, as before.
-- **The PC (remote home).** The first home caches the PC's secondmate summary in
-  `state/secondmate-summary-cache/`; `PC_SUMMARY_FILE` names the file, else the
-  only `*.json` there is used (none, or several, means no PC entry). `homes[]`
+- **The PC (remote home).** A fleet home caches the PC's secondmate summary in
+  its `state/secondmate-summary-cache/`; `PC_SUMMARY_FILE` names the file, else
+  the first home in `FM_HOMES` order whose cache holds exactly one `*.json`
+  gives it (a home with none, or several, is skipped; no such home means no PC
+  entry). `homes[]`
   gains one entry appended after the aggregation:
   `{id: "pc" (PC_HOME_ID), path: null, published: true, remote: true, valid: true, reason: null, last_seen_epoch, state}`.
   `state` is `working` (the summary has active children), `idle`, or `off`
