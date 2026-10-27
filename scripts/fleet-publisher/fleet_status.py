@@ -48,6 +48,7 @@ TOP_QUEUE = 10
 THROUGHPUT_DAYS = 7
 LIST_LIMIT = 1000
 PR_BUDGET = 15
+SHOW_BUDGET = 20
 LIST_FIELDS = "held,hold_kind,hold_until,hold_reason,priority,closed,links,blocked"
 TRUNCATED = "\n... (truncated, "
 TOON_TABLE_RE = re.compile(r"^tasks\[\d+\]\{([^}]*)\}:$")
@@ -183,11 +184,13 @@ def read_records(
     cache: dict[str, Any],
     now: int,
     errors: list[str],
-) -> list[dict[str, Any]]:
+    deadline: float,
+) -> tuple[list[dict[str, Any]], int]:
     """The home's open backlog, whole, and the records done within the throughput
-    window. A row whose cells the list truncated is read
-    again with `show --full`, unless the cache holds the same row already
-    resolved (titles rarely change, and each show costs a node start)."""
+    window, with the count of cut rows left unresolved. A row whose cells the
+    list truncated is read again with `show --full`, unless the cache holds the
+    same row already resolved (titles rarely change, and each show costs a node
+    start), and only until `deadline`: a cut row past it keeps the list's cells."""
     wrapper = Path(home) / "bin/fm-tasks-axi.sh"
     if not os.access(wrapper, os.X_OK):
         raise OSError("no bin/fm-tasks-axi.sh")
@@ -212,6 +215,7 @@ def read_records(
         .isoformat()
     )
     records = []
+    unresolved = 0
     for line, row in rows:
         if not row.get("id"):
             continue
@@ -222,6 +226,10 @@ def read_records(
             hit = cache.get(key)
             if isinstance(hit, dict) and hit.get("line") == line:
                 full = hit.get("fields") or {}
+            elif time.monotonic() >= deadline:
+                unresolved += 1
+                records.append(record(home_id, row))
+                continue
             else:
                 shown = toon_fields(axi("show", str(row["id"]), "--full"))
                 full = {
@@ -230,7 +238,7 @@ def read_records(
             cache[key] = {"line": line, "fields": full}
             row = {**row, **full}
         records.append(record(home_id, row))
-    return records
+    return records, unresolved
 
 
 # --- projects --------------------------------------------------------------------
@@ -539,20 +547,28 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     errors: list[str] = []
     records: list[dict[str, Any]] = []
     by_home: dict[str, list[dict[str, Any]] | None] = {}
-    kept = 0
+    kept = unresolved = 0
+    show_deadline = time.monotonic() + SHOW_BUDGET
     for home_id, home in homes:
         try:
-            got = read_records(home_id, home, tasks_axi, record_cache, args.now, errors)
+            got, cut = read_records(
+                home_id, home, tasks_axi, record_cache, args.now, errors, show_deadline
+            )
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             errors.append(
                 f"{home_id}: backlog unreadable ({exc.__class__.__name__}: {exc})"[:300]
             )
             by_home[home_id] = None
             continue
+        unresolved += cut
         safe = [r for r in got if not withheld(r, pattern)]
         kept += len(got) - len(safe)
         by_home[home_id] = safe
         records.extend(safe)
+    if unresolved:
+        errors.append(
+            f"{unresolved} cut record(s) not shown in full: the show time budget ran out"
+        )
     if kept:
         errors.append(
             f"{kept} record(s) withheld: they look like they hold a credential"

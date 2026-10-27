@@ -132,7 +132,9 @@ alone. Each home is read with `FM_HOME` set to it, through its own
 - **Records** are read whole. A row the list truncates (a long title) is read
   again with `show <id> --full`; the resolved row is cached in the publisher's
   state directory (`status-records.json`) against the list line, so an
-  unchanged record is not shown again. A record whose text matches a
+  unchanged record is not shown again. The shows share a 20 s budget per run;
+  a cut row past it keeps the list's cut cells and is counted in `errors`,
+  and the cache still saves, so a cold cache fills over a few runs. A record whose text matches a
   credential pattern is left out and counted in `errors`. A missing `repo` is
   never an error: the record shows under "no project".
 - **Repo to GitHub**: a `repo` already of the form owner/name is used as is;

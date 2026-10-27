@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -2076,6 +2077,28 @@ def test_a_cut_row_is_shown_once_and_then_served_from_the_cache(homes):
         assert homes.run(vps).returncode == 0
     assert (vps / "calls.log").read_text().count("show cut --full") == 1
     assert status(homes)["records"][0]["title"] == "Short and then the rest"
+
+
+def test_cut_rows_past_the_show_budget_keep_the_list_cells(homes):
+    cut = "Short\n... (truncated, 90 chars total - use show cut --full)"
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [task("cut", title=cut)],
+        shows={"cut": {"title": "Short and then the rest"}},
+    )
+    cache: dict = {}
+    errors: list[str] = []
+    got, unresolved = fleet_status.read_records(
+        "fm-vps", str(vps), "", cache, NOW, errors, time.monotonic() - 1
+    )
+    assert (got[0]["title"], unresolved, cache) == (cut, 1, {})
+    assert not (vps / "calls.log").read_text().count("show")
+    got, unresolved = fleet_status.read_records(
+        "fm-vps", str(vps), "", cache, NOW, errors, time.monotonic() + 30
+    )
+    assert (got[0]["title"], unresolved) == ("Short and then the rest", 0)
+    assert errors == []
 
 
 def test_projects_roll_up_by_repo_with_no_project_last(homes):
