@@ -1749,13 +1749,25 @@ From the host (firstmate, or the operator; any account in the `docker` group). O
   `Source:` line. It is stamped `standard`, or `claim-check` with `--check`; a YouTube or
   Instagram video link is rejected (queue it with `enqueue`). The report is kept in
   `/var/lib/lifekit/intake/reports/links/`, which intake-to-vault does not file into the vault.
+- **File a judged text note** (the owner's own note, read and judged by its producer):
+  `scripts/video-eval.sh note <report file> [--check]` (or the report on stdin) files it the
+  same way as a link, under `VIDEO_EVAL_ORIGIN`, with the note's text as its `Note:` line; it is
+  recorded and matched under that text's digest (`note:<digest>`), so the same note sent again
+  answers with its earlier verdict. A `Note:` over 4096 characters is rejected.
+- **Queue a voice note** (an audio file: `.ogg`, `.oga`, `.opus`, `.m4a`, `.mp3`, `.wav`):
+  `scripts/video-eval.sh voice <file> [--check]` queues it like a backfilled video file - no
+  egress, the same local whisper, judged on the next drain turn - but it is judged and indexed
+  as kind `note`. It prints `note queued - job video-file-<digest>`; follow it with `status`.
+  Both kinds of note are stamped `standard`, or `claim-check` with `--check`, and their reports
+  are kept in `/var/lib/lifekit/intake/reports/notes/`, which intake-to-vault does not file into
+  the vault.
 
 Then:
 
 - **Verify:**
   - Send Kit a public YouTube link. It answers `video queued` at once, and with the PC on the
     three-line answer arrives within a few minutes. Then `scripts/video-eval.sh index` shows
-    its row, and its report has a `Rubric: video-eval v3 (standard)` line.
+    its row, and its report has a `Rubric: video-eval v4 (standard)` line.
   - `scripts/video-eval.sh enqueue <the same link>` answers `already judged`.
   - A made-up reel link ends as an `unavailable` line, which proves the yt-dlp and the route
     to Instagram.

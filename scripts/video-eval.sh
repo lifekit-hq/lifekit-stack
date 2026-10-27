@@ -21,12 +21,17 @@
 #   video-eval.sh link [FILE] [--check]      file a judged link's or article's
 #                                            report (FILE, else stdin) the same
 #                                            way, as VIDEO_EVAL_ORIGIN
+#   video-eval.sh note [FILE] [--check]      file a judged text note's report
+#                                            (FILE, else stdin) the same way
+#   video-eval.sh voice FILE [--check]       queue a voice note (an audio file):
+#                                            transcribed, then judged as a note
 #
 # Completion signal: `status` prints `done` or `failed` on its first line once
 # the job is finished, and a done job's last line is `report: <host path>`.
 # enqueue prints the job id (video-<key>). A link already judged prints its
-# earlier verdict instead, and nothing is queued. idea and link exit 3 with the
-# reasons when the report does not follow the rubric.
+# earlier verdict instead, and nothing is queued; voice prints its job id the
+# same way. idea, link and note exit 3 with the reasons when the report does
+# not follow the rubric.
 #
 # Run as a user that may use docker (denys, or lifekit). Paths it prints are
 # host paths: the gateway's /home/node/.life-state is /var/lib/lifekit here,
@@ -40,7 +45,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '7,23p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '7,27p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -101,7 +106,7 @@ case "$cmd" in
     $DOCKER exec -i "$GATEWAY" python3 "$SCRIPT" idea \
       <"${1:-/dev/stdin}" | host_paths
     ;;
-  link)
+  link | note | voice)
     check=() file=""
     for a in "$@"; do
       case "$a" in
@@ -113,8 +118,13 @@ case "$cmd" in
       echo "$file: no such file" >&2
       exit 1
     fi
-    $DOCKER exec -i "$GATEWAY" python3 "$SCRIPT" link --origin "$ORIGIN" \
-      "${check[@]}" <"${file:-/dev/stdin}" | host_paths
+    name=()
+    if [ "$cmd" = voice ]; then
+      [ -n "$file" ] || usage
+      name=("$(basename "$file")")
+    fi
+    $DOCKER exec -i "$GATEWAY" python3 "$SCRIPT" "$cmd" "${name[@]}" \
+      --origin "$ORIGIN" "${check[@]}" <"${file:-/dev/stdin}" | host_paths
     ;;
   *) usage ;;
 esac
