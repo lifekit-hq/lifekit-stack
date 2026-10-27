@@ -44,7 +44,7 @@
 # task.dispatched), landed_at (landed: its task.merged, else task.cleaned_up)
 # and priority (queued: the backlog line's "(priority: N)"); decisions_open
 # items the snapshot gives no ask gain the validated data/<id>/ask.json.
-# A remote home (the PC) appears in homes[] from the first home's cached
+# A remote home (the PC) appears in homes[] from a fleet home's cached
 # secondmate summary as state and last-seen only. OUT_DIR/metrics also gets
 # quota.jsonl and quota-snapshot.json: percentages and reset times only, never
 # an account identifier (contract in README.md).
