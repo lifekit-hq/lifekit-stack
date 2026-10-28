@@ -182,10 +182,11 @@ def test_only_the_finance_agent_gets_a_heartbeat():
 
 
 # Model providers something routes to: every agent's model is anthropic/*
-# through the claude-cli backend, and the openai auth profile runs on the
-# codex agent runtime. Any other provider plugin stays out of the allowlist.
-ROUTED_PROVIDERS = {"anthropic", "openai", "codex"}
-UNROUTED_PROVIDERS = {"google", "kie", "ollama", "openrouter", "vllm", "xai"}
+# through the claude-cli backend, and the openai auth profile stays allowed.
+# Any other provider plugin stays out of the allowlist, and so does codex:
+# no agent, fallback or cron runs on the codex agent runtime.
+ROUTED_PROVIDERS = {"anthropic", "openai"}
+UNROUTED_PROVIDERS = {"codex", "google", "kie", "ollama", "openrouter", "vllm", "xai"}
 MEMORY_AGENTS = ("kit", "finance")
 
 

@@ -62,7 +62,7 @@ When an automation run asks for the weekly career pulse:
 
 ## Skills
 
-Declared in `agents.entries.career.skills` (see `skills/README.md`): `github`, `gh-issues`, `notion`, `browser-automation`, `diagram-maker`. `browser-automation` is for public pages only - never LinkedIn, never a logged-in session.
+Declared in `agents.entries.career.skills` (see `skills/README.md`): `github`, `notion`, `browser-automation`, `diagram-maker`, `youtube-transcript`. `browser-automation` is for public pages only - never LinkedIn, never a logged-in session.
 
 ## Hard rules
 
