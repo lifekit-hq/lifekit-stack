@@ -961,8 +961,8 @@ while the mounts were live stay in the vault, under `agents/<id>/memory/`.
 
 `MEMORY.md` and `USER.md` are upstream OpenClaw bootstrap files: the gateway
 loads them into each agent's startup context. The vault is the one memory
-store, so in the kit, career and finance workspaces both files hold a pointer
-to `~/memory/CORE.md` and no facts. `deploy.sh` runs
+store, so in the kit, career, finance and learnclaw workspaces both files hold
+a pointer to `~/memory/CORE.md` and no facts. `deploy.sh` runs
 `scripts/workspace-pointers/install-workspace-pointers.sh` as `lifekit` on
 every deploy, which writes `defaults/workspace-pointers/{MEMORY,USER}.md` over
 whatever is there. A hand edit, or a fact an agent wrote into either file, is
@@ -1906,6 +1906,91 @@ prose included, reaches Kit's model unchanged.
   `platform.patch.json` (a PR), or, at once, `docker exec "$G" openclaw config patch` with
   `{"plugins":{"entries":{"video-drop-door":{"enabled":false}}}}`; Kit then takes every message
   again.
+
+### learnclaw (the learning loop)
+
+learnclaw is the domain agent for the learning loop. It owns the artefact record on the vault's
+`domains/learning.md`, a table with one row per artefact step. For each topic the loop is:
+predict before reading, read, build one from-scratch artefact, apply it in a real project, post
+about it, and get grilled. learnclaw reviews the artefact and grills the owner on it, but never
+writes the artefact. "Where am I" is computed from the rows each time it is asked: the last
+artefact, checkpoints met (an artefact row dated by the checkpoint), due or missed, and what
+each open topic still lacks. Nothing stores that state separately. There is no app, UI or MCP server, and other agents only read the page.
+
+- **Contract:** `defaults/agents/learnclaw/workspace/` (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`,
+  `skills/README.md`). Change the persona here; the deploy overwrites the live files.
+- **Skill:** `skills/learning-record` (`record.py`, stdlib only).
+  - `record.py status` prints the projections. A row whose date is not a real calendar date is
+    reported on its own line, not counted, and does not stop the report.
+  - `record.py append --topic ... --artefact ...` adds one row at the end of the table and bumps
+    the page's `updatedAt`. It then runs the vault's own `bin/lint.sh --changed --tsv`. On any
+    high or medium finding for the page it puts the page back byte for byte and exits 1.
+  - A bad row (a pipe in a cell, a date that is not a real calendar date, `done` without the
+    application, post and grilling)
+    exits 2 and writes nothing. It never commits: memory-sync does.
+  - Rows are append-only; a correction is a new row, and a topic's latest row is its state.
+- **Install:** the deploy. The post-up phase runs `scripts/ensure-learnclaw.sh`. It copies the
+  contract and the skill into the learnclaw workspace and reports, read-only, whether
+  `learning-record` is on the agent's skill allowlist. A box without the workspace skips with a
+  note. `install-workspace-pointers.sh` and the openclaw-config mirror include learnclaw too.
+- **How it is invoked:**
+  - The owner's own chat with learnclaw in the OpenClaw Control UI. This is the only route that
+    records a row, since a row holds the owner's own words.
+  - kit, as a subagent run, once `learnclaw` is in kit's `subagents.allowAgents`. kit relays the
+    answer, and a subagent run never records.
+  - No Telegram account and no cron in v0: nothing runs unless asked.
+- **Cost:** a run is one Sonnet 4.6 conversation turn on the gateway's subscription. Measured on
+  comparable career runs, that is about 50k tokens, mostly cache reads: roughly $0.10-0.20 at list
+  prices. Nothing is scheduled, so the idle cost is zero.
+
+**Operator steps (once, after the merge deploys).** The agent entry is host state.
+
+```bash
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+# 1. Create the agent (no --bind: it has no Telegram account).
+docker exec "$G" openclaw agents add learnclaw \
+  --workspace /home/node/.openclaw/agents/learnclaw/workspace \
+  --agent-dir /home/node/.openclaw/agents/learnclaw/agent \
+  --model anthropic/claude-sonnet-4-6 --non-interactive --json
+# 2. As lifekit: install the contract and the skill, drop the bootstrap stub.
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-learnclaw.sh
+sudo -u lifekit rm -f /srv/openclaw/config/agents/learnclaw/workspace/BOOTSTRAP.md
+# 3. The entry: identity, description, the skill allowlist, the coding tool profile.
+cat > /tmp/learnclaw.patch.json <<'JSON'
+{"agents":{"entries":{"learnclaw":{"name":"Learnclaw","description":"The learning loop: the artefact record on the vault's learning page, predict-read-build-apply-post, the grilling.","identity":{"name":"Learnclaw","theme":"learning familiar - exacting, patient, brief","emoji":"📚"},"skills":["learning-record"],"tools":{"profile":"coding"}}}}}
+JSON
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/learnclaw.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/learnclaw.patch.json
+# 4. Let kit hand it learning questions (the live list plus learnclaw).
+docker exec "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const a=((c.agents.entries.kit.subagents||{}).allowAgents||[]).slice();if(!a.includes("learnclaw"))a.push("learnclaw");process.stdout.write(JSON.stringify({agents:{entries:{kit:{subagents:{allowAgents:a}}}}}))' > /tmp/kit-allow.patch.json
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/kit-allow.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/kit-allow.patch.json
+rm /tmp/learnclaw.patch.json /tmp/kit-allow.patch.json
+```
+
+5. Kit's live `AGENTS.md`: hand-merge the "Learning" section from
+   `defaults/agents/kit/workspace/AGENTS.md` (kit's contract is copied by hand).
+6. **Rehearsal:** one run that appends one row the vault lint accepts. Use a row the page already
+   states as fact, for example the open topic with no artefact yet and status `in progress`:
+   `docker exec "$G" openclaw agent --agent learnclaw --message "Record this row: <the owner's
+   words>" --json`. The reply's usage block gives the run's real token cost.
+
+**Verify:** `openclaw agents list` shows `learnclaw`. `openclaw skills --agent learnclaw list`
+shows `learning-record` ready. The rehearsal printed `recorded: | <date> | ...`, and on the host
+`sh bin/lint.sh --changed` in `/srv/memory` has no high or medium finding on
+`domains/learning.md`. `ensure-learnclaw.sh` prints `allowlist: 'learning-record' is on agent
+'learnclaw''s skills list`.
+
+**Pause** (the agent and its record stay): take `learnclaw` out of kit's
+`subagents.allowAgents`, and patch `{"agents":{"entries":{"learnclaw":{"skills":[]}}}}`. The
+agent can still talk, but it can no longer read or write the record, and kit no longer reaches it.
+Nothing is scheduled, so there is nothing else to stop. Resume by re-applying steps 3 and 4.
+
+**Retire / roll back:** `openclaw agents delete learnclaw` (it removes the entry and its
+bindings). Then revert kit's `allowAgents` and the live kit "Learning" section,
+and revert the PR so the deploy stops installing the contract. Rows already on the learning page
+stay; they are the owner's record.
 
 ## Rolling back OpenClaw
 

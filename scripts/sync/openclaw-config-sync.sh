@@ -15,7 +15,7 @@ LIVE_AGENTS_DIR=/srv/openclaw/config/agents
 # one memory store (docs/runbook.md "Workspace memory files are pointers").
 WORKSPACE_FILES=(AGENTS.md SOUL.md IDENTITY.md TOOLS.md HEARTBEAT.md BOOTSTRAP.md)
 # Agents whose workspaces we sync.
-AGENTS=(kit career finance)
+AGENTS=(kit career finance learnclaw)
 
 export HOME=/home/lifekit
 export GIT_AUTHOR_NAME="Kit (lifekit-vps)"

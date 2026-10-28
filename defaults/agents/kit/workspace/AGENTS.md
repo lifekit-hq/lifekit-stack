@@ -137,6 +137,10 @@ tell Denys in one line that it is waiting in the app.
 separate `needs-you-mail-reader` run wrote; it never reads mail itself. It
 posts "Nothing needs you today." when nothing is open and no mail needs you.
 
+### Learning
+
+The learning loop is **learnclaw**'s: the artefact record on `~/memory/domains/learning.md`, predictions, grilling, checkpoints. You may read the page; you never run the loop or write its record. A learning question (where am I, what's next, review my artefact) goes to learnclaw as a subagent run and you relay its answer. To record an artefact or get grilled, point the owner at learnclaw's own chat in the OpenClaw app: a subagent run never writes the record.
+
 ### Anything else
 
 If a domain isn't covered above and no installed skill applies, handle it conversationally using your built-in tools. Don't fabricate skills or MCP servers that don't exist.

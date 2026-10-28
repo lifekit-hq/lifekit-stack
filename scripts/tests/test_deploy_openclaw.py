@@ -947,7 +947,7 @@ def post_up_ytt(env, tmp_path, ensure=None, curl_fail=False):
             REPO / "skills" / skill, fake / "skills" / skill, dirs_exist_ok=True
         )
     (fake / "scripts").mkdir(parents=True, exist_ok=True)
-    for name in ("ensure-video-eval.sh", "ensure-job-queue.sh"):
+    for name in ("ensure-video-eval.sh", "ensure-job-queue.sh", "ensure-learnclaw.sh"):
         shutil.copy(REPO / "scripts" / name, fake / "scripts" / name)
     script = fake / "scripts/ensure-youtube-transcript.sh"
     if ensure is None:
@@ -1174,6 +1174,7 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/ensure-job-queue.sh", True),
         ("skills/job-queue/jobq.py", True),
         ("scripts/ensure-video-drop-door.sh", True),
+        ("scripts/ensure-learnclaw.sh", True),
         ("compose/openclaw-gateway/plugins/video-drop-door/index.js", True),
         ("scripts/openclaw-smoke-verdict.py", True),
         ("skills/youtube-transcript/transcript.py", True),
