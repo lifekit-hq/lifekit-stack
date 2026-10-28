@@ -2418,20 +2418,15 @@ answers an authorized caller) or be removed through the platform patch.
 ## Vault door
 
 ChatGPT reads and writes the memory vault and nothing else (GitHub is the transport, no MCP
-door, the captain inbox is the one door). `scripts/vault-door/` gives it a live picture of the
-fleet and a way to put proposals on the Monday list, both through the vault, with no new
-credential or service. Two host timers run `vault_door.py` as the admin account:
+door, the captain inbox is the one door). `scripts/vault-door/` gives it a way to put proposals
+on the Monday list through the vault, with no new credential or service. One host timer runs
+`vault_door.py bridge` as the admin account:
 
-- `lifekit-vault-door-snapshot.timer` (daily 05:30 UTC) overwrites `system/fleet-snapshot.md`
-  in the vault from the fleet publisher's `home-summary.json` and `daily.jsonl` plus `gh`
-  (queued work, open captain calls, PRs merged in 7 days, a few numbers). `memory-sync`
-  commits it like any vault edit; ChatGPT reads it from GitHub.
 - `lifekit-vault-door-bridge.timer` (every 5 minutes) reads the vault `inbox.md`. A line
   `- YYYY-MM-DD - chatgpt: <text>` (indented lines continue it) becomes one captain-inbox note
   `proposal: <text>` in the main firstmate home (`fm-inbox.sh note --request-id gpt-<hash>`),
   and the line gets ` [forwarded: <note id>]`. A held `proposal:` note is reviewed with the
-  Monday list, never dispatched. ChatGPT learns the convention from the "How to send a
-  proposal" paragraph of the snapshot page.
+  Monday list, never dispatched.
 
 **Install (operator, `denys`):**
 
@@ -2441,43 +2436,51 @@ sudo FM_HOME=<main fleet home> bash /srv/lifekit-stack/scripts/vault-door/instal
 
 `bootstrap-vps.sh` runs the same installer when `FM_HOME` is set. `FM_HOME` is the one home
 that receives the notes (the main firstmate home, not the other fleet homes). The `lifekit-*.timer`
-glob in the unit gauge picks both timers up with no further change.
+glob in the unit gauge picks the timer up with no further change.
 
 **Rehearsal (before trusting it):**
 
-1. `systemctl start lifekit-vault-door-snapshot.service`, then read `/srv/memory/system/fleet-snapshot.md`:
-   frontmatter present, no path or credential, sections filled. The next `memory-sync` tick
-   commits it; if `/srv/memory/.lint-failed` names it, the vault lint refused it - fix the
-   cause (the journal of the snapshot unit says what it withheld) before the next run.
-2. Add `- <today> - chatgpt: bridge rehearsal` to `/srv/memory/inbox.md`, then
+1. Add `- <today> - chatgpt: bridge rehearsal` to `/srv/memory/inbox.md`, then
    `systemctl start lifekit-vault-door-bridge.service`. The line gains `[forwarded: <id>]` and
    `FM_HOME=<home> <home>/bin/fm-inbox.sh list` shows the note as `proposal: bridge rehearsal`.
    Acknowledge it as usual and delete the vault line.
-3. Run the bridge again: no second note (`journalctl -u lifekit-vault-door-bridge -n 5` says
+2. Run the bridge again: no second note (`journalctl -u lifekit-vault-door-bridge -n 5` says
    nothing was sent).
 
-**Reading a failure.** The snapshot unit fails (exit 1) when the fleet summary is missing; the
-page is left as it was and ChatGPT sees the last good one (its `Generated` line shows the age).
-The bridge unit fails (exit 1) when `fm-inbox.sh` fails or the vault cannot be written; the
-affected lines stay unmarked and the next run retries under the same request id, so a note is
-never lost or doubled. Exit 78 means `VAULT_DOOR_FM_HOME` is missing from the unit: rerun the
-installer with `FM_HOME`. A marker edit to `inbox.md` can race a ChatGPT append on the outbox
-branch; `memory-sync` then fails that tick on the rebase and the next tick resolves it, and the
-marker is re-applied by the bridge (the request id replays) if the merge dropped it.
+**Reading a failure.** The bridge unit fails (exit 1) when `fm-inbox.sh` fails or the vault
+cannot be written; the affected lines stay unmarked and the next run retries under the same
+request id, so a note is never lost or doubled. Exit 78 means `VAULT_DOOR_FM_HOME` is missing
+from the unit: rerun the installer with `FM_HOME`. A marker edit to `inbox.md` can race a
+ChatGPT append on the outbox branch; `memory-sync` then fails that tick on the rebase and the
+next tick resolves it, and the marker is re-applied by the bridge (the request id replays) if
+the merge dropped it.
 
-**Undo, either half or both:**
+**Retiring the old snapshot units.** Earlier installs also put a daily
+`lifekit-vault-door-snapshot.timer` on the host, which wrote the vault page
+`system/fleet-snapshot.md`. Nothing reads that page any more and the code is gone; on a host
+that still has the units:
 
 ```bash
-# stop the jobs (nothing else depends on them)
-sudo systemctl disable --now lifekit-vault-door-bridge.timer lifekit-vault-door-snapshot.timer
-sudo rm /etc/systemd/system/lifekit-vault-door-{bridge,snapshot}.{service,timer} && sudo systemctl daemon-reload
+sudo systemctl disable --now lifekit-vault-door-snapshot.timer
+sudo rm /etc/systemd/system/lifekit-vault-door-snapshot.{service,timer} && sudo systemctl daemon-reload
+```
+
+Rerun the installer afterwards so the installed `vault_door.py` is the bridge-only one. Then,
+in the vault, delete `system/fleet-snapshot.md` (and its line in `index.md` on the next index
+build).
+
+**Undo:**
+
+```bash
+# stop the job (nothing else depends on it)
+sudo systemctl disable --now lifekit-vault-door-bridge.timer
+sudo rm /etc/systemd/system/lifekit-vault-door-bridge.{service,timer} && sudo systemctl daemon-reload
 sudo rm -r /usr/local/libexec/lifekit-vault-door
 ```
 
-Then, in the vault, delete `system/fleet-snapshot.md` (and its line in `index.md` on the next
-index build). Notes already forwarded stay in the captain inbox like any other note;
-acknowledge or delete them there. `[forwarded: ...]` markers in `inbox.md` are inert and age out
-through the normal 30-day rotation.
+Notes already forwarded stay in the captain inbox like any other note; acknowledge or delete
+them there. `[forwarded: ...]` markers in `inbox.md` are inert and age out through the normal
+30-day rotation.
 
 ## Intake to vault
 
