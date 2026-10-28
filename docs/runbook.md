@@ -268,7 +268,11 @@ more than two dozen model-provider plugins that nothing here routes to.
 - **The routed providers.**
   - `anthropic`: every agent's model runs through the Anthropic provider.
   - `openai`: the openai auth profile.
-  - `codex`: the agent runtime that `openai` runs on.
+- **Not `codex`.** The codex agent runtime is off: no agent's model, fallback
+  or cron job runs on it, and its seven tools had no callers. Dropping it
+  from the list changes the plugin set, so the deploy that ships it recreates
+  the gateway. Add it back in the same PR that routes an agent to an
+  `openai/*` model on that runtime.
 - **The non-provider plugins the gateway already runs.** These include
   `telegram`, `memory-core`, both diagnostics exporters, `browser` and
   `github`.
@@ -539,7 +543,7 @@ rebuilt one.
        entries: {
          finance: {
            skills: [
-             "github", "gh-issues", "summarize", "notion", "skill-creator",
+             "github", "notion", "skill-creator",
              "thesis-tracker", "catalyst-calendar", "idea-generation",
            ],
          },
@@ -550,7 +554,9 @@ rebuilt one.
 
    Dry-run first, then apply, the same two commands as the per-agent patch
    below; `agents.entries` keys hot-reload. Re-assign a deck or model skill
-   for an interactive session by adding it back to the list.
+   for an interactive session by adding it back to the list. The current
+   full list, with the deck and model skills back, is in
+   [Per-agent skill allowlists](#per-agent-skill-allowlists).
 
 3. **Persona.** The finance workspace `AGENTS.md` (host state, 18,667 bytes
    against `bootstrapMaxChars` 20,000) still carries the scan's mechanics.
@@ -614,7 +620,7 @@ Exec policy per agent:
 - career: set to `ask` - 0 exec calls in 30 days and no domain cron. (learning and
   social had the same setting until they were deleted on 2026-10-07.)
 - fable: `full` to `ask` - no sessions ever; its only automated turn is the deploy pong smoke.
-- kit keeps `full` - skills github, gh-issues and summarize need host binaries (145 exec calls in 30 days),
+- kit keeps `full` - the github skill needs a host binary (145 exec calls in 30 days),
   and since health folded into kit on 2026-10-07 the three claw CLIs are kit's only write path for food,
   workouts and daily state.
 - finance keeps `full` - it reaches its `state/` files (the learning journal)
@@ -631,6 +637,55 @@ and `models.weak_tier` cleared; `security_full_configured` (devclaw, until it wa
 Follow-up, out of scope for this change: the boundary-drift remediation
 (sandbox those agents, or split the sensitive MCP servers into a separate
 gateway).
+
+#### Per-agent skill allowlists
+
+`agents.entries.<id>.skills` is host state. These are the whole lists; arrays
+replace under `config patch`, so a change patches the full list for that
+agent (dry-run first, the same two commands as above; the keys hot-reload):
+
+```json5
+{
+  agents: {
+    entries: {
+      kit: {
+        skills: [
+          "github", "skill-vetter", "skill-creator", "secondmate-relay",
+          "openai-whisper", "youtube-transcript", "workout-log", "job-queue",
+          "video-eval",
+        ],
+      },
+      career: {
+        skills: [
+          "github", "notion", "browser-automation", "diagram-maker",
+          "youtube-transcript",
+        ],
+      },
+      finance: {
+        skills: [
+          "github", "notion", "skill-creator", "thesis-tracker",
+          "catalyst-calendar", "idea-generation", "earnings-analysis",
+          "earnings-preview", "sector-overview", "dcf-model", "comps-analysis",
+          "competitive-analysis", "youtube-transcript",
+        ],
+      },
+    },
+  },
+}
+```
+
+Not on any list:
+
+- `gh-issues`: it tells an agent to spawn fix agents and open PRs; builds go
+  through the relay note instead.
+- `summarize`, `nutrition-claw`, `workout-claw`, `life-state`: their
+  `skills.entries` are disabled, so an allowlist name shows the model
+  nothing. The CLIs stay: Kit runs them by command from its persona and its
+  cron prompts, and their workspace directories stay where they are.
+- `video-frames`: no skill by that name is installed.
+
+The [openclaw-config mirror](#openclaw-config-mirror) picks up the live lists
+on its next run.
 
 ### The career weekly cron
 

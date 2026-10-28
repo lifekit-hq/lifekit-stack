@@ -7,10 +7,10 @@ Skills are NOT vendored in this repo. The agent's allowlist is `agents.entries.c
 | Skill | What career uses it for |
 | --- | --- |
 | `github` | Reading the owner's public repos as portfolio evidence (needs `gh`, so exec - interactive only) |
-| `gh-issues` | Same, for issues and PRs |
 | `notion` | Notes the owner keeps in Notion, when they point you at one |
 | `browser-automation` | Reading public job listings and company pages - never LinkedIn, never a logged-in session |
 | `diagram-maker` | Career-path and skill-gap diagrams |
+| `youtube-transcript` | Captions of a YouTube talk or interview the owner points you at |
 
 `summarize` is not declared: it is disabled globally in `skills.entries`, so declaring it only adds an unresolved entry.
 

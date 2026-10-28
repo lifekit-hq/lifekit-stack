@@ -17,7 +17,6 @@
   "plugins": {
     "allow": [
       "anthropic",
-      "codex",
       "openai",
       "browser",
       "canvas",
