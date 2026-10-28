@@ -18,7 +18,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="${HERE}/../../defaults/workspace-pointers"
 AGENTS_DIR="${LIFEKIT_AGENTS_DIR:-/srv/openclaw/config/agents}"
-AGENTS=(kit career finance)
+AGENTS=(kit career finance learnclaw)
 
 for agent in "${AGENTS[@]}"; do
   ws="${AGENTS_DIR}/${agent}/workspace"

@@ -14,8 +14,8 @@
 #   configure  apply compose/openclaw-gateway/platform.patch.json, then reload
 #              and audit the gateway's SOPS-backed secrets
 #   post-up    reattach openclaw-cli, reset stuck sessions, skill native deps,
-#              the youtube-transcript and video-eval skills, doctor /
-#              health / channels status
+#              the youtube-transcript and video-eval skills, learnclaw's
+#              contract, doctor / health / channels status
 #   smoke      one real agent turn per runtime, then the post-upgrade smoke
 #              check of each pillar the deployed range upgraded
 #
@@ -723,6 +723,17 @@ OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-job-que
 say "video-eval skill -> ${OPENCLAW_CONFIG_DIR}/agents/kit/workspace/skills"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-video-eval.sh" \
   || fail_later "video-eval skill install failed (output above)"
+
+# ─── learnclaw contract and learning-record skill ────────────────────────────
+#
+# learnclaw's persona changes only through this repo: the script writes the git
+# contract (defaults/agents/learnclaw/workspace) and the learning-record skill
+# over the live workspace, skips a box with no learnclaw workspace, and reports
+# the agent's allowlist read-only (creating the agent and its entry stay
+# operator steps, docs/runbook.md "learnclaw (the learning loop)").
+say "learnclaw contract and skill -> ${OPENCLAW_CONFIG_DIR}/agents/learnclaw/workspace"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-learnclaw.sh" \
+  || fail_later "learnclaw contract install failed (output above)"
 
 # ─── Skill CLI install (life-state etc.) ─────────────────────────────────────
 #

@@ -209,9 +209,9 @@ bash "${REPO_DIR}/scripts/claude-home/install-claude-home.sh" \
 # ─── OpenClaw workspace memory files: vault pointers ─────────────────────────
 #
 # scripts/workspace-pointers/install-workspace-pointers.sh rewrites MEMORY.md
-# and USER.md in the kit, career and finance workspaces to the pointers in
-# defaults/workspace-pointers/: the vault is the one memory store. A run with
-# nothing to change prints nothing.
+# and USER.md in the kit, career, finance and learnclaw workspaces to the
+# pointers in defaults/workspace-pointers/: the vault is the one memory store. A
+# run with nothing to change prints nothing.
 say "OpenClaw workspace memory files (vault pointers)"
 bash "${REPO_DIR}/scripts/workspace-pointers/install-workspace-pointers.sh" \
   || warn "workspace pointers: install-workspace-pointers.sh failed (lines above)"
