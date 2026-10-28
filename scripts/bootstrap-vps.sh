@@ -321,9 +321,8 @@ say "Installing reply pusher script + systemd units"
 ADMIN_USER="$ADMIN_USER" FM_HOME="${FM_HOME:-}" FM_HOMES="${FM_HOMES:-}" bash "$REPO_DIR/scripts/reply-pusher/install-reply-pusher.sh"
 
 # ─── Vault door ───────────────────────────────────────────────────────────────
-# ChatGPT reads and writes the memory vault, nothing else. A daily timer writes
-# the fleet snapshot page it reads; a 5-minute timer turns each `chatgpt:` note
-# it adds to the vault's inbox.md into one held proposal in the main firstmate
+# ChatGPT reads and writes the memory vault, nothing else. A 5-minute timer
+# turns each `chatgpt:` note it adds to the vault's inbox.md into one held proposal in the main firstmate
 # home's captain inbox. Skipped unless FM_HOME names the main fleet home; see
 # scripts/vault-door/ and docs/runbook.md "Vault door".
 

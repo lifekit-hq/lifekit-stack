@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# install-vault-door.sh - install the vault door: two systemd timers that give
-# ChatGPT a daily fleet snapshot page in the vault and forward its vault inbox
-# notes to the main firstmate captain inbox (root). FM_HOME is the main
+# install-vault-door.sh - install the vault door: a systemd timer that forwards
+# ChatGPT's vault inbox notes to the main firstmate captain inbox (root). FM_HOME is the main
 # firstmate home that receives the notes; unset means this box has no fleet and
 # the install is skipped. bootstrap-vps.sh calls it; on a live box:
 #
 #   sudo FM_HOME=<main fleet home> bash /srv/lifekit-stack/scripts/vault-door/install-vault-door.sh
 #
-# The units do nothing until a ChatGPT note appears (bridge) or the timer fires
-# (snapshot); undo is in docs/runbook.md "Vault door".
+# The units do nothing until a ChatGPT note appears; undo is in docs/runbook.md
+# "Vault door".
 #
 # Tests set INSTALL_ROOT (a prefix for every installed path) and SYSTEMCTL; an
 # INSTALL_ROOT run needs no root.
@@ -39,11 +38,9 @@ UNIT_DIR="$INSTALL_ROOT/etc/systemd/system"
 BIN_DIR="$INSTALL_ROOT/usr/local/libexec/lifekit-vault-door"
 install -d -m 755 "$BIN_DIR" "$UNIT_DIR"
 install -m 755 "$HERE/vault_door.py" "$BIN_DIR/vault_door.py"
-for job in snapshot bridge; do
-  sed -e "s|__ADMIN_USER__|${ADMIN_USER}|" -e "s|__FM_HOME__|${FM_HOME}|" \
-    "$HERE/lifekit-vault-door-$job.service" > "$UNIT_DIR/lifekit-vault-door-$job.service"
-  chmod 644 "$UNIT_DIR/lifekit-vault-door-$job.service"
-  install -m 644 "$HERE/lifekit-vault-door-$job.timer" "$UNIT_DIR/lifekit-vault-door-$job.timer"
-done
+sed -e "s|__ADMIN_USER__|${ADMIN_USER}|" -e "s|__FM_HOME__|${FM_HOME}|" \
+  "$HERE/lifekit-vault-door-bridge.service" > "$UNIT_DIR/lifekit-vault-door-bridge.service"
+chmod 644 "$UNIT_DIR/lifekit-vault-door-bridge.service"
+install -m 644 "$HERE/lifekit-vault-door-bridge.timer" "$UNIT_DIR/lifekit-vault-door-bridge.timer"
 "$SYSTEMCTL" daemon-reload
-"$SYSTEMCTL" enable --now lifekit-vault-door-snapshot.timer lifekit-vault-door-bridge.timer
+"$SYSTEMCTL" enable --now lifekit-vault-door-bridge.timer
