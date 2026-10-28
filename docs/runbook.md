@@ -1914,17 +1914,19 @@ learnclaw is the domain agent for the learning loop. It owns the artefact record
 predict before reading, read, build one from-scratch artefact, apply it in a real project, post
 about it, and get grilled. learnclaw reviews the artefact and grills the owner on it, but never
 writes the artefact. "Where am I" is computed from the rows each time it is asked: the last
-artefact, checkpoints passed or due, and what each open topic still lacks. Nothing stores that
-state separately. There is no app, UI or MCP server, and other agents only read the page.
+artefact, checkpoints met (an artefact row dated by the checkpoint), due or missed, and what
+each open topic still lacks. Nothing stores that state separately. There is no app, UI or MCP server, and other agents only read the page.
 
 - **Contract:** `defaults/agents/learnclaw/workspace/` (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`,
   `skills/README.md`). Change the persona here; the deploy overwrites the live files.
 - **Skill:** `skills/learning-record` (`record.py`, stdlib only).
-  - `record.py status` prints the projections.
+  - `record.py status` prints the projections. A row whose date is not a real calendar date is
+    reported on its own line, not counted, and does not stop the report.
   - `record.py append --topic ... --artefact ...` adds one row at the end of the table and bumps
     the page's `updatedAt`. It then runs the vault's own `bin/lint.sh --changed --tsv`. On any
     high or medium finding for the page it puts the page back byte for byte and exits 1.
-  - A bad row (a pipe in a cell, a bad date, `done` without the application, post and grilling)
+  - A bad row (a pipe in a cell, a date that is not a real calendar date, `done` without the
+    application, post and grilling)
     exits 2 and writes nothing. It never commits: memory-sync does.
   - Rows are append-only; a correction is a new row, and a topic's latest row is its state.
 - **Install:** the deploy. The post-up phase runs `scripts/ensure-learnclaw.sh`. It copies the
