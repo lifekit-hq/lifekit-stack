@@ -11,7 +11,7 @@ The record is the table under "Artefact record" on `~/memory/domains/learning.md
 Run it as `python3 <this skill's dir>/record.py ...`.
 
 ## Where was I / where am I
-1. `record.py status`. It prints the last artefact row and how long ago it was, each checkpoint still open (due, or missed by how many days), what each in-progress topic still lacks (applied, post, grilled), and the done and dropped topics.
+1. `record.py status`. It prints the last artefact row and how long ago it was, each checkpoint still open (met by an artefact row dated by it, due, or missed by how many days), any row whose date is not a real date, what each in-progress topic still lacks (applied, post, grilled), and the done and dropped topics.
 2. Answer from that output and the page's "Current focus" and "Fundamentals track" sections. Never hold a projection in your notes or on the page: it is computed when asked.
 
 ## Record an artefact

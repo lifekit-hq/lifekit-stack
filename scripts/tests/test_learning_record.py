@@ -126,6 +126,61 @@ def test_the_latest_row_is_the_topics_state(vault):
     assert "done: 1 topic(s): caching" in r.stdout
 
 
+def test_a_checkpoint_is_met_by_an_artefact_row_dated_by_it_whatever_its_status(vault):
+    r = record(
+        vault,
+        *("append", "--topic", "caching", "--artefact", "repo/cache.py"),
+        *("--date", "2026-09-20"),
+    )
+    assert r.returncode == 0, r.stderr
+    r = record(vault, "status")
+    assert "checkpoint 2026-09-22 (caching): met 2026-09-20" in r.stdout
+    assert "missed" not in r.stdout
+    assert "in progress: caching - lacks applied, post, grilled" in r.stdout
+
+
+def test_a_checkpoint_is_missed_when_the_artefact_row_comes_after_it(vault):
+    record(
+        vault,
+        *("append", "--topic", "caching", "--artefact", "repo/cache.py"),
+        *("--date", "2026-09-23"),
+    )
+    record(
+        vault,
+        *("append", "--topic", "other", "--artefact", "repo/o.py"),
+        *("--date", "2026-09-20"),
+    )
+    r = record(vault, "status")
+    assert "checkpoint 2026-09-22 (caching): missed by 36 days" in r.stdout
+
+
+def test_a_future_checkpoint_with_no_artefact_row_yet_is_due(vault):
+    r = record(vault, "status", today="2026-09-20")
+    assert "checkpoint 2026-09-22 (caching): due in 2 days" in r.stdout
+
+
+@pytest.mark.parametrize("date", ["2026-02-30", "due 2026-13-01"])
+def test_append_refuses_an_impossible_calendar_date_and_writes_nothing(vault, date):
+    before = (vault / "domains/learning.md").read_bytes()
+    r = record(vault, "append", "--topic", "caching", "--artefact", "a", "--date", date)
+    assert r.returncode == 2 and "date: YYYY-MM-DD" in r.stderr
+    assert (vault / "domains/learning.md").read_bytes() == before
+
+
+def test_status_reports_a_row_with_an_impossible_date_instead_of_crashing(vault):
+    page = vault / "domains/learning.md"
+    bad = "| 2026-02-30 | tracing | t.py | - | - | - | - | in progress |"
+    page.write_text(
+        page.read_text().replace("\n\n## In-progress", f"\n{bad}\n\n## In-progress")
+    )
+    r = record(vault, "status")
+    assert r.returncode == 0, r.stderr
+    assert "unparseable date on row: '2026-02-30' (tracing)" in r.stdout
+    assert "2 row(s), today 2026-10-28" in r.stdout
+    assert "checkpoint 2026-09-22 (caching): missed by 36 days" in r.stdout
+    assert "in progress: tracing" in r.stdout
+
+
 @pytest.mark.parametrize(
     "args,said",
     [

@@ -4,8 +4,8 @@ learning page (decision 0010 in the vault: the artefact is the unit of record,
 projections are computed at read).
 
     record.py status            the record and its projections (last artefact,
-                                days since, checkpoints due or missed, what each
-                                in-progress row still lacks), computed now
+                                days since, checkpoints met, due or missed, what
+                                each in-progress row still lacks), computed now
     record.py append --topic T --artefact A [--reading R] [--applied X]
                      [--post P] [--grilled G] [--status S] [--date D]
                                 one new row at the end of the table
@@ -105,14 +105,28 @@ def rows(lines: list[str]) -> list[dict[str, str]]:
     return out
 
 
+def parse_date(value: str) -> tuple[bool, dt.date] | None:
+    """(is a 'due' checkpoint, the date), or None when it is not a real date."""
+    m = DATE.match(value)
+    if not m:
+        return None
+    try:
+        return bool(m.group(1)), dt.date.fromisoformat(m.group(2))
+    except ValueError:
+        return None
+
+
 def status(lines: list[str], now: dt.date) -> str:
     record = rows(lines)
     out = [f"artefact record: {len(record)} row(s), today {now}"]
-    dated = [
-        (dt.date.fromisoformat(m.group(2)), r)
-        for r in record
-        if (m := DATE.match(r["date"])) and not m.group(1)
-    ]
+    parsed = []
+    for r in record:
+        d = parse_date(r["date"])
+        if d is None:
+            out.append(f"unparseable date on row: {r['date']!r} ({r['topic']})")
+        else:
+            parsed.append((d[0], d[1], r))
+    dated = [(d, r) for due, d, r in parsed if not due]
     if dated:
         last, row = max(dated, key=lambda d: d[0])
         out.append(
@@ -123,12 +137,21 @@ def status(lines: list[str], now: dt.date) -> str:
     # A topic's latest row is its state: the table is append-only, so a
     # correction or a step forward is always the later row.
     latest = {r["topic"]: r for r in record}
-    for r in record:
-        m = DATE.match(r["date"])
-        if m and m.group(1) and latest[r["topic"]]["status"] == "in progress":
-            due = dt.date.fromisoformat(m.group(2))
+    for is_due, due, r in parsed:
+        if is_due and latest[r["topic"]]["status"] == "in progress":
+            made = [
+                d
+                for was_due, d, a in parsed
+                if not was_due
+                and a["topic"] == r["topic"]
+                and not missing(a["artefact"])
+                and d <= due
+            ]
             days = (now - due).days
-            when = f"missed by {days} days" if days > 0 else f"due in {-days} days"
+            if made:
+                when = f"met {min(made)}"
+            else:
+                when = f"missed by {days} days" if days > 0 else f"due in {-days} days"
             out.append(f"checkpoint {due} ({r['topic']}): {when}")
     for topic, r in latest.items():
         if r["status"] == "in progress":
@@ -160,8 +183,10 @@ def new_row(args: argparse.Namespace, now: dt.date) -> str:
         if "|" in value or "\n" in value or "\r" in value:
             fail(f"{key}: a cell cannot hold a pipe or a line break")
         row[key] = value or "-"
-    if not DATE.match(row["date"]):
-        fail("date: YYYY-MM-DD, or 'due YYYY-MM-DD' for a planned artefact")
+    if parse_date(row["date"]) is None:
+        fail(
+            "date: YYYY-MM-DD (a real calendar date), or 'due YYYY-MM-DD' for a planned artefact"
+        )
     for key in ("topic", "artefact"):
         if missing(row[key]):
             fail(f"{key} is required")
