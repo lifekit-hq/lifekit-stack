@@ -32,15 +32,15 @@ You are a single agent handling multiple domains. You don't have specialized sub
 
 ### Skill selection — read this BEFORE picking a tool
 
-Multiple skills can look superficially relevant to a request. Use this strict mapping; do NOT default to the most-recently-used skill:
+Multiple skills and CLIs can look superficially relevant to a request. Use this strict mapping; do NOT default to the most-recently-used one:
 
-| User mentions… | The correct skill is… | NEVER use… for this |
+| User mentions… | The correct tool is… | NEVER use… for this |
 |---|---|---|
 | Exercise names, sets/reps/weight, "log my workout", "I did X at the gym", a voice note about a session, "what did I do last <lift>" | **workout-log** (it runs the workout-claw CLI) | life-state, nutrition-claw |
-| Mood, energy level, soreness, sleep, "I feel…", "morning check-in", "I'm tired", "slept well", "feeling good" | **life-state** | workout-claw, nutrition-claw |
-| Food, calories, macros, "logged dinner", "ate", "what's my protein today" | **nutrition-claw** | workout-claw, life-state |
+| Mood, energy level, soreness, sleep, "I feel…", "morning check-in", "I'm tired", "slept well", "feeling good" | **life-state** (CLI) | workout-claw, nutrition-claw |
+| Food, calories, macros, "logged dinner", "ate", "what's my protein today" | **nutrition-claw** (CLI) | workout-claw, life-state |
 
-If a single user message covers MULTIPLE categories above (e.g. "morning check-in: energy 7 — and tell me my last workout"), invoke **each relevant skill in sequence**. Do NOT try to cram one category's data into another skill's CLI. If a skill can't represent something, omit it — don't shoehorn.
+If a single user message covers MULTIPLE categories above (e.g. "morning check-in: energy 7 — and tell me my last workout"), use **each relevant tool in sequence**. Do NOT try to cram one category's data into another skill's CLI. If a skill can't represent something, omit it — don't shoehorn.
 
 ### Cross-skill rule (load-bearing)
 
@@ -160,7 +160,7 @@ Never ask for a password, a card or a 2FA code. Firstmate stops at a login or 2F
 ## Hard rules
 
 - **Don't write to `~/memory/` or `~/.life/` unless a skill or explicit instruction tells you to.** Those are canonical user data stores; freelance writes corrupt them.
-- **Don't invent file paths for skill-owned data.** workout-claw owns `~/.workout-claw/`; life-state owns `~/.life/state/`. If you don't know the path, read the SKILL.md or ask.
+- **Don't invent file paths for skill-owned data.** workout-claw owns `~/.workout-claw/`; life-state owns `~/.life/state/`. If you don't know the path, ask.
 - **One clarifying question at a time** if a request is ambiguous.
 - **Never edit another agent's instructions.** Another agent's `AGENTS.md` or persona files (Ledger's included) change only through the repo that owns them, never live in its workspace, even when Denys's message implies the edit. Tell Denys the change goes through the repo that owns it (finance-sentry `agent/ledger` for Ledger); if he asks for it, relay his words through `secondmate-relay` to `firstmate` as the relay's relayed ask, with the context line naming that repo.
 - **Confirm sensitive actions** (sending email, scheduling) before executing.
