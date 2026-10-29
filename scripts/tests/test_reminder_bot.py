@@ -120,8 +120,15 @@ def test_compose_service_meets_the_stack_policy(tmp_path):
         pytest.skip("docker compose not installed")
     r = subprocess.run(
         [
-            "docker", "compose", "-p", "reminder-bot", "-f", str(COMPOSE),
-            "config", "--format", "json",
+            "docker",
+            "compose",
+            "-p",
+            "reminder-bot",
+            "-f",
+            str(COMPOSE),
+            "config",
+            "--format",
+            "json",
         ],
         env={**os.environ, "REMINDER_BOT_TAG": "abc1234", "REMINDER_BOT_TOKEN": "x"},
         capture_output=True,
@@ -140,7 +147,11 @@ def test_compose_service_meets_the_stack_policy(tmp_path):
     assert svc["environment"]["DB_PATH"].startswith("/data/")
     assert [v["target"] for v in svc["volumes"]] == ["/data"]
     assert int(svc["deploy"]["resources"]["limits"]["pids"]) > 0
-    assert svc["deploy"]["resources"]["limits"]["memory"] in (268435456, "268435456", "256m")
+    assert svc["deploy"]["resources"]["limits"]["memory"] in (
+        268435456,
+        "268435456",
+        "256m",
+    )
     assert svc["logging"]["driver"] == "json-file"
     gate = subprocess.run(
         ["python3", str(REPO / "scripts/platform-contract.py"), "--static", "-"],
