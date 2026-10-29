@@ -1,0 +1,82 @@
+# Reminder bot compose project (`reminder-bot`): one Telegram long-polling
+# worker, a private repo's code built on the box.
+#
+#   reminder-bot - python-telegram-bot + SQLite. Long polling means it opens
+#                  no port and takes no inbound traffic; it only dials out to
+#                  api.telegram.org. The database is the `reminder_data`
+#                  named volume at /data.
+#
+# Relative paths resolve from this directory (compose/reminder-bot/).
+#
+# The image is not built by the deploy: the source repo is private and the
+# deploy account holds no access to it. An operator builds it once per pin
+# (scripts/reminder-bot/build-image.sh, the commit is scripts/reminder-bot/PIN)
+# and scripts/deploy.sh checks the tag exists before it brings this project up.
+# deploy.sh exports REMINDER_BOT_TAG from that script; an ad-hoc compose call
+# needs it set by hand:
+#   REMINDER_BOT_TAG=$(scripts/reminder-bot/build-image.sh --tag) \
+#   docker compose -p reminder-bot --env-file /srv/lifekit-secrets/stack.env \
+#     -f compose/reminder-bot/docker-compose.yml ps
+#
+# The x-policy anchor is a copy of the platform file's (YAML anchors do not
+# cross files); keep the two in step. The one deliberate difference is the
+# restart policy: a polling worker with no healthcheck endpoint should come
+# back after any exit, so it is `unless-stopped` here.
+---
+name: reminder-bot
+
+x-policy:
+  policy: &policy
+    init: true
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: '50m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          pids: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+
+services:
+
+  reminder-bot:
+    <<: *policy
+    # Built by scripts/reminder-bot/build-image.sh from the pinned commit; no
+    # `build:` key, so a deploy never tries to reach the private repo.
+    image: reminder-bot:${REMINDER_BOT_TAG:?set by scripts/deploy.sh (scripts/reminder-bot/build-image.sh --tag)}
+    # Platform contract (scripts/platform-contract.py, docs/platform-contract.md):
+    # `none`. A v1 service answers health, readiness and /metrics over HTTP;
+    # a long-polling worker has no listener to declare them on. Health is the
+    # container being up with a polling log line (docs/runbook.md "Reminder bot").
+    labels:
+      lifekit.contract: "none"  # no HTTP surface to declare (scripts/platform-contract.py)
+    restart: unless-stopped
+    # The image's own unprivileged user (`bot`); it owns /data, so a fresh
+    # named volume inherits the ownership and no root step is needed.
+    environment:
+      # Rendered into the env file from the master SOPS file; empty means the
+      # deploy did not bring this project up.
+      BOT_TOKEN: ${REMINDER_BOT_TOKEN:-}
+      TZ: Europe/Dublin
+      DB_PATH: /data/reminders.db
+    volumes:
+      - reminder_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          pids: 64
+
+volumes:
+  reminder_data:

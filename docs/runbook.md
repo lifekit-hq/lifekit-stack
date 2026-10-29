@@ -3954,6 +3954,48 @@ dockerd journal for containers already gone.
 The collector's own Loki export errors are not shipped (they would feed back
 into the pipeline while Loki is down); they stay visible via `docker logs`.
 
+## Reminder bot
+
+Compose project `reminder-bot` (`compose/reminder-bot/`): one Telegram
+long-polling reminder bot (Python, python-telegram-bot, SQLite). It publishes
+no port and takes no inbound traffic; the database is the `reminder_data` named
+volume at `/data`, `TZ` is `Europe/Dublin`, and the container is
+`reminder-bot-reminder-bot-1`. Its log ships to Loki like every container's
+([Container console logs in Loki](#container-console-logs-in-loki)).
+
+The bot's source repo is private and publishes no image, and the deploy account
+cannot read it, so the image is built by an operator account that can (its
+existing `gh` login, read-only), from the commit in
+`scripts/reminder-bot/PIN`:
+
+```bash
+bash scripts/reminder-bot/build-image.sh            # builds reminder-bot:<short sha>; skips if it exists
+bash scripts/reminder-bot/build-image.sh --check    # exit 1 if the tag is absent
+```
+
+**Build before the merge that adds or bumps the pin**, then deploy. A pin bump
+is a PR that edits `PIN`; the new tag is a different image, so the old one stays
+for rollback until a prune. `deploy.sh` runs the `--check` before it brings the
+project up: with the image absent it prints a red failure naming the build
+command, leaves the other projects as they were, and goes red at the end. It
+skips the project with a yellow warning while `REMINDER_BOT_TOKEN` is not yet in
+the rendered env file (`docs/secrets.md`).
+
+First bring-up, after the token is in the master file: merge, `sudo bash
+scripts/secrets/render-stack-env.sh`, then a deploy (CI on the next merge, or
+`workflow_dispatch` on CI).
+
+Verify, read-only:
+
+```bash
+docker logs --tail 20 reminder-bot-reminder-bot-1     # the polling log line, no error
+docker exec reminder-bot-reminder-bot-1 python -c "import asyncio, os; from telegram import Bot; print(asyncio.run(Bot(os.environ['BOT_TOKEN']).get_me()).username)"   # getMe
+```
+
+The platform contract label is `none`: the bot has no HTTP surface to declare
+health or metrics on, so liveness is the container's state and its log. The
+database is on the volume only; there is no backup yet.
+
 ## Ledger persona from finance-sentry
 
 finance-sentry's `agent/ledger/` is the source of truth for the finance agent's
@@ -4685,7 +4727,7 @@ run read-only diagnosis — the rule's own description commands, `docker
 logs/inspect/stats`, `journalctl`, `systemctl status` — at no cost.
 
 **Production test for containers.** A container is production only if its
-compose project label is one of `compose openclaw identity edge finance-sentry
+compose project label is one of `compose openclaw identity edge reminder-bot finance-sentry
 dashboard backstage devclaw xui` **and** its name starts with that project:
 
 ```bash

@@ -287,6 +287,8 @@ identity_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 edge_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
+reminder_bot_compose config --format json \
+  | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -402,6 +404,24 @@ else
       fail_later "edge: project ${EDGE_PROJECT} did not come up healthy (edge_compose ps / logs)"
     fi
   fi
+fi
+
+# ─── Reminder bot: compose project `reminder-bot`, up -d ────────────────────
+#
+# One Telegram long-polling worker (compose/reminder-bot/, docs/runbook.md
+# "Reminder bot"). Its source repo is private and the deploy account cannot
+# read it, so the image is built by an operator (scripts/reminder-bot/
+# build-image.sh) and this step only runs the pinned local tag. Until the
+# token is rendered the project is skipped with a warning; once it is, a
+# missing image or a failed `up` queues a red failure at the end of the
+# deploy and leaves every other project as it was.
+say "reminder bot (compose project ${REMINDER_BOT_PROJECT})"
+if ! grep -qE '^[[:space:]]*REMINDER_BOT_TOKEN=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}"; then
+  warn "reminder-bot: REMINDER_BOT_TOKEN is not in ${ENV_FILE}; project ${REMINDER_BOT_PROJECT} not brought up (docs/runbook.md \"Reminder bot\")"
+elif ! bash "${REMINDER_BOT_BUILD}" --check; then
+  fail_later "reminder-bot: image reminder-bot:$(bash "${REMINDER_BOT_BUILD}" --tag) is not built; project ${REMINDER_BOT_PROJECT} not brought up. As the operator account: bash scripts/reminder-bot/build-image.sh, then redeploy"
+elif ! reminder_bot_compose up -d --wait --wait-timeout 120; then
+  fail_later "reminder-bot: project ${REMINDER_BOT_PROJECT} did not come up (reminder_bot_compose ps / logs reminder-bot)"
 fi
 
 # ─── OpenClaw: move out of the platform project (once), up -d ───────────────
