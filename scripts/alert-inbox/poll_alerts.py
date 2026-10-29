@@ -20,6 +20,17 @@ not reimplement Grafana's wider expression language (math, multi-step
 reduce, classic conditions), so a future rule that uses those will be
 skipped with a warning rather than silently misjudged.
 
+The rules in rules-agent-mail.yml have the same shape with a LogQL metric
+query on the `loki` datasource; Loki's loopback query API
+(http://127.0.0.1:3100/loki/api/v1/query) answers an instant query in the
+same vector form as Prometheus, so those rules take the same path against
+Loki. Each backend has its own outage transition; one being unreachable
+leaves the other's rules evaluated and its own rules' state untouched.
+
+State entries for rule uids that are no longer in any provisioning file (a
+retired rule never reads true again, so it would stay "alerting" forever) are
+dropped on each run.
+
 `for` is approximated as wall-clock elapsed since the condition first read
 true, using this poller's own state file - coarser than Grafana's continuous
 evaluation, quantized to how often this script runs (the documented install
@@ -29,7 +40,8 @@ inventing a new one.
 Notifies only on state transitions (pending/normal -> alerting, and
 alerting -> normal) via `fm-inbox.sh note`, one line per transition. A
 Prometheus connection failure is its own transition ("prometheus-unreachable"
-starting/resolving) so an outage is reported once, not every poll.
+starting/resolving; likewise "loki-unreachable") so an outage is reported
+once, not every poll.
 """
 
 from __future__ import annotations
@@ -44,15 +56,26 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RULES_FILE = (
     REPO_ROOT / "compose/observability/grafana/provisioning/alerting/rules.yml"
 )
+DEFAULT_RULES_FILES = (
+    DEFAULT_RULES_FILE,
+    REPO_ROOT
+    / "compose/observability/grafana/provisioning/alerting/rules-agent-mail.yml",
+)
 DEFAULT_PROMETHEUS_URL = "http://127.0.0.1:9090"
+DEFAULT_LOKI_URL = "http://127.0.0.1:3100"
 DEFAULT_STATE_FILE = Path.home() / ".local/state/lifekit-alert-inbox/state.json"
 OUTAGE_UID = "prometheus-unreachable"
+# datasourceUid in a rule's query -> (backend label, state key of its outage entry)
+BACKENDS = {
+    "prometheus": ("Prometheus", "outage"),
+    "loki": ("Loki", "outage_loki"),
+}
 
 STATE_NORMAL = "normal"
 STATE_PENDING = "pending"
@@ -70,6 +93,7 @@ class Rule:
         evaluator_param: float,
         for_seconds: float,
         no_data_state: str,
+        datasource: str = "prometheus",
     ) -> None:
         self.uid = uid
         self.title = title
@@ -79,6 +103,7 @@ class Rule:
         self.evaluator_param = evaluator_param
         self.for_seconds = for_seconds
         self.no_data_state = no_data_state
+        self.datasource = datasource
 
 
 _FOR_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -99,7 +124,7 @@ def parse_rules(doc: dict[str, Any]) -> tuple[list[Rule], list[str]]:
     """Parse the standard-shape rules out of a rules.yml document.
 
     Returns (rules, warnings) - a rule using a data-flow this script does not
-    model (anything other than one PromQL query -> reduce last/dropNN ->
+    model (anything other than one PromQL/LogQL query -> reduce last/dropNN ->
     single lt/gt threshold) is skipped and named in warnings, never guessed at.
     """
     rules: list[Rule] = []
@@ -132,8 +157,11 @@ def parse_rules(doc: dict[str, Any]) -> tuple[list[Rule], list[str]]:
                     )
                 query_ref = reduce_model["expression"]
                 query_d = by_ref[query_ref]
-                if query_d.get("datasourceUid") != "prometheus":
-                    raise ValueError("reduce does not feed from a prometheus query")
+                datasource = query_d.get("datasourceUid")
+                if datasource not in BACKENDS:
+                    raise ValueError(
+                        "reduce does not feed from a prometheus or loki query"
+                    )
                 expr = query_d["model"]["expr"]
                 for_seconds = parse_duration(str(rule.get("for", "0s")))
             except (KeyError, ValueError) as exc:
@@ -149,9 +177,20 @@ def parse_rules(doc: dict[str, Any]) -> tuple[list[Rule], list[str]]:
                     evaluator_param=float(param),
                     for_seconds=for_seconds,
                     no_data_state=rule.get("noDataState", "OK"),
+                    datasource=datasource,
                 )
             )
     return rules, warnings
+
+
+def provisioned_uids(doc: dict[str, Any]) -> set[str]:
+    """Every rule uid in a rules document, parseable or not."""
+    return {
+        rule["uid"]
+        for group in doc.get("groups", [])
+        for rule in group.get("rules", [])
+        if "uid" in rule
+    }
 
 
 def evaluate_condition(value: float, evaluator_type: str, param: float) -> bool:
@@ -171,8 +210,8 @@ class PrometheusError(Exception):
     pass
 
 
-def query_instant(prometheus_url: str, expr: str, timeout: float = 10.0) -> list[dict]:
-    url = f"{prometheus_url}/api/v1/query?{urllib.parse.urlencode({'query': expr})}"
+def _instant_query(base_url: str, path: str, expr: str, timeout: float) -> list[dict]:
+    url = f"{base_url}{path}?{urllib.parse.urlencode({'query': expr})}"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             payload = json.load(response)
@@ -181,6 +220,14 @@ def query_instant(prometheus_url: str, expr: str, timeout: float = 10.0) -> list
     if payload.get("status") != "success":
         raise PrometheusError(payload.get("error", "query did not succeed"))
     return payload.get("data", {}).get("result", [])
+
+
+def query_instant(prometheus_url: str, expr: str, timeout: float = 10.0) -> list[dict]:
+    return _instant_query(prometheus_url, "/api/v1/query", expr, timeout)
+
+
+def query_loki_instant(loki_url: str, expr: str, timeout: float = 10.0) -> list[dict]:
+    return _instant_query(loki_url, "/loki/api/v1/query", expr, timeout)
 
 
 def load_state(path: Path) -> dict[str, Any]:
@@ -251,56 +298,82 @@ def notify_resolved(
 
 
 def poll(
-    rules_file: Path,
+    rules_files: Sequence[Path],
     prometheus_url: str,
     state_file: Path,
     fm_inbox_bin: str,
     fm_home: str | None,
     dry_run: bool,
     now: float | None = None,
+    loki_url: str = DEFAULT_LOKI_URL,
 ) -> int:
     import yaml
 
     now = time.time() if now is None else now
     state = load_state(state_file)
     rules_state: dict[str, dict] = state.setdefault("rules", {})
-    outage_state: dict | None = state.get("outage")
 
-    doc = yaml.safe_load(rules_file.read_text())
-    rules, warnings = parse_rules(doc)
-    for warning in warnings:
-        print(f"alert-inbox: skipping {warning}", file=sys.stderr)
+    rules: list[Rule] = []
+    known_uids: set[str] = set()
+    for rules_file in rules_files:
+        doc = yaml.safe_load(rules_file.read_text())
+        file_rules, warnings = parse_rules(doc)
+        rules.extend(file_rules)
+        known_uids |= provisioned_uids(doc)
+        for warning in warnings:
+            print(f"alert-inbox: skipping {warning}", file=sys.stderr)
 
-    try:
-        results_by_uid: dict[str, list[dict]] = {}
-        for rule in rules:
-            results_by_uid[rule.uid] = query_instant(prometheus_url, rule.expr)
-    except PrometheusError as exc:
-        new_entry, transition = advance_state(outage_state, True, now, 0.0)
-        state["outage"] = new_entry
-        if transition == "start":
-            notify(
-                fm_inbox_bin,
-                fm_home,
-                f"alert-inbox: cannot reach Prometheus at {prometheus_url}"
-                f" since {format_started(now)}: {exc}",
-                dry_run,
+    # A rule retired from the provisioning files never reads true again, so its
+    # "alerting" entry would never resolve. Skipped for an empty rule set: that
+    # is a broken read of the files, not a retirement of every rule.
+    if known_uids:
+        for uid in [u for u in rules_state if u not in known_uids]:
+            print(f"alert-inbox: dropping state of retired rule {uid}", file=sys.stderr)
+            del rules_state[uid]
+
+    urls = {"prometheus": prometheus_url, "loki": loki_url}
+    queries = {"prometheus": query_instant, "loki": query_loki_instant}
+    results_by_uid: dict[str, list[dict]] = {}
+    failed: dict[str, PrometheusError] = {}
+    for rule in rules:
+        if rule.datasource in failed:
+            continue
+        try:
+            results_by_uid[rule.uid] = queries[rule.datasource](
+                urls[rule.datasource], rule.expr
             )
-        save_state(state_file, state)
-        return 1
+        except PrometheusError as exc:
+            failed[rule.datasource] = exc
 
-    if outage_state is not None:
-        new_entry, transition = advance_state(outage_state, False, now, 0.0)
-        state["outage"] = new_entry
-        if transition == "resolve":
-            notify(
-                fm_inbox_bin,
-                fm_home,
-                "alert-inbox: Prometheus is reachable again",
-                dry_run,
-            )
+    # A backend that cannot be reached is its own transition, reported once; its
+    # rules keep their state for the next poll rather than reading as resolved.
+    for datasource, (label, outage_key) in BACKENDS.items():
+        outage_state: dict | None = state.get(outage_key)
+        if datasource in failed:
+            new_entry, transition = advance_state(outage_state, True, now, 0.0)
+            state[outage_key] = new_entry
+            if transition == "start":
+                notify(
+                    fm_inbox_bin,
+                    fm_home,
+                    f"alert-inbox: cannot reach {label} at {urls[datasource]}"
+                    f" since {format_started(now)}: {failed[datasource]}",
+                    dry_run,
+                )
+        elif outage_state is not None:
+            new_entry, transition = advance_state(outage_state, False, now, 0.0)
+            state[outage_key] = new_entry
+            if transition == "resolve":
+                notify(
+                    fm_inbox_bin,
+                    fm_home,
+                    f"alert-inbox: {label} is reachable again",
+                    dry_run,
+                )
 
     for rule in rules:
+        if rule.datasource in failed:
+            continue
         rule_state: dict[str, dict] = rules_state.setdefault(rule.uid, {})
         results = results_by_uid[rule.uid]
         seen_fingerprints: set[str] = set()
@@ -397,13 +470,24 @@ def poll(
             rules_state.pop(rule.uid, None)
 
     save_state(state_file, state)
-    return 0
+    return 1 if failed else 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rules-file", type=Path, default=DEFAULT_RULES_FILE)
+    parser.add_argument(
+        "--rules-file",
+        type=Path,
+        action="append",
+        help="rules file to evaluate, repeatable "
+        "(default: rules.yml and rules-agent-mail.yml)",
+    )
     parser.add_argument("--prometheus-url", default=DEFAULT_PROMETHEUS_URL)
+    parser.add_argument(
+        "--loki-url",
+        default=os.environ.get("ALERT_INBOX_LOKI_URL", DEFAULT_LOKI_URL),
+        help="Loki base URL (or set ALERT_INBOX_LOKI_URL); loopback by default",
+    )
     parser.add_argument("--state-file", type=Path, default=DEFAULT_STATE_FILE)
     parser.add_argument(
         "--fm-inbox-bin",
@@ -427,8 +511,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--fm-inbox-bin (or FM_INBOX_BIN) is required unless --dry-run")
 
     return poll(
-        rules_file=args.rules_file,
+        rules_files=args.rules_file or DEFAULT_RULES_FILES,
         prometheus_url=args.prometheus_url,
+        loki_url=args.loki_url,
         state_file=args.state_file,
         fm_inbox_bin=args.fm_inbox_bin,
         fm_home=args.fm_home,

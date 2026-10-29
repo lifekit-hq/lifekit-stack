@@ -27,6 +27,9 @@ sys.modules["poll_alerts"] = poll_alerts
 SPEC.loader.exec_module(poll_alerts)
 
 RULES_FILE = REPO / "compose/observability/grafana/provisioning/alerting/rules.yml"
+AGENT_MAIL_RULES_FILE = (
+    REPO / "compose/observability/grafana/provisioning/alerting/rules-agent-mail.yml"
+)
 
 
 class DurationTests(unittest.TestCase):
@@ -317,7 +320,7 @@ class PollEndToEndTests(unittest.TestCase):
             try:
                 for t in (1000, 1001, 1002):
                     poll_alerts.poll(
-                        rules_file=rules_file,
+                        rules_files=[rules_file],
                         prometheus_url="http://unused",
                         state_file=state_file,
                         fm_inbox_bin="unused",
@@ -353,7 +356,7 @@ class PollEndToEndTests(unittest.TestCase):
             try:
                 for t in (1000, 1001):
                     poll_alerts.poll(
-                        rules_file=rules_file,
+                        rules_files=[rules_file],
                         prometheus_url="http://unused",
                         state_file=state_file,
                         fm_inbox_bin="unused",
@@ -393,7 +396,7 @@ class PollEndToEndTests(unittest.TestCase):
             try:
                 for t in (1000, 1001, 1002):
                     poll_alerts.poll(
-                        rules_file=rules_file,
+                        rules_files=[rules_file],
                         prometheus_url="http://unused",
                         state_file=state_file,
                         fm_inbox_bin="unused",
@@ -408,6 +411,218 @@ class PollEndToEndTests(unittest.TestCase):
             self.assertEqual(len(notified), 2)
             self.assertIn("cannot reach Prometheus", notified[0])
             self.assertIn("reachable again", notified[1])
+
+
+class ParseLokiRulesFileTests(unittest.TestCase):
+    def test_agent_mail_rule_parses_as_a_loki_rule(self):
+        doc = yaml.safe_load(AGENT_MAIL_RULES_FILE.read_text())
+        rules, warnings = poll_alerts.parse_rules(doc)
+        self.assertEqual(warnings, [])
+        (rule,) = rules
+        self.assertEqual(rule.uid, "agent-mail-sent")
+        self.assertEqual(rule.datasource, "loki")
+        self.assertIn("count_over_time", rule.expr)
+        self.assertEqual(rule.evaluator_type, "gt")
+        self.assertEqual(rule.evaluator_param, 0.0)
+        self.assertEqual(rule.severity, "critical")
+
+    def test_default_rules_files_cover_every_provisioned_rule_file(self):
+        self.assertEqual(
+            set(poll_alerts.DEFAULT_RULES_FILES), {RULES_FILE, AGENT_MAIL_RULES_FILE}
+        )
+
+    def test_unknown_datasource_is_skipped(self):
+        doc = yaml.safe_load(AGENT_MAIL_RULES_FILE.read_text())
+        doc["groups"][0]["rules"][0]["data"][0]["datasourceUid"] = "tempo"
+        rules, warnings = poll_alerts.parse_rules(doc)
+        self.assertEqual(rules, [])
+        self.assertEqual(len(warnings), 1)
+
+
+class LokiPollTests(unittest.TestCase):
+    """poll() over the real rule files, against stub Prometheus/Loki backends."""
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.state_file = self.tmp / "state.json"
+        self.notified: list[str] = []
+        self.loki_result: list[dict] | Exception = []
+        self.prom_result: list[dict] | Exception = []
+        self.loki_calls = 0
+        self._originals = (
+            poll_alerts.query_instant,
+            poll_alerts.query_loki_instant,
+            poll_alerts.notify,
+        )
+        poll_alerts.query_instant = lambda url, expr, timeout=10.0: self._answer(
+            self.prom_result
+        )
+        poll_alerts.query_loki_instant = lambda url, expr, timeout=10.0: self._loki()
+        poll_alerts.notify = lambda bin_, home, text, dry_run: self.notified.append(
+            text
+        )
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        (
+            poll_alerts.query_instant,
+            poll_alerts.query_loki_instant,
+            poll_alerts.notify,
+        ) = self._originals
+
+    @staticmethod
+    def _answer(result):
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def _loki(self):
+        self.loki_calls += 1
+        return self._answer(self.loki_result)
+
+    def _poll(self, now, rules_files=None):
+        return poll_alerts.poll(
+            rules_files=rules_files or [AGENT_MAIL_RULES_FILE],
+            prometheus_url="http://unused",
+            state_file=self.state_file,
+            fm_inbox_bin="unused",
+            fm_home=None,
+            dry_run=False,
+            now=now,
+        )
+
+    def _state(self):
+        return json.loads(self.state_file.read_text())
+
+    def test_loki_rule_fires_once_and_resolves(self):
+        sent = [{"metric": {}, "value": [0, "1"]}]
+        self.loki_result = sent
+        self._poll(1000)
+        self._poll(1060)  # still firing: no repeat note
+        self.loki_result = []
+        self._poll(1120)
+        self.assertEqual(len(self.notified), 2)
+        self.assertIn("alert firing: agent sent an email [critical]", self.notified[0])
+        self.assertIn(
+            "alert resolved: agent sent an email [critical]", self.notified[1]
+        )
+        self.assertNotIn("agent-mail-sent", self._state()["rules"])
+
+    def test_loki_unreachable_keeps_state_and_notifies_once(self):
+        self.loki_result = [{"metric": {}, "value": [0, "1"]}]
+        self._poll(1000)
+        self.notified.clear()
+
+        self.loki_result = poll_alerts.PrometheusError("connection refused")
+        self.assertEqual(self._poll(1060), 1)
+        self.assertEqual(self._poll(1120), 1)
+        state = self._state()
+        self.assertEqual(
+            state["rules"]["agent-mail-sent"]["{}"]["state"], poll_alerts.STATE_ALERTING
+        )
+        self.assertEqual(len(self.notified), 1)
+        self.assertIn("cannot reach Loki", self.notified[0])
+
+        # Back, still sending: recovery note only, no second firing note.
+        self.loki_result = [{"metric": {}, "value": [0, "1"]}]
+        self.assertEqual(self._poll(1180), 0)
+        self.assertEqual(len(self.notified), 2)
+        self.assertIn("Loki is reachable again", self.notified[1])
+        self.assertIsNone(self._state()["outage_loki"])
+
+    def _both_backends(self):
+        # One Prometheus rule (target-down) beside the real Loki rule file.
+        prom_rules = PollEndToEndTests(
+            "test_start_and_resolve_transitions_notify_exactly_once"
+        )._write_rules(self.tmp)
+        return [prom_rules, AGENT_MAIL_RULES_FILE]
+
+    def test_loki_outage_does_not_stop_prometheus_rules(self):
+        self.loki_result = poll_alerts.PrometheusError("connection refused")
+        self.prom_result = [{"metric": {"job": "x"}, "value": [0, "0"]}]
+        self.assertEqual(self._poll(1000, self._both_backends()), 1)
+        self.assertTrue(any("scrape target is down" in n for n in self.notified))
+        self.assertEqual(self.loki_calls, 1)
+
+    def test_prometheus_outage_does_not_stop_loki_rules(self):
+        self.prom_result = poll_alerts.PrometheusError("connection refused")
+        self.loki_result = [{"metric": {}, "value": [0, "2"]}]
+        self.assertEqual(self._poll(1000, self._both_backends()), 1)
+        self.assertTrue(any("agent sent an email" in n for n in self.notified))
+        self.assertTrue(any("cannot reach Prometheus" in n for n in self.notified))
+
+
+class RetiredRuleCleanupTests(unittest.TestCase):
+    def test_state_of_unprovisioned_rules_is_dropped(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            state_file = tmp / "state.json"
+            state_file.write_text(
+                json.dumps(
+                    {
+                        "rules": {
+                            "host-group-over-budget": {
+                                '{"group": "x"}': {"state": "alerting", "since": 1}
+                            },
+                            "target-down": {
+                                '{"job": "x"}': {"state": "alerting", "since": 1}
+                            },
+                        }
+                    }
+                )
+            )
+            notified: list[str] = []
+            originals = (poll_alerts.query_instant, poll_alerts.notify)
+            poll_alerts.query_instant = lambda *a, **k: [
+                {"metric": {"job": "x"}, "value": [0, "0"]}
+            ]
+            poll_alerts.notify = lambda bin_, home, text, dry_run: notified.append(text)
+            try:
+                poll_alerts.poll(
+                    rules_files=[
+                        PollEndToEndTests(
+                            "test_start_and_resolve_transitions_notify_exactly_once"
+                        )._write_rules(tmp)
+                    ],
+                    prometheus_url="http://unused",
+                    state_file=state_file,
+                    fm_inbox_bin="unused",
+                    fm_home=None,
+                    dry_run=False,
+                    now=2000,
+                )
+            finally:
+                poll_alerts.query_instant, poll_alerts.notify = originals
+
+            rules_state = json.loads(state_file.read_text())["rules"]
+            self.assertNotIn("host-group-over-budget", rules_state)
+            self.assertIn("target-down", rules_state)
+            self.assertFalse(any("host-group" in n for n in notified))
+
+
+class RunbookRemediesTests(unittest.TestCase):
+    def test_every_provisioned_rule_has_a_remedy_row(self):
+        alerting = REPO / "compose/observability/grafana/provisioning/alerting"
+        uids = set()
+        for name in ("rules.yml", "rules-agent-mail.yml"):
+            doc = yaml.safe_load((alerting / name).read_text())
+            uids |= poll_alerts.provisioned_uids(doc)
+        uids.add("external-heartbeat-watchdog")  # heartbeat.yml.tmpl, templated
+        runbook = (REPO / "docs/runbook.md").read_text()
+        section = runbook.split("\n## Alert remedies\n", 1)[1].split("\n## ", 1)[0]
+        rows = {
+            line.split("`")[1]
+            for line in section.splitlines()
+            if line.startswith("| `")
+        }
+        self.assertEqual(uids - rows, set(), "rules without a remedy row")
+        self.assertEqual(rows - uids, set(), "remedy rows for retired rules")
 
 
 if __name__ == "__main__":

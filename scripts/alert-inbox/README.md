@@ -22,6 +22,12 @@ PromQL query, `reduce(last, dropNN)`, a single `lt`/`gt` threshold — and a
 rule that uses anything wider (multi-step math, classic conditions) is
 skipped with a stderr warning rather than silently misjudged.
 
+`rules-agent-mail.yml` holds the one rule that reads logs. It has the same
+shape with a LogQL metric query on the `loki` datasource, and Loki's loopback
+query API (`http://127.0.0.1:3100/loki/api/v1/query`, the published
+`LOKI_PORT`) answers an instant query in the same vector form, so
+`poll_alerts.py` evaluates it the same way and posts the same notes.
+
 `for:` (the rule's own pending duration before Grafana would actually fire)
 is approximated as wall-clock elapsed since this poller first saw the
 condition true, using its own state file. That is coarser than Grafana's
@@ -32,8 +38,8 @@ it reuses each rule's own `for:` value instead of inventing a new one.
 
 Each run:
 
-1. Reads `rules.yml`, evaluates every rule's PromQL expression as an instant
-   query against Prometheus.
+1. Reads `rules.yml` and `rules-agent-mail.yml`, evaluates every rule's query
+   as an instant query: PromQL against Prometheus, LogQL against Loki.
 2. Advances a small per-series state machine (`normal` -> `pending` ->
    `alerting` -> `normal`) kept in a JSON file under
    `~/.local/state/lifekit-alert-inbox/state.json` (`--state-file` to
@@ -43,9 +49,13 @@ Each run:
    resolved: ..."). A resolved note is sent for every severity except
    `warning`; a warning's firing note is its only note. An already-firing rule
    is silent on every subsequent poll — no repeat notifications.
-4. If Prometheus cannot be reached at all, that is its own transition
-   (`prometheus-unreachable` starting/resolving), so an outage is reported
-   once, not every poll.
+4. If Prometheus or Loki cannot be reached, that is its own transition per
+   backend ("cannot reach ..." / "... is reachable again"), so an outage is
+   reported once, not every poll. The other backend's rules are still
+   evaluated, and the unreachable backend's rules keep their state — an
+   outage never reads as a resolve.
+5. Drops state entries for rule uids that are no longer in the provisioning
+   files, so a retired rule that was "alerting" does not linger forever.
 
 Out of scope, by design: Grafana contact points or notification policies,
 any new network listener or service, `/etc`, the RAM reaction automation,
@@ -65,8 +75,10 @@ python3 scripts/alert-inbox/poll_alerts.py \
 no default in this repo — nothing here hard-codes a path outside it. The
 install step below is where an operator supplies both.
 
-Flags: `--rules-file` (default: this repo's `rules.yml`), `--prometheus-url`
-(default: `http://127.0.0.1:9090`), `--state-file`.
+Flags: `--rules-file` (repeatable; default: this repo's `rules.yml` and
+`rules-agent-mail.yml`), `--prometheus-url` (default: `http://127.0.0.1:9090`),
+`--loki-url` (default: `http://127.0.0.1:3100`, or `ALERT_INBOX_LOKI_URL`),
+`--state-file`.
 
 ## Install (systemd timer)
 
@@ -90,6 +102,10 @@ are in the journal (`journalctl -u alert-inbox`).
 ```
 
 Pure-logic tests only (duration parsing, rule parsing against the real
-`rules.yml`, threshold evaluation, the state machine, and an end-to-end
-`poll()` run against a stubbed Prometheus and a stubbed `fm-inbox.sh`) — no
-test touches a live Prometheus or sends a real notification.
+`rules.yml` and `rules-agent-mail.yml`, threshold evaluation, the state
+machine, retired-rule cleanup, and end-to-end `poll()` runs against stubbed
+Prometheus and Loki backends and a stubbed `fm-inbox.sh`) — no test touches a
+live backend or sends a real notification.
+
+What the receiving agent may do about each rule is in `docs/runbook.md`
+"Alert remedies".
