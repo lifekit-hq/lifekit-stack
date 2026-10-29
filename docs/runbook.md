@@ -4654,8 +4654,10 @@ still uses it.
 Grafana's alerts route to Telegram only (the phone, for `severity: critical`), so nothing reaches an agent unless
 something pulls. `scripts/alert-inbox/poll_alerts.py` (see
 `scripts/alert-inbox/README.md`) reads the provisioned alert rules' own
-PromQL from `rules.yml` and evaluates them against Prometheus's open,
-loopback-bound query API — no Grafana admin credentials, no new listener.
+queries from `rules.yml` (PromQL) and `rules-agent-mail.yml` (LogQL) and
+evaluates them against Prometheus's and Loki's open, loopback-bound query
+APIs — no Grafana admin credentials, no new listener. State kept for a rule
+uid that is no longer provisioned is dropped on the next run.
 Installed by `bootstrap-vps.sh` as the `alert-inbox.timer` systemd unit (every
 5 minutes, as the admin account) when `FM_INBOX_BIN` / `FM_INBOX_HOME` are in
 the bootstrap environment; they are kept in `/etc/lifekit/alert-inbox.env`.
@@ -4672,8 +4674,83 @@ Logs go to the journal (`journalctl -u alert-inbox`).
 
 Notifies only on transitions (a rule starting to fire, the same rule
 resolving; a `warning` rule's resolve is silent) via `fm-inbox.sh note`; a
-Prometheus outage is its own transition so it is reported once, not every poll. Does not touch Grafana contact
+Prometheus or Loki outage is its own transition so it is reported once, not every poll. Does not touch Grafana contact
 points, policies, or credentials.
+
+## Alert remedies
+
+What the agent that receives an `alert-inbox` note (above) may do about each
+provisioned rule without asking, and when it reports up. Every row may always
+run read-only diagnosis — the rule's own description commands, `docker
+logs/inspect/stats`, `journalctl`, `systemctl status` — at no cost.
+
+**Production test for containers.** A container is production only if its
+compose project label is one of `compose openclaw identity edge finance-sentry
+dashboard backstage devclaw xui` **and** its name starts with that project:
+
+```bash
+docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}} {{.Name}}' <container>
+```
+
+Everything else is scratch (a throwaway stack from a worker; two scratch
+replicas carry `project=openclaw`, so only the name test catches them).
+
+**The tiers.** *Unattended* is the remedy the agent applies itself, then runs
+the verification named after it. *Routed instruction* is a remedy that waits
+for an instruction naming it. `ISSUE` means file an issue (or a PR) in the
+owning repo rather than act on the box.
+
+**Report up** means a note to the agent or person that owns the fleet, with
+the rule, labels, what was done and the verification result:
+
+- **R1:** not cleared 30 minutes after the remedy.
+- **R2:** the same rule and labels fired 3 or more times in 7 days.
+- **R3:** any action taken on a production container.
+- **R4:** an incident: a production service down past 15 minutes, money
+  moving, a security event, or a dead credential stopping automation. Relay at once.
+
+| Rule (severity) | Unattended (verify after) | Routed instruction | Report up |
+| --- | --- | --- | --- |
+| `target-down` (critical) | If a CI deploy run is in progress (`gh-axi run list -R lifekit-hq/lifekit-stack --status in_progress --limit 3`) wait for it to end; else `docker ps -a --filter name=<job>`, map the job to its container, read its logs. Verify `up{job}` = 1 | Any start, restart or recreate | Still down 15 min with no deploy running: R4 |
+| `container-exited-abnormally` (critical) | Scratch: remove it (`docker rm -f <c>`, never `-v`) or have its owner remove it. Production: `docker logs --tail 100 <c>` into the report | Production: `docker start <c>` | Production: R3 at once. Scratch: R2 |
+| `container-stopped-or-vanished` (critical) | Compare `git log --since=24h` of the owning repo: a container retired or renamed by a merge is log-only (the rule clears itself in about 30 min) | Bringing a production service back | Not explained by a merge: R3 |
+| `container-restarting` (critical) | Scratch: `docker stop <c>`. Production: `docker logs --tail 50 <c>` | Any intervention on a production container | Production looping 15 min: R4 |
+| `container-unhealthy` (critical) | Scratch: `docker stop <c>`. Production: `docker inspect --format '{{json .State.Health}}' <c>` | Production restart | Production unhealthy 15 min: R3, and R4 if it is down |
+| `docker-exporter-scrape-errors` (critical) | `docker logs compose-container-exporter-1 --tail 50`; treat the container rules above and `container-oom-killed` / `container-near-memory-cap` as blind until it clears | Recreating the exporter outside a deploy | R1 |
+| `container-oom-killed` (critical) | Scratch: find the owner, have it cap memory (`--memory 2g`, single-node builds) and remove the dead container. Production: `docker inspect -f '{{.State.OOMKilled}} {{.State.ExitCode}}' <c>` and `docker logs --tail 100 <c>`, then ISSUE raising `mem_limit` (the deploy recreates it) | Live `docker update --memory` | Production: R3 at once. Scratch: R2 |
+| `root-filesystem-low-space` (warning) | `df -h /`, `docker system df`; delete backed-up leftovers (the prune policy and "Rollback images" above); have workers clear their worktree build output. Verify free space is back above 10% | Any prune outside the installed timers | Free space under 10%, or no improvement in 24 h |
+| `tmp-filesystem-nearly-full` (warning) | As `root-filesystem-low-space`; verify `df -h /tmp` ("Moving /tmp off RAM") | Root-owned leftovers | As `root-filesystem-low-space` |
+| `host-ram-nearly-exhausted` (critical) | `ps -eo pid,ppid,rss,etime,cmd --sort=-rss \| head -20`; `kill -TERM` a runaway host `ng test` and its headless-chrome children; pause new worker launches; have .NET workers use `-m:1`. Verify available RAM is above 10% within 15 min | Stopping anything else (a compose container, a daemon, a session) | R1 at 15 min: R4 (the box is at risk) |
+| `host-swap-and-ram-pressure` (warning) | As `host-ram-nearly-exhausted` | As `host-ram-nearly-exhausted` | R1 |
+| `textfile-collector-stale` (warning) | `journalctl -u <writer> -n 30`. Quota telemetry returning 429 is not exhaustion: log-only. Once the cause is fixed, start the writer unit once and verify the file's mtime advances | Unit file edits | Stale over 2 h for a non-quota file, or R2 |
+| `textfile-collector-scrape-error` (warning) | `docker logs compose-node-exporter-1 --tail 50`; a malformed repo gauge: ISSUE | | Still firing after 1 h |
+| `host-unit-down-or-failed` (warning) | `systemctl status <u>`, `journalctl -u <u> -n 50`. A failed one-shot unit may be reset (`reset-failed`) and started once after its cause is fixed; the weekly-prune red from an unlabelled `:prev` image is by design ("Rollback images"); repo bugs: ISSUE. Verify the unit is active | Runner units, docker, containerd, tailscaled and the prune units | Backup or verify unit red 2 nights; any unit red 24 h |
+| `claude-quota-behind-pace` (warning) | Log-only: low usage is not a reason to change work | | Never |
+| `claude-quota-nearly-exhausted` (critical) | Log-only; pausing and resuming at the reset belongs to the fleet owner | | One report per weekly window, keyed by the reset date |
+| `claude-quota-runway-short` (warning) | Log-only: burning the quota down before the reset is intended | | Never |
+| `host-memory-pressure` (warning) | As `host-ram-nearly-exhausted` at lower urgency; the annotation's top-3 groups say where to look | As `host-ram-nearly-exhausted` | Firing 60 min, or a group over its `docs/resource-budget.md` line on 3 days in 7 |
+| `container-near-memory-cap` (warning) | `docker stats --no-stream <c>`; ISSUE: a PR raising `mem_limit` | Live limit change | R2, or it reaches `container-oom-killed` |
+| `host-swap-high` (warning) | Log-only unless `host-ram-nearly-exhausted` or `host-memory-pressure` also fires (a full swap with free RAM is steady state) | | As `host-memory-pressure` |
+| `devclaw-heartbeat-hung` (critical) | Read `/health` of the devclaw container | The restart the description prescribes (a production container) | At once: R3 |
+| `devclaw-token-burn-high` (warning) | `docker logs devclaw-devclaw-mcp-1 --tail 100` and its `/metrics` | | 2 consecutive hours |
+| `notify-relay-cannot-deliver` (critical) | `docker logs compose-notify-relay-1 --tail 100` | Repairing the Telegram bot setup | At once: R4 (the owner's incident path is down) |
+| `openclaw-run-failed` (critical) | `docker exec openclaw-openclaw-gateway-1 openclaw cron list --all`, `cron runs <id> --limit 5`, `tasks list --status failed`. Timeouts and "receipt authority unavailable" are transient: log-only (the next scheduled run is the retry). A config or code cause: ISSUE | A gateway restart; a manual re-run of a job that announces to the owner | The same job fails 3 in a row, or one error class 3 or more times in 7 days: ISSUE and report. An auth-class error: report |
+| `claude-oauth-token-expiring` (warning) | Prepare the branch with the date edits (`docs/secrets-runbook.md`, token rotation) | Renewing the token | First firing |
+| `ledger-finance-drift` (warning) | Read the drifting file; with no finance facts in it, a PR adding it to `WORKSPACE_ALLOW` | Carrying the facts to finance-sentry and retiring the file | Finance facts present: one request for a decision |
+| `finance-backup-verify-stale` (warning) | `docker logs finance-sentry-api --since 2h \| grep -i restore`; ISSUE in finance-sentry | | Unverified over 14 days (data at risk) |
+| `finance-retention-stale` (warning) | As `finance-backup-verify-stale` for the retention jobs; ISSUE | | 3 days |
+| `finance-job-consecutive-failures` (warning) | Grep the job in the API logs; a provider outage or rate limit is log-only; a code cause: ISSUE | An expired bank consent or API key | A credential cause: report. Failing over 24 h |
+| `fleet-summary-stale` (warning) | Read `fleet_home_summary_generated_timestamp_seconds{home}` in `/var/lib/node_exporter/textfile/fleet.prom`. For the agent's own home, run its session-start recovery; for any other home, log-only (its keeper restarts it; never touch another home) | | Another home stale over 60 min |
+| `grafana-notification-delivery-failing` (critical) | `docker logs compose-grafana-1 --since 30m \| grep -i notif` | Repairing the Telegram bot setup | R1: R4 (the phone path is blind) |
+| `grafana-rule-evaluation-failing` (critical) | Grafana's log names the rule uid; ISSUE: a fix PR to the rule file (the deploy reloads Grafana) | | R2, or over 2 h |
+| `prometheus-config-reload-failing` (critical) | `docker logs compose-prometheus-1 --tail 50`; ISSUE | | R1 |
+| `prometheus-tsdb-compaction-failing` (warning) | Logs and `df` | Anything on the `prometheus_data` volume | Second firing |
+| `prometheus-notifications-dropped` (critical) | Logs | | R1 |
+| `weekly-release-not-merged` (warning) | `gh-axi run view <run id from the alert's run_url> -R <repo> --log-failed`. A flaky run: `gh-axi workflow run weekly-release.yml --ref main -R <repo>`. A real failure: fix the release PR's failing check | | Unmerged after 2 re-runs or 7 days |
+| `agent-mail-sent` (critical, Loki) | `docker logs --since 1h openclaw-google-workspace-mcp-1 \| grep send_gmail_message`; match each send to an explicit request | | Any send with no matching request: R4 (security) |
+| `external-heartbeat-watchdog` | None: it fires by design (`heartbeat.yml.tmpl`) and carries no signal | | Never |
+
+A remedy that is not in the table is not unattended: report up with the diagnosis.
 
 ## External heartbeat (dead-man)
 
