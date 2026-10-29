@@ -137,6 +137,18 @@ print("ledger persona: stub " + cmd)
 sys.exit(int(os.environ.get("LEDGER_" + cmd.upper() + "_EXIT", "0")))
 """
 
+# Stands in for scripts/reminder-bot/build-image.sh: --tag prints a fixed tag,
+# --check exits 1 while $REMINDER_IMAGE_MISSING is set.
+REMINDER_BUILD_SH = """#!/bin/sh
+case "$1" in
+  --tag) echo abc1234 ;;
+  --check)
+    echo "reminder-check" >> "$DOCKER_CALL_LOG"
+    [ -z "$REMINDER_IMAGE_MISSING" ]
+    ;;
+esac
+"""
+
 PHASES = ["prepare", "modules", "build", "up", "configure", "post_up", "smoke"]
 
 # Platform steps and OpenClaw phases in the order deploy.sh ran them before the
@@ -146,6 +158,7 @@ DEPLOY_ORDER = [
     "embed-origin",
     "openclaw:modules",
     "render-heartbeat",
+    "contract-static",
     "contract-static",
     "contract-static",
     "contract-static",
@@ -266,6 +279,7 @@ def full_deploy(
     stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
     stub(fake / "scripts/tmp-scratch-policy.sh", LOGGING_SH % "tmp-scratch")
     stub(fake / "scripts/ledger-persona/ledger-persona.py", LEDGER_PERSONA_PY)
+    stub(fake / "scripts/reminder-bot/build-image.sh", REMINDER_BUILD_SH)
     stub(
         fake / "scripts/platform-contract.py",
         "import os, sys\n"
@@ -1564,3 +1578,58 @@ def test_a_failed_upgrade_is_checked_again_on_the_next_deploy(env, smoke_repo):
     commit(smoke_repo, "docs/runbook.md")
     _, failures, _, _ = smoke_phase(env, smoke_repo, {"OPENCLAW_SMOKE": "FAIL"})
     assert failures == ["upgrade smoke openclaw: FAIL (summary line above)"]
+
+
+REMINDER_PREFIX = "compose -p reminder-bot --env-file {env} -f {fake}/compose/reminder-bot/docker-compose.yml "
+
+
+def reminder_calls(env, trace, fake):
+    prefix = REMINDER_PREFIX.format(env=env["ENV_FILE"], fake=fake)
+    return [
+        line[len(prefix) :] if line.startswith(prefix) else line
+        for line in trace
+        if line.startswith(prefix) or line == "reminder-check"
+    ]
+
+
+def test_reminder_bot_is_declared_but_skipped_until_its_token_is_rendered(
+    env, tmp_path
+):
+    r, trace, fake = full_deploy(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert reminder_calls(env, trace, fake) == ["config --format json"]
+    assert "REMINDER_BOT_TOKEN is not in" in r.stderr
+
+
+def test_reminder_bot_comes_up_once_its_token_is_rendered_and_image_built(
+    env, tmp_path
+):
+    r, trace, fake = full_deploy(
+        env, tmp_path, env_text="LIFEKIT_TELEGRAM_CHAT=123\nREMINDER_BOT_TOKEN=abc\n"
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert reminder_calls(env, trace, fake) == [
+        "config --format json",
+        "reminder-check",
+        "up -d --wait --wait-timeout 120",
+    ]
+
+
+def test_reminder_bot_missing_image_goes_red_without_stopping_other_projects(
+    env, tmp_path
+):
+    r, trace, fake = full_deploy(
+        {**env, "REMINDER_IMAGE_MISSING": "1"},
+        tmp_path,
+        env_text="LIFEKIT_TELEGRAM_CHAT=123\nREMINDER_BOT_TOKEN=abc\n",
+    )
+    assert r.returncode != 0
+    assert "reminder-bot:abc1234 is not built" in r.stderr
+    assert "bash scripts/reminder-bot/build-image.sh" in r.stderr
+    assert reminder_calls(env, trace, fake) == [
+        "config --format json",
+        "reminder-check",
+    ]
+    # Everything after the reminder-bot step still ran.
+    assert "builder-gc" in trace
+    assert "✓ deploy complete." not in r.stdout

@@ -107,6 +107,18 @@ edge_compose() {
   docker compose -p "${EDGE_PROJECT}" --env-file "${ENV_FILE}" -f "${EDGE_COMPOSE_FILE}" "$@"
 }
 
+# The reminder bot (one Telegram long-polling worker) is compose project
+# `reminder-bot` (compose/reminder-bot/). Its image is built by an operator
+# (scripts/reminder-bot/build-image.sh), not by the deploy; the compose file
+# takes the tag from REMINDER_BOT_TAG, which deploy.sh sets from that script.
+REMINDER_BOT_PROJECT="reminder-bot"
+REMINDER_BOT_COMPOSE_FILE="${REPO_DIR}/compose/reminder-bot/docker-compose.yml"
+REMINDER_BOT_BUILD="${REPO_DIR}/scripts/reminder-bot/build-image.sh"
+reminder_bot_compose() {
+  REMINDER_BOT_TAG="$(bash "${REMINDER_BOT_BUILD}" --tag)" \
+    docker compose -p "${REMINDER_BOT_PROJECT}" --env-file "${ENV_FILE}" -f "${REMINDER_BOT_COMPOSE_FILE}" "$@"
+}
+
 # CURRENT_STEP is read by the callers' EXIT traps.
 # shellcheck disable=SC2034
 CURRENT_STEP="startup"
