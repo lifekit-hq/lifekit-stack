@@ -1491,6 +1491,18 @@ logged for the day.
   workspace by `scripts/ensure-workout-log.sh`, which also reports kit's allowlist and the
   cron read-only. Voice notes reach kit already transcribed (OpenClaw's audio
   auto-detection, the local `whisper` CLI in the image).
+
+  **Voice-note transcription model.** `tools.media.models` in
+  `compose/openclaw-gateway/platform.patch.json` pins audio understanding to the `base`
+  model, the only one the image bakes. Without the entry OpenClaw's auto-detected `whisper`
+  run uses its own default (`turbo`, about 1.6 GB of weights), which on this CPU-only host
+  needs several GiB on top of the gateway and shares the gateway container's memory limit;
+  it once triggered an out-of-memory kill inside the container. Verify the live config
+  (read-only): `docker exec openclaw-openclaw-gateway-1 openclaw config get tools.media.models`
+  must show `--model base`. The operator can check a transcription by hand with
+  `docker exec openclaw-openclaw-gateway-1 sh -c 'whisper <audio file> --model base --fp16 False --output_dir <scratch dir>'`.
+  A cached `large-v3-turbo.pt` in the whisper cache is unused and safe for the operator
+  to delete.
 - **Nudge:** the `workout-nudge` cron, a command payload that runs `nudge.sh` (no model
   turn). Its day-of-week field is the gym-days setting: host state in the gateway's cron
   store, never in git. `nudge.sh` asks `workout-claw summary` for today (the gateway's
