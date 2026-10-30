@@ -210,3 +210,62 @@ def test_a_hand_edited_fleet_step_is_left_untouched(tmp_path):
     assert "left untouched" in res.stderr
     assert edits(tmp_path) == []
     assert json.loads(state.read_text())["jobs"][1]["payload"]["message"] == edited
+
+
+# The step text a live row carries before the evidence-based Google rule.
+PREV_GOOGLE_TAIL = (
+    "Never call start_google_auth and never show an auth URL: when "
+    "Google calendar or mail fails with an expired or revoked sign-in, say once "
+    '"Google sign-in expired - mail and calendar skipped" and add the to-do '
+    '"Redo the Google sign-in on the PC (docs/google-mcp-setup.md, steps 6-7)".'
+)
+
+
+def fresh_message(tmp_path: Path) -> str:
+    d = tmp_path / "fresh"
+    d.mkdir()
+    _, st = run(d)
+    return json.loads(st.read_text())["jobs"][1]["payload"]["message"]
+
+
+def test_a_fresh_insert_carries_the_evidence_based_google_rule(tmp_path):
+    message = fresh_message(tmp_path)
+    assert (
+        "Never call start_google_auth and never show an auth URL. Make the real "
+        "google-workspace calendar and mail calls on every run" in message
+    )
+    assert "never reuse a sign-in verdict from an earlier run or from memory" in message
+    for evidence in ("invalid_grant", "ACTION REQUIRED", "Authentication Needed"):
+        assert evidence in message
+    assert "the tool's own error text says the sign-in is expired or revoked" in message
+    assert (
+        '"Google mail and calendar unavailable: <the error line, or tools not '
+        'available>." and add no to-do'
+    ) in message
+    assert PREV_GOOGLE_TAIL not in message
+
+
+def test_a_row_with_the_current_step_is_upgraded_in_place(tmp_path):
+    fresh = fresh_message(tmp_path)
+    start = fresh.index("6. Fleet: run")
+    # the step as it is live today: the new step with the old Google tail
+    prev_prompt = (
+        fresh[: fresh.index("Never call start_google_auth", start)]
+        + PREV_GOOGLE_TAIL
+        + fresh[fresh.index("\n\nMessage (Telegram") :]
+    )
+    assert prev_prompt != fresh
+    res, state = run(tmp_path, message=prev_prompt)
+    assert res.returncode == 0, res.stderr
+    (cmd,) = edits(tmp_path)
+    message = json.loads(state.read_text())["jobs"][1]["payload"]["message"]
+    assert message == cmd[4] == fresh
+    assert PREV_GOOGLE_TAIL not in message
+    assert message.count("6. Fleet") == 1
+
+
+def test_a_row_with_the_new_step_is_idempotent(tmp_path):
+    run(tmp_path)
+    res, _ = run(tmp_path)
+    assert res.returncode == 0 and "nothing to do" in res.stdout
+    assert len(edits(tmp_path)) == 1

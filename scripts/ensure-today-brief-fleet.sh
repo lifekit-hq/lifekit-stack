@@ -13,7 +13,12 @@
 # is missing, because a prompt that changed under it needs a human to place the
 # step. A prompt that already carries this version of the step is left alone,
 # so re-running converges; one that carries the exact text of the previous
-# version of the step (OLD_STEP, OLD_FLEET below) is upgraded in place.
+# version of the step (PREV_STEP, or OLD_STEP with OLD_FLEET, below) is
+# upgraded in place.
+#
+# The step's Google rule: the brief makes the real calendar and mail calls on
+# every run and prints the "sign-in expired" line only on the tool's own
+# expired/revoked error text; any other failure is reported as "unavailable".
 #
 # Run on the VPS host as lifekit, from the repo checkout, after
 # ensure-secondmate-relay.sh has installed the skill:
@@ -90,11 +95,26 @@ STEP = (
     "(held items are counted through queued; leave out zero parts); \"Fleet: <counts.active_children> working · <counts.queued_open> queued "
     "· <n> landed today\" where <n> counts the landed items whose completion.date is today; \"+<N> not shown\" "
     "only when counts.decisions_open is larger than the decisions_open list. If the command fails, keep one line "
-    "\"Fleet status unavailable: <stderr line>.\" Never call start_google_auth and never show an auth URL: when "
+    "\"Fleet status unavailable: <stderr line>.\" Never call start_google_auth and never show an auth URL"
+)
+# The Google sentence that ends the step. PREV_GOOGLE is what the previous
+# version of the step said, kept so a live row that carries it can be upgraded.
+PREV_GOOGLE = (
+    ": when "
     "Google calendar or mail fails with an expired or revoked sign-in, say once \"Google sign-in expired - mail "
     "and calendar skipped\" and add the to-do \"Redo the Google sign-in on the PC (docs/google-mcp-setup.md, "
     "steps 6-7)\"."
 )
+GOOGLE = (
+    ". Make the real google-workspace calendar and mail calls on every run and never reuse a sign-in verdict "
+    "from an earlier run or from memory. Only when the tool'"'"'s own error text says the sign-in is expired or "
+    "revoked (invalid_grant, \"ACTION REQUIRED\", \"Authentication Needed\"), say once \"Google sign-in expired - "
+    "mail and calendar skipped\" and add the to-do \"Redo the Google sign-in on the PC (docs/google-mcp-setup.md, "
+    "steps 6-7)\". For any other failure, or when the Google tools are not available to you, say once "
+    "\"Google mail and calendar unavailable: <the error line, or tools not available>.\" and add no to-do."
+)
+PREV_STEP = STEP + PREV_GOOGLE
+STEP += GOOGLE
 BEFORE = "\n\nMessage (Telegram"
 EMPTY = "If calendar, mail, deadlines-within-7-days and non-bot PRs are all empty, reply exactly NO_REPLY."
 FLEET = (
@@ -128,6 +148,9 @@ for job in json.load(sys.stdin)["jobs"]:
         break
 if STEP in msg and FLEET in msg:
     sys.exit(10)
+if PREV_STEP in msg and FLEET in msg:
+    sys.stdout.write(msg.replace(PREV_STEP, STEP, 1))
+    sys.exit(0)
 if OLD_STEP in msg and OLD_FLEET in msg:
     sys.stdout.write(msg.replace(OLD_STEP, STEP, 1).replace(OLD_FLEET, FLEET, 1))
     sys.exit(0)
