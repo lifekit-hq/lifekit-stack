@@ -54,6 +54,21 @@ def test_hook_path_is_not_in_git():
     assert ENV_REF.fullmatch(HOOKS["path"]), "a path committed to the repo is guessable"
 
 
+def test_audio_transcription_is_pinned_to_the_baked_base_model():
+    # Unset, OpenClaw auto-detects whisper and runs its default turbo model
+    # (~1.6 GB of weights), which has OOM-killed a process in the gateway
+    # container; the image bakes only `base`.
+    models = PATCH["tools"]["media"]["models"]
+    audio = [m for m in models if "audio" in m.get("capabilities", [])]
+    assert len(audio) == 1
+    entry = audio[0]
+    assert entry["type"] == "cli" and entry["command"] == "whisper"
+    args = entry["args"]
+    assert args[args.index("--model") + 1] == "base"
+    assert not any(re.search(r"turbo|large", a) for a in args)
+    assert args[-1] == "{{AttachmentPath}}"
+
+
 def test_code_mode_is_authored_on_the_quickjs_executor():
     # Absent tools.codeMode means "auto" on the node:vm executor, which is not a
     # security boundary; Kit reads untrusted mail, so the executor is pinned to

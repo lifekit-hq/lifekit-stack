@@ -68,6 +68,29 @@
     "codeMode": {
       "enabled": "auto",
       "executor": "quickjs"
+    },
+    "media": {
+      "models": [
+        {
+          "type": "cli",
+          "command": "whisper",
+          "args": [
+            "--model",
+            "base",
+            "--output_format",
+            "txt",
+            "--output_dir",
+            "{{OutputDir}}",
+            "--fp16",
+            "False",
+            "--verbose",
+            "False",
+            "{{AttachmentPath}}"
+          ],
+          "timeoutSeconds": 300,
+          "capabilities": ["audio"]
+        }
+      ]
     }
   },
   "memory": {
