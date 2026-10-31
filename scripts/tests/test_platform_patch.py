@@ -305,12 +305,15 @@ def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
     # 2.x binds loopback by default; the gateway reaches it over the network.
     assert env["WORKSPACE_MCP_HOST"] == "0.0.0.0"
     assert env["WORKSPACE_MCP_SESSION_IDLE_TIMEOUT"] == "0"
+    # Download links are built on the name the gateway reaches the service by.
+    assert env["WORKSPACE_EXTERNAL_URL"] == "http://google-workspace-mcp:8000"
     for key in (
         "TOOLS",
         "WORKSPACE_MCP_PERMISSIONS",
         "WORKSPACE_MCP_DISABLED_TOOLS",
         "WORKSPACE_MCP_HOST",
         "WORKSPACE_MCP_SESSION_IDLE_TIMEOUT",
+        "WORKSPACE_EXTERNAL_URL",
     ):
         assert "${" not in str(env[key])
     assert svc["image"] == "ghcr.io/taylorwilsdon/google_workspace_mcp:2.1.0"
