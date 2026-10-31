@@ -418,6 +418,9 @@ services:
       # 2.x expires idle streamable-HTTP sessions after 61 min; 0 keeps the 1.x
       # no-expiry behaviour for the gateway's long-lived MCP session.
       WORKSPACE_MCP_SESSION_IDLE_TIMEOUT: "0"
+      # Download links must use the name the gateway reaches this service by,
+      # not the default http://localhost:8000 (unreachable from the gateway).
+      WORKSPACE_EXTERNAL_URL: "http://google-workspace-mcp:8000"
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # Refresh-token store. Upstream image runs as non-root user `app`, so the
