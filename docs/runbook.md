@@ -1444,7 +1444,8 @@ and the status read is an HTTP GET Kit could always make.
   fleet step into its prompt at two fixed anchors and refuses, row untouched, when the
   prompt no longer has them; a prompt already carrying the step is left alone, and a row
   carrying the previous version of the step is upgraded in place. The step's Google rule
-  is evidence-based: the brief makes the real calendar and mail calls on every run and
+  is evidence-based: the brief makes the real calendar and mail calls on every run, with the
+  tool server's own argument names (`page_size`, `calendar_id`), and
   prints "Google sign-in expired - mail and calendar skipped" (with the re-sign-in to-do)
   only when the tool's own error text says the sign-in is expired or revoked; any other
   failure, or Google tools not available, prints "Google mail and calendar unavailable:

@@ -13,7 +13,7 @@
 # is missing, because a prompt that changed under it needs a human to place the
 # step. A prompt that already carries this version of the step is left alone,
 # so re-running converges; one that carries the exact text of the previous
-# version of the step (PREV_STEP, or OLD_STEP with OLD_FLEET, below) is
+# version of the step (PREV_STEP, PREV_STEP2, or OLD_STEP with OLD_FLEET, below) is
 # upgraded in place.
 #
 # The step's Google rule: the brief makes the real calendar and mail calls on
@@ -105,15 +105,27 @@ PREV_GOOGLE = (
     "and calendar skipped\" and add the to-do \"Redo the Google sign-in on the PC (docs/google-mcp-setup.md, "
     "steps 6-7)\"."
 )
-GOOGLE = (
+GOOGLE_HEAD = (
     ". Make the real google-workspace calendar and mail calls on every run and never reuse a sign-in verdict "
-    "from an earlier run or from memory. Only when the tool'"'"'s own error text says the sign-in is expired or "
+    "from an earlier run or from memory."
+)
+GOOGLE_TAIL = (
+    " Only when the tool'"'"'s own error text says the sign-in is expired or "
     "revoked (invalid_grant, \"ACTION REQUIRED\", \"Authentication Needed\"), say once \"Google sign-in expired - "
     "mail and calendar skipped\" and add the to-do \"Redo the Google sign-in on the PC (docs/google-mcp-setup.md, "
     "steps 6-7)\". For any other failure, or when the Google tools are not available to you, say once "
     "\"Google mail and calendar unavailable: <the error line, or tools not available>.\" and add no to-do."
 )
+# The argument names the Google tool server accepts, so the first calls do not fail on a wrong name.
+GOOGLE_ARGS = (
+    " Use these argument names: search_gmail_messages takes query and page_size (never max_results); "
+    "get_events takes calendar_id, time_min, time_max and max_results (never calendarId); list_calendars "
+    "takes no required argument; leave user_google_email out."
+)
+PREV_GOOGLE2 = GOOGLE_HEAD + GOOGLE_TAIL
+GOOGLE = GOOGLE_HEAD + GOOGLE_ARGS + GOOGLE_TAIL
 PREV_STEP = STEP + PREV_GOOGLE
+PREV_STEP2 = STEP + PREV_GOOGLE2
 STEP += GOOGLE
 BEFORE = "\n\nMessage (Telegram"
 EMPTY = "If calendar, mail, deadlines-within-7-days and non-bot PRs are all empty, reply exactly NO_REPLY."
@@ -148,9 +160,10 @@ for job in json.load(sys.stdin)["jobs"]:
         break
 if STEP in msg and FLEET in msg:
     sys.exit(10)
-if PREV_STEP in msg and FLEET in msg:
-    sys.stdout.write(msg.replace(PREV_STEP, STEP, 1))
-    sys.exit(0)
+for prev in (PREV_STEP2, PREV_STEP):
+    if prev in msg and FLEET in msg:
+        sys.stdout.write(msg.replace(prev, STEP, 1))
+        sys.exit(0)
 if OLD_STEP in msg and OLD_FLEET in msg:
     sys.stdout.write(msg.replace(OLD_STEP, STEP, 1).replace(OLD_FLEET, FLEET, 1))
     sys.exit(0)

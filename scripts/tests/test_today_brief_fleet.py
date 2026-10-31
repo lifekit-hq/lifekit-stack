@@ -269,3 +269,39 @@ def test_a_row_with_the_new_step_is_idempotent(tmp_path):
     res, _ = run(tmp_path)
     assert res.returncode == 0 and "nothing to do" in res.stdout
     assert len(edits(tmp_path)) == 1
+
+
+# The step text a live row carries before the Google argument names.
+CURRENT_GOOGLE_ARGS = (
+    " Use these argument names: search_gmail_messages takes query and page_size "
+    "(never max_results); get_events takes calendar_id, time_min, time_max and "
+    "max_results (never calendarId); list_calendars takes no required argument; "
+    "leave user_google_email out."
+)
+
+
+def test_a_fresh_insert_names_the_google_tool_arguments(tmp_path):
+    message = fresh_message(tmp_path)
+    assert (
+        "from an earlier run or from memory." + CURRENT_GOOGLE_ARGS + " Only when"
+    ) in message
+    assert (
+        "search_gmail_messages takes query and page_size (never max_results)" in message
+    )
+    assert "get_events takes calendar_id" in message
+    assert "(never calendarId)" in message
+
+
+def test_a_row_with_the_step_before_the_argument_names_is_upgraded(tmp_path):
+    fresh = fresh_message(tmp_path)
+    prev_prompt = fresh.replace(CURRENT_GOOGLE_ARGS, "", 1)
+    assert prev_prompt != fresh
+    res, state = run(tmp_path, message=prev_prompt)
+    assert res.returncode == 0, res.stderr
+    (cmd,) = edits(tmp_path)
+    message = json.loads(state.read_text())["jobs"][1]["payload"]["message"]
+    assert message == cmd[4] == fresh
+    assert message.count("6. Fleet") == 1
+    res, _ = run(tmp_path)
+    assert res.returncode == 0 and "nothing to do" in res.stdout
+    assert len(edits(tmp_path)) == 1
