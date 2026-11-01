@@ -115,9 +115,10 @@ def test_ensure_installs_the_skill_and_converges(tmp_path):
         assert r.returncode == 0, r.stderr
         assert "not checked" in r.stdout
     dest = workspace / "skills/workout-log"
-    for f in ("SKILL.md", "nudge.sh"):
+    for f in ("SKILL.md", "nudge.sh", "day-check.sh"):
         assert (dest / f).read_bytes() == (SKILL / f).read_bytes()
     assert os.access(dest / "nudge.sh", os.X_OK)
+    assert os.access(dest / "day-check.sh", os.X_OK)
 
 
 def test_ensure_refuses_an_agent_without_a_workspace(tmp_path):

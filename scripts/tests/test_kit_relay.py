@@ -977,6 +977,8 @@ def test_ensure_installs_the_skill_into_kits_workspace(tmp_path):
     dest = workspace / "skills/secondmate-relay"
     assert (dest / "SKILL.md").read_bytes() == SKILL_MD.read_bytes()
     assert (dest / "relay.sh").read_bytes() == CLIENT.read_bytes()
+    digest = CLIENT.with_name("needs-you-digest.mjs")
+    assert (dest / digest.name).read_bytes() == digest.read_bytes()
     assert (dest / "SKILL.md").stat().st_mode & 0o777 == 0o644
     assert (dest / "relay.sh").stat().st_mode & 0o777 == 0o755
     assert "allowlist not checked" in result.stdout
@@ -1038,6 +1040,8 @@ elif cmd[:2] == ["cron", "edit"]:
                 job["sessionKey"] = cmd[cmd.index("--session-key") + 1]
             if "--tools" in cmd:
                 job["payload"] = {"toolsAllow": cmd[cmd.index("--tools") + 1].split(",")}
+                if "--model" in cmd:
+                    job["payload"]["model"] = cmd[cmd.index("--model") + 1]
             job.update(json.loads(os.environ.get("FAKE_ROW_OVERRIDE", "{}")).get(job["id"], {}))
     state.write_text(json.dumps(data))
 else:
@@ -1100,13 +1104,14 @@ def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
         ["cron", "edit", "job1"],
     ]
     message = message_of(edit_of(calls, "job1"))
-    status_cmd = (
-        "sh /home/node/.openclaw/agents/kit/workspace/skills/"
-        "secondmate-relay/relay.sh status"
+    digest_cmd = (
+        "node /home/node/.openclaw/agents/kit/workspace/skills/"
+        "secondmate-relay/needs-you-digest.mjs "
+        "/home/node/.openclaw/agents/kit/workspace/needs-you/open.json"
     )
-    assert status_cmd in message
-    # the prompt's only relay verb is the read-only one; a cron turn never sends
-    assert set(re.findall(r"relay\.sh (\w+)", message)) == {"status"}
+    assert digest_cmd in message
+    # the ledger and fleet reads are the script's; the prompt names no relay verb
+    assert not re.findall(r"relay\.sh (\w+)", message)
     assert "NO_REPLY" not in message
     assert "the first line is the date" in message
 
@@ -1244,6 +1249,30 @@ def test_digest_refuses_a_row_with_a_wider_tool_list(tmp_path):
     assert "needs-you-digest payload.toolsAllow" in result.stderr
 
 
+def test_digest_runs_on_sonnet_and_refuses_a_row_on_another_model(tmp_path):
+    result, calls = run_digest(tmp_path, BOTH_ROWS)
+    assert result.returncode == 0, result.stderr
+    for verb in ("edit",):
+        digest_edit = [c for c in calls if c[:3] == ["cron", verb, "job1"]][0]
+        assert (
+            digest_edit[digest_edit.index("--model") + 1]
+            == "anthropic/claude-sonnet-4-6"
+        )
+    sub = tmp_path / "other"
+    sub.mkdir()
+    result, _ = run_digest(
+        sub,
+        BOTH_ROWS,
+        row_override={
+            "job1": {
+                "payload": {"toolsAllow": ["read", "exec", "process"], "model": "opus"}
+            }
+        },
+    )
+    assert result.returncode != 0
+    assert "needs-you-digest payload.model" in result.stderr
+
+
 def test_digest_all_clear_line_yields_to_mail_that_needs_the_owner(tmp_path):
     result, calls = run_digest(tmp_path, BOTH_ROWS)
     assert result.returncode == 0, result.stderr
@@ -1275,7 +1304,8 @@ def test_digest_creates_missing_rows_with_the_same_messages(tmp_path):
     assert tools_of(add) == {"read", "exec", "process"}
     assert edit[:3] == ["cron", "edit", "job1"]
     assert message_of(add) == message_of(edit)
-    assert set(re.findall(r"relay\.sh (\w+)", message_of(add))) == {"status"}
+    assert not re.findall(r"relay\.sh (\w+)", message_of(add))
+    assert "needs-you-digest.mjs" in message_of(add)
 
 
 def test_digest_row_description_and_verify_hint_keep_their_quoted_phrase(tmp_path):

@@ -36,6 +36,7 @@ skill_dest="${workspace}/skills/${SKILL}"
 
 install -D -m 0644 "$skill_src/SKILL.md" "$skill_dest/SKILL.md"
 install -D -m 0755 "$skill_src/relay.sh" "$skill_dest/relay.sh"
+install -D -m 0644 "$skill_src/needs-you-digest.mjs" "$skill_dest/needs-you-digest.mjs"
 echo "skill installed -> $skill_dest"
 
 # Read-only: is the skill on the agent's allowlist? An agent with a `skills`

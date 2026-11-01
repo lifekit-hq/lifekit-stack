@@ -6,7 +6,8 @@
 # The skill logs a session from one line through the workout-claw CLI baked
 # into the gateway image (compose/openclaw-gateway/package.json); nudge.sh is
 # the command the workout-nudge cron runs (docs/runbook.md, "Kit's workout log
-# and gym-day nudge"). Kit's allowlist (agents.entries.kit.skills) and the
+# and gym-day nudge"); day-check.sh is the one the evening-day-plan cron runs
+# ("Kit's evening day plan"). Kit's allowlist (agents.entries.kit.skills) and the
 # cron, whose day-of-week field holds the gym days, are host state, so this
 # script only reads them; adding either is an operator step.
 #
@@ -38,6 +39,7 @@ skill_dest="${workspace}/skills/${SKILL}"
 
 install -D -m 0644 "$skill_src/SKILL.md" "$skill_dest/SKILL.md"
 install -D -m 0755 "$skill_src/nudge.sh" "$skill_dest/nudge.sh"
+install -D -m 0755 "$skill_src/day-check.sh" "$skill_dest/day-check.sh"
 echo "skill installed -> $skill_dest"
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \

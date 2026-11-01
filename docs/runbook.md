@@ -1027,6 +1027,8 @@ whatever the mail says. It delivers nothing; its run stays in its run history, w
 `summary` is all of the run's text, kept from the head and cut at 2000 characters. The
 reader writes no text but its final reply, a mail section of under 1500 characters
 between a `<<<MAIL-SECTION` line and a `MAIL-SECTION>>>` line.
+The digest runs on `anthropic/claude-sonnet-4-6` (`NEEDS_YOU_DIGEST_MODEL` overrides; `ensure-needs-you-digest.sh` exits non-zero when the live row's `payload.model` differs) and does not read the ledger or the relay itself: its first step runs `skills/secondmate-relay/needs-you-digest.mjs`
+(installed by `ensure-secondmate-relay.sh`), which prints the open ledger entries oldest first with lettered options, the live fleet decisions, and the already-counted Later, Fleet, partial-view and not-shown figures, or a `needs-you digest failed:` / `fleet status unavailable:` line. The model keeps the call-versus-to-do judgment, the mail section and the final message.
 The digest, allowed only `read`, `exec` and `process` (no Gmail tool, but `exec`
 is a shell, so `relay.sh` and its send verbs stay reachable; the prompt forbids
 them and nothing else does), reads that summary with
@@ -1592,6 +1594,60 @@ docker exec "$G" openclaw cron edit "$ID" \
 - **Rollback:** `docker exec "$G" openclaw cron rm "$ID"`, re-apply kit's old skills list, and remove the
   skill folder from kit's workspace. The CLI pin rolls back with the image ("Rolling back
   OpenClaw").
+
+### Kit's evening day plan (command cron)
+
+The 21:00 `evening-day-plan` row is a command payload, not an agent turn: its message is a
+fixed line, so a model only paid for reading two CLIs and copying numbers.
+`skills/workout-log/day-check.sh <kcal target> <protein target g>` (installed with the
+workout-log skill by `scripts/ensure-workout-log.sh`) runs `nutrition-claw summary` and
+`workout-claw summary` for today and prints the whole delivery line:
+
+```
+Day check | nutrition 1840kcal/2278 160g -> 112g under | gym Wed: done (legs) | tomorrow's priorities?
+```
+
+kcal is eaten/target; the protein part is target -> eaten, then `under`, `over` or
+`on target`; the gym part is `done (<muscle groups>)` or `no session`. The two targets are
+the owner's numbers from the vault health page and live in the cron row (host state),
+never in git. If either CLI fails or its summary lacks the numbers, the script prints
+the reason on stderr and exits 1, so the failure alert fires instead of a wrong line.
+`day-check.sh` passes `--date "$(date +%F)"` (the gateway's TZ) to both CLIs, reads `consumed` under
+the `calories_kcal` and `protein_g` blocks, prefers the CLI's own `goal` over the arguments, and
+names the distinct exercise `muscle` values (falling back to `muscle_group`). Rehearse read-only:
+`docker exec -i "$G" sh -s -- <kcal> <protein-g> < skills/workout-log/day-check.sh`.
+
+Operator steps, after the PR has deployed and `ensure-workout-log.sh` has run. Run as
+lifekit on the VPS; read the old row first (`cron show`), and keep its delivery
+destination if it differs from the owner's Telegram chat below:
+
+```bash
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+docker exec "$G" sh /home/node/.openclaw/agents/kit/workspace/skills/workout-log/day-check.sh <kcal> <protein-g>   # rehearse: prints the line, sends nothing
+OLD=$(docker exec "$G" openclaw cron list --json \
+  | docker exec -i "$G" node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);process.stdout.write((j.jobs||j).find(x=>x.name==="evening-day-plan").id)})')
+docker exec "$G" openclaw cron show "$OLD"   # note the schedule and delivery
+CHAT=$(sed -nE 's/^[[:space:]]*LIFEKIT_TELEGRAM_CHAT=["'"'"']?([0-9-]+)["'"'"']?[[:space:]]*$/\1/p' \
+  /srv/lifekit-secrets/stack.env)
+docker exec "$G" openclaw cron rm "$OLD"
+docker exec "$G" openclaw cron add \
+  --name evening-day-plan \
+  --description "21:00 day check: nutrition and gym lines printed by day-check.sh, no model turn. Declared in docs/runbook.md (source: lifekit-stack)." \
+  --agent kit --session isolated \
+  --cron "0 21 * * *" --tz "$(docker exec "$G" printenv TZ)" --exact \
+  --command-argv '["sh","/home/node/.openclaw/agents/kit/workspace/skills/workout-log/day-check.sh","<kcal>","<protein-g>"]' \
+  --timeout-seconds 20 --no-output-timeout-seconds 10 --output-max-bytes 1000 \
+  --announce --channel telegram --account default --to "$CHAT"
+ID=$(docker exec "$G" openclaw cron list --json \
+  | docker exec -i "$G" node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);process.stdout.write((j.jobs||j).find(x=>x.name==="evening-day-plan").id)})')
+docker exec "$G" openclaw cron edit "$ID" \
+  --failure-alert --failure-alert-after 1 \
+  --failure-alert-mode announce --failure-alert-channel telegram \
+  --failure-alert-account-id default --failure-alert-to "$CHAT"
+```
+
+Rollback: `cron rm "$ID"` and re-add the old prompt row from the `cron show` output.
 
 ### Shared job queue
 
