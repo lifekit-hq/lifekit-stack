@@ -37,7 +37,7 @@ field() { # $1 = block, $2 = field
 }
 kcal="$(field calories_kcal consumed)"
 protein="$(field protein_g consumed)"
-[ -n "$kcal" ] && [ -n "$protein" ] || fail "unrecognised nutrition-claw summary output"
+if [ -z "$kcal" ] || [ -z "$protein" ]; then fail "unrecognised nutrition-claw summary output"; fi
 # The CLI's own goal wins; the arguments are the display targets when it has none.
 kcal_goal="$(field calories_kcal goal || true)"; kcal_goal="${kcal_goal:-$1}"
 protein_goal="$(field protein_g goal || true)"; protein_goal="${protein_goal:-$2}"
