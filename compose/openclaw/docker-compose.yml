@@ -397,11 +397,13 @@ services:
       # env tools + env permissions is a startup error. Services are selected by
       # the permission list itself.
       TOOLS: ""
-      # gmail:send is cumulative (readonly + organize + drafts + send); every
-      # other service stays at readonly. Needs the one-time gmail:send consent
-      # (docs/google-mcp-setup.md, "Widening the consent"); the token works with
-      # the older read-only config too.
-      WORKSPACE_MCP_PERMISSIONS: "gmail:send drive:readonly calendar:readonly docs:readonly sheets:readonly tasks:readonly"
+      # gmail:send is cumulative (readonly + organize + drafts + send); drive:full
+      # is the full Drive level (the server has only readonly|full); every
+      # other service stays at readonly. Each wider level needs its one-time
+      # consent (docs/google-mcp-setup.md, "Widening the consent"); the token
+      # works with the older narrower config too, and a Drive create is refused
+      # until the Drive consent is in.
+      WORKSPACE_MCP_PERMISSIONS: "gmail:send drive:full calendar:readonly docs:readonly sheets:readonly tasks:readonly"
       # The server's ONLY write tool is send_gmail_message: the rest of what
       # the gmail:send level exposes (draft, labels, modify, batch modify) is
       # blocked by name, and block wins over the permission list. A send is
@@ -410,7 +412,16 @@ services:
       # Once upstream ships the recipient allowlist (WORKSPACE_ALLOWED_RECIPIENTS,
       # taylorwilsdon/google_workspace_mcp#1078, unmerged at 2.1.0), set it here
       # as a literal too: until then a prompt-injected agent can send anywhere.
-      WORKSPACE_MCP_DISABLED_TOOLS: "draft_gmail_message,manage_gmail_label,modify_gmail_message_labels,batch_modify_gmail_message_labels"
+      # Drive: the full level is only there so the document door can file an
+      # original into a subject folder, so the Drive write tools left are
+      # create_drive_folder and create_drive_file (create only). Editing,
+      # sharing, permission changes and copies are blocked by name (block wins
+      # over the permission list). Creates log as `[create_drive_file]` /
+      # `[create_drive_folder]` (alert: agent-drive-created, a warning). To undo:
+      # set drive:readonly above and remove the five Drive names below.
+      WORKSPACE_MCP_DISABLED_TOOLS: "draft_gmail_message,manage_gmail_label,modify_gmail_message_labels,\
+        batch_modify_gmail_message_labels,update_drive_file,manage_drive_access,\
+        set_drive_file_permissions,get_drive_shareable_link,copy_drive_file"
       # 2.x binds 127.0.0.1 by default for the legacy (non-OAuth 2.1) HTTP
       # mode; the gateway reaches us over the compose network, so bind all
       # interfaces. Still internal-only: no `ports:` mapping below.

@@ -8,11 +8,14 @@ them on the server and keep one cited report per document (SKILL.md).
     door.py report <doc id>               file the agent's report (stdin)
     door.py status                        counts per state, one line each
 
-Read-only toward Google: it speaks MCP to the google-workspace server and
-calls only search_gmail_messages, get_gmail_message_content and
-get_gmail_attachment_content. It never sends, drafts or labels, and never
-touches Drive (filing into Drive needs a write scope the server does not
-grant; SKILL.md, "What is not here yet").
+Toward Google it speaks MCP to the google-workspace server and calls only the
+tools in ALLOWED_TOOLS: three mail reads, the Drive reads needed to find a
+folder (search_drive_files, list_drive_items) and the two Drive creates
+(create_drive_folder, create_drive_file). It never sends, drafts or labels, and
+never edits, moves, deletes or shares a Drive file; Mcp.call refuses any other
+tool. After a report is accepted, the original is filed into the report's
+subject folder; a Drive failure leaves `Drive: pending (<reason>)` and the next
+scan retries, and never fails the scan.
 
 State lives in DOC_DOOR_DIR (default ~/.life-state/doc-door, mode 700, outside
 the vault, never cited as a source): state.json (idempotency: one record per
@@ -33,6 +36,19 @@ import sys
 import urllib.request
 from pathlib import Path
 
+ALLOWED_TOOLS = frozenset(
+    {
+        "search_gmail_messages",
+        "get_gmail_message_content",
+        "get_gmail_attachment_content",
+        "search_drive_files",
+        "list_drive_items",
+        "create_drive_folder",
+        "create_drive_file",
+    }
+)
+FILE_PER_PASS = 5  # Drive filings attempted per scan or report
+
 MCP_URL = os.environ.get("DOC_DOOR_MCP_URL", "http://google-workspace-mcp:8000/mcp/")
 HOME = Path(os.environ.get("DOC_DOOR_DIR", Path.home() / ".life-state" / "doc-door"))
 VAULT = Path(os.environ.get("VAULT", Path.home() / "memory"))
@@ -41,6 +57,12 @@ MARKITDOWN = os.environ.get(
 )
 
 KINDS = ("pdf", "docx", "xlsx", "pptx")
+MIME = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
 MAX_BYTES = 15 * 1024 * 1024
 MAX_TEXT = 12000  # characters of converted text shown to the agent
 MIN_BYTES = 4096  # smaller attachments are signatures and tracking pixels
@@ -129,6 +151,8 @@ class Mcp:
         return msg["result"]
 
     def call(self, tool: str, **args) -> str:
+        if tool not in ALLOWED_TOOLS:
+            raise RuntimeError(f"tool {tool} is not allowed for the document door")
         res = self._rpc("tools/call", {"name": tool, "arguments": args})
         text = "\n".join(c.get("text", "") for c in res.get("content", []))
         if res.get("isError"):
@@ -254,6 +278,7 @@ def scan(days: int, limit: int) -> int:
         save_state(state)
         print(f"mail unavailable: {exc}")
         return 0
+    file_pending(state, mcp)
     seen_msgs = {r["message_id"] for r in docs.values()} | set(state.get("skipped", []))
     for mid in ids:
         if mid in seen_msgs or shown >= MAX_NEW:
@@ -311,6 +336,132 @@ def scan(days: int, limit: int) -> int:
     if shown == 0:
         print("No new documents.")
     return 0
+
+
+# --- Drive filing ---------------------------------------------------------------------
+
+FOLDER_MIME = "application/vnd.google-apps.folder"
+ITEM = re.compile(
+    r'"?(?P<name>[^"\n]+?)"?\s*\(ID:\s*(?P<id>[\w-]+),\s*Type:\s*(?P<type>[^,)]+)'
+)
+ANY_ID = re.compile(r"\bID:\s*([\w-]+)")
+
+
+def parse_items(text: str) -> list[tuple[str, str, str]]:
+    """(name, id, mime type) per entry of a Drive search or listing reply."""
+    out = []
+    for line in text.splitlines():
+        m = ITEM.search(line.replace("Name:", "").strip().lstrip("-* "))
+        if m:
+            out.append((m["name"].strip(), m["id"], m["type"].strip()))
+    return out
+
+
+def short_reason(exc: Exception) -> str:
+    msg = re.sub(r"[^\x20-\x7e]+", " ", str(exc)).strip()
+    return IDENTIFIER.sub("?", msg)[:80] or "error"
+
+
+def find_or_create_folder(mcp, state: dict, name: str) -> str:
+    cache = state.setdefault("folders", {})
+    if name in cache:
+        return cache[name]
+    found = mcp.call(
+        "search_drive_files",
+        query=f"name = '{name}' and mimeType = '{FOLDER_MIME}' and 'root' in parents and trashed = false",
+        page_size=10,
+    )
+    hits = [i for n, i, t in parse_items(found) if n == name and t == FOLDER_MIME]
+    if hits:
+        fid = hits[0]
+    else:
+        made = mcp.call(
+            "create_drive_folder", folder_name=name, parent_folder_id="root"
+        )
+        m = ANY_ID.search(made)
+        if not m:
+            raise RuntimeError("folder created but no id in the reply")
+        fid = m[1]
+    cache[name] = fid
+    return fid
+
+
+def target_name(filename: str, doc_id: str, taken: set[str]) -> str:
+    """The original name, or suffixed with a short content hash when taken."""
+    if filename not in taken:
+        return filename
+    stem, dot, ext = filename.rpartition(".")
+    if not dot:
+        stem, ext = filename, ""
+    return f"{stem}-{doc_id[:8]}{dot}{ext}"
+
+
+def file_original(mcp, state: dict, doc_id: str, rec: dict) -> None:
+    """Upload the original once. Raises on any Drive problem."""
+    kind = kind_of(rec["filename"])
+    blob = (HOME / "documents" / f"{doc_id}.{kind}").read_bytes()
+    folder_id = find_or_create_folder(mcp, state, rec["folder"])
+    listing = mcp.call("list_drive_items", folder_id=folder_id, page_size=1000)
+    taken = {n: i for n, i, _ in parse_items(listing)}
+    name = target_name(rec["filename"], doc_id, set(taken))
+    if name in taken and name != rec["filename"]:
+        # The suffixed name is there already (an earlier upload whose result was
+        # lost): that is this file; nothing is written.
+        ref = taken[name]
+    else:
+        made = mcp.call(
+            "create_drive_file",
+            file_name=name,
+            folder_id=folder_id,
+            mime_type=MIME[kind],
+            base64_content=base64.b64encode(blob).decode(),
+            base64_sha256=hashlib.sha256(blob).hexdigest(),
+        )
+        m = ANY_ID.search(made)
+        ref = m[1] if m else "unparsed"
+    rec["drive"] = "filed"
+    rec["drive_ref"] = ref
+    rec["drive_name"] = name
+    rec.pop("drive_why", None)
+
+
+def set_drive_line(doc_id: str, line: str) -> None:
+    f = HOME / "reports" / f"{doc_id}.md"
+    if not f.exists():
+        return
+    text = re.sub(r"^Drive: .*$", line, f.read_text(), flags=re.M)
+    f.write_text(text)
+    f.chmod(0o600)
+
+
+def file_pending(state: dict, mcp=None) -> None:
+    """Try to file every reported, not yet filed original. Never raises."""
+    todo = [
+        (d, r)
+        for d, r in sorted(state["docs"].items())
+        if r["status"] == "reported" and r.get("drive", "pending") != "filed"
+    ][:FILE_PER_PASS]
+    if not todo:
+        return
+    try:
+        mcp = mcp or Mcp()
+    except Exception as exc:  # noqa: BLE001
+        for d, r in todo:
+            r["drive_why"] = short_reason(exc)
+            set_drive_line(d, f"Drive: pending ({r['drive_why']})")
+        save_state(state)
+        return
+    for doc_id, rec in todo:
+        try:
+            file_original(mcp, state, doc_id, rec)
+            set_drive_line(
+                doc_id, f"Drive: filed in {rec['folder']} ({rec['drive_ref']})"
+            )
+        except Exception as exc:  # noqa: BLE001 - retried by the next scan
+            rec["drive"] = "pending"
+            rec["drive_why"] = short_reason(exc)
+            set_drive_line(doc_id, f"Drive: pending ({rec['drive_why']})")
+        save_state(state)
 
 
 # --- report -------------------------------------------------------------------------
@@ -426,9 +577,11 @@ def report(doc_id: str) -> int:
     )
     save_state(state)
     flush_logs(state)
+    file_pending(state)
     print(
         f"filed report {doc_id}: {fields['Title']} -> folder {fields['Folder']}, page {fields['Page']}"
     )
+    print(f"Drive: {state['docs'][doc_id].get('drive', 'pending')}")
     print(f"Proposal for {fields['Page']}: {fields['Proposal']}")
     return 0
 

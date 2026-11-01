@@ -1,0 +1,71 @@
+# Provisioned alert rule: an agent created a folder or file in Drive through the
+# google-workspace MCP (the document door's filing, skills/doc-door). A copy of
+# rules-agent-mail.yml's shape (Loki count over a 2m window, evaluated every
+# 1m, noDataState OK, nothing from the log line forwarded) with one difference:
+# severity is warning, so policies.yml.tmpl does not page it (only critical
+# routes to the phone) and it is visible in Grafana alerting only. Filing runs
+# up to a few times a day by design, so a page per file would be noise; the
+# permission itself is the guard (compose/openclaw/docker-compose.yml blocks
+# every Drive tool except these two creates by name).
+#
+# The server logs each call BEFORE the Drive API is hit, in the same shape as
+# the Gmail tools:
+#   [DRIVE] [create_drive_file] Invoked. Email: '<account>', ...
+# The match is anchored on `] Invoked.` after the tool name so Loki's own query log
+# (escaped query text) cannot match it. Edits, moves, deletes and shares are
+# blocked by name and never reach a log line of their own.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: agent-drive
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: agent-drive-created
+        title: agent created a Drive item
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              expr: >-
+                sum(count_over_time({service_name="docker"}
+                |~ "\\[create_drive_(file|folder)\\] Invoked\\."
+                [2m]))
+              queryType: instant
+              instant: true
+              editorMode: code
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: google-workspace-mcp
+          severity: warning
+        annotations:
+          summary: "an agent created a Drive item"
+          description: >-
+            Agents made {{ printf "%.0f" $values.B.Value }} Drive create call(s)
+            in the last 2 minutes. Check the Drive subject folders for what was
+            added. Calls are in the container log: `docker logs --since 1h
+            openclaw-google-workspace-mcp-1 | grep create_drive_`.

@@ -51,18 +51,25 @@ Tasks) needs these six:
 permissions.)
 
 The compose service sets the tool surface with literals, not env values:
-`WORKSPACE_MCP_PERMISSIONS` is `gmail:send` plus `readonly` for Drive, Calendar,
-Docs, Sheets and Tasks, and `WORKSPACE_MCP_DISABLED_TOOLS` removes the other
-write tools that `gmail:send` pulls in (`draft_gmail_message`,
+`WORKSPACE_MCP_PERMISSIONS` is `gmail:send` and `drive:full` plus `readonly` for
+Calendar, Docs, Sheets and Tasks, and `WORKSPACE_MCP_DISABLED_TOOLS` removes the
+other write tools those levels pull in: for Gmail `draft_gmail_message`,
 `manage_gmail_label`, `modify_gmail_message_labels`,
-`batch_modify_gmail_message_labels`). The server then lists 36 tools at 2.1.0 and
-the ONLY one that writes anywhere is `send_gmail_message`. This is the guard that
+`batch_modify_gmail_message_labels`; for Drive `update_drive_file`,
+`manage_drive_access`, `set_drive_file_permissions`, `get_drive_shareable_link`
+and `copy_drive_file`. Drive has only the levels `readonly` and `full`; the
+block-by-name list wins over the permission list, so the only tools that write
+anywhere are `send_gmail_message`, `create_drive_folder` and `create_drive_file`
+(create only: the document door files an original into a subject folder; nothing
+edits, moves, deletes or shares an existing Drive file). This is the guard that
 binds: per-agent tool allow and deny lists are not enforced under the
 claude-cli runtime. `TOOLS` stays an empty literal: a non-empty value puts
 `--tools` on the start command and the server then ignores permissions
 (full mode); `WORKSPACE_MCP_TOOLS` is no longer read. Every call is logged and
-pings the owner through the `agent-mail-sent` Grafana alert
-(`compose/observability/grafana/provisioning/alerting/rules-agent-mail.yml`).
+send pings the owner through the `agent-mail-sent` Grafana alert
+(`compose/observability/grafana/provisioning/alerting/rules-agent-mail.yml`); a
+Drive create raises the warning-level `agent-drive-created` alert
+(`rules-agent-drive.yml`), visible in Grafana and not paged.
 To change the surface, change the literals in `compose/openclaw/docker-compose.yml`
 in a reviewed PR. When upstream ships `WORKSPACE_ALLOWED_RECIPIENTS`
 ([taylorwilsdon/google_workspace_mcp#1078](https://github.com/taylorwilsdon/google_workspace_mcp/pull/1078),
@@ -84,6 +91,26 @@ from a read-only consent cannot send. Order matters:
    needs, so it requests `gmail.send` only once the read-only flag is gone: run
    it after the compose change is live. Then check the granted scopes include
    `gmail.send`.
+
+### Widening the consent for Drive
+
+Filing needs the full Drive scope (and `drive.file`), so the token must come from
+a consent that includes it; a token from a read-only Drive consent keeps working
+for reads and a Drive create is refused (the document door then reports
+`Drive: pending` and retries on its next scan). Order matters:
+
+1. Merge the compose change (`drive:full`, five Drive tools blocked by name).
+2. Redo step 6 with `drive:full` in the `--permissions` flag, sign in once, and
+   copy the new token (step 7). Run it after the compose change is live: the
+   sign-in asks only for the scopes the running config needs.
+3. Check the granted scopes include the Drive scope.
+
+Undo, back to read-only: set `drive:readonly` in `WORKSPACE_MCP_PERMISSIONS`,
+remove the five Drive names from `WORKSPACE_MCP_DISABLED_TOOLS`, and merge. A
+token with the wider scope keeps working at the narrower config and no new
+consent is required to go down; to be thorough, revoke the app's access on the
+Google account's third-party access page and redo the consent with the narrower
+flag. The document door then reports `Drive: pending` again.
 
 ## 3. Configure the OAuth consent screen
 
@@ -167,7 +194,7 @@ export GOOGLE_OAUTH_CLIENT_SECRET=...
 export USER_GOOGLE_EMAIL=you@example.com
 export OAUTHLIB_INSECURE_TRANSPORT=1   # needed for http://localhost callback
 uvx workspace-mcp --transport streamable-http --single-user \
-    --permissions gmail:send drive:readonly calendar:readonly \
+    --permissions gmail:send drive:full calendar:readonly \
     docs:readonly sheets:readonly tasks:readonly
 ```
 
