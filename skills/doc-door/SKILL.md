@@ -48,10 +48,13 @@ again. On success it prints the proposal; the script appends the vault log line 
 
 One line per document: `<Title> - folder <Folder> - proposal for <Page>: <Proposal>`. Nothing
 else: no facts, no text from the document. You change no vault page, send nothing, draft
-nothing, label nothing and call no Gmail tool: the script reads the mailbox itself.
+nothing, label nothing and call no Gmail or Drive tool: the script reads the mailbox itself.
 
-## What is not here yet
+## Drive
 
-Filing the original into the Drive folder needs a Drive write scope the Workspace server does
-not grant (docs/runbook.md, "Document door"). Until it does, the report names the proposed
-folder and `Drive: pending`; do not try another route to Drive.
+The script files the original itself, right after `report` is accepted and again on later scans
+while it is pending: it finds or creates the subject folder, uploads the original once and puts
+the Drive reference in the report's `Drive:` line. `report` prints that line; if it says
+`Drive: pending (...)`, nothing is needed from you, the next scan retries. You call no Drive
+tool yourself, and you never delete, move, edit or share an existing Drive file, nor change
+anyone's access to one. No other route to Drive exists; do not look for one.

@@ -4,12 +4,14 @@
 # dir, and idempotently declare the scheduled job that runs it.
 #
 # The job notices new document attachments in the owner's mailbox (door.py
-# talks read-only to the Workspace MCP itself: search, message and attachment
-# reads only), converts each on the server and has kit file one cited report
+# talks to the Workspace MCP itself: mail search/message/attachment reads, the
+# Drive reads to find a folder, and the two Drive creates, create_drive_folder
+# and create_drive_file; nothing that edits, moves, deletes or shares), converts each on the server and has kit file one cited report
 # per document (docs/runbook.md, "Document door"). The job's tool allow-list is
 # exactly `exec` (to run door.py) and it delivers nothing; the script fails
-# closed when the live row differs. Filing into Drive is not here: the
-# Workspace server is drive:readonly by standing decision.
+# closed when the live row differs. Filing into Drive needs the
+# server's one-time Drive consent (docs/google-mcp-setup.md); until then a report
+# says "Drive: pending (<reason>)" and the next scan retries.
 #
 # The deploy runs it (deploy-openclaw.sh, post-up phase). By hand, on the VPS
 # host as lifekit, from the repo checkout:
@@ -104,7 +106,7 @@ job_id="$(find_job_id "$JOB_NAME")" || { echo "could not read the automation lis
 if [ -z "$job_id" ]; then
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" --display-name "Document door" \
-    --description "Files a cited report for each new document attachment in the mailbox; reads mail read-only, delivers nothing. Declared by scripts/ensure-doc-door.sh (source: lifekit-stack)." \
+    --description "Files a cited report for each new document attachment in the mailbox; reads mail and files the original into a Drive subject folder (create only), delivers nothing. Declared by scripts/ensure-doc-door.sh (source: lifekit-stack)." \
     --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
     --agent "$AGENT" --session isolated \
     --message "$MESSAGE" --tools "$JOB_TOOLS" --light-context \

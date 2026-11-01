@@ -292,7 +292,7 @@ def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
     # Literals, so widening the consent is a reviewed compose change, not an
     # env-file edit.
     assert env["WORKSPACE_MCP_PERMISSIONS"] == (
-        "gmail:send drive:readonly calendar:readonly "
+        "gmail:send drive:full calendar:readonly "
         "docs:readonly sheets:readonly tasks:readonly"
     )
     # The other write tools that gmail:send pulls in (cumulative levels).
@@ -301,7 +301,23 @@ def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
         "manage_gmail_label",
         "modify_gmail_message_labels",
         "batch_modify_gmail_message_labels",
+        # drive:full is create-only: every other Drive write is blocked by name.
+        "update_drive_file",
+        "manage_drive_access",
+        "set_drive_file_permissions",
+        "get_drive_shareable_link",
+        "copy_drive_file",
     ]
+    # Nothing wider than drive:full, and no other service above its level.
+    levels = dict(p.split(":") for p in env["WORKSPACE_MCP_PERMISSIONS"].split())
+    assert levels == {
+        "gmail": "send",
+        "drive": "full",
+        "calendar": "readonly",
+        "docs": "readonly",
+        "sheets": "readonly",
+        "tasks": "readonly",
+    }
     # 2.x binds loopback by default; the gateway reaches it over the network.
     assert env["WORKSPACE_MCP_HOST"] == "0.0.0.0"
     assert env["WORKSPACE_MCP_SESSION_IDLE_TIMEOUT"] == "0"

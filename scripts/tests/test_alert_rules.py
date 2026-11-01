@@ -856,3 +856,47 @@ def test_agent_mail_pattern_matches_send_and_forward_only():
     assert pat.search(FORWARD_LINE)
     for line in READ_LINES:
         assert not pat.search(line), line
+
+
+# --- agent-drive: the warning copy of the agent-mail rule for Drive creates ---
+
+DRIVE_DOC = yaml.safe_load(
+    (
+        REPO
+        / "compose/observability/grafana/provisioning/alerting/rules-agent-drive.yml"
+    ).read_text()
+)
+DRIVE_RULE = DRIVE_DOC["groups"][0]["rules"][0]
+
+
+def test_agent_drive_rule_is_the_agent_mail_shape_at_warning():
+    assert DRIVE_RULE["uid"] == "agent-drive-created"
+    assert DRIVE_RULE["labels"]["severity"] == "warning"
+    assert DRIVE_RULE["labels"]["service"] == MAIL_RULE["labels"]["service"]
+    for key in ("noDataState", "execErrState", "for", "condition"):
+        assert DRIVE_RULE[key] == MAIL_RULE[key]
+    assert DRIVE_DOC["groups"][0]["interval"] == MAIL_DOC["groups"][0]["interval"]
+    assert threshold(DRIVE_RULE) == threshold(MAIL_RULE)
+    description = DRIVE_RULE["annotations"]["description"]
+    assert re.findall(r"\{\{.*?\}\}", description) == [
+        '{{ printf "%.0f" $values.B.Value }}'
+    ]
+    (query,) = [d for d in DRIVE_RULE["data"] if d["datasourceUid"] == "loki"]
+    assert query["model"]["instant"] is True
+    (win,) = re.findall(r"\[(\d+)m\]\)\)$", query["model"]["expr"])
+    assert int(win) >= int(DRIVE_DOC["groups"][0]["interval"][:-1])
+
+
+def test_agent_drive_pattern_matches_creates_only():
+    (query,) = [d for d in DRIVE_RULE["data"] if d["datasourceUid"] == "loki"]
+    (raw,) = re.findall(r'\|~ "((?:[^"\\]|\\.)*)"', query["model"]["expr"])
+    pat = re.compile(raw.replace("\\\\", "\\"))
+    assert pat.search("[DRIVE] \x1b[32m[create_drive_file] Invoked. Email: 'x'\x1b[0m")
+    assert pat.search("[DRIVE] [create_drive_folder] Invoked. Email: 'x'")
+    for line in (
+        "[DRIVE] [search_drive_files] Invoked. Email: 'x'",
+        "[DRIVE] [list_drive_items] Invoked. Email: 'x'",
+        "[GMAIL] [send_gmail_message] Invoked. Email: 'x'",
+        'level=info msg="executing query" query="{service_name=\\"docker\\"} |~ \\"\\\\[create_drive_(file|folder)\\\\] Invoked\\\\.\\""',
+    ):
+        assert not pat.search(line), line

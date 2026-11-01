@@ -2026,10 +2026,21 @@ retried by the next scan. The page edit stays a proposal in the report.
 - **Fail-closed:** the job's tool allow-list is exactly `exec` and it delivers nothing; the
   script exits 1 if the live row differs. A failed run alerts the owner through the `default`
   Telegram account, like the needs-you digest.
-- **Not here yet - filing into Drive.** The Workspace server is `drive:readonly` by standing
-  decision, so the door cannot create a folder or upload; each report says `Drive: pending` and
-  names the folder it belongs in. Closing that needs a reviewed widening of the server's Drive
-  permission, decided separately; nothing here widens a scope.
+- **Filing into Drive.** After a report is accepted, `door.py` files the original: it finds the
+  report's subject folder under the Drive root (`search_drive_files`), creates it if absent
+  (`create_drive_folder`), lists the folder (`list_drive_items`) and uploads the bytes with
+  `create_drive_file` (`base64_content` + `base64_sha256`), under the original name, or suffixed
+  with a short content hash when that name is taken, so nothing is overwritten. The Drive file id
+  goes in the report's `Drive:` line and the private state, never in the vault log. One upload per
+  content hash. Any Drive error (token without the Drive scope, size, server) leaves
+  `Drive: pending (<short reason>)` and the next scan retries; it never fails the scan. These are
+  the only Drive tools the door may call (`ALLOWED_TOOLS`, enforced in `Mcp.call`), and the
+  server blocks every other Drive write by name (`docs/google-mcp-setup.md`, "Widening the
+  consent for Drive"; undo is `drive:readonly` plus removing the five blocks). Each create logs
+  `[create_drive_file]` / `[create_drive_folder]`; the `agent-drive-created` rule
+  (`rules-agent-drive.yml`) raises a warning for it, not a page (only critical routes to the
+  phone), and `poll_alerts` does not read that file. Before the one-time Drive re-consent every
+  report stays `Drive: pending (...)`.
 - **Not a queue job:** a mailbox scan and a MarkItDown conversion fit one cron tick. If either
   proves slow, move conversion to the shared job queue then.
 - **Files handed to an agent in chat** (the second source) and a Drive `Inbox` folder (the third)
