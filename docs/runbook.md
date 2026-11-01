@@ -1612,8 +1612,10 @@ kcal is eaten/target; the protein part is target -> eaten, then `under`, `over` 
 the owner's numbers from the vault health page and live in the cron row (host state),
 never in git. If either CLI fails or its summary lacks the numbers, the script prints
 the reason on stderr and exits 1, so the failure alert fires instead of a wrong line.
-`day-check.sh` finds the eaten numbers by key name (`calories`/`kcal`, `protein`),
-skipping the summary's own `goal` block; check it against the live CLI before cutover.
+`day-check.sh` passes `--date "$(date +%F)"` (the gateway's TZ) to both CLIs, reads `consumed` under
+the `calories_kcal` and `protein_g` blocks, prefers the CLI's own `goal` over the arguments, and
+names the distinct exercise `muscle` values (falling back to `muscle_group`). Rehearse read-only:
+`docker exec -i "$G" sh -s -- <kcal> <protein-g> < skills/workout-log/day-check.sh`.
 
 Operator steps, after the PR has deployed and `ensure-workout-log.sh` has run. Run as
 lifekit on the VPS; read the old row first (`cron show`), and keep its delivery

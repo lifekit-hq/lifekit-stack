@@ -22,17 +22,24 @@ DAY_CHECK = REPO / "skills/workout-log/day-check.sh"
 DIGEST = REPO / "skills/secondmate-relay/needs-you-digest.mjs"
 ENSURE_DIGEST = REPO / "scripts/ensure-needs-you-digest.sh"
 
-NUTRITION = """date: 2026-11-01
-totals:
-  calories: 1840.4
-  protein_g: 112
-goal:
-  calories: 2000
-  protein_g: 150
-meals: 3
-"""
-GYM_DONE = "date: 2026-11-01\nsessions:\n  - id: a\n    muscle_group: legs\n  - id: b\n    muscle_group: legs\n  - id: c\n    muscle_group: core\n"
-GYM_NONE = "date: 2026-11-01\nsessions: 0\nmessage: no workouts logged\n"
+
+def _nutrition(kcal=1840, protein=112, kcal_goal=2278, protein_goal=160):
+    block = "  {k}:\n    consumed: {c}\n    type: {t}\n    goal: {g}\n    pct: 0\n    status: ok\n"
+    return (
+        "date: 2026-11-01\nsummary:\n"
+        + block.format(k="calories_kcal", c=kcal, t="max", g=kcal_goal)
+        + block.format(k="protein_g", c=protein, t="min", g=protein_goal)
+        + block.format(k="carbs_g", c=999, t="max", g=300)
+    )
+
+
+NUTRITION = _nutrition()
+GYM_DONE = (
+    "date: 2026-11-01\nsessions:\n  - id: a\n    muscle_group: full\n    total_sets: 6\n"
+    "    exercises:\n      - name: squat\n        muscle: legs\n      - name: leg-press\n        muscle: legs\n"
+    "      - name: plank\n        muscle: core\n"
+)
+GYM_NONE = "date: 2026-11-01\nmessage: no workouts logged\n"
 
 
 def _stub(bindir: Path, name: str, text: str, rc: int = 0) -> None:
@@ -71,22 +78,44 @@ def test_day_check_prints_the_whole_message_with_the_clis_numbers(day_check):
     )
 
 
-def test_day_check_ignores_the_clis_own_goal_block(day_check):
-    r = day_check(nut=NUTRITION.replace("calories: 1840.4", "calories: 1500"))
-    assert "1500kcal/2278" in r.stdout and "2000" not in r.stdout
+def test_day_check_reads_consumed_not_other_blocks_and_prefers_the_clis_goal(day_check):
+    r = day_check(
+        nut=_nutrition(kcal=1500, kcal_goal=2100, protein_goal=150), args=("1", "2")
+    )
+    assert "nutrition 1500kcal/2100 150g -> 112g under" in r.stdout
+    assert "999" not in r.stdout
+
+
+def test_day_check_passes_todays_date_to_both_clis(day_check, tmp_path):
+    day_check()
+    bindir = tmp_path / "bin"
+    for name in ("nutrition-claw", "workout-claw"):
+        (bindir / name).write_text(
+            f'#!/bin/sh\necho "$@" > "{bindir}/{name}.args"\ncat "{bindir}/{name}.out"\n'
+        )
+    subprocess.run(
+        ["sh", str(DAY_CHECK), "2278", "160"],
+        env={"PATH": f"{bindir}:/usr/bin:/bin"},
+        check=True,
+        capture_output=True,
+    )
+    want = f"summary --date {datetime.date.today().isoformat()}"
+    for name in ("nutrition-claw", "workout-claw"):
+        assert (bindir / f"{name}.args").read_text().strip() == want
 
 
 @pytest.mark.parametrize(
     "protein,word", [(170, "over"), (160, "on target"), (112, "under")]
 )
 def test_day_check_protein_verdict(day_check, protein, word):
-    r = day_check(nut=NUTRITION.replace("protein_g: 112", f"protein_g: {protein}"))
+    r = day_check(nut=_nutrition(protein=protein))
     assert f"160g -> {protein}g {word} |" in r.stdout
 
 
 def test_day_check_no_session(day_check):
     r = day_check(gym=GYM_NONE)
-    assert "| no session |" not in r.stdout and ": no session |" in r.stdout
+    assert r.returncode == 0, r.stderr
+    assert ": no session |" in r.stdout
 
 
 @pytest.mark.parametrize(
@@ -94,7 +123,7 @@ def test_day_check_no_session(day_check):
     [
         {"nut_rc": 1, "nut": "error: corrupt JSON\n"},
         {"gym_rc": 1, "gym": "error: corrupt JSON\n"},
-        {"nut": "date: 2026-11-01\nmeals: 0\n"},
+        {"nut": "date: 2026-11-01\nsummary:\n"},
         {"gym": "something else\n"},
     ],
 )
@@ -119,7 +148,12 @@ def fleet(**over):
         "generated_epoch": int(time.time()),
         "counts": {"active_children": 2, "queued_open": 3, "decisions_open": 2},
         "decisions_open": [
-            {"summary": "pick a thing", "reason": "A or B", "hold_bucket": "live", "board_url": "http://b/1"},
+            {
+                "summary": "pick a thing",
+                "reason": "A or B",
+                "hold_bucket": "live",
+                "board_url": "http://b/1",
+            },
             {"summary": "later thing", "reason": "x", "hold_bucket": "dated"},
         ],
         "queued": [
@@ -165,7 +199,12 @@ def run_digest(tmp_path, ledger, status, rc=0):
 def test_digest_precomputes_ledger_and_fleet(tmp_path):
     ledger = [
         {"ask": "newer", "options": ["x", "y"], "opened": "2026-10-30"},
-        {"ask": "older", "options": ["p", "q", "r"], "context": "http://c", "opened": "2026-10-01"},
+        {
+            "ask": "older",
+            "options": ["p", "q", "r"],
+            "context": "http://c",
+            "opened": "2026-10-01",
+        },
     ]
     r = run_digest(tmp_path, ledger, json.dumps(fleet()))
     assert r.returncode == 0, r.stderr
@@ -207,7 +246,9 @@ def test_digest_reports_a_missing_ledger_a_bad_ledger_and_a_failed_status(tmp_pa
 
 def test_the_digest_job_is_pinned_to_sonnet_and_verified_live():
     text = ENSURE_DIGEST.read_text()
-    assert 'DIGEST_MODEL="${NEEDS_YOU_DIGEST_MODEL:-anthropic/claude-sonnet-4-6}"' in text
+    assert (
+        'DIGEST_MODEL="${NEEDS_YOU_DIGEST_MODEL:-anthropic/claude-sonnet-4-6}"' in text
+    )
     assert text.count('--model "$DIGEST_MODEL"') == 2  # cron add and cron edit
     assert "payload.model=" in text  # fail-closed check of the live row
     assert "needs-you-digest.mjs" in text
