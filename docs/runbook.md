@@ -339,6 +339,24 @@ agents, and gives the finance agent a heartbeat:
   to the compose `environment` does change the service definition, so the
   deploy that first carries them recreates the gateway once in `up -d`.
 
+#### Asking another agent (firstmate to finance or kit)
+
+`scripts/ask-agent/ask-agent.sh <finance|kit> "<question>"` is the outbound half of
+agent-to-agent asking; the return half is the relay both agents already have. It
+POSTs once to the gateway's direct `/hooks/agent` endpoint (the token already
+reaches it; `allowedAgentIds` lists both agents) with `deliver: false`, so nothing
+goes to Telegram. The message carries a request id and tells the agent to answer
+firstmate with a relay note whose first line is `ask <request id>`; the answer
+lands as an ordinary inbox note and the script printed the id to match it. No
+queue, no broker, no mapping, no change to the platform file.
+
+The script reads its configuration from the environment: `ASK_AGENT_HOOK_URL` (the
+full `/hooks/agent` URL) and `ASK_AGENT_HOOK_TOKEN_FILE` (a path; or
+`ASK_AGENT_HOOK_TOKEN`). **Operator step:** the hook credential is provisioned
+on the VPS outside any repo after the owner's recorded approval; the script fails
+with exit 78 and a message naming the missing setting until then, exit 77 when the
+gateway refuses the token. It passes the token to curl on stdin only and never prints it.
+
 The pulse's checklist is not config. It is the `payload.message` of the
 `ledger-pulse` cron row: an `agentTurn` run receives only that message (the
 per-job scratch, and the workspace `HEARTBEAT.md`, which is a no-op in
