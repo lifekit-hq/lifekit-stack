@@ -41,6 +41,9 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import consumers  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GIB = 1024**3
 MIB = 1024**2
@@ -564,6 +567,10 @@ def drift_section(repo_root: Path) -> tuple[str, list[str]]:
 # --------------------------------------------------------------------------
 
 
+def consumers_section() -> tuple[str, list[str]]:
+    return section("Token cost by consumer", [consumers.safe_cost_line()]), []
+
+
 def assemble(now: datetime, sections: list[tuple[str, list[str]]]) -> str:
     decisions = [d for _, ds in sections for d in ds]
     head = f"# VPS ops report - week to {now.strftime('%Y-%m-%d')}\n"
@@ -594,6 +601,7 @@ def build_report(args: argparse.Namespace, now: datetime | None = None) -> str:
             disk_section(args.rehearsal_dir, args.backup_dir),
             deploys_section(args.prometheus),
             drift_section(Path(args.repo_root)),
+            consumers_section(),
         ],
     )
 

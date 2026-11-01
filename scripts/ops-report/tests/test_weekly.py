@@ -146,6 +146,11 @@ class ReportTests(unittest.TestCase):
         self.orig = (weekly.prom_query, weekly.run_cmd)
         weekly.prom_query = self.fake_prom
         weekly.run_cmd = self.fake_cmd
+        self.orig_cons = weekly.consumers_section
+        weekly.consumers_section = lambda: (
+            weekly.section("Token cost by consumer", ["7d to X list-USD total 0"]),
+            [],
+        )
         self.args = Namespace(
             prometheus="http://x",
             budget_doc=str(REPO / "docs" / "resource-budget.md"),
@@ -158,6 +163,7 @@ class ReportTests(unittest.TestCase):
 
     def tearDown(self):
         weekly.prom_query, weekly.run_cmd = self.orig
+        weekly.consumers_section = self.orig_cons
 
     def fake_prom(self, base, query, timeout=60.0):
         if self.prom_down:
