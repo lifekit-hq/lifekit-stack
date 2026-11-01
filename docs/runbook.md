@@ -1929,6 +1929,38 @@ prose included, reaches Kit's model unchanged.
   `{"plugins":{"entries":{"video-drop-door":{"enabled":false}}}}`; Kit then takes every message
   again.
 
+### Document door
+
+New document attachments in the owner's mailbox become one short cited report each, with no step
+for the owner. `skills/doc-door` (`door.py`, stdlib only) is run by the `doc-door` cron job
+(`scripts/ensure-doc-door.sh`, declared on every deploy; 07:20, 13:20 and 19:20 Dublin): `scan`
+speaks MCP to `google-workspace-mcp` itself and calls only `search_gmail_messages`,
+`get_gmail_message_content` and `get_gmail_attachment_content` (PDF, DOCX, XLSX and PPTX of
+4 KiB to 15 MiB, mail from the last 3 days), converts each new attachment with MarkItDown, and
+prints it with numbered lines for kit to read. Kit files the report with `door.py report`, which
+accepts it only when it has a title, a Drive subject folder, an owner vault page, a one-line page
+proposal and 3 to 5 facts, each with a quote that is on the cited line, and nothing
+identifier-shaped (number runs, IBANs, e-mail addresses, PPS numbers). It then appends one
+`bin/log.sh` line (pointer only: title, folder, page, report id) to the vault; a failed append is
+retried by the next scan. The page edit stays a proposal in the report.
+
+- **State is private and outside the vault:** `/var/lib/lifekit/doc-door/` on the host (mode
+  700): `state.json` (one record per attachment content hash, so a re-sent file and a re-run are
+  no-ops), `documents/` (the file and its converted text, a reading cache, never cited),
+  `reports/`, and `venv/` (the job's own MarkItDown, pinned in `ensure-doc-door.sh`; bump the
+  literal to upgrade).
+- **Fail-closed:** the job's tool allow-list is exactly `exec` and it delivers nothing; the
+  script exits 1 if the live row differs. A failed run alerts the owner through the `default`
+  Telegram account, like the needs-you digest.
+- **Not here yet - filing into Drive.** The Workspace server is `drive:readonly` by standing
+  decision, so the door cannot create a folder or upload; each report says `Drive: pending` and
+  names the folder it belongs in. Closing that needs a reviewed widening of the server's Drive
+  permission, decided separately; nothing here widens a scope.
+- **Not a queue job:** a mailbox scan and a MarkItDown conversion fit one cron tick. If either
+  proves slow, move conversion to the shared job queue then.
+- **Files handed to an agent in chat** (the second source) and a Drive `Inbox` folder (the third)
+  are not built; the video drop door's plugin shape is the model for the first.
+
 ### learnclaw (the learning loop)
 
 learnclaw is the domain agent for the learning loop. It owns the artefact record on the vault's
