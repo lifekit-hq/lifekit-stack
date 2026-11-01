@@ -724,6 +724,16 @@ say "video-eval skill -> ${OPENCLAW_CONFIG_DIR}/agents/kit/workspace/skills"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-video-eval.sh" \
   || fail_later "video-eval skill install failed (output above)"
 
+# ─── document door ───────────────────────────────────────────────────────────
+#
+# skills/doc-door lives in kit's workspace, so nothing else carries a merged
+# change to it there. The script installs the skill, pins its own MarkItDown
+# venv in the gateway state dir, and declares the scheduled job (exec only, no
+# delivery, verified fail-closed); docs/runbook.md, "Document door".
+say "doc-door skill and job -> ${OPENCLAW_CONFIG_DIR}/agents/kit/workspace/skills"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-doc-door.sh" \
+  || fail_later "doc-door install failed (output above)"
+
 # ─── learnclaw contract and learning-record skill ────────────────────────────
 #
 # learnclaw's persona changes only through this repo: the script writes the git

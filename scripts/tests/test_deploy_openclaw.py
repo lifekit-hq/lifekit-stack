@@ -963,6 +963,9 @@ def post_up_ytt(env, tmp_path, ensure=None, curl_fail=False):
     (fake / "scripts").mkdir(parents=True, exist_ok=True)
     for name in ("ensure-video-eval.sh", "ensure-job-queue.sh", "ensure-learnclaw.sh"):
         shutil.copy(REPO / "scripts" / name, fake / "scripts" / name)
+    # The doc-door script drives the gateway container; its own tests cover it.
+    (fake / "scripts/ensure-doc-door.sh").write_text("#!/bin/sh\nexit 0\n")
+    (fake / "scripts/ensure-doc-door.sh").chmod(0o755)
     script = fake / "scripts/ensure-youtube-transcript.sh"
     if ensure is None:
         text = (REPO / "scripts/ensure-youtube-transcript.sh").read_text()
@@ -1189,6 +1192,7 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("skills/job-queue/jobq.py", True),
         ("scripts/ensure-video-drop-door.sh", True),
         ("scripts/ensure-learnclaw.sh", True),
+        ("scripts/ensure-doc-door.sh", True),
         ("compose/openclaw-gateway/plugins/video-drop-door/index.js", True),
         ("scripts/openclaw-smoke-verdict.py", True),
         ("skills/youtube-transcript/transcript.py", True),
