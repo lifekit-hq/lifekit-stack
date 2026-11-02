@@ -18,6 +18,58 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.10](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.9...v0.1.10) (2026-11-01)
+
+
+### Features
+
+* **alert-inbox:** poll the Loki rule, drop retired rule state, document alert remedies ([#439](https://github.com/lifekit-hq/lifekit-stack/issues/439)) ([75fdf50](https://github.com/lifekit-hq/lifekit-stack/commit/75fdf50748c53f72417e56ef2243e654a590081d)), closes [#438](https://github.com/lifekit-hq/lifekit-stack/issues/438)
+* **doc-door:** file originals into Drive subject folders ([#466](https://github.com/lifekit-hq/lifekit-stack/issues/466)) ([#467](https://github.com/lifekit-hq/lifekit-stack/issues/467)) ([ce8269c](https://github.com/lifekit-hq/lifekit-stack/commit/ce8269cb180aa0bbd4b8ba989fc88720a6de8eeb))
+* **doc-door:** report new mailbox document attachments with cited facts ([#457](https://github.com/lifekit-hq/lifekit-stack/issues/457)) ([#463](https://github.com/lifekit-hq/lifekit-stack/issues/463)) ([ba0cc55](https://github.com/lifekit-hq/lifekit-stack/commit/ba0cc55d6dcfdb55f1e0ce1afca805ee27b98e93))
+* **edge:** add loopback route passing only POST to the reply-pusher hook ([#401](https://github.com/lifekit-hq/lifekit-stack/issues/401)) ([d0ab1f6](https://github.com/lifekit-hq/lifekit-stack/commit/d0ab1f69d5356f0459c73e4a218a5777f6fc7cea))
+* **fleet-publisher:** link the workflow owner pages and the vault's plan ([#427](https://github.com/lifekit-hq/lifekit-stack/issues/427)) ([05c869c](https://github.com/lifekit-hq/lifekit-stack/commit/05c869ccb8c86f71cfb751df49c39821a615c892))
+* **fleet-publisher:** publish living status page data in home-summary.json ([#420](https://github.com/lifekit-hq/lifekit-stack/issues/420)) ([84d2771](https://github.com/lifekit-hq/lifekit-stack/commit/84d27717ce25cbcb7aad174961f4cf7c580f46f2))
+* **memory-audit:** run the weekly vault audit from a host timer, not the OpenClaw cron ([#412](https://github.com/lifekit-hq/lifekit-stack/issues/412)) ([7f1d07a](https://github.com/lifekit-hq/lifekit-stack/commit/7f1d07a7db68fa3e37f522503696b742f4edcf48))
+* **monday-page:** generate the Monday page's bearings board payload ([#418](https://github.com/lifekit-hq/lifekit-stack/issues/418)) ([fb031c9](https://github.com/lifekit-hq/lifekit-stack/commit/fb031c90ceeeb2bbefc4a66508c5887de7f6d2b6))
+* **openclaw:** add ask-agent script for firstmate-to-agent questions ([#459](https://github.com/lifekit-hq/lifekit-stack/issues/459)) ([9353fbe](https://github.com/lifekit-hq/lifekit-stack/commit/9353fbe14cf3bf9377c5bbc1ac84e9c404f16bf1))
+* **openclaw:** author tools.codeMode on the quickjs executor ([#403](https://github.com/lifekit-hq/lifekit-stack/issues/403)) ([57b37ed](https://github.com/lifekit-hq/lifekit-stack/commit/57b37edd0e91c7a51cdc86906e3ef3567efebb42))
+* **openclaw:** cheaper needs-you digest and command-kind evening day plan ([#465](https://github.com/lifekit-hq/lifekit-stack/issues/465)) ([88c66ce](https://github.com/lifekit-hq/lifekit-stack/commit/88c66ce76d1353699b9f485821d056a7f893a46e))
+* **openclaw:** revive learnclaw as the learning-loop agent ([#435](https://github.com/lifekit-hq/lifekit-stack/issues/435)) ([aa9e809](https://github.com/lifekit-hq/lifekit-stack/commit/aa9e809ea995a4d0a9e116531114eb1c9fe196a6))
+* **ops-report:** add weekly per-consumer list-price cost line ([#464](https://github.com/lifekit-hq/lifekit-stack/issues/464)) ([02dbb3c](https://github.com/lifekit-hq/lifekit-stack/commit/02dbb3c246eef4a12ba1245498e2bba3b4c02c84))
+* **reminder-bot:** run the reminder bot as its own compose project ([#441](https://github.com/lifekit-hq/lifekit-stack/issues/441)) ([372c234](https://github.com/lifekit-hq/lifekit-stack/commit/372c234e8d8998cce4d09374df85ee9292814fea))
+* **scripts:** file accepted video-eval reports into the vault as source pages ([#410](https://github.com/lifekit-hq/lifekit-stack/issues/410)) ([afaa944](https://github.com/lifekit-hq/lifekit-stack/commit/afaa9448414751c22f8b5f4b424032dbe71e5c2c))
+* **scripts:** give ChatGPT a daily fleet snapshot page and a vault inbox bridge ([#406](https://github.com/lifekit-hq/lifekit-stack/issues/406)) ([7145d7f](https://github.com/lifekit-hq/lifekit-stack/commit/7145d7f90d6eae4c60987d6eb2da30cd280a5186))
+* **skills:** evaluate videos against one versioned intake rubric on the shared job queue ([#408](https://github.com/lifekit-hq/lifekit-stack/issues/408)) ([2481dc1](https://github.com/lifekit-hq/lifekit-stack/commit/2481dc118f330fbeec3a992be8ce8fa220f80c4e))
+* **skills:** fact-check Instagram reels on Kit ([#405](https://github.com/lifekit-hq/lifekit-stack/issues/405)) ([41bce10](https://github.com/lifekit-hq/lifekit-stack/commit/41bce10c7da5b1b2011f6ba1ec332cbc9dfa6ab9))
+* **skills:** file a judged link or article through video-eval as kind link ([#424](https://github.com/lifekit-hq/lifekit-stack/issues/424)) ([4296917](https://github.com/lifekit-hq/lifekit-stack/commit/42969173e7aae1b191a0e86120a9df8f0094019a))
+* **skills:** file a judged repo or tool through video-eval as kind repo ([#430](https://github.com/lifekit-hq/lifekit-stack/issues/430)) ([340d24a](https://github.com/lifekit-hq/lifekit-stack/commit/340d24a1dd32ec982c80520aaccda85a688c5e76))
+* **skills:** file a scout's judged idea through video-eval as kind idea ([#415](https://github.com/lifekit-hq/lifekit-stack/issues/415)) ([208c2cd](https://github.com/lifekit-hq/lifekit-stack/commit/208c2cdbdf1faf5f913a891eae9339c1b7657697))
+* **skills:** judge a text or voice note through video-eval as kind note ([#429](https://github.com/lifekit-hq/lifekit-stack/issues/429)) ([8acf53e](https://github.com/lifekit-hq/lifekit-stack/commit/8acf53e50dfeaa12a3177e94883bcd20e0bcad31))
+* **skills:** queue a bare video link or file sent to Kit before the model ([#409](https://github.com/lifekit-hq/lifekit-stack/issues/409)) ([b2e3baf](https://github.com/lifekit-hq/lifekit-stack/commit/b2e3bafc615b21d15ccced360d3800b6bee0010f))
+* **skills:** queue reel claim checks on a shared PC job queue ([#407](https://github.com/lifekit-hq/lifekit-stack/issues/407)) ([4dd7a63](https://github.com/lifekit-hq/lifekit-stack/commit/4dd7a635054882768a83b3d616401d72c7134ee4))
+* **vault-door:** remove the daily fleet-snapshot generator, keep the bridge ([#433](https://github.com/lifekit-hq/lifekit-stack/issues/433)) ([c6042d3](https://github.com/lifekit-hq/lifekit-stack/commit/c6042d355345c22818d2943c38aa5f7259dfd26d)), closes [#431](https://github.com/lifekit-hq/lifekit-stack/issues/431)
+
+
+### Bug Fixes
+
+* **brief:** report the real Google call result, not a canned sign-in-expired line ([#449](https://github.com/lifekit-hq/lifekit-stack/issues/449)) ([299d39c](https://github.com/lifekit-hq/lifekit-stack/commit/299d39c171436cbee56b8069b540d1238e61876c))
+* **brief:** use the Google tool's real argument names in the brief ([#451](https://github.com/lifekit-hq/lifekit-stack/issues/451)) ([73648c1](https://github.com/lifekit-hq/lifekit-stack/commit/73648c16021a822d749bf7eec45be076ecaa74a1))
+* **fleet-publisher:** fill the PC capacity row on the status page from its published summary ([#425](https://github.com/lifekit-hq/lifekit-stack/issues/425)) ([fff4ff3](https://github.com/lifekit-hq/lifekit-stack/commit/fff4ff3a294c6dbc9ee97f6dcecdb25388878185))
+* **fleet-publisher:** find the PC summary cache in any fleet home ([#419](https://github.com/lifekit-hq/lifekit-stack/issues/419)) ([438c931](https://github.com/lifekit-hq/lifekit-stack/commit/438c931d59a0f411e831809d316db41291d108ac))
+* **fleet-publisher:** look up hold origins only for decisions the home lists ([#426](https://github.com/lifekit-hq/lifekit-stack/issues/426)) ([63ee717](https://github.com/lifekit-hq/lifekit-stack/commit/63ee717054e61294b38af8d2b8afb2e86a0f249e))
+* **fleet-publisher:** one status-page row per project whatever repo spelling a record used ([#428](https://github.com/lifekit-hq/lifekit-stack/issues/428)) ([65c9b26](https://github.com/lifekit-hq/lifekit-stack/commit/65c9b2602348191ba0b69a605e3aab69b7d51464))
+* **openclaw:** build Drive download links on the service name the gateway reaches ([#453](https://github.com/lifekit-hq/lifekit-stack/issues/453)) ([393c655](https://github.com/lifekit-hq/lifekit-stack/commit/393c65534bb3b25dc071774e372e48368d779947))
+* **openclaw:** deliver firstmate replies to the owner's Kit DM via an explicit Telegram route ([#413](https://github.com/lifekit-hq/lifekit-stack/issues/413)) ([db3cdf4](https://github.com/lifekit-hq/lifekit-stack/commit/db3cdf45051a1082076af7c63829920d0c0193ce))
+* **openclaw:** pin voice-note transcription to the whisper base model ([#447](https://github.com/lifekit-hq/lifekit-stack/issues/447)) ([e0c145d](https://github.com/lifekit-hq/lifekit-stack/commit/e0c145deca5af8ad5a70690a061bb631d6eb02fb)), closes [#446](https://github.com/lifekit-hq/lifekit-stack/issues/446)
+* **scripts:** stop the finance pulse repeating rebalance notices from a stateless cron run ([#404](https://github.com/lifekit-hq/lifekit-stack/issues/404)) ([f0fe242](https://github.com/lifekit-hq/lifekit-stack/commit/f0fe24204e60a2eeb55047f00403fc372b01f9b0))
+* **skills:** run queued video jobs in a detached runner so slow ones finish ([#414](https://github.com/lifekit-hq/lifekit-stack/issues/414)) ([833d072](https://github.com/lifekit-hq/lifekit-stack/commit/833d072d7f39ec152ec3594d7f370852074468ac))
+* **vault-door:** escape [[...]] in outside text so titles never read as wikilinks ([#417](https://github.com/lifekit-hq/lifekit-stack/issues/417)) ([26a269f](https://github.com/lifekit-hq/lifekit-stack/commit/26a269f851703a708b0e36e2cbf3b2c489e81298))
+
+
+### Refactoring
+
+* **skills:** share one media module between youtube-transcript and video-eval ([#416](https://github.com/lifekit-hq/lifekit-stack/issues/416)) ([364ced0](https://github.com/lifekit-hq/lifekit-stack/commit/364ced0c0d7c2ee449cc7d272f0e7b1a6ccd84a7))
+
 ## [0.1.9](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.8...v0.1.9) (2026-10-24)
 
 
