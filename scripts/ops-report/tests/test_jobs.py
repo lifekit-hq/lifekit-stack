@@ -193,7 +193,9 @@ class JobsTests(unittest.TestCase):
         write("k1", "x companion signal: kind digest y", [("k1a", iso(4))])
         write("h1", "Job ID: 77", [("h1a", iso(4))])
         write("d1", "Run the post-deploy SMOKE check", [("d1a", iso(4))])
-        write("i1", "hello", [("i1a", iso(4)), ("i1a", iso(4)), ("i1old", iso(24 * 20))])
+        write(
+            "i1", "hello", [("i1a", iso(4)), ("i1a", iso(4)), ("i1old", iso(24 * 20))]
+        )
         got = self.run_oc_script(self.proj)
         out = 15.0  # 1M sonnet output tokens at the 15/Mtok list price
         self.assertEqual(got["cron:ledger-pulse"][0], 2)
