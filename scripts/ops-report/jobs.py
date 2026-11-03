@@ -12,7 +12,10 @@ WHAT inside each consumer recurs, so a token-diet verdict can be checked week ov
       ...
     cold_cache[2]{consumer,calls,usd,share}:
       main,24,31.6,34%
-    total: 812 (rows above min-usd shown; rest folded into <consumer>,other)
+    total: 812
+
+Rows under --min-usd fold into one <consumer>,other(<min) row per consumer; the total
+includes them. "(openclaw n/a)" is appended when the gateway container scan is unavailable.
 
 Rows:
 - main / vps (supervisor sessions): every assistant call is charged to the last real user
@@ -28,6 +31,7 @@ Rows:
   or interactive; OpenClaw's own price table.
 
 Usage: python3 scripts/ops-report/jobs.py [--days 7] [--min-usd 1] [--no-openclaw]
+       [--claude-projects DIR] [--clip-data DIR] [--nm-db FILE]   (see README.md)
 """
 
 from __future__ import annotations
