@@ -7,9 +7,11 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -144,6 +146,84 @@ class JobsTests(unittest.TestCase):
         self.write("-home-denys-firstmate", "o.jsonl", [asst("o1", iso(24 * 20))])
         rows, _ = jobs.scan_host(str(self.proj), self.cut)
         self.assertEqual(len(rows), 0)
+
+    def test_supervisor_subagent_spend_follows_parent_trigger(self):
+        self.write(
+            "-home-denys-firstmate",
+            "s.jsonl",
+            [
+                user("needs a handling turn now. check: process-event", iso(10)),
+                asst("p1", iso(9.9)),
+                user("hello", iso(5)),
+                asst("p2", iso(4.9)),
+            ],
+        )
+        sub = self.proj / "-home-denys-firstmate" / "s" / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "a.jsonl").write_text(
+            "\n".join([asst("a1", iso(9.5)), asst("a2", iso(4.5))]) + "\n"
+        )
+        rows, _ = jobs.scan_host(str(self.proj), self.cut)
+        self.assertNotIn(("main", "start"), rows)
+        self.assertAlmostEqual(rows[("main", "wake:check:process-event")][1], 20.0)
+        self.assertAlmostEqual(rows[("main", "captain/other")][1], 20.0)
+
+    def run_oc_script(self, root):
+        r = subprocess.run(
+            [sys.executable, "-I", "-c", jobs.OC_SCRIPT, self.cut.isoformat(), str(root)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )  # fmt: skip
+        return json.loads(r.stdout)
+
+    def test_oc_script_classifies_jobs_and_charges_subagents_to_parent(self):
+        def write(name, first, calls, subs=()):
+            d = self.proj / "-workspace"
+            d.mkdir(parents=True, exist_ok=True)
+            lines = [user(first, iso(5))] + [asst(*c) for c in calls]
+            (d / f"{name}.jsonl").write_text("\n".join(lines) + "\n")
+            if subs:
+                sd = d / name / "subagents"
+                sd.mkdir(parents=True)
+                (sd / "x.jsonl").write_text("\n".join(asst(*c) for c in subs) + "\n")
+
+        write("c1", "[cron:abc ledger-pulse] go", [("c1a", iso(4))], [("c1s", iso(3))])
+        write("c2", "[cron:def ledger-pulse] go", [("c2a", iso(4))])
+        write("k1", "x companion signal: kind digest y", [("k1a", iso(4))])
+        write("h1", "Job ID: 77", [("h1a", iso(4))])
+        write("d1", "Run the post-deploy SMOKE check", [("d1a", iso(4))])
+        write("i1", "hello", [("i1a", iso(4)), ("i1a", iso(4)), ("i1old", iso(24 * 20))])
+        got = self.run_oc_script(self.proj)
+        out = 15.0  # 1M sonnet output tokens at the 15/Mtok list price
+        self.assertEqual(got["cron:ledger-pulse"][0], 2)
+        self.assertAlmostEqual(got["cron:ledger-pulse"][1], out * 3)
+        for job in (
+            "hook:companion-digest",
+            "hook:other",
+            "deploy-smoke",
+            "interactive/other",
+        ):
+            self.assertEqual(got[job][0], 1)
+            self.assertAlmostEqual(got[job][1], out)
+
+    def test_oc_rows_parses_gateway_output_and_degrades(self):
+        def run(*results):
+            return mock.patch.object(jobs.subprocess, "run", side_effect=list(results))
+
+        def done(stdout):
+            return subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+
+        rows = {}
+        with run(done("abc\n"), done(json.dumps({"cron:x": [2, 3.5]}))):
+            self.assertTrue(jobs.oc_rows(self.cut, rows))
+        self.assertEqual(rows[("openclaw", "cron:x")], [2, 3.5])
+        with run(done("")):
+            self.assertFalse(jobs.oc_rows(self.cut, {}))  # no gateway container
+        with run(done("abc\n"), done("Traceback")):
+            self.assertFalse(jobs.oc_rows(self.cut, {}))  # script failed
+        with run(OSError("no docker")):
+            self.assertFalse(jobs.oc_rows(self.cut, {}))
 
     def test_nm_rows(self):
         db = self.root / "state.sqlite"

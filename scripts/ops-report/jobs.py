@@ -33,6 +33,7 @@ Usage: python3 scripts/ops-report/jobs.py [--days 7] [--min-usd 1] [--no-opencla
 from __future__ import annotations
 
 import argparse
+import bisect
 import glob
 import json
 import os
@@ -119,6 +120,7 @@ def scan_host(root, cut):
             consumer = b
         files = [p] + glob.glob(p[:-6] + "/subagents/*.jsonl")
         spent = False
+        trigs = []  # parent's (timestamp, trigger) pairs, in file order
         for f in files:
             trig, last_t = "start", None
             for line in open(f, errors="replace"):
@@ -131,6 +133,7 @@ def scan_host(root, cut):
                     t = text_of(d.get("message"))
                     if t is not None and t.strip():
                         trig = trigger(t)
+                        trigs.append((d.get("timestamp") or "", trig))
                     continue
                 if ty != "assistant":
                     continue
@@ -139,6 +142,9 @@ def scan_host(root, cut):
                 ts = d.get("timestamp") or ""
                 if k in seen or ts < cut.isoformat():
                     continue
+                if sup and f != p:
+                    i = bisect.bisect_right(trigs, (ts, "\U0010ffff"))
+                    trig = trigs[i - 1][1] if i else "start"
                 seen.add(k)
                 u = mm.get("usage") or {}
                 c = usd(mm.get("model"), u)
@@ -202,17 +208,19 @@ def nm_rows(db, cut, rows):
         pass
 
 
+OC_ROOT = "/home/node/.claude/projects"
 OC_SCRIPT = r"""
 import glob, json, os, re, sys
-cut = sys.argv[1]
 P = {"opus": (5, 25, 0.5), "sonnet": (3, 15, 0.3), "haiku": (1, 5, 0.1)}
+cut, root = sys.argv[1], sys.argv[2]
 seen, out = set(), {}
-for p in glob.glob("/home/node/.claude/projects/*/*.jsonl"):
+for p in glob.glob(root + "/*/*.jsonl"):
     job, cost, hit = None, 0.0, False
-    for line in open(p, errors="replace"):
+    for f in [p] + glob.glob(p[:-6] + "/subagents/*.jsonl"):
+      for line in open(f, errors="replace"):
         try: d = json.loads(line)
         except ValueError: continue
-        if d.get("type") == "user" and job is None:
+        if d.get("type") == "user" and job is None and f == p:
             c = (d.get("message") or {}).get("content")
             if isinstance(c, list): c = " ".join(x.get("text", "") for x in c if isinstance(x, dict))
             c = str(c or "")
@@ -227,9 +235,9 @@ for p in glob.glob("/home/node/.claude/projects/*/*.jsonl"):
         m = d.get("message") or {}; k = d.get("requestId") or m.get("id")
         if k in seen or (d.get("timestamp") or "") < cut: continue
         seen.add(k); u = m.get("usage") or {}
-        f = next((x for x in P if x in (m.get("model") or "")), None)
-        if not f: continue
-        i, o, cr = P[f]; hit = True
+        fam = next((x for x in P if x in (m.get("model") or "")), None)
+        if not fam: continue
+        i, o, cr = P[fam]; hit = True
         cost += ((u.get("input_tokens") or 0) * i + (u.get("output_tokens") or 0) * o
                  + (u.get("cache_read_input_tokens") or 0) * cr
                  + (u.get("cache_creation_input_tokens") or 0) * i * 1.25) / 1e6
@@ -249,7 +257,7 @@ def oc_rows(cut, rows):
         if not ids:
             return False
         r = subprocess.run(
-            ["docker", "exec", ids[0], "python3", "-I", "-c", OC_SCRIPT, cut.isoformat()],
+            ["docker", "exec", ids[0], "python3", "-I", "-c", OC_SCRIPT, cut.isoformat(), OC_ROOT],
             capture_output=True, text=True, timeout=300,
         )  # fmt: skip
         for job, (n, c) in json.loads(r.stdout).items():
