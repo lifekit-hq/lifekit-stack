@@ -425,6 +425,7 @@ def file_original(mcp, state: dict, doc_id: str, rec: dict) -> None:
             file_name=name,
             folder_id=folder_id,
             mime_type=MIME[kind],
+            content_mime_type=MIME[kind],
             base64_content=base64.b64encode(blob).decode(),
             base64_sha256=hashlib.sha256(blob).hexdigest(),
         )
