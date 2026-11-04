@@ -33,6 +33,8 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -49,7 +51,7 @@ ALLOWED_TOOLS = frozenset(
 )
 FILE_PER_PASS = 5  # Drive filings attempted per scan or report
 
-MCP_URL = os.environ.get("DOC_DOOR_MCP_URL", "http://google-workspace-mcp:8000/mcp/")
+MCP_URL = os.environ.get("DOC_DOOR_MCP_URL", "http://google-workspace-mcp:8000/mcp")
 HOME = Path(os.environ.get("DOC_DOOR_DIR", Path.home() / ".life-state" / "doc-door"))
 VAULT = Path(os.environ.get("VAULT", Path.home() / "memory"))
 MARKITDOWN = os.environ.get(
@@ -126,10 +128,19 @@ class Mcp:
         }
         if self.sid:
             headers["Mcp-Session-Id"] = self.sid
-        req = urllib.request.Request(self.url, json.dumps(body).encode(), headers)
-        with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 - fixed internal URL
-            self.sid = resp.headers.get("Mcp-Session-Id") or self.sid
-            raw = resp.read().decode()
+        data, url = json.dumps(body).encode(), self.url
+        for hop in range(2):  # urllib will not replay a POST: follow one 307/308 here
+            req = urllib.request.Request(url, data, headers)
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 - fixed internal URL
+                    self.sid = resp.headers.get("Mcp-Session-Id") or self.sid
+                    raw = resp.read().decode()
+                break
+            except urllib.error.HTTPError as e:
+                loc = e.headers.get("Location")
+                if hop or e.code not in (307, 308) or not loc:
+                    raise
+                url = urllib.parse.urljoin(url, loc)
         if "id" not in body:
             return None
         for chunk in re.findall(r"^data: (.*)$", raw, re.M) or [raw]:
@@ -504,7 +515,7 @@ def check_report(report: str, text: str) -> tuple[dict, list[str]]:
         if not 1 <= n <= len(lines):
             errs.append(f"[L{n}] is outside the document ({len(lines)} lines)")
         elif norm(m["quote"]) not in norm(" ".join(lines[max(0, n - 1) : n + 1])):
-            errs.append(f"quote is not on L{n} of the document: \"{m['quote'][:40]}\"")
+            errs.append(f'quote is not on L{n} of the document: "{m["quote"][:40]}"')
         facts.append(m["fact"])
     if not 3 <= len(facts) <= 5:
         errs.append(f"{len(facts)} facts, want 3 to 5")
