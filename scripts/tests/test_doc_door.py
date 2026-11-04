@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import json
 import stat
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
@@ -383,3 +386,53 @@ def test_only_create_and_lookup_drive_tools_are_allowed(env, capsys):
     ):
         with pytest.raises(RuntimeError, match="not allowed"):
             REAL_MCP.call(real, tool)
+
+
+class _Stub(BaseHTTPRequestHandler):
+    """Answers POST /mcp/ with 307 -> /mcp, like the Workspace server 2.1.0."""
+
+    seen: list = []
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        _Stub.seen.append((self.path, self.headers.get("Mcp-Session-Id"), body))
+        if self.path == "/mcp/":
+            self.send_response(307)
+            self.send_header("Location", "/mcp")
+            self.end_headers()
+            return
+        out = b""
+        if "id" in body:
+            result = {"content": [{"type": "text", "text": "pong"}]}
+            if body["method"] == "initialize":
+                result = {}
+            out = json.dumps(
+                {"jsonrpc": "2.0", "id": body["id"], "result": result}
+            ).encode()
+        self.send_response(200 if out else 202)
+        self.send_header("Mcp-Session-Id", "sess-1")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
+def test_mcp_client_works_with_and_without_trailing_slash(path):
+    _Stub.seen = []
+    srv = HTTPServer(("127.0.0.1", 0), _Stub)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        mcp = REAL_MCP(f"http://127.0.0.1:{srv.server_port}{path}")
+        assert mcp.call("search_gmail_messages", query="x") == "pong"
+    finally:
+        srv.shutdown()
+    last = _Stub.seen[-1]
+    assert last[0] == "/mcp" and last[1] == "sess-1"  # session header survives
+    assert last[2]["params"]["name"] == "search_gmail_messages"
+
+
+def test_default_url_has_no_trailing_slash():
+    assert door.MCP_URL.endswith(":8000/mcp")
