@@ -90,6 +90,11 @@ class FakeMcp:
             FakeMcp.folders[args["folder_name"]] = fid
             return f"Successfully created folder '{args['folder_name']}' (ID: {fid})"
         assert tool == "create_drive_file"
+        # The real server (image 2.1.0) rejects inline bytes without their type.
+        if args.get("base64_content") and not args.get("content_mime_type"):
+            raise RuntimeError(
+                "'content_mime_type' is required when using 'base64_content'"
+            )
         FakeMcp.uploads.append(args)
         FakeMcp.files.setdefault(args["folder_id"], []).append(args["file_name"])
         return f"Successfully created file '{args['file_name']}' (ID: file-{len(FakeMcp.uploads)})"
@@ -293,6 +298,7 @@ def test_filing_creates_the_folder_and_uploads_the_original_once(env, capsys):
     (up,) = FakeMcp.uploads
     assert up["file_name"] == "offer.pdf" and up["folder_id"] == "fold-1"
     assert base64.b64decode(up["base64_content"]) == PDF
+    assert up["content_mime_type"] == "application/pdf"
     assert up["base64_sha256"] == door.hashlib.sha256(PDF).hexdigest()
     assert "Drive: filed in Employment (file-1)" in report_text(d)
     rec = door.load_state()["docs"][d]
