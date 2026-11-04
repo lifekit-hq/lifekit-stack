@@ -2029,8 +2029,8 @@ retried by the next scan. The page edit stays a proposal in the report.
 - **Filing into Drive.** After a report is accepted, `door.py` files the original: it finds the
   report's subject folder under the Drive root (`search_drive_files`), creates it if absent
   (`create_drive_folder`), lists the folder (`list_drive_items`) and uploads the bytes with
-  `create_drive_file` (`base64_content` + `base64_sha256`), under the original name, or suffixed
-  with a short content hash when that name is taken, so nothing is overwritten. The Drive file id
+  `create_drive_file` (`base64_content` with the `content_mime_type` the server requires beside it,
+  plus `base64_sha256`), under the original name, or suffixed with a short content hash when that name is taken, so nothing is overwritten. The Drive file id
   goes in the report's `Drive:` line and the private state, never in the vault log. One upload per
   content hash. Any Drive error (token without the Drive scope, size, server) leaves
   `Drive: pending (<short reason>)` and the next scan retries; it never fails the scan. These are
