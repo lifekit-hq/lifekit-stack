@@ -18,6 +18,20 @@ commands:
     && .venv/bin/python -m pytest -q
     compose/container-exporter/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests
 
+# The gate runs `commands.test` itself and starts the Test agent only to gather
+# evidence (or on red). Tell that agent not to re-run what CI already runs.
+# No repo-level key exists in the installed no-mistakes (v1.99.0) to skip the
+# agent turn outright, nor to pin the review-fix model: `review_agents` and
+# `agent_config` are global-only (~/.no-mistakes/config.yaml), where the fixer
+# is already pinned to Sonnet.
+test:
+  instructions: |
+    The pinned lint and test commands already ran and passed in this gate.
+    Do not re-run pre-commit, pytest, or the notify-relay node tests, and do
+    not re-read their output. Only exercise behavior those suites cannot
+    show (e.g. a changed script's real invocation), and keep it short; if
+    nothing needs live evidence, say so and stop.
+
 # Review rules, injected into the review step only when a changed file
 # matches `path`. Read from the default branch only (no-mistakes v1.84).
 # A bare `**` has no slash, so the matcher compares it against each file's
