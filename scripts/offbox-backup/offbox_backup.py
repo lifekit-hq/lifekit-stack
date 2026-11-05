@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Nightly encrypted off-box backup to Cloudflare R2, and its monthly restore check.
 
-Four stores have no copy off this disk (docs/runbook.md "Off-box backup (R2)"):
-the identity provider's nightly dumps, the backstage database, the OpenClaw
-auth-profile secret key, and the OpenClaw runtime state. One run streams each
+Five stores have no copy off this disk (docs/runbook.md "Off-box backup (R2)"):
+the identity provider's nightly dumps, the backstage and basket databases, the
+OpenClaw auth-profile secret key, and the OpenClaw runtime state. One run streams each
 one through `age` to the captain's key (plus the on-box restore-check key when
 it is configured) and `rclone rcat`s the ciphertext to R2 as one set:
 
   lifekit/daily/<UTC stamp>/    (Sunday's run goes to lifekit/weekly/)
     identity.sql.gz.age          newest dump the identity-backup timer wrote
     backstage.dump.age           pg_dump -Fc of compose project backstage's db
+    basket.dump.age              pg_dump -Fc of compose project basket's db
     openclaw-secret-key.tar.age  tar of the secret-key directory
     openclaw-sqlite.tar.zst.age  consistent copies of the state's *.sqlite
     openclaw-state.tar.zst.age   the state dir minus caches, logs, archives
@@ -26,10 +27,10 @@ No value read from the env file is ever printed.
             oneshot; the unit gauge alerts on it.
   verify    fetch the newest complete set, check every object against the
             manifest's sha256, decrypt it with the on-box key, and prove it
-            restores: pg_restore --list on the backstage dump, the dump-complete
-            footer on the identity dump, a tar listing of the state, PRAGMA
-            quick_check on every SQLite copy, and the secret key compared with
-            the live one by hash only. The verdict goes to the owner through
+            restores: pg_restore --list on the backstage and basket dumps, the
+            dump-complete footer on the identity dump, a tar listing of the
+            state, PRAGMA quick_check on every SQLite copy, and the secret key
+            compared with the live one by hash only. The verdict goes to the owner through
             notify-relay (`good` or `act`); exit 1 only when it cannot be sent.
   estimate  produce every store without encrypting or uploading and print the
             compressed sizes and the retention's expected storage and cost.
@@ -433,6 +434,13 @@ def run_store(source: dict, tail: list[list[str]], sink) -> tuple[int, str]:
 
 # ─── the stores ─────────────────────────────────────────────────────────────
 
+# Postgres stores dumped with pg_dump -Fc through docker exec:
+# (store, compose project, compose service). Each is `<store>.dump.age`.
+PG_STORES = (
+    ("backstage", "backstage", "backstage-db"),
+    ("basket", "basket", "db"),
+)
+
 
 def find_container(project: str, service: str, running: bool = True) -> str:
     args = [DOCKER, "ps", "-q"] if running else [DOCKER, "ps", "-aq"]
@@ -511,28 +519,29 @@ def stores(cfg: Config, scratch: Path) -> tuple[list[dict], list[dict]]:
     else:
         skipped.append({"store": "identity", "reason": "not deployed"})
 
-    ctr = find_container("backstage", "backstage-db")
-    if ctr:
-        out.append(
-            {
-                "name": "backstage.dump.age",
-                "store": "backstage",
-                "kind": "cmd",
-                "cmd": [
-                    DOCKER,
-                    "exec",
-                    ctr,
-                    "sh",
-                    "-c",
-                    'exec pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"',
-                ],
-                "source": "pg_dump -Fc (compose project backstage, backstage-db)",
-            }
-        )
-    elif find_container("backstage", "backstage-db", running=False):
-        raise Failed("backstage-db exists but is not running; no dump taken")
-    else:
-        skipped.append({"store": "backstage", "reason": "not deployed"})
+    for store, project, service in PG_STORES:
+        ctr = find_container(project, service)
+        if ctr:
+            out.append(
+                {
+                    "name": f"{store}.dump.age",
+                    "store": store,
+                    "kind": "cmd",
+                    "cmd": [
+                        DOCKER,
+                        "exec",
+                        ctr,
+                        "sh",
+                        "-c",
+                        'exec pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"',
+                    ],
+                    "source": f"pg_dump -Fc (compose project {project}, {service})",
+                }
+            )
+        elif find_container(project, service, running=False):
+            raise Failed(f"{service} exists but is not running; no dump taken")
+        else:
+            skipped.append({"store": store, "reason": "not deployed"})
 
     if not cfg.secret_dir.is_dir():
         raise Failed(f"{cfg.secret_dir} is missing")
@@ -794,30 +803,35 @@ def check_identity(cfg: Config, plain, scratch: Path) -> str | None:
     return None
 
 
-def check_backstage(cfg: Config, plain, scratch: Path) -> str | None:
-    image = "postgres:17-alpine"
-    ctr = find_container("backstage", "backstage-db")
-    if ctr:
+def check_pg_dump(project: str, service: str):
+    """A restore check for a `pg_dump -Fc` store: the archive's TOC must list."""
+
+    def check(cfg: Config, plain, scratch: Path) -> str | None:
+        image = "postgres:17-alpine"
+        ctr = find_container(project, service)
+        if ctr:
+            res = subprocess.run(
+                [DOCKER, "inspect", "--format", "{{.Config.Image}}", ctr],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            image = res.stdout.strip() or image
+        # a throwaway container with no network: it only reads the archive's TOC
         res = subprocess.run(
-            [DOCKER, "inspect", "--format", "{{.Config.Image}}", ctr],
+            [DOCKER, "run", "--rm", "-i", "--network", "none", image]
+            + ["pg_restore", "--list"],
+            stdin=plain,
             capture_output=True,
             text=True,
             check=False,
         )
-        image = res.stdout.strip() or image
-    # a throwaway container with no network: it only reads the archive's TOC
-    res = subprocess.run(
-        [DOCKER, "run", "--rm", "-i", "--network", "none", image]
-        + ["pg_restore", "--list"],
-        stdin=plain,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    toc = [ln for ln in res.stdout.splitlines() if ln and not ln.startswith(";")]
-    if res.returncode == 0 and toc:
-        return f"pg_restore --list: {len(toc)} entries"
-    return None
+        toc = [ln for ln in res.stdout.splitlines() if ln and not ln.startswith(";")]
+        if res.returncode == 0 and toc:
+            return f"pg_restore --list: {len(toc)} entries"
+        return None
+
+    return check
 
 
 def check_secret_key(cfg: Config, plain, scratch: Path) -> str | None:
@@ -859,7 +873,7 @@ def check_sqlite(cfg: Config, plain, scratch: Path) -> str | None:
 
 CHECKS = {
     "identity": check_identity,
-    "backstage": check_backstage,
+    **{store: check_pg_dump(project, service) for store, project, service in PG_STORES},
     "openclaw-secret-key": check_secret_key,
     "openclaw-state": check_state,
     "openclaw-sqlite": check_sqlite,

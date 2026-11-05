@@ -4505,7 +4505,7 @@ Restoring from such a mirror is step 3 of
 - `/srv/openclaw/backups/identity/` — nightly dumps of the identity provider's database (users, sign-in settings, OIDC clients and signing keys; [Identity provider (Logto)](#identity-provider-logto) has the restore)
 
 On the maintainer's box the OpenClaw state, the secret key and the identity
-dumps go off-box nightly, encrypted, with the backstage database:
+dumps go off-box nightly, encrypted, with the backstage and basket databases:
 [Off-box backup (R2)](#off-box-backup-r2). Snapshot the rest via your
 provider's backups or rsync to another box.
 
@@ -4676,7 +4676,7 @@ the env key only stops new ones. `lifekit-stack migrate` copies the laptop's
 ### Off-box backup (R2)
 
 Everything above lives on the box's one disk. `lifekit-offbox-backup.timer`
-copies the four stores that had no other copy to Cloudflare R2 each night,
+copies the five stores that had no other copy to Cloudflare R2 each night,
 encrypted with `age` before they leave the box, and
 `lifekit-offbox-verify.timer` proves once a month that the newest copy
 restores. Both run `scripts/offbox-backup/offbox_backup.py` from the checkout
@@ -4691,6 +4691,7 @@ Sunday's run goes to `lifekit/weekly/`:
 | --- | --- | --- |
 | `identity.sql.gz.age` | identity provider (Logto) | the newest dump `lifekit-identity-backup.timer` wrote; no second dump |
 | `backstage.dump.age` | backstage's Postgres | `pg_dump -Fc` through `docker exec` into compose project `backstage`'s `backstage-db`; skipped (and recorded) where backstage is not deployed |
+| `basket.dump.age` | basket's Postgres (the shared list, passkey accounts) | `pg_dump -Fc` through `docker exec` into compose project `basket`'s `db`; skipped (and recorded) where basket is not deployed |
 | `openclaw-secret-key.tar.age` | `/srv/openclaw/secret-key/` | tar piped into `age`: the key never touches disk in plaintext |
 | `openclaw-sqlite.tar.zst.age` | the state's `*.sqlite` databases | copied with SQLite's backup API (consistent while the gateway writes) into the unit's private `/tmp`, removed after |
 | `openclaw-state.tar.zst.age` | `/srv/openclaw/config/` | tar + zstd, minus the exclusions below |
@@ -4787,8 +4788,8 @@ reset-failed lifekit-offbox-backup.service`.
 set (it fails when that is older than 48 hours), checks each ciphertext
 against the manifest's sha256, decrypts with the on-box key and proves each
 store restores: the gzip and the `pg_dumpall` footer of the identity dump,
-`pg_restore --list` on the backstage dump in a throwaway `--network none`
-container, a tar listing of the state with `openclaw.json` in it, `PRAGMA
+`pg_restore --list` on the backstage and basket dumps, each in a throwaway
+`--network none` container, a tar listing of the state with `openclaw.json` in it, `PRAGMA
 quick_check` on every SQLite copy, and the secret key against the live one by
 hash only. The verdict goes to the owner through notify-relay: `good` with one
 line per store, or `act` naming what failed. A verdict the relay refuses fails
@@ -4823,6 +4824,15 @@ K=~/.config/sops/age/keys.txt
   age -d -i $K set/backstage.dump.age | docker exec -i backstage-db \
     sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner'
   docker start backstage
+  ```
+
+- Basket, into a running `basket-db` (stop the app first, start it after):
+
+  ```bash
+  docker stop basket-app
+  age -d -i $K set/basket.dump.age | docker exec -i basket-db \
+    sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner'
+  docker start basket-app
   ```
 
 - Secret key, before the gateway starts:
@@ -5100,7 +5110,7 @@ git reset --hard origin/main
 # OR rsync from a snapshot.
 
 # 4. Restore /srv/openclaw/secret-key/, the OpenClaw state, the identity dump
-#    and the backstage database from the newest R2 set ("Off-box backup (R2)"
+#    and the backstage and basket databases from the newest R2 set ("Off-box backup (R2)"
 #    above, restoring by hand). Without the secret key, you re-pair every channel.
 ```
 

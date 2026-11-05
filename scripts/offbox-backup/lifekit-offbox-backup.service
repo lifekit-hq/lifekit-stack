@@ -1,5 +1,5 @@
 [Unit]
-Description=Encrypted off-box backup to Cloudflare R2 (identity, backstage, OpenClaw key and state)
+Description=Encrypted off-box backup to Cloudflare R2 (identity, backstage, basket, OpenClaw key and state)
 After=network-online.target docker.service
 Wants=network-online.target
 
