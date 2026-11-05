@@ -1,6 +1,6 @@
 """offbox_backup.py end to end against fakes: rclone on a local directory,
 a passthrough age that records its recipients and checks the identity it is
-handed, docker answering for the backstage db and notify-relay, and cat for
+handed, docker answering for the backstage and basket dbs and notify-relay, and cat for
 zstd. Real tar and SQLite. No network, no real key."""
 
 from __future__ import annotations
@@ -90,22 +90,26 @@ if sys.stdin.read().strip() != os.environ["FAKE_IDENTITY"]:
 print(os.environ["FAKE_PUB"])
 """
 
-# FAKE_BACKSTAGE: running | stopped | absent
+# FAKE_BACKSTAGE / FAKE_BASKET: running | stopped | absent
 FAKE_DOCKER = r"""
 import json, os, sys
 args = sys.argv[1:]
 state = os.environ.get("FAKE_BACKSTAGE", "running")
+basket = os.environ.get("FAKE_BASKET", "running")
 if args[0] == "ps":
     filt = " ".join(args)
     if "service=backstage-db" in filt:
         if state == "running" or (state == "stopped" and "-aq" in args):
             print("bsdb")
+    elif "project=basket" in filt and "service=db" in filt:
+        if basket == "running" or (basket == "stopped" and "-aq" in args):
+            print("bkdb")
     elif "service=notify-relay" in filt:
         print("relay")
     elif "service=postgres" in filt:
         pass
-elif args[0] == "exec" and args[1] == "bsdb":
-    sys.stdout.buffer.write(b"PGDMP fake custom-format dump")
+elif args[0] == "exec" and args[1] in ("bsdb", "bkdb"):
+    sys.stdout.buffer.write(b"PGDMP fake custom-format dump " + args[1].encode())
 elif args[0] == "exec" and args[2] == "relay":
     with open(os.environ["FAKE_POSTS"], "a") as f:
         f.write(json.dumps(json.load(sys.stdin)) + "\n")
@@ -226,6 +230,7 @@ def test_backup_writes_one_encrypted_set_with_a_manifest(box):
     assert names == {
         "identity.sql.gz.age",
         "backstage.dump.age",
+        "basket.dump.age",
         "openclaw-secret-key.tar.age",
         "openclaw-sqlite.tar.zst.age",
         "openclaw-state.tar.zst.age",
@@ -306,7 +311,7 @@ def test_verify_passes_and_says_so(box):
     assert res.returncode == 0, res.stderr
     (env,) = box.posts()
     assert env["level"] == "good" and env["subject"] == "offbox-backup"
-    assert "pg_restore --list: 1 entries" in env["detail"]
+    assert env["detail"].count("pg_restore --list: 1 entries") == 2  # backstage, basket
     assert "same hash as the live key" in env["detail"]
     assert "1 databases pass quick_check" in env["detail"]
     assert KEY_VALUE.decode() not in json.dumps(env) + res.stdout
@@ -459,6 +464,10 @@ def test_a_failed_store_leaves_no_partial_set(box):
     res = box.run("backup", FAKE_BACKSTAGE="stopped")
     assert res.returncode == 1
     assert "backstage-db exists but is not running" in res.stderr
+    res = box.run("backup", FAKE_BASKET="stopped")
+    assert res.returncode == 1
+    assert "db exists but is not running" in res.stderr
+    assert not (box.remote / "daily" / WEDNESDAY).exists()
     res = box.run("backup", FAKE_RCLONE_FAIL="openclaw-sqlite.tar.zst.age")
     assert res.returncode == 1
     assert not (box.remote / "daily" / WEDNESDAY).exists()
@@ -530,6 +539,25 @@ def test_verify_reports_a_corrupt_object_as_an_act_message(box, name, garbage):
     assert not list((box.root / "tmp").iterdir()), "scratch left behind"
 
 
+def test_verify_fails_a_basket_dump_that_does_not_restore(box):
+    assert box.run("backup").returncode == 0
+    name = "basket.dump.age"
+    obj = box.remote / "daily" / WEDNESDAY / name
+    data = b"FAKEAGE\nnot a pg_dump archive"
+    obj.write_bytes(data)
+    manifest_path = obj.parent / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    for o in manifest["objects"]:
+        if o["name"] == name:
+            o["bytes"], o["sha256"] = len(data), hashlib.sha256(data).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+    res = box.run("verify", OFFBOX_BACKUP_NOW="2026-10-14T05-00-00Z")
+    assert res.returncode == 0, res.stderr
+    (env,) = box.posts()
+    assert env["level"] == "act" and name in env["headline"]
+    assert "the restored basket does not check out" in env["headline"]
+
+
 def test_a_noisy_failing_stage_fails_promptly(box):
     noisy = fake(
         box.root,
@@ -552,6 +580,15 @@ def test_an_undeployed_backstage_is_recorded_as_skipped(box):
         (box.remote / "daily" / WEDNESDAY / "MANIFEST.json").read_text()
     )
     assert manifest["skipped"] == [{"store": "backstage", "reason": "not deployed"}]
+
+
+def test_an_undeployed_basket_is_recorded_as_skipped(box):
+    assert box.run("backup", FAKE_BASKET="absent").returncode == 0
+    manifest = json.loads(
+        (box.remote / "daily" / WEDNESDAY / "MANIFEST.json").read_text()
+    )
+    assert manifest["skipped"] == [{"store": "basket", "reason": "not deployed"}]
+    assert "basket.dump.age" not in {o["name"] for o in manifest["objects"]}
 
 
 def test_estimate_uploads_nothing(box):
