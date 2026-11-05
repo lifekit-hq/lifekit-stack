@@ -1,15 +1,20 @@
 # modules.yaml — lifekit-stack routing manifest
 #
-# Describes each capability module wired in this stack.
-# OpenClaw reads this (via lifekit-router skill) to route user intents
-# to the right MCP server.
+# Describes each MCP module wired in this stack: exactly the servers the live
+# gateway lists under `openclaw mcp list`. OpenClaw reads this (via the
+# lifekit-router skill) to route user intents to the right MCP server.
 #
-# Deploy: scripts/deploy.sh copies this to /srv/life/system/modules.yaml
-# on the VPS so it lands in the ~/.life/ knowledge layer where OpenClaw
+# Health is not a module here: food and workouts run as Kit's workspace
+# skills (workout-claw, life-state), called as bash by the Kit agent. The
+# health-claw MCP wrapper was removed in the v2 cutover, so nothing below
+# points at it.
+#
+# Deploy: the OpenClaw "modules" phase of scripts/deploy-openclaw.sh copies
+# this to /srv/memory/system/modules.yaml on the VPS (the vault) so OpenClaw
 # can read it.
 #
 # Schema:
-#   id          — matches the MCP server id in openclaw.json
+#   id          — matches the MCP server id in openclaw.json (`openclaw mcp list`)
 #   description — what this module can do (used for routing decisions)
 #   mcp         — internal MCP server URL (compose DNS)
 #   examples    — sample intents that should route here
@@ -25,27 +30,16 @@ modules:
       - "create a Google Doc with my weekly plan"
       - "add a task to my Google Tasks"
 
-  - id: health-claw
+  - id: finance-sentry
     description: >-
-      Log workouts, track PRs and volume per muscle group, record daily
-      mood/energy/soreness/sleep, get state-aware fitness suggestions
-    mcp: http://health-claw:8000/mcp/
+      Read the owner's investing and finance data: portfolio, recommendations
+      and their verdicts, watchlist, pending companion events. Ledger (agent id
+      `finance`) is the agent that uses it
+    mcp: http://finance-sentry-mcp:5100/
     examples:
-      - "log today's workout: bench 4x10 at 60, pullups 4x10"
-      - "what's my squat PR"
-      - "how much back volume did I do this week"
-      - "feeling tired, energy 5, sore chest"
-      - "morning check-in: slept well, energy 7"
-      - "what was my last workout"
-      - "show my chest history from the last month"
+      - "how is my portfolio doing against the plan"
+      - "what recommendations are waiting on me"
+      - "what is on my watchlist"
 
   # ── future modules ────────────────────────────────────────────────────────
-  # Add entries here as you wire new modules into the stack.
-
-  # - id: finance-claw
-  #   description: Track spending, review transactions, help with tax prep, monitor financial goals
-  #   mcp: http://finance-claw:8000/mcp/
-  #   examples:
-  #     - "how much did I spend on food this month"
-  #     - "what are my recurring subscriptions"
-  #     - "help me prepare for tax season"
+  # Add an entry only when its MCP server is registered in openclaw.json.

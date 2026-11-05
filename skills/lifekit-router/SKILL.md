@@ -36,4 +36,4 @@ The module does the work. Your job is to give it the right context and translate
 
 ## Cross-module intents
 
-Some intents touch more than one module (e.g. "book a dentist appointment and block the time in my calendar" → health-claw + google-workspace). Handle these sequentially: complete the first module call, use its result to inform the second.
+Some intents touch more than one module (e.g. "what recommendations are waiting on me, and put a review block on my calendar" → finance-sentry + google-workspace). Handle these sequentially: complete the first module call, use its result to inform the second.
