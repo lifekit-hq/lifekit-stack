@@ -156,6 +156,11 @@ services:
       # environment - the gateway's global dotenv is legacy plaintext and is
       # being retired, not a source it should ever fall back to.
       FINANCE_SENTRY_MCP_TOKEN: ${FINANCE_SENTRY_MCP_TOKEN:-}
+      # Same shape for the devclaw MCP entry (mcp.servers.devclaw.headers):
+      # openclaw.json holds the bearer as a ${DEVCLAW_MCP_TOKEN} template,
+      # never the value, so the variable must be in this container's own
+      # environment (docs/secrets.md).
+      DEVCLAW_MCP_TOKEN: ${DEVCLAW_MCP_TOKEN:-}
       OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
       # The shared job queue's egress (skills/job-queue/jobq.py, docs/runbook.md
       # "Shared job queue"): the proxy queued downloads go out through, a

@@ -253,11 +253,14 @@ def test_retired_wiki_vault_mount_is_gone():
 
 def test_retired_devclaw_agent_wiring_is_gone():
     # The devclaw OpenClaw agent is retired: no memory mount, and no gateway
-    # env for its Telegram account or MCP server.
+    # env for its Telegram account. The one DEVCLAW_ variable allowed is the
+    # bearer for the devclaw MCP server entry Kit calls (mcp.servers.devclaw,
+    # an env template in openclaw.json), and only on the gateway.
     for service in ("openclaw-gateway", "openclaw-cli"):
         assert not [m for m in volumes(service) if "agents/devclaw" in m]
         env = compose_services()[service].get("environment", {})
-        assert not [k for k in env if k.startswith("DEVCLAW_")]
+        allowed = {"DEVCLAW_MCP_TOKEN"} if service == "openclaw-gateway" else set()
+        assert not [k for k in env if k.startswith("DEVCLAW_") and k not in allowed]
 
 
 def test_workshop_approval_policy_stays_retired():
