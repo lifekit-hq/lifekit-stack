@@ -745,22 +745,13 @@ say "learnclaw contract and skill -> ${OPENCLAW_CONFIG_DIR}/agents/learnclaw/wor
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-learnclaw.sh" \
   || fail_later "learnclaw contract install failed (output above)"
 
-# ─── Skill CLI install (life-state etc.) ─────────────────────────────────────
+# ─── Skill CLIs (workout-claw, life-state) ───────────────────────────────────
 #
-# Some module CLIs are NOT shipped from this repo — they live in separate
-# repos (life-state, health-claw; workout-claw is baked into the gateway
-# image from its npm pin) on the maintainer's laptop
-# and are rsync'd to /srv/openclaw/workspace/external/ on the VPS. The
-# health-claw container installs them at start from those paths.
-#
-# Before running this deploy script after adding the health-claw service,
-# rsync the external sources to the VPS:
-#
-#   rsync -a ~/projects/life-state/   lifekit@lifekit-vps:/srv/openclaw/workspace/external/life-state/
-#   rsync -a ~/projects/health-claw/  lifekit@lifekit-vps:/srv/openclaw/workspace/external/health-claw/
-#
-# And register the health-claw MCP in openclaw.json:
-#   (add the entry from compose/health-claw/mcp-config.json to /srv/openclaw/config/openclaw.json)
+# Nothing to install in this script: workout-claw is baked into the gateway
+# image from its npm pin; nutrition-claw and life-state are entrypoint-installed
+# from host checkouts (see compose/openclaw-gateway/Dockerfile).
+# The health-claw MCP service no longer exists (removed in the v2 cutover);
+# health runs as Kit's workspace skills, not an MCP server.
 
 # ─── Health checks ───────────────────────────────────────────────────────────
 #

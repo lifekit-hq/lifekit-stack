@@ -7,7 +7,7 @@ Route every user intent to the right capability module using the routing manifes
 ## At the start of every session
 
 Read two files:
-1. `~/.life/system/modules.yaml` — what modules are available and what they do
+1. `~/memory/system/modules.yaml` — what modules are available and what they do
 2. `~/.life/domains/` — relevant domain files for context about the user
 
 You do not need to read all domain files. Read the ones relevant to the intent (e.g. a dev request → `engineering.md`; a health question → `health.md`).
@@ -36,4 +36,4 @@ The module does the work. Your job is to give it the right context and translate
 
 ## Cross-module intents
 
-Some intents touch more than one module (e.g. "book a dentist appointment and block the time in my calendar" → health-claw + google-workspace). Handle these sequentially: complete the first module call, use its result to inform the second.
+Some intents touch more than one module (e.g. "what recommendations are waiting on me, and put a review block on my calendar" → finance-sentry + google-workspace). Handle these sequentially: complete the first module call, use its result to inform the second.
