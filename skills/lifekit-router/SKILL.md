@@ -7,7 +7,7 @@ Route every user intent to the right capability module using the routing manifes
 ## At the start of every session
 
 Read two files:
-1. `~/.life/system/modules.yaml` — what modules are available and what they do
+1. `~/memory/system/modules.yaml` — what modules are available and what they do
 2. `~/.life/domains/` — relevant domain files for context about the user
 
 You do not need to read all domain files. Read the ones relevant to the intent (e.g. a dev request → `engineering.md`; a health question → `health.md`).
