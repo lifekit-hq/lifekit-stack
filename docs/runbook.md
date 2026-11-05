@@ -187,6 +187,24 @@ fail the deploy with a clear message; `deploy-trusted-proxies.sh` falls back to
 the one-shot, since there is no owner to verify. The upgrade steps run with the
 gateway stopped and stay `run --rm`.
 
+#### DevClaw MCP server (per-agent half)
+
+Kit calls DevClaw's MCP tools through `mcp.servers.devclaw`, which lives in the
+per-agent half of `openclaw.json` (host state), not in `platform.patch.json`.
+Its `url` is `http://devclaw-mcp:8000/mcp`, reached over the external
+`lifekit-shared` network that the gateway and `devclaw-mcp` already share, and
+its `headers` carry `Authorization: Bearer ${DEVCLAW_MCP_TOKEN}` as an env
+template, like finance-sentry's `${FINANCE_SENTRY_MCP_TOKEN}`. The gateway
+resolves the template from its own environment, which
+`compose/openclaw/docker-compose.yml` fills from `DEVCLAW_MCP_TOKEN` in
+`stack.env`; the value never appears in git or in the config file. Check with
+`docker exec openclaw-openclaw-gateway-1 openclaw mcp probe`.
+
+**Undo:** run `openclaw mcp unset devclaw` in the gateway container, then
+remove the `DEVCLAW_MCP_TOKEN` line from the gateway's `environment` in
+`compose/openclaw/docker-compose.yml` and redeploy. The edge keeps reading the
+same token for the devclaw console, so it stays in the master SOPS file.
+
 #### Skill Workshop approval key retired (OpenClaw 2026.10.5)
 
 OpenClaw 2026.10.5 retired Skill Workshop proposals and removed
