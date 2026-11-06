@@ -277,6 +277,36 @@ class ReportTests(unittest.TestCase):
         self.assertIn("OOM kill", decision)
         self.assertIn("root filesystem 90% used", decision)
 
+    def test_basket_reports_against_its_budget(self):
+        """basket is a group of its own: the report asks Prometheus for every
+        container of compose project `basket` and reads the budget from the doc,
+        so a remeasured row needs no edit here."""
+        asked: list[str] = []
+        inner = weekly.prom_query
+
+        def recording(base, query, timeout=60.0):
+            asked.append(query)
+            return inner(base, query, timeout)
+
+        weekly.prom_query = recording
+        try:
+            report = weekly.build_report(self.args)
+        finally:
+            weekly.prom_query = inner
+
+        budget = weekly.parse_budgets(Path(self.args.budget_doc).read_text())["basket"]
+        self.assertIn(
+            f"| basket | {weekly.fmt_gib_budget(budget)} | 2.00 GiB | 1.00 GiB | no |",
+            report,
+        )
+        member_sum = (
+            '(sum(docker_container_memory_usage_bytes{project="basket"}) or vector(0))'
+        )
+        self.assertTrue(
+            [q for q in asked if q.startswith("max_over_time(" + member_sum)],
+            "no 7-day peak query selected basket's containers",
+        )
+
     def test_host_groups_report_against_their_budgets(self):
         report = weekly.build_report(self.args)
         self.assertIn(

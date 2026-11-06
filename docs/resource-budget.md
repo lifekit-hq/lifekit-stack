@@ -4,8 +4,8 @@ The box has 15.6 GiB of RAM and 8 GiB of swap (the live `/swapfile`; `scripts/bo
 memory budget: the expected sustained footprint, so "the box is slow" has an owner to
 look at. The budgets are **documentation, not alert thresholds** (see Alerts): no alert
 keys on them, they are set against the measured 7-day maximum 30-minute average, and
-shorter bursts can exceed them. They sum to **16.85 GiB**; a **1.75 GiB burst pool** for
-short-lived work brings the total to **18.6 GiB** against the 15.6 GiB of RAM. That
+shorter bursts can exceed them. They sum to **17.10 GiB**; a **1.75 GiB burst pool** for
+short-lived work brings the total to **18.85 GiB** against the 15.6 GiB of RAM. That
 overcommit is intended: the groups do not peak together, and swap is the margin.
 
 The weekly ops report on 2026-10-02 shows 15-minute-plus breaches for openclaw (124%),
@@ -49,13 +49,14 @@ history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 | dashboard | 0.25 | the dashboard service (compose project `dashboard`) | 114 MiB |
 | xui | 0.25 | web, db (compose project `xui`) | 188 MiB |
 | backstage | 0.15 | the Backstage service (compose project `backstage`, on `lifekit-shared`) | new 2026-10-12; sustained estimate, not yet measured |
+| basket | 0.25 | the app and its Postgres (compose project `basket`: `basket-app`, `basket-db`) | new 2026-11-06; sized estimate, not yet measured (see below) |
 | identity | 0.5 | logto, postgres (compose project `identity`); capped at 512 + 256 MiB. Also the tailnet sign-in gate, traefik and oauth2-proxy (compose project `edge`), capped at 128 + 64 MiB | new 2026-10-02: logto 218-266 MiB, postgres 38-71 MiB just after first boot in local tests; traefik about 21 MiB, oauth2-proxy about 5 MiB in local tests |
 | operator sessions | 6.8 | the operator's login slice (`user-1001.slice`): agent sessions, their browser helpers, tools | 4.3 GiB resident at the 5-worker cap (2026-10-01); 30-minute average 3.5 p50, 5.1 p95, 6.8 max over 7 days |
 | runners | 1.4 | the CI runner services and their jobs | 0.2-0.45 GiB idle; 1.6 GiB raw and 1.0 GiB 30-minute average during the 2026-10-01 image-rebuild deploy; 1.37 GiB 30-minute average max over 7 days |
 | OS | 1.0 | dockerd, containerd, shims, tailscaled, journald (the `os` gauge counts only these four units; cron and the other system services, about 80 MiB in the same snapshot, are not in any gauge and sit in this row's headroom) | about 0.75 GiB (snapshot) |
-| **Sum** | **16.85** | | |
+| **Sum** | **17.10** | | |
 | burst pool | 1.75 | everything else that runs as a container: devclaw sandboxes, `openclaw-cli` runs, rehearsals, CI and worker validation containers, test compose projects, any orphan | 30-minute average 0.14 GiB p50, 0.78 p95, 1.66 max over 7 days; one worker container reached 3164 MiB (a spike, not sustained) |
-| **Total** | **18.6** | of 15.6 GiB RAM | |
+| **Total** | **18.85** | of 15.6 GiB RAM | |
 
 **Operator sessions, runners and burst pool, recalibrated 2026-10-01** (was 3.5, 0.75 and 3.0 GiB; the
 per-group alerts that read them fired at 113-116% on the first day, with 4-5 worker
@@ -73,10 +74,34 @@ then retired - see Alerts):
   average to 1.0 GiB (1.6 GiB raw, 18:19-18:44 UTC on 2026-10-01; the worst 7-day average
   was 1.37 GiB). 1.4 GiB covers that worst case.
 - The burst pool shrinks from 3.0 to 1.75 GiB, just above its 7-day 30-minute average
-  maximum of 1.66 GiB (under 0.8 GiB 95% of the time). The budgets now total 17.95 GiB
-  against 15.6 GiB of RAM, on purpose: the groups do not peak together and swap is the
-  margin. No other group's budget changed. The platform group's budget (1.5 GiB) is below its
+  maximum of 1.66 GiB (under 0.8 GiB 95% of the time). The budgets totalled 17.95 GiB at
+  that date against 15.6 GiB of RAM, on purpose: the groups do not peak together and swap
+  is the margin. No other group's budget changed. The platform group's budget (1.5 GiB) is below its
   measured 3 GiB 7-day median, which is outside this recalibration.
+
+**basket, added 2026-11-06.** compose project `basket`: `basket-app` and `basket-db`, whose
+Postgres the off-box backup dumps ([`runbook.md`](./runbook.md) "Off-box backup (R2)"). The
+0.25 GiB is a **sized estimate, not a measurement** - xui is the same app-plus-Postgres
+shape at a 188 MiB peak, identity's Postgres sits at 38-71 MiB - because no reading of the
+box was reachable when the row was written. Replace it (owner: maintainer) with the real
+7-day peak once `docker_container_memory_usage_bytes{project="basket"}` holds seven full
+days - check that range, do not take the report's first basket row for the measurement: a
+container group's query ends `or vector(0)`, so a row prints from the first scrape onwards
+however little history stands behind it. The container exporter reads every container on
+the box, so that history may already be there.
+
+**Nothing scrapes basket (2026-11-06).** It exposes no `/metrics` endpoint this stack knows
+of, so it has no job in `compose/observability/prometheus/prometheus.yml` and no rule of its
+own; declaring itself under the platform contract is its own repo's work
+([`platform-contract.md`](./platform-contract.md) "Declaring a service" - there are no
+waivers). The `box` rule group still watches its containers through the container exporter:
+an abnormal exit, a restart loop, a failing healthcheck or an OOM kill fires for them as for
+any container on the box. One hole stays open: *long-running container is stopped or gone*
+is gated to `project=~"compose|openclaw|docker|devclaw|dashboard|xui"`, so a cleanly stopped
+or deleted `basket-db` is silent. That allowlist predates backstage, identity, edge and
+reminder-bot as well; widening it to every production project is its own change (owner:
+maintainer, follow-up to #479), because it also decides how much retirement noise the rule
+may make.
 
 Membership is by compose project and service label, so a new container is in the burst
 pool until it is added to a group; platform is every service of compose project
@@ -143,10 +168,22 @@ The swap gauge is margin, not budget: it has no rule of its own, the host-wide
 
 ## Changing a budget
 
-A budget is a table row above, and the weekly report reads it from there. When a group's
-members change, update the member selectors in the `lifekit:group_memory_bytes` recording
-rule (`compose/observability/prometheus/rules.yml`) and in `GROUP_SELECTORS` in
-`scripts/ops-report/weekly.py` together; `scripts/tests/test_alert_rules.py` fails when
-they differ. A budget moves because measured use moved: check
-the 7-day peak first. A merge to `main` reloads the Prometheus and Grafana rules on
-deploy; nothing is recreated.
+A budget is a table row above, and the weekly report reads it from there. A budget moves
+because measured use moved: check the 7-day peak first. A merge to `main` reloads the
+Prometheus and Grafana rules on deploy; nothing is recreated.
+
+A **new group**, or a change to an existing group's members, is four edits that have to
+agree:
+
+1. the table row above (and the `Sum` / `Total` rows and the two totals in the opening
+   paragraph);
+2. `GROUP_SELECTORS` in `scripts/ops-report/weekly.py`;
+3. the `lifekit:group_memory_bytes` recording rule
+   (`compose/observability/prometheus/rules.yml`) - **twice**: the group's own
+   `label_replace` branch and the burst pool's `unless (...)` list, or its containers are
+   counted in both;
+4. the compose-project list in [`runbook.md`](./runbook.md) "Production test for
+   containers", which decides what an alert remedy may do to those containers.
+
+`scripts/ops-report/tests/test_weekly.py` and `scripts/tests/test_alert_rules.py` fail when
+1-3 disagree. Nothing checks 4: it is prose.

@@ -60,6 +60,7 @@ GROUP_SELECTORS = {
     "dashboard": 'project="dashboard"',
     "xui": 'project="xui"',
     "backstage": 'project="backstage"',
+    "basket": 'project="basket"',
     "identity": 'project=~"identity|edge"',
 }
 # Host groups: budget-doc name -> `group` label of host_group_memory_bytes

@@ -316,22 +316,31 @@ def test_claude_token_expiry_rule_matches_the_documented_date():
     assert rule["labels"]["severity"] == "warning"
 
 
-def test_memory_group_selectors_match_weekly_report():
-    """The recording rule and the weekly report must name the same members."""
+def weekly_report_module():
+    """scripts/ops-report/weekly.py, loaded by path (it is a script, not a package)."""
     spec = importlib.util.spec_from_file_location(
         "weekly", REPO / "scripts/ops-report/weekly.py"
     )
     weekly = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(weekly)
+    return weekly
 
+
+def group_memory_expr():
+    """The `lifekit:group_memory_bytes` recording rule's expression."""
     rules = yaml.safe_load(
         (REPO / "compose/observability/prometheus/rules.yml").read_text()
     )
-    expr = rules["groups"][0]["rules"][0]["expr"]
+    return rules["groups"][0]["rules"][0]["expr"]
 
-    def squash(text):
-        return re.sub(r"\s+", "", text)
 
+def squash(text):
+    return re.sub(r"\s+", "", text)
+
+
+def test_memory_group_selectors_match_weekly_report():
+    """The recording rule and the weekly report must name the same members."""
+    expr = group_memory_expr()
     in_rule = {
         name: squash(selector)
         for selector, name in re.findall(
@@ -339,8 +348,24 @@ def test_memory_group_selectors_match_weekly_report():
             expr,
         )
     }
-    in_report = {n: squash(sel) for n, sel in weekly.GROUP_SELECTORS.items()}
+    in_report = {
+        n: squash(sel) for n, sel in weekly_report_module().GROUP_SELECTORS.items()
+    }
     assert in_rule == in_report
+
+
+def test_burst_pool_subtracts_every_named_group():
+    """The burst pool is everything minus the named groups, so a group missing
+    from its `unless` list is counted twice - once in its own series and once in
+    the pool. The parity test above cannot see this list: its regex matches only
+    the `label_replace(..., "name", ...)` branches."""
+    block = group_memory_expr().split("unless (", 1)[1].split("))", 1)[0]
+    subtracted = {
+        squash(sel)
+        for sel in re.findall(r"docker_container_memory_usage_bytes\{([^}]*)\}", block)
+    }
+    named = {squash(sel) for sel in weekly_report_module().GROUP_SELECTORS.values()}
+    assert subtracted == named
 
 
 def test_finance_job_age_rules_wait_an_hour_and_stay_quiet_without_data():
