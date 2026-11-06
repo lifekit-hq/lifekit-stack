@@ -51,8 +51,8 @@ history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 | devclaw-mcp | 0.25 | `devclaw-mcp` (compose project `devclaw`; its sandboxes count in the burst pool) | 130 MiB |
 | dashboard | 0.25 | the dashboard service (compose project `dashboard`) | 114 MiB |
 | xui | 0.25 | web, db (compose project `xui`) | 188 MiB |
-| backstage | 0.15 | the Backstage service (compose project `backstage`, on `lifekit-shared`) | new 2026-10-12; sustained estimate, not yet measured |
-| basket | 0.25 | the app and its Postgres (compose project `basket`; containers `basket-app`, `basket-db`) | new 2026-11-06; sized estimate, not yet measured (see below) |
+| backstage | 0.15 | the Backstage service (compose project `backstage`, on `lifekit-shared`) | new 2026-10-12; sustained estimate, not yet measured - replace with the measurement (owner: maintainer, #484); its series already holds the seven days, so this waits on box access, not on a window |
+| basket | 0.25 | the app and its Postgres (compose project `basket`; containers `basket-app`, `basket-db`) | new 2026-11-06; sized estimate, not yet measured (owner: maintainer, #484; see below) |
 | identity | 0.5 | logto, postgres (compose project `identity`); capped at 512 + 256 MiB. Also the tailnet sign-in gate, traefik and oauth2-proxy (compose project `edge`), capped at 128 + 64 MiB | new 2026-10-02: logto 218-266 MiB, postgres 38-71 MiB just after first boot in local tests; traefik about 21 MiB, oauth2-proxy about 5 MiB in local tests |
 | operator sessions | 6.8 | the operator's login slice (`user-1001.slice`): agent sessions, their browser helpers, tools | 4.3 GiB resident at the 5-worker cap (2026-10-01); 30-minute average 3.5 p50, 5.1 p95, 6.8 max over 7 days |
 | runners | 1.4 | the CI runner services and their jobs | 0.2-0.45 GiB idle; 1.6 GiB raw and 1.0 GiB 30-minute average during the 2026-10-01 image-rebuild deploy; 1.37 GiB 30-minute average max over 7 days |
@@ -91,12 +91,15 @@ and nothing in this repo names the app's. Its Postgres the off-box backup
 dumps ([`runbook.md`](./runbook.md) "Off-box backup (R2)"). The
 0.25 GiB is a **sized estimate, not a measurement** - xui is the same app-plus-Postgres
 shape at a 188 MiB peak, identity's Postgres sits at 38-71 MiB - because no reading of the
-box was reachable when the row was written. Replace it (owner: maintainer) with the real
-7-day peak once `docker_container_memory_usage_bytes{project="basket"}` holds seven full
-days - check that range, do not take the report's first basket row for the measurement: a
-container group's query ends `or vector(0)`, so a row prints from the first scrape onwards
-however little history stands behind it. The container exporter reads every container on
-the box, so that history may already be there.
+box was reachable when the row was written. Replace it (owner: maintainer, tracked in #484)
+with the real 7-day peak once `docker_container_memory_usage_bytes{project="basket"}` holds
+seven full days - check that range, do not take the report's first basket row for the
+measurement: a container group's query ends `or vector(0)`, so a row prints from the first
+scrape onwards however little history stands behind it. The container exporter reads every
+container on the box, so that history may already be there. The same issue carries
+backstage's older estimate, which needs no waiting window at all: its series has been
+recorded since 2026-10-12, so the seven days are already behind it and the measurement
+waits on box access alone.
 
 **Nothing scrapes basket (2026-11-06).** It exposes no `/metrics` endpoint this stack knows
 of, so it has no job in `compose/observability/prometheus/prometheus.yml` and no rule of its
