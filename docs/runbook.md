@@ -2156,8 +2156,9 @@ prompts are self-contained: every file they read is an absolute workspace path, 
 every tool call is named in the prompt. They do not need the workspace bootstrap
 (`AGENTS.md`, persona and the other injected files), which each run carried on top
 of its prompt (about 200k tokens a run in the token-diet audit). `--light-context`
-(payload `lightContext: true`) drops that bootstrap for the run. The 2026-11-03 `jobs.py` figures, the baseline to beat:
-`today-brief` $0.74 a run, `ledger-opportunity` $0.49 a run (list-price weighting).
+(payload `lightContext: true`) drops that bootstrap for the run. The 2026-11-03
+`jobs.py` figures are the baseline to beat: `today-brief` $0.74 a run,
+`ledger-opportunity` $0.49 a run (list-price weighting).
 
 **Operator step** (firstmate or the operator, once; the row hot-reloads, no gateway
 restart, schedule, delivery and tools untouched). Ids differ per box, so read them
@@ -2172,7 +2173,7 @@ docker exec "$GW" openclaw cron edit <ledger-opportunity id> --light-context
 docker exec "$GW" openclaw cron show <id>         # payload shows lightContext: true
 ```
 
-**Verify:** after both rows have run once on their schedule (08:00 and 08:30 Dublin),
+**Verify:** after both rows have run once on their schedule (`today-brief` fires 08:30 Dublin),
 `python3 -I scripts/ops-report/jobs.py --days 1` should show `cron:today-brief` and
 `cron:ledger-opportunity` per-run well below the baseline. Read the delivered brief
 that day: it should still carry the calendar, the gym line, the deadlines and the
