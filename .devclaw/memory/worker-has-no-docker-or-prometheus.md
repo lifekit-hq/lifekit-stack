@@ -18,9 +18,8 @@ Consequences, all handled in `.devclaw/verify`:
   it never pulls. Without either, 44 of its 78 tests skip, **and that is what CI
   does**: only `secrets-gateway-decrypt` and `deploy` are `self-hosted`, every
   other job including `pytest` runs on `ubuntu-latest` with neither a promtool
-  nor that image (AGENTS.md's "lint/tests follow it onto the VPS runner" is
-  stale on this point - check `ci.yml`, not the prose). So a green CI says
-  nothing about whether the rule expressions parse. `verify` provisions the
+  nor that image. So a green CI says nothing about whether the rule expressions
+  parse. `verify` provisions the
   pinned static promtool from the Prometheus release tarball, reading the version
   from `PROMTOOL_IMAGE` in that test file so there is only one pin; it is the
   only place those 44 run, and a skip there now means something is wrong.
