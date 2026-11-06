@@ -39,11 +39,12 @@ group is averaged over the full 30 minutes, not just the minutes it was alive.
 
 ## The budgets
 
-The 7-day peaks are the Prometheus maximum of the group's containers to 2026-09-29.
+Where the last column gives a 7-day peak it is the Prometheus maximum of the group's
+containers to 2026-09-29; the rows resting on something else say so in that column.
 The host groups (operator sessions, runners, OS) are sized from the `host_group_memory_bytes`
 history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 
-| Group | Budget (GiB) | Contains | 7-day peak |
+| Group | Budget (GiB) | Contains | Basis |
 | --- | --- | --- | --- |
 | openclaw | 3.5 | `openclaw-gateway`, `google-workspace-mcp` (compose project `openclaw`) | 3723 + 153 MiB |
 | platform | 1.5 | prometheus, loki, grafana, tempo, otel-collector, node-exporter, container-exporter, notify-relay (compose project `compose`) | 1.3 GiB (sum of peaks) |
@@ -82,44 +83,47 @@ then retired - see Alerts):
   is the margin. No other group's budget changed. The platform group's budget (1.5 GiB) is below its
   measured 3 GiB 7-day median, which is outside this recalibration.
 
-**basket, added 2026-11-06.** compose project `basket`. Selected on the project label
-alone, so the member names do not matter to any query here; where they appear below
-they are the container names [`runbook.md`](./runbook.md) "Off-box backup (R2)" drives
-(`docker stop basket-app`, `docker exec basket-db`), not the compose service labels the
-rows above use - the db service's label is `db` (`scripts/offbox-backup/offbox_backup.py`),
-and nothing in this repo names the app's. Its Postgres the off-box backup
-dumps ([`runbook.md`](./runbook.md) "Off-box backup (R2)"). The
-0.25 GiB is a **sized estimate, not a measurement** - xui is the same app-plus-Postgres
-shape at a 188 MiB peak, identity's Postgres sits at 38-71 MiB - because no reading of the
-box was reachable when the row was written. Replace it (owner: maintainer, tracked in #484)
-with the real 7-day peak once `docker_container_memory_usage_bytes{project="basket"}` holds
-seven full days - check that range, do not take the report's first basket row for the
-measurement: a container group's query ends `or vector(0)`, so a row prints from the first
-scrape onwards however little history stands behind it. The container exporter reads every
-container on the box, so that history may already be there. The same issue carries
-backstage's older estimate, which needs no waiting window at all: its series has been
-recorded since 2026-10-12, so the seven days are already behind it and the measurement
-waits on box access alone.
+**basket, added 2026-11-06.** compose project `basket`. Selected on the project label alone, so
+the member names do not matter to any query here; where they appear they are the container
+names [`runbook.md`](./runbook.md) "Off-box backup (R2)" drives (`docker stop basket-app`,
+`docker exec basket-db`), not the compose service labels the rows above use - the db service's
+label is `db` (`scripts/offbox-backup/offbox_backup.py`), and nothing in this repo names the
+app's. The 0.25 GiB is a **sized estimate, not a measurement** - xui is the same
+app-plus-Postgres shape at a 188 MiB peak, identity's Postgres sits at 38-71 MiB - because no
+reading of the box was reachable when the row was written. Replace it (owner: maintainer,
+tracked in #484) with the real 7-day peak once
+`docker_container_memory_usage_bytes{project="basket"}` holds seven full days - check that
+range, do not take the report's first basket row for the measurement: a container group's query
+ends `or vector(0)`, so a row prints from the first scrape onwards however little history
+stands behind it. The container exporter reads every container on the box, so that history may
+already be there. The same issue carries backstage's older estimate, which needs no waiting
+window at all: its series has been recorded since 2026-10-12, so the seven days are already
+behind it and the measurement waits on box access alone.
 
-**Nothing scrapes basket (2026-11-06).** It exposes no `/metrics` endpoint this stack knows
-of, so it has no job in `compose/observability/prometheus/prometheus.yml` and no rule of its
-own. The deploy-time census does see its containers, and reports them as undeclared:
-nothing in this repo settles which classification that is - a lifekit product whose own
-repo adds the labels (the devclaw-mcp case, since there are no waivers for products) or
-a project for `OUT_OF_CONTRACT`. Each branch lands somewhere different: a product goes
-in [`platform-contract.md`](./platform-contract.md) "Known gaps", which still names only
+**Nothing scrapes basket (2026-11-06).** It exposes no `/metrics` endpoint this stack knows of,
+so it has no scrape job in `compose/observability/prometheus/prometheus.yml` and no alert rule
+of its own; its only lines in `prometheus/rules.yml` are the `lifekit:group_memory_bytes`
+branch and burst-pool exclusion the budget row above requires, and those read the container
+exporter's series, not basket's. The deploy-time census does see its containers, and reports
+them as undeclared: nothing in this repo settles which classification that is - a lifekit
+product whose own repo adds the labels (the devclaw-mcp case, since there are no waivers for
+products) or a project for `OUT_OF_CONTRACT`. Each branch lands somewhere different: a product
+goes in [`platform-contract.md`](./platform-contract.md) "Known gaps", which still names only
 devclaw-mcp, while a non-product goes in the `OUT_OF_CONTRACT` dict in
-`scripts/platform-contract.py` (that doc's "Classifying a non-product container"). Making
-the call belongs to whoever owns basket (owner: maintainer, next time the census is read),
-not to this doc. The `box` rule group still watches its containers through the container exporter:
-an abnormal exit, a restart loop, a failing healthcheck or an OOM kill fires for them as for
-any container on the box. One hole stays open: *long-running container is stopped or gone*
-is gated to `project=~"compose|openclaw|docker|devclaw|dashboard|xui"`, so a cleanly stopped
-or deleted `basket-db` is silent. That allowlist predates backstage, identity, edge and
-reminder-bot as well; widening it to every production project is its own change, because
-it also decides how much retirement noise the rule may make. Owner: maintainer;
-follow-up to #479, and the trigger is the next change that touches that allowlist -
-waiting to notice a silent stop cannot be the trigger, since not noticing is the hole.
+`scripts/platform-contract.py` (that doc's "Classifying a non-product container"). Making the
+call belongs to whoever owns basket (owner: maintainer), not to this doc, and it has no tracked
+issue yet: `scripts/deploy.sh` enforces the contract at runtime for the `compose`, `openclaw`,
+`identity` and `edge` projects only, so basket's containers print as undeclared on every deploy
+without ever failing one - reading the census is not a trigger that fires. The `box` rule group
+still watches its containers through the container exporter: an abnormal exit, a restart loop,
+a failing healthcheck or an OOM kill fires for them as for any container on the box. One hole
+stays open: *long-running container is stopped or gone* is gated to
+`project=~"compose|openclaw|docker|devclaw|dashboard|xui"`, so a cleanly stopped or deleted
+`basket-db` is silent. That allowlist predates backstage, identity, edge and reminder-bot as
+well; widening it to every production project is its own change, because it also decides how
+much retirement noise the rule may make. Owner: maintainer; no tracked issue yet - #479 closes
+with the PR that wrote this line, so it cannot carry the follow-up, and the trigger cannot be
+waiting to notice a silent stop, since not noticing is the hole.
 
 Membership is by compose project and service label, so a new container is in the burst
 pool until it is added to a group; platform is every service of compose project

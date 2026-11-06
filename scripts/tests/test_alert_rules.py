@@ -19,6 +19,7 @@ import pytest
 yaml = pytest.importorskip("yaml")
 
 REPO = Path(__file__).resolve().parents[2]
+PROM_RULES = REPO / "compose/observability/prometheus/rules.yml"
 DOC = yaml.safe_load(
     (REPO / "compose/observability/grafana/provisioning/alerting/rules.yml").read_text()
 )
@@ -289,9 +290,7 @@ def test_host_memory_pressure_message_lists_the_top_three_groups():
     )
     ranks = re.findall(r"\d\. ([A-Za-z ]+?) \{\{", rendered)
     assert ranks == list(names.values())
-    prom = yaml.safe_load(
-        (REPO / "compose/observability/prometheus/rules.yml").read_text()
-    )
+    prom = yaml.safe_load(PROM_RULES.read_text())
     recorded = {r["record"] for g in prom["groups"] for r in g["rules"]}
     assert set(re.findall(r"topk\(\d, ([\w:]+)\)", by_ref["G1"]["expr"])) == recorded
 
@@ -328,9 +327,7 @@ def weekly_report_module():
 
 def group_memory_expr():
     """The `lifekit:group_memory_bytes` recording rule's expression."""
-    rules = yaml.safe_load(
-        (REPO / "compose/observability/prometheus/rules.yml").read_text()
-    )
+    rules = yaml.safe_load(PROM_RULES.read_text())
     return rules["groups"][0]["rules"][0]["expr"]
 
 
@@ -400,9 +397,6 @@ def promtool_cmd(workdir: Path) -> list[str] | None:
         "docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{workdir}:{workdir}",
         "--entrypoint", "promtool", PROMTOOL_IMAGE,
     ]  # fmt: skip
-
-
-PROM_RULES = REPO / "compose/observability/prometheus/rules.yml"
 
 
 def test_prometheus_recording_rules_are_valid_promql():
