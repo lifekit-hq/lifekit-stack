@@ -2149,6 +2149,43 @@ bindings). Then revert kit's `allowAgents` and the live kit "Learning" section,
 and revert the PR so the deploy stops installing the contract. Rows already on the learning page
 stay; they are the owner's record.
 
+### Light context on `today-brief` and `ledger-opportunity`
+
+Both rows are host state (cron rows live in the gateway store, not in git) and both
+prompts are self-contained: every file they read is an absolute workspace path, and
+every tool call is named in the prompt. They do not need the workspace bootstrap
+(`AGENTS.md`, persona and the other injected files), which each run carried on top
+of its prompt (about 200k tokens a run in the token-diet audit). `--light-context`
+(payload `lightContext: true`) drops that bootstrap for the run. The 2026-11-03
+`jobs.py` figures are the baseline to beat: `today-brief` $0.74 a run,
+`ledger-opportunity` $0.49 a run (list-price weighting).
+
+**Operator step** (firstmate or the operator, once; the row hot-reloads, no gateway
+restart, schedule, delivery and tools untouched). Ids differ per box, so read them
+from the list first:
+
+```bash
+GW=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)
+docker exec "$GW" openclaw cron list --all        # ids for today-brief, ledger-opportunity
+docker exec "$GW" openclaw cron edit <today-brief id> --light-context
+docker exec "$GW" openclaw cron edit <ledger-opportunity id> --light-context
+docker exec "$GW" openclaw cron show <id>         # payload shows lightContext: true
+```
+
+**Verify:** after both rows have run once on their schedule (`today-brief` fires 08:30 Dublin),
+`python3 -I scripts/ops-report/jobs.py --days 1` should show `cron:today-brief` and
+`cron:ledger-opportunity` per-run well below the baseline. Read the delivered brief
+that day: it should still carry the calendar, the gym line, the deadlines and the
+fleet section; `ledger-opportunity` should still end in `NO_REPLY` or one message.
+Keep watching for a week (`--days 7`); a brief that loses a section or an opportunity
+message that stops following its prompt means the prompt leaned on the bootstrap.
+
+**Rollback:** `openclaw cron edit <id> --no-light-context`. Same hot reload.
+
+`scripts/ensure-today-brief-fleet.sh` edits only the message, so re-running it after a
+deploy leaves the flag as set.
+
 ## Rolling back OpenClaw
 
 ### The one-rollback rule
