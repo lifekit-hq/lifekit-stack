@@ -99,10 +99,9 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
   exception is `.github/workflows/openclaw-rehearsal.yml`: path-gated to same-repo PRs touching
   `compose/openclaw-gateway/Dockerfile` or the rehearsal script, non-required, and it builds and rehearses that image
   against a copy of live state via `scripts/rehearse-openclaw-bump.sh`.
-- **Only `deploy` and `secrets-gateway-decrypt` run on the VPS self-hosted runner** (they need the
-  box); lint, the test jobs and the release workflows run on GitHub-hosted runners, matching
-  finance-sentry's shape. The self-hosted runner has no provisionable Python, hence the
-  throwaway-venv pattern in `ci.yml`.
+- **CI runs on the VPS self-hosted runner** (deploy must; lint/tests follow it — the runner has no
+  provisionable Python, hence the throwaway-venv pattern in `ci.yml`). The release workflows run
+  on GitHub-hosted runners, matching finance-sentry's shape.
 - **hadolint at `--failure-threshold error`**: accepted warning backlog (DL3006/DL4006/DL3016/
   DL3042) on working prod images — warnings print but don't block; revisit rather than loosen.
 - **No repo-local CODE_OF_CONDUCT.md** — the org default in
