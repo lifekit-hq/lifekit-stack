@@ -8,6 +8,7 @@ here needs a live box.
 import importlib.util
 import json
 import os
+import re
 import sys
 import unittest
 from argparse import Namespace
@@ -32,6 +33,40 @@ def vec(*items):
     return [{"metric": m, "value": [0, str(v)]} for m, v in items]
 
 
+def doc_table_totals(text):
+    """The budgets table's `Sum` and `Total` rows.
+
+    `weekly.parse_budgets` drops them on purpose - they are derived, not a
+    group's budget - so nothing in the report reads them and only a test can
+    hold them to the rows above.
+    """
+    totals = {}
+    in_table = False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            in_table = line.strip() == "## The budgets"
+            continue
+        if not in_table or not line.startswith("|"):
+            continue
+        cells = [
+            c.strip().strip("*").strip() for c in line.strip().strip("|").split("|")
+        ]
+        if len(cells) < 2 or cells[0].lower() not in ("sum", "total"):
+            continue
+        # Every occurrence, not the last: assigning would let a stale duplicate
+        # row sit above the right one unnoticed.
+        totals.setdefault(cells[0].lower(), []).append(float(cells[1]))
+    return totals
+
+
+# The opening paragraph restates all three figures in prose, where no parser
+# looks. Anchored on the sentence, so a reword has to re-confirm the numbers.
+INTRO_SUM_AND_POOL = re.compile(
+    r"sum to \*\*([\d.]+) GiB\*\*;\s+a \*\*([\d.]+) GiB burst pool\*\*"
+)
+INTRO_TOTAL = re.compile(r"total to \*\*([\d.]+) GiB\*\*")
+
+
 class BudgetDocTests(unittest.TestCase):
     def test_real_doc_parses_every_group(self):
         budgets = weekly.parse_budgets(
@@ -48,6 +83,58 @@ class BudgetDocTests(unittest.TestCase):
         )
         host = set(weekly.HOST_GROUPS) | {weekly.BURST_POOL_BUDGET_LABEL}
         self.assertEqual(set(budgets) - host, set(weekly.GROUP_SELECTORS))
+
+    def test_the_doc_totals_match_the_rows_they_sum(self):
+        """`Sum`, `Total` and the opening paragraph are hand-maintained.
+
+        A new group is four edits (see the doc's "Changing a budget"), and the
+        tests that tie its row to the report's selectors and the recording rule
+        all pass with the `Sum` row left stale - which is how the "budgets now
+        total 17.95 GiB" sentence went wrong before 2026-11-06. Whoever sizes
+        the burst pool against free RAM reads these three numbers, so they are
+        worth a gate rather than a note saying nothing checks them.
+        """
+        text = (REPO / "docs" / "resource-budget.md").read_text()
+        budgets = weekly.parse_budgets(text)
+        pool = budgets.pop(weekly.BURST_POOL_BUDGET_LABEL)
+        groups = round(sum(budgets.values()), 2)
+
+        stated = doc_table_totals(text)
+        self.assertEqual(
+            stated.get("sum"),
+            [groups],
+            f"the `Sum` row(s) say {stated.get('sum')}; the {len(budgets)} group "
+            f"rows above them add up to {groups} (one `Sum` row is expected)",
+        )
+        self.assertEqual(
+            stated.get("total"),
+            [round(groups + pool, 2)],
+            f"the `Total` row(s) say {stated.get('total')}; `Sum` {groups} plus "
+            f"the {pool} burst pool is {round(groups + pool, 2)}",
+        )
+
+        # Everything before the table, so a second restatement further down the
+        # prose is checked too - findall, not search, which would stop at the
+        # first correct one and let a stale copy below it through.
+        intro = text.split("## The budgets", 1)[0]
+        pairs = INTRO_SUM_AND_POOL.findall(intro)
+        totals = INTRO_TOTAL.findall(intro)
+        self.assertTrue(
+            pairs and totals,
+            "no prose before the table states the sum, the burst pool and the "
+            "total in the form this test reads; re-anchor it on the reworded "
+            "sentence rather than dropping the check",
+        )
+        self.assertEqual(
+            [(float(s), float(p)) for s, p in pairs],
+            [(groups, pool)] * len(pairs),
+            "prose before the table disagrees with it on the sum or the pool",
+        )
+        self.assertEqual(
+            [float(v) for v in totals],
+            [round(groups + pool, 2)] * len(totals),
+            "prose before the table disagrees with it on the total",
+        )
 
     def test_only_the_budgets_table_is_read(self):
         text = "## Other\n| a | 9 |\n## The budgets\n| Group | Budget |\n| --- | --- |\n| x | 2 |\n"
@@ -276,6 +363,36 @@ class ReportTests(unittest.TestCase):
         self.assertIn("openclaw breached", decision)
         self.assertIn("OOM kill", decision)
         self.assertIn("root filesystem 90% used", decision)
+
+    def test_basket_reports_against_its_budget(self):
+        """basket is a group of its own: the report asks Prometheus for every
+        container of compose project `basket` and reads the budget from the doc,
+        so a remeasured row needs no edit here."""
+        asked: list[str] = []
+        inner = weekly.prom_query
+
+        def recording(base, query, timeout=60.0):
+            asked.append(query)
+            return inner(base, query, timeout)
+
+        weekly.prom_query = recording
+        try:
+            report = weekly.build_report(self.args)
+        finally:
+            weekly.prom_query = inner
+
+        budget = weekly.parse_budgets(Path(self.args.budget_doc).read_text())["basket"]
+        self.assertIn(
+            f"| basket | {weekly.fmt_gib_budget(budget)} | 2.00 GiB | 1.00 GiB | no |",
+            report,
+        )
+        member_sum = (
+            '(sum(docker_container_memory_usage_bytes{project="basket"}) or vector(0))'
+        )
+        self.assertTrue(
+            [q for q in asked if q.startswith("max_over_time(" + member_sum)],
+            "no 7-day peak query selected basket's containers",
+        )
 
     def test_host_groups_report_against_their_budgets(self):
         report = weekly.build_report(self.args)

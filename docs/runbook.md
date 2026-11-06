@@ -4932,7 +4932,7 @@ logs/inspect/stats`, `journalctl`, `systemctl status` — at no cost.
 
 **Production test for containers.** A container is production only if its
 compose project label is one of `compose openclaw identity edge reminder-bot finance-sentry
-dashboard backstage devclaw xui` **and** its name starts with that project:
+dashboard backstage basket devclaw xui` **and** its name starts with that project:
 
 ```bash
 docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}} {{.Name}}' <container>
