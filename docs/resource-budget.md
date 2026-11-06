@@ -3,8 +3,11 @@
 The box has 15.6 GiB of RAM and 8 GiB of swap (the live `/swapfile`; `scripts/bootstrap-vps.sh` creates 4 GiB on a fresh host, and the file was grown since). Every project and host group has a
 memory budget: the expected sustained footprint, so "the box is slow" has an owner to
 look at. The budgets are **documentation, not alert thresholds** (see Alerts): no alert
-keys on them, they are set against the measured 7-day maximum 30-minute average, and
-shorter bursts can exceed them. They sum to **17.10 GiB**; a **1.75 GiB burst pool** for
+keys on them, and shorter bursts can exceed them. A budget is set against the measured
+7-day maximum 30-minute average where that range exists; where it does not, the row's
+own last column says what the number rests on instead - a sized estimate, a local
+test, a single snapshot, a sum of per-container peaks - and more than one row does.
+Read that column before treating a budget as measured. They sum to **17.10 GiB**; a **1.75 GiB burst pool** for
 short-lived work brings the total to **18.85 GiB** against the 15.6 GiB of RAM. That
 overcommit is intended: the groups do not peak together, and swap is the margin.
 
@@ -49,7 +52,7 @@ history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 | dashboard | 0.25 | the dashboard service (compose project `dashboard`) | 114 MiB |
 | xui | 0.25 | web, db (compose project `xui`) | 188 MiB |
 | backstage | 0.15 | the Backstage service (compose project `backstage`, on `lifekit-shared`) | new 2026-10-12; sustained estimate, not yet measured |
-| basket | 0.25 | the app and its Postgres (compose project `basket`: `basket-app`, `basket-db`) | new 2026-11-06; sized estimate, not yet measured (see below) |
+| basket | 0.25 | the app and its Postgres (compose project `basket`; containers `basket-app`, `basket-db`) | new 2026-11-06; sized estimate, not yet measured (see below) |
 | identity | 0.5 | logto, postgres (compose project `identity`); capped at 512 + 256 MiB. Also the tailnet sign-in gate, traefik and oauth2-proxy (compose project `edge`), capped at 128 + 64 MiB | new 2026-10-02: logto 218-266 MiB, postgres 38-71 MiB just after first boot in local tests; traefik about 21 MiB, oauth2-proxy about 5 MiB in local tests |
 | operator sessions | 6.8 | the operator's login slice (`user-1001.slice`): agent sessions, their browser helpers, tools | 4.3 GiB resident at the 5-worker cap (2026-10-01); 30-minute average 3.5 p50, 5.1 p95, 6.8 max over 7 days |
 | runners | 1.4 | the CI runner services and their jobs | 0.2-0.45 GiB idle; 1.6 GiB raw and 1.0 GiB 30-minute average during the 2026-10-01 image-rebuild deploy; 1.37 GiB 30-minute average max over 7 days |
@@ -79,8 +82,13 @@ then retired - see Alerts):
   is the margin. No other group's budget changed. The platform group's budget (1.5 GiB) is below its
   measured 3 GiB 7-day median, which is outside this recalibration.
 
-**basket, added 2026-11-06.** compose project `basket`: `basket-app` and `basket-db`, whose
-Postgres the off-box backup dumps ([`runbook.md`](./runbook.md) "Off-box backup (R2)"). The
+**basket, added 2026-11-06.** compose project `basket`. Selected on the project label
+alone, so the member names do not matter to any query here; where they appear below
+they are the container names [`runbook.md`](./runbook.md) "Off-box backup (R2)" drives
+(`docker stop basket-app`, `docker exec basket-db`), not the compose service labels the
+rows above use - the db service's label is `db` (`scripts/offbox-backup/offbox_backup.py`),
+and nothing in this repo names the app's. Its Postgres the off-box backup
+dumps ([`runbook.md`](./runbook.md) "Off-box backup (R2)"). The
 0.25 GiB is a **sized estimate, not a measurement** - xui is the same app-plus-Postgres
 shape at a 188 MiB peak, identity's Postgres sits at 38-71 MiB - because no reading of the
 box was reachable when the row was written. Replace it (owner: maintainer) with the real
@@ -92,16 +100,23 @@ the box, so that history may already be there.
 
 **Nothing scrapes basket (2026-11-06).** It exposes no `/metrics` endpoint this stack knows
 of, so it has no job in `compose/observability/prometheus/prometheus.yml` and no rule of its
-own; declaring itself under the platform contract is its own repo's work
-([`platform-contract.md`](./platform-contract.md) "Declaring a service" - there are no
-waivers). The `box` rule group still watches its containers through the container exporter:
+own. The deploy-time census does see its containers, and reports them as undeclared:
+nothing in this repo settles which classification that is - a lifekit product whose own
+repo adds the labels (the devclaw-mcp case, since there are no waivers for products) or
+a project for `OUT_OF_CONTRACT`. Each branch lands somewhere different: a product goes
+in [`platform-contract.md`](./platform-contract.md) "Known gaps", which still names only
+devclaw-mcp, while a non-product goes in the `OUT_OF_CONTRACT` dict in
+`scripts/platform-contract.py` (that doc's "Classifying a non-product container"). Making
+the call belongs to whoever owns basket (owner: maintainer, next time the census is read),
+not to this doc. The `box` rule group still watches its containers through the container exporter:
 an abnormal exit, a restart loop, a failing healthcheck or an OOM kill fires for them as for
 any container on the box. One hole stays open: *long-running container is stopped or gone*
 is gated to `project=~"compose|openclaw|docker|devclaw|dashboard|xui"`, so a cleanly stopped
 or deleted `basket-db` is silent. That allowlist predates backstage, identity, edge and
-reminder-bot as well; widening it to every production project is its own change (owner:
-maintainer, follow-up to #479), because it also decides how much retirement noise the rule
-may make.
+reminder-bot as well; widening it to every production project is its own change, because
+it also decides how much retirement noise the rule may make. Owner: maintainer;
+follow-up to #479, and the trigger is the next change that touches that allowlist -
+waiting to notice a silent stop cannot be the trigger, since not noticing is the hole.
 
 Membership is by compose project and service label, so a new container is in the burst
 pool until it is added to a group; platform is every service of compose project
@@ -175,8 +190,8 @@ Prometheus and Grafana rules on deploy; nothing is recreated.
 A **new group**, or a change to an existing group's members, is four edits that have to
 agree:
 
-1. the table row above (and the `Sum` / `Total` rows and the two totals in the opening
-   paragraph);
+1. the table row above (and the `Sum` / `Total` rows and the opening paragraph's three
+   figures: the sum, the burst pool and the total);
 2. `GROUP_SELECTORS` in `scripts/ops-report/weekly.py`;
 3. the `lifekit:group_memory_bytes` recording rule
    (`compose/observability/prometheus/rules.yml`) - **twice**: the group's own
@@ -186,4 +201,6 @@ agree:
    containers", which decides what an alert remedy may do to those containers.
 
 `scripts/ops-report/tests/test_weekly.py` and `scripts/tests/test_alert_rules.py` fail when
-1-3 disagree. Nothing checks 4: it is prose.
+1-3 disagree, the `Sum` / `Total` rows and the opening paragraph's figures included - the
+report never reads those three, so `test_the_doc_totals_match_the_rows_they_sum` is what
+holds them to the rows they sum. Nothing checks 4: it is prose.

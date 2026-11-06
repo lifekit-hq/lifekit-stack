@@ -16,6 +16,15 @@ What that section does not say:
   named branches and `test_burst_pool_subtracts_every_named_group` (added
   2026-11-06) reads the `unless` list, which the first one's regex cannot see.
   The runbook list has no test, by its nature.
+- Two gates cover what those parity tests structurally cannot. The doc's `Sum` /
+  `Total` rows and the two figures in its opening paragraph are read by nothing
+  in the report (`parse_budgets` skips them), so a group can land with every
+  parity test green and the doc silently self-contradicting;
+  `test_the_doc_totals_match_the_rows_they_sum` adds them up. And every other
+  test reads `rules.yml` as YAML plus a regex, so a typo inside an expression
+  passes them all while Prometheus rejects the file at load and keeps serving
+  the previous rules - `test_prometheus_recording_rules_are_valid_promql` runs
+  `promtool check rules` over the real file.
 - A fifth place exists, deliberately outside that list: the
   `container-stopped-or-vanished` Grafana rule
   (`compose/observability/grafana/provisioning/alerting/rules.yml`) carries its

@@ -402,6 +402,37 @@ def promtool_cmd(workdir: Path) -> list[str] | None:
     ]  # fmt: skip
 
 
+PROM_RULES = REPO / "compose/observability/prometheus/rules.yml"
+
+
+def test_prometheus_recording_rules_are_valid_promql():
+    """`promtool check rules` over the real Prometheus rule file.
+
+    Every other test that reads this file parses it as YAML and regex-matches
+    the expression text, so a typo *inside* an expression - an unbalanced
+    paren, a malformed label matcher - passes all of them. Prometheus rejects
+    the whole file at load, goes on serving the previous rule set and says so
+    only in its own log; `scripts/deploy.sh` reloads it with `kill -s HUP` and
+    never reads the result, so nothing downstream notices either. This is the
+    one gate that reads the expressions as PromQL rather than as strings.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp)
+        cmd = promtool_cmd(workdir)
+        if cmd is None:
+            pytest.skip("promtool (or the prom/prometheus image) is not available")
+        # Staged inside workdir because the docker form mounts only that path.
+        staged = workdir / "rules.yml"
+        staged.write_text(PROM_RULES.read_text())
+        proc = subprocess.run(
+            [*cmd, "check", "rules", str(staged)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
 def promtool_alerts(uid: str, input_series: list[tuple[str, float]]) -> tuple[int, str]:
     """Evaluate the rule's own query and threshold in Prometheus (promtool)."""
     rule = RULES[uid]
