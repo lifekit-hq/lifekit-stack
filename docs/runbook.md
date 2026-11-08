@@ -3377,6 +3377,111 @@ tears it down. It never touches the `identity` project. Run it after a Logto
 upgrade, before the bootstrap or the script is used against the new
 version: the bootstrap writes Logto's tables directly.
 
+### Fleet identity (`fleet-agent`)
+
+One narrow Logto identity for the fleet's routine calls to the owner's own
+apps, so none of them borrows `firstmate-ops` (Management API power, far too
+broad). It is a machine-to-machine app `fleet-agent` that gets a token for one
+API resource, `https://fleet.lifekit.internal/api` (override with
+`FLEET_RESOURCE`; it is only an audience name, nothing resolves it), carrying
+only the scopes its role holds. `scripts/identity/fleet-agent.sh` does it all
+through `logto-admin.py` as `firstmate-ops`; every step is idempotent and
+nothing restarts Logto or any container.
+
+| Scope | Action class | Accepted by |
+| --- | --- | --- |
+| `fleet:read` | reads of fleet and health data | lifekit-dashboard edge, finance-sentry |
+| `fleet:recategorise` | reversible recategorisation | finance-sentry |
+| `basket:price-ingest` | price ingest | basket machine endpoints |
+| `basket:catalog-read` | product catalog read | basket machine endpoints |
+| `basket:catalog-add` | product catalog add | basket machine endpoints |
+
+Writes that change money, accounts or ownership have no scope here, so no
+token can carry them. An app accepts a token by checking issuer (Logto's
+`/oidc`), audience (the resource indicator) and the scope its endpoint needs.
+The apps themselves are separate work: lifekit-dashboard#217,
+finance-sentry#1355 and basket#62.
+
+**Issue** (admin account, a checkout, firstmate's age key; re-running changes
+nothing):
+
+```bash
+bash scripts/identity/fleet-agent.sh issue     # resource, scopes, app, role, grant, secret store
+bash scripts/identity/fleet-agent.sh status    # what Logto holds; whether the store matches
+bash scripts/identity/fleet-agent.sh verify    # a token from the stored credentials; fails if any scope is missing
+```
+
+The client secret is created once by Logto and written only to the host
+secret store, `~/.config/firstmate/fleet-agent.env.sops` (0600, a SOPS dotenv
+with `FLEET_AGENT_CLIENT_ID`, `FLEET_AGENT_CLIENT_SECRET`,
+`FLEET_AGENT_RESOURCE`, encrypted to the same recipients as
+`logto-m2m.env.sops`, [docs/secrets.md](./secrets.md) "Not in these files").
+It never reaches argv, a log, the ledger, the repo or a PR. The only
+consumer is the fleet on this host: no app holds the secret, so no app file
+gets a new secret. Use it the way the `firstmate-ops` file is used:
+
+```bash
+sops exec-env ~/.config/firstmate/fleet-agent.env.sops 'curl -s -u "$FLEET_AGENT_CLIENT_ID:$FLEET_AGENT_CLIENT_SECRET" \
+  -d grant_type=client_credentials --data-urlencode "resource=$FLEET_AGENT_RESOURCE" \
+  -d scope=fleet:read http://127.0.0.1:3001/oidc/token'
+```
+
+Ask for the scopes the call needs; Logto grants the intersection with the
+role. A scope the role lacks is not an error: the token simply comes back
+without it, and a token with no scope is refused by every app.
+
+A run that died after Logto created the app and before the store was written
+recovers by running `issue` again (the secret is read back from Logto). A
+store whose client id is not the live app's (the app was deleted and made
+again) is replaced by the next `issue`.
+
+**Rotate** (on exposure, or yearly with the secrets review): adds a new secret,
+writes it to the store, then deletes the older ones in Logto. The old secret
+answers HTTP 401 at once; a token it already minted lives out its hour. The
+fleet is the only holder, so nothing else changes:
+
+```bash
+bash scripts/identity/fleet-agent.sh rotate && bash scripts/identity/fleet-agent.sh verify
+```
+
+**Revoke.** Two levels; both leave a token already issued valid until it
+expires, at most an hour (the resource's token lifetime):
+
+```bash
+bash scripts/identity/fleet-agent.sh revoke            # take the role away
+bash scripts/identity/fleet-agent.sh revoke --delete   # delete the app and the stored secret
+```
+
+`revoke` is the pause: Logto has no per-application disable, so the app
+keeps its credentials but its role (and with it every scope) is gone. It
+still gets a token, one that carries no scope, and a scope-checking app
+refuses it (`verify` then fails, naming the missing scopes). `logto-admin.py undo` puts the role back. `revoke --delete` is
+retirement: the app is gone, no token is issued at all, and `issue` later
+makes a new app with a new client id and secret. For a leaked secret, run
+`rotate` first (the leaked one stops at once), then decide.
+
+**Per-agent identities (optional).** For an audit trail per agent, give each
+its own app with the same or a narrower scope list, through the generic
+commands (the role is named after the app, so each app's scopes are its own):
+
+```bash
+sops exec-env ~/.config/firstmate/logto-m2m.env.sops 'python3 scripts/identity/logto-admin.py \
+  ensure-m2m-app oc-kit --resource https://fleet.lifekit.internal/api \
+  --scope fleet:read --secret-file ~/oc-kit.secret'
+```
+
+`ensure-m2m-app` makes the app's role hold exactly the scopes given (extras
+are taken away), `rotate-secret` and `revoke-app` take the app name, and
+`app-status` prints roles, scopes and the live-secret count without a value.
+Each is also in the ledger for `logto-admin.py undo`, except a secret
+rotation and an app deletion, which cannot be taken back. The secret file
+goes into its own SOPS file the same way as above, then is shredded.
+
+The rehearsal covers all of it (resource, scopes, the app, idempotence, the
+scope intersection, rotation, both revocations) against a throwaway Logto;
+`scripts/tests/test_logto_admin.py` covers the request shapes and the
+store handling.
+
 ### Inviting a person: `people invite` / `people status`
 
 `scripts/people/people.py` is the owner-facing wrapper over the commands

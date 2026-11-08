@@ -43,6 +43,10 @@ class FakeLogto:
         self.user_roles: dict[str, list[str]] = {}
         self.apps: list[dict] = []
         self.secrets: dict[str, list[dict]] = {}
+        self.resources: list[dict] = []
+        self.resource_scopes: dict[str, list[dict]] = {}
+        self.role_scopes: dict[str, list[str]] = {}
+        self.app_roles: dict[str, list[str]] = {}
         self.sign_in_exp = {
             "id": "default",
             "color": {
@@ -71,6 +75,10 @@ class FakeLogto:
         self.test_sends: list[dict] = []
         self.requests: list[tuple[str, str, object]] = []
         self.seq = 0
+
+    def next_secret(self) -> str:
+        self.seq += 1
+        return f"rotated-secret-value-{self.seq:04d}-0123456789abcdef"
 
     def next_id(self, prefix: str) -> str:
         self.seq += 1
@@ -111,20 +119,46 @@ def handler_for(fake: FakeLogto):
                 form = urllib.parse.parse_qs(raw.decode())
                 want = base64.b64encode(f"{APP_ID}:{APP_SECRET}".encode()).decode()
                 ok = self.headers.get("Authorization") == f"Basic {want}"
-                good_form = form.get("grant_type") == [
-                    "client_credentials"
-                ] and form.get("resource") == ["https://default.logto.app/api"]
+                granted = None
+                for app in fake.apps:
+                    for sec in fake.secrets.get(app["id"], []):
+                        pair = base64.b64encode(
+                            f"{app['id']}:{sec['value']}".encode()
+                        ).decode()
+                        if self.headers.get("Authorization") == f"Basic {pair}":
+                            ok = True
+                            held = {
+                                sid
+                                for rid in fake.app_roles.get(app["id"], [])
+                                for sid in fake.role_scopes.get(rid, [])
+                            }
+                            granted = {
+                                sc["name"]
+                                for scs in fake.resource_scopes.values()
+                                for sc in scs
+                                if sc["id"] in held
+                            }
+                audiences = ["https://default.logto.app/api"] + [
+                    r["indicator"] for r in fake.resources
+                ]
+                good_form = (
+                    form.get("grant_type") == ["client_credentials"]
+                    and form.get("resource", [""])[0] in audiences
+                )
                 if not (ok and good_form):
                     return self.reply(
                         400, {"error": "invalid_client", "error_description": "bad"}
                     )
+                scope = form.get("scope", ["all"])[0]
+                if granted is not None:
+                    scope = " ".join(s for s in scope.split() if s in granted)
                 return self.reply(
                     200,
                     {
                         "access_token": TOKEN,
                         "expires_in": 3600,
                         "token_type": "Bearer",
-                        "scope": "all",
+                        "scope": scope,
                     },
                 )
             if self.headers.get("Authorization") != f"Bearer {TOKEN}":
@@ -208,6 +242,50 @@ def handler_for(fake: FakeLogto):
                 if len(parts) == 4 and parts[3] == "test" and method == "POST":
                     fake.test_sends.append(data)
                     return self.reply(204)
+            if parts[:2] == ["api", "resources"]:
+                if len(parts) == 2 and method == "GET":
+                    return self.page(fake.resources, query)
+                if len(parts) == 2 and method == "POST":
+                    res = {"id": fake.next_id("res"), **data}
+                    fake.resources.append(res)
+                    fake.resource_scopes[res["id"]] = []
+                    return self.reply(201, res)
+                res = next((r for r in fake.resources if r["id"] == parts[2]), None)
+                if res is None:
+                    return self.reply(404, {"code": "entity.not_found", "message": "x"})
+                scopes = fake.resource_scopes[res["id"]]
+                if len(parts) == 4 and parts[3] == "scopes":
+                    if method == "GET":
+                        return self.page(scopes, query)
+                    if method == "POST":
+                        if any(sc["name"] == data["name"] for sc in scopes):
+                            return self.reply(
+                                422, {"code": "resource.scope_exists", "message": "x"}
+                            )
+                        scope = {"id": fake.next_id("sc"), **data}
+                        scopes.append(scope)
+                        return self.reply(201, scope)
+                if len(parts) == 5 and parts[3] == "scopes" and method == "DELETE":
+                    scopes[:] = [sc for sc in scopes if sc["id"] != parts[4]]
+                    return self.reply(204)
+                if len(parts) == 3 and method == "DELETE":
+                    fake.resources.remove(res)
+                    return self.reply(204)
+            if (
+                parts[:2] == ["api", "roles"]
+                and len(parts) >= 4
+                and parts[3] == "scopes"
+            ):
+                have = fake.role_scopes.setdefault(parts[2], [])
+                every = [sc for scs in fake.resource_scopes.values() for sc in scs]
+                if method == "GET":
+                    return self.page([sc for sc in every if sc["id"] in have], query)
+                if method == "POST":
+                    have.extend(i for i in data["scopeIds"] if i not in have)
+                    return self.reply(201, {"scopeIds": data["scopeIds"]})
+                if method == "DELETE":
+                    have.remove(parts[4])
+                    return self.reply(204)
             if parts[:2] == ["api", "roles"]:
                 if len(parts) == 4 and parts[3] == "users" and method == "GET":
                     holders = [
@@ -225,6 +303,7 @@ def handler_for(fake: FakeLogto):
                             {"code": "guard.invalid_input", "message": "description"},
                         )
                     role = {"id": fake.next_id("r"), **data}
+                    fake.role_scopes[role["id"]] = list(role.pop("scopeIds", []))
                     fake.roles.append(role)
                     return self.reply(200, role)
                 if method == "DELETE":
@@ -302,7 +381,34 @@ def handler_for(fake: FakeLogto):
                         404, {"code": "entity.not_found", "message": "gone"}
                     )
                 if len(parts) == 4 and parts[3] == "secrets":
+                    if method == "POST":
+                        secret = {
+                            "expiresAt": None,
+                            "value": fake.next_secret(),
+                            **data,
+                        }
+                        fake.secrets[app["id"]].append(secret)
+                        return self.reply(201, secret)
                     return self.reply(200, fake.secrets[app["id"]])
+                if len(parts) == 5 and parts[3] == "secrets" and method == "DELETE":
+                    fake.secrets[app["id"]] = [
+                        sec
+                        for sec in fake.secrets[app["id"]]
+                        if sec["name"] != urllib.parse.unquote(parts[4])
+                    ]
+                    return self.reply(204)
+                if len(parts) >= 4 and parts[3] == "roles":
+                    have = fake.app_roles.setdefault(app["id"], [])
+                    if method == "GET":
+                        return self.page(
+                            [r for r in fake.roles if r["id"] in have], query
+                        )
+                    if method == "POST":
+                        have.extend(i for i in data["roleIds"] if i not in have)
+                        return self.reply(201, {"roleIds": data["roleIds"]})
+                    if method == "DELETE":
+                        have.remove(parts[4])
+                        return self.reply(204)
                 if method == "PATCH":
                     meta = data["oidcClientMetadata"]
                     if (
@@ -367,6 +473,7 @@ def logto(tmp_path):
         return proc
 
     run.fake = fake
+    run.endpoint = f"http://127.0.0.1:{server.server_port}"
     run.ledger = ledger
     run.outputs = outputs
     yield run
@@ -374,6 +481,8 @@ def logto(tmp_path):
     for out in outputs:
         for secret in (APP_SECRET, TOKEN, GATE_SECRET, SMTP_PASSWORD):
             assert secret not in out
+        assert "rotated-secret-value" not in out
+        assert "STORED-SECRET" not in out
     if ledger.exists():
         assert SMTP_PASSWORD not in ledger.read_text()
 
@@ -1043,3 +1152,407 @@ def test_create_user_is_get_or_create_and_undoable(logto):
     }
     assert logto("undo").returncode == 0
     assert all(u["id"] != made["id"] for u in logto.fake.users)
+
+
+FLEET = "https://fleet.example.invalid/api"
+FLEET_SCOPES = ("fleet:read", "fleet:recategorise", "basket:catalog-add")
+
+
+def ensure_fleet_resource(run, *scopes):
+    return run(
+        "ensure-resource",
+        FLEET,
+        "--name",
+        "Fleet apps",
+        *[a for sc in (scopes or FLEET_SCOPES) for a in ("--scope", sc)],
+    )
+
+
+def ensure_fleet_app(run, *scopes, extra=()):
+    return run(
+        "ensure-m2m-app",
+        "fleet-agent",
+        "--resource",
+        FLEET,
+        *[a for sc in (scopes or FLEET_SCOPES) for a in ("--scope", sc)],
+        *extra,
+    )
+
+
+def test_ensure_resource_creates_then_changes_nothing(logto):
+    first = ensure_fleet_resource(logto)
+    assert first.returncode == 0, first.stderr
+    assert "created" in first.stdout
+    res = logto.fake.resources[0]
+    assert res["indicator"] == FLEET
+    assert res["accessTokenTtl"] == 3600
+    assert sorted(s["name"] for s in logto.fake.resource_scopes[res["id"]]) == sorted(
+        FLEET_SCOPES
+    )
+    before = len(ledger_entries(logto))
+    again = ensure_fleet_resource(logto)
+    assert again.returncode == 0, again.stderr
+    assert "created" not in again.stdout
+    assert len(ledger_entries(logto)) == before
+    assert len(logto.fake.resources) == 1
+
+
+def test_ensure_resource_adds_a_scope_and_never_removes_one(logto):
+    ensure_fleet_resource(logto)
+    proc = ensure_fleet_resource(logto, "fleet:read", "basket:price-ingest")
+    assert proc.returncode == 0, proc.stderr
+    names = {s["name"] for s in logto.fake.resource_scopes["res1"]}
+    assert names == {*FLEET_SCOPES, "basket:price-ingest"}
+
+
+def test_ensure_resource_rejects_a_bad_scope_name(logto):
+    proc = ensure_fleet_resource(logto, "has space")
+    assert proc.returncode == 2
+    assert not logto.fake.resources
+
+
+def test_ensure_m2m_app_builds_role_scopes_and_grant(logto, tmp_path):
+    ensure_fleet_resource(logto)
+    secret_file = tmp_path / "fleet.secret"
+    proc = ensure_fleet_app(
+        logto,
+        "fleet:read",
+        "fleet:recategorise",
+        extra=("--secret-file", str(secret_file)),
+    )
+    assert proc.returncode == 0, proc.stderr
+    app = next(a for a in logto.fake.apps if a["name"] == "fleet-agent")
+    assert app["type"] == "MachineToMachine"
+    role = next(r for r in logto.fake.roles if r["name"] == "fleet-agent")
+    assert role["type"] == "MachineToMachine"
+    held = {
+        s["name"]
+        for s in logto.fake.resource_scopes["res1"]
+        if s["id"] in logto.fake.role_scopes[role["id"]]
+    }
+    assert held == {"fleet:read", "fleet:recategorise"}
+    assert logto.fake.app_roles[app["id"]] == [role["id"]]
+    assert secret_file.read_text() == GATE_SECRET
+    assert oct(secret_file.stat().st_mode & 0o777) == "0o600"
+    assert [e["action"] for e in ledger_entries(logto)] == [
+        "create-resource",
+        "create-scope",
+        "create-scope",
+        "create-scope",
+        "create-app",
+        "create-role",
+        "grant-app-role",
+    ]
+
+
+def test_ensure_m2m_app_is_idempotent_and_prints_no_secret(logto):
+    ensure_fleet_resource(logto)
+    ensure_fleet_app(logto)
+    before = len(ledger_entries(logto))
+    requests = len(logto.fake.requests)
+    again = ensure_fleet_app(logto)
+    assert again.returncode == 0, again.stderr
+    assert len(ledger_entries(logto)) == before
+    assert all(m == "GET" for m, _, _ in logto.fake.requests[requests:])
+    assert len(logto.fake.apps) == 1
+    assert GATE_SECRET not in again.stdout + again.stderr
+
+
+def test_ensure_m2m_app_narrows_a_role_that_holds_more(logto):
+    ensure_fleet_resource(logto)
+    ensure_fleet_app(logto)
+    proc = ensure_fleet_app(logto, "fleet:read")
+    assert proc.returncode == 0, proc.stderr
+    role = next(r for r in logto.fake.roles if r["name"] == "fleet-agent")
+    names = {
+        s["name"]
+        for s in logto.fake.resource_scopes["res1"]
+        if s["id"] in logto.fake.role_scopes[role["id"]]
+    }
+    assert names == {"fleet:read"}
+    actions = [e["action"] for e in ledger_entries(logto)]
+    assert actions.count("remove-role-scope") == 2
+    # and widening again is one add per scope
+    ensure_fleet_app(logto, *FLEET_SCOPES)
+    assert len(logto.fake.role_scopes[role["id"]]) == 3
+
+
+def test_ensure_m2m_app_refuses_unknown_resource_scope_and_wrong_types(logto):
+    no_resource = ensure_fleet_app(logto)
+    assert no_resource.returncode == 1
+    assert "ensure-resource first" in no_resource.stderr
+    ensure_fleet_resource(logto)
+    bad_scope = ensure_fleet_app(logto, "fleet:read", "fleet:write")
+    assert bad_scope.returncode == 1
+    assert "fleet:write" in bad_scope.stderr
+    assert not logto.fake.apps and not logto.fake.roles
+    logto.fake.apps.append({"id": "w1", "name": "fleet-agent", "type": "Traditional"})
+    wrong_app = ensure_fleet_app(logto)
+    assert wrong_app.returncode == 1
+    assert "not MachineToMachine" in wrong_app.stderr
+    logto.fake.apps.clear()
+    logto.fake.roles.append({"id": "u1r", "name": "fleet-agent", "type": "User"})
+    wrong_role = ensure_fleet_app(logto)
+    assert wrong_role.returncode == 1
+    assert "not MachineToMachine" in wrong_role.stderr
+
+
+def test_ensure_m2m_app_undo_reverses_in_order(logto):
+    ensure_fleet_resource(logto)
+    ensure_fleet_app(logto)
+    while logto("undo").returncode == 0:
+        pass
+    assert not logto.fake.apps
+    assert not logto.fake.roles
+    assert not logto.fake.resources
+
+
+def test_rotate_secret_writes_the_new_and_drops_the_old(logto, tmp_path):
+    ensure_fleet_resource(logto)
+    ensure_fleet_app(logto)
+    target = tmp_path / "new.secret"
+    proc = logto("rotate-secret", "fleet-agent", "--secret-file", str(target))
+    assert proc.returncode == 0, proc.stderr
+    app_id = next(a["id"] for a in logto.fake.apps if a["name"] == "fleet-agent")
+    live = logto.fake.secrets[app_id]
+    assert [s["name"].startswith("rotated-") for s in live] == [True]
+    assert target.read_text() == live[0]["value"] != GATE_SECRET
+    assert oct(target.stat().st_mode & 0o777) == "0o600"
+    entry = ledger_entries(logto)[-1]
+    assert entry["action"] == "rotate-secret"
+    assert "undo" not in entry
+    assert live[0]["value"] not in logto.ledger.read_text()
+    refused = logto("rotate-secret", "fleet-agent", "--secret-file", str(target))
+    assert refused.returncode == 1
+    assert "not overwriting" in refused.stderr
+    assert len(logto.fake.secrets[app_id]) == 1
+
+
+def test_revoke_app_takes_the_role_away_and_undo_restores_it(logto):
+    ensure_fleet_resource(logto)
+    ensure_fleet_app(logto)
+    app = next(a for a in logto.fake.apps if a["name"] == "fleet-agent")
+    proc = logto("revoke-app", "fleet-agent")
+    assert proc.returncode == 0, proc.stderr
+    assert logto.fake.app_roles[app["id"]] == []
+    again = logto("revoke-app", "fleet-agent")
+    assert "already revoked" in again.stdout
+    assert logto("undo").returncode == 0
+    assert len(logto.fake.app_roles[app["id"]]) == 1
+
+
+def test_revoke_app_delete_and_absent(logto):
+    assert "absent" in logto("revoke-app", "fleet-agent").stdout
+    ensure_fleet_resource(logto)
+    ensure_fleet_app(logto)
+    proc = logto("revoke-app", "fleet-agent", "--delete")
+    assert proc.returncode == 0, proc.stderr
+    assert not logto.fake.apps
+
+
+def test_revoke_app_refuses_a_non_machine_app(logto):
+    logto("ensure-app", "Grafana")
+    proc = logto("revoke-app", "Grafana")
+    assert proc.returncode == 1
+    assert "not MachineToMachine" in proc.stderr
+    assert logto.fake.apps
+
+
+def test_app_status_prints_roles_scopes_and_count_only(logto):
+    ensure_fleet_resource(logto)
+    ensure_fleet_app(logto, "fleet:read")
+    proc = logto("app-status", "fleet-agent")
+    assert proc.returncode == 0, proc.stderr
+    assert "roles [fleet-agent]" in proc.stdout
+    assert "scopes [fleet:read]" in proc.stdout
+    assert "1 live secret(s)" in proc.stdout
+    assert "absent" in logto("app-status", "nope").stdout
+
+
+def test_token_check_asks_for_the_resource_and_scopes_given(logto):
+    ensure_fleet_resource(logto)
+    proc = logto(
+        "token-check", "--resource", FLEET, "--scope", "fleet:read", "--scope", "x:y"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "scope fleet:read x:y" in proc.stdout
+    unknown = logto("token-check", "--resource", "https://nowhere.invalid/")
+    assert unknown.returncode == 1
+
+
+FLEET_SH = REPO / "scripts/identity/fleet-agent.sh"
+
+# A sops stand-in: "encrypt" keeps the dotenv and appends the recipients like
+# sops does, "decrypt" drops the metadata lines. Real sops runs on the box.
+STUB_SOPS = """#!/usr/bin/env bash
+case "$1" in
+  decrypt) grep -v '^sops_' "${@: -1}" ;;
+  encrypt)
+    if [ -e "$PWD/.sops.yaml" ]; then
+      echo 'error loading config: no matching creation rules found' >&2
+      exit 128
+    fi
+    file="${@: -1}"
+    cat "$file"
+    n=0
+    for k in $(printf '%s' "$3" | tr ',' ' '); do echo "sops_age__list_${n}__map_recipient=$k"; n=$((n+1)); done
+    ;;
+  *) exit 64 ;;
+esac
+"""
+
+
+@pytest.fixture
+def fleet(logto, tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "sops"
+    stub.write_text(STUB_SOPS)
+    stub.chmod(0o755)
+    m2m = tmp_path / "m2m.env.sops"
+    m2m.write_text(
+        f"LOGTO_M2M_APP_ID={APP_ID}\nLOGTO_M2M_APP_SECRET={APP_SECRET}\n"
+        "sops_age__list_0__map_recipient=age1captainkey\n"
+        "sops_age__list_1__map_recipient=age1firstmatekey\n"
+    )
+    store = tmp_path / "cfg" / "fleet-agent.env.sops"
+
+    def run(*args):
+        env = {
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "HOME": str(tmp_path),
+            "LOGTO_ENDPOINT": logto.endpoint,
+            "LOGTO_ADMIN_LEDGER": str(logto.ledger),
+            "FIRSTMATE_LOGTO_M2M_SOPS": str(m2m),
+            "FLEET_AGENT_SOPS": str(store),
+            "FLEET_RESOURCE": FLEET,
+        }
+        proc = subprocess.run(
+            ["bash", str(FLEET_SH), *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        logto.outputs.append(proc.stdout + proc.stderr)
+        return proc
+
+    run.store = store
+    run.logto = logto
+    return run
+
+
+def stored(fleet, key):
+    for line in fleet.store.read_text().splitlines():
+        if line.startswith(f"{key}="):
+            return line.split("=", 1)[1]
+    return None
+
+
+def test_fleet_issue_creates_everything_and_stores_the_secret_only_there(fleet):
+    proc = fleet("issue")
+    assert proc.returncode == 0, proc.stderr
+    fake = fleet.logto.fake
+    app = next(a for a in fake.apps if a["name"] == "fleet-agent")
+    assert app["type"] == "MachineToMachine"
+    assert {s["name"] for s in fake.resource_scopes["res1"]} == {
+        "fleet:read",
+        "fleet:recategorise",
+        "basket:price-ingest",
+        "basket:catalog-read",
+        "basket:catalog-add",
+    }
+    role = next(r for r in fake.roles if r["name"] == "fleet-agent")
+    assert len(fake.role_scopes[role["id"]]) == 5
+    assert oct(fleet.store.stat().st_mode & 0o777) == "0o600"
+    assert stored(fleet, "FLEET_AGENT_CLIENT_ID") == app["id"]
+    assert stored(fleet, "FLEET_AGENT_CLIENT_SECRET") == GATE_SECRET
+    assert stored(fleet, "FLEET_AGENT_RESOURCE") == FLEET
+    # the store is encrypted to the same recipients as the firstmate-ops file
+    text = fleet.store.read_text()
+    assert "age1captainkey" in text and "age1firstmatekey" in text
+    assert GATE_SECRET not in proc.stdout + proc.stderr
+    assert list(fleet.store.parent.iterdir()) == [fleet.store]
+
+
+def test_fleet_issue_twice_changes_nothing(fleet):
+    assert fleet("issue").returncode == 0
+    entries = len(ledger_entries(fleet.logto))
+    before = fleet.store.read_bytes()
+    again = fleet("issue")
+    assert again.returncode == 0, again.stderr
+    assert "not touched" in again.stdout
+    assert len(ledger_entries(fleet.logto)) == entries
+    assert fleet.store.read_bytes() == before
+    assert len(fleet.logto.fake.apps) == 1
+
+
+def test_fleet_issue_replaces_a_store_that_belongs_to_a_deleted_app(fleet):
+    assert fleet("issue").returncode == 0
+    assert fleet("revoke", "--delete").returncode == 0
+    assert not fleet.store.exists()
+    fleet.store.parent.mkdir(exist_ok=True)
+    fleet.store.write_text(
+        "FLEET_AGENT_CLIENT_ID=gone\nFLEET_AGENT_CLIENT_SECRET=STORED-SECRET\n"
+    )
+    assert fleet("issue").returncode == 0
+    new_id = next(a["id"] for a in fleet.logto.fake.apps if a["name"] == "fleet-agent")
+    assert stored(fleet, "FLEET_AGENT_CLIENT_ID") == new_id
+    assert "STORED-SECRET" not in fleet.store.read_text()
+
+
+def test_fleet_verify_gets_a_token_with_the_stored_credentials(fleet):
+    assert fleet("verify").returncode == 1
+    assert fleet("issue").returncode == 0
+    proc = fleet("verify")
+    assert proc.returncode == 0, proc.stderr
+    assert "token ok: scope fleet:read" in proc.stdout
+    assert TOKEN not in proc.stdout
+
+
+def test_fleet_verify_fails_once_the_role_is_revoked(fleet):
+    assert fleet("issue").returncode == 0
+    assert fleet("verify").returncode == 0
+    assert fleet("revoke").returncode == 0
+    proc = fleet("verify")
+    assert proc.returncode == 1
+    assert "lacks scope" in proc.stderr
+    assert "fleet:read" in proc.stderr
+
+
+def test_fleet_rotate_replaces_the_stored_secret(fleet):
+    assert fleet("rotate").returncode == 1
+    assert fleet("issue").returncode == 0
+    proc = fleet("rotate")
+    assert proc.returncode == 0, proc.stderr
+    new = stored(fleet, "FLEET_AGENT_CLIENT_SECRET")
+    assert new != GATE_SECRET
+    assert new.startswith("rotated-secret-value-")
+    app_id = next(a["id"] for a in fleet.logto.fake.apps if a["name"] == "fleet-agent")
+    assert [s["value"] for s in fleet.logto.fake.secrets[app_id]] == [new]
+    assert fleet("verify").returncode == 0
+    assert new not in proc.stdout + proc.stderr
+
+
+def test_fleet_revoke_keeps_the_app_and_delete_removes_app_and_store(fleet):
+    assert fleet("issue").returncode == 0
+    soft = fleet("revoke")
+    assert soft.returncode == 0, soft.stderr
+    assert "at most an hour" in soft.stdout
+    assert len(fleet.logto.fake.apps) == 1
+    assert fleet.store.exists()
+    status = fleet("status")
+    assert status.returncode == 0
+    assert "roles []" in status.stdout
+    assert "matching the app" in status.stdout
+    hard = fleet("revoke", "--delete")
+    assert hard.returncode == 0, hard.stderr
+    assert not any(a["name"] == "fleet-agent" for a in fleet.logto.fake.apps)
+    assert not fleet.store.exists()
+
+
+def test_fleet_usage_errors(fleet):
+    assert fleet().returncode == 2
+    assert fleet("nope").returncode == 2
+    assert fleet("revoke", "--now").returncode == 2
+    assert fleet("issue", "extra").returncode == 2
