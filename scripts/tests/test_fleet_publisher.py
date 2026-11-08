@@ -2817,8 +2817,7 @@ def test_taken_feed_skips_and_counts_lines_it_cannot_use(fleet):
             json.dumps(p16_row("yesterday")) + "\n",
             json.dumps(p16_row(1_794_139_002, subject="   ")) + "\n",
             json.dumps(p16_row(1_794_139_003, outcome=7)) + "\n",
-            json.dumps(p16_row("PLACEHOLDER")).replace('"PLACEHOLDER"', "1e999")
-            + "\n",
+            json.dumps(p16_row("PLACEHOLDER")).replace('"PLACEHOLDER"', "1e999") + "\n",
             json.dumps(p16_row("PLACEHOLDER")).replace('"PLACEHOLDER"', "9" * 400)
             + "\n",
             "[" * 60_000 + "\n",

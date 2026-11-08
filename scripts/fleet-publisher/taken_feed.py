@@ -131,7 +131,11 @@ def action(source: str, row: dict[str, Any]) -> dict[str, Any] | None:
         cited = SELF_CALL_RULING_RE.search(str(row.get("record") or ""))
         outcome = SELF_CALL_OUTCOME
         ruling = cited.group(1) if cited else SELF_CALL_OUTCOME
-        extras = {"class": None, "actor": None, "home_id": one_line(row.get("home"), FIELD_MAX)}
+        extras = {
+            "class": None,
+            "actor": None,
+            "home_id": one_line(row.get("home"), FIELD_MAX),
+        }
     item = {
         "source": source,
         "ts": at,
