@@ -2817,6 +2817,11 @@ def test_taken_feed_skips_and_counts_lines_it_cannot_use(fleet):
             json.dumps(p16_row("yesterday")) + "\n",
             json.dumps(p16_row(1_794_139_002, subject="   ")) + "\n",
             json.dumps(p16_row(1_794_139_003, outcome=7)) + "\n",
+            json.dumps(p16_row("PLACEHOLDER")).replace('"PLACEHOLDER"', "1e999")
+            + "\n",
+            json.dumps(p16_row("PLACEHOLDER")).replace('"PLACEHOLDER"', "9" * 400)
+            + "\n",
+            "[" * 60_000 + "\n",
         ],
         self_calls=["not json at all\n", json.dumps({"ts": 1_794_139_004}) + "\n"],
     )
@@ -2824,7 +2829,7 @@ def test_taken_feed_skips_and_counts_lines_it_cannot_use(fleet):
     assert result.returncode == 0, result.stderr
     feed = taken(fleet)
     assert [i["subject"] for i in feed["items"]] == ["lifekit-dashboard#212"]
-    assert feed["sources"]["p16"] == {"read": True, "lines": 7, "skipped": 6}
+    assert feed["sources"]["p16"] == {"read": True, "lines": 10, "skipped": 9}
     assert feed["sources"]["self_calls"] == {"read": True, "lines": 2, "skipped": 2}
 
 

@@ -29,6 +29,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -66,7 +67,12 @@ def epoch(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        seconds = float(value)
+        try:
+            seconds = float(value)
+        except OverflowError:
+            return None
+        if not math.isfinite(seconds):
+            return None
         if seconds > 1e11:  # milliseconds
             seconds /= 1000
         return int(seconds) if seconds > 0 else None
@@ -77,7 +83,10 @@ def epoch(value: Any) -> int | None:
             return None
         if moment.tzinfo is None:
             moment = moment.replace(tzinfo=dt.timezone.utc)
-        return int(moment.timestamp())
+        try:
+            return int(moment.timestamp())
+        except (OverflowError, OSError):
+            return None
     return None
 
 
@@ -153,7 +162,7 @@ def read_source(source: str, path: Path) -> tuple[list[dict[str, Any]], dict[str
         if len(stripped) <= MAX_LINE_BYTES:
             try:
                 row = json.loads(stripped)
-            except ValueError:
+            except (ValueError, RecursionError):
                 row = None
         item = action(source, row) if isinstance(row, dict) else None
         if item is None:
