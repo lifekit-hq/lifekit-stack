@@ -210,7 +210,9 @@ Stop the local server (`Ctrl-C`) — the token is now on disk.
 
 ## 7. Copy the refresh token to the VPS
 
-First make sure the host dir exists with the right owner/mode. On the VPS:
+The deploy creates the host dir with the right owner/mode before it starts the
+service; on a host the deploy has not reached yet, or to make it by hand, on the
+VPS:
 
 ```bash
 sudo /srv/lifekit-stack/scripts/google-mcp-bootstrap.sh
@@ -301,11 +303,18 @@ is not the owner's to revoke.
   `GOOGLE_OAUTH_*` / `USER_GOOGLE_EMAIL` names. The two `oauth-client`
   inventory rows are added to `docs/secrets.md` in the same change that stores
   the values in the master file (`scripts/tests/test_secrets.py` holds the pair).
-- On the VPS: `sudo /srv/lifekit-stack/scripts/google-mcp-bootstrap.sh fleet`
-  creates `/srv/google-workspace-mcp-fleet/credentials/` (mode 0700, owner
-  `lifekit`). Run it before the first sign-in; the compose service starts without
-  it and without credentials, and answers `/health`, so the merge is safe to land
-  first.
+- On the VPS: the deploy creates `/srv/google-workspace-mcp-fleet/credentials/`
+  itself (mode 0700, owner `app`, uid 1000 = `lifekit`) before it brings the
+  service up, so a fresh or rebuilt host starts the connector without
+  credentials, healthy on `/health`, and without an alert; a first start that
+  found the folder missing would otherwise make Docker create it root-owned and
+  the connector would exit on its credentials-folder check (issue 495). The
+  deploy account has no sudo, so a throwaway container from the connector's
+  image does it (`openclaw_ensure_google_creds_dirs` in
+  `scripts/deploy-openclaw.sh`); it also re-owns a folder a failed first start
+  left root-owned, and leaves a writable folder alone.
+  `sudo /srv/lifekit-stack/scripts/google-mcp-bootstrap.sh fleet` makes the same
+  folder by hand and is no longer a step before the first deploy.
 - Step 6 on the PC, signed in as the fleet account, with only Drive asked for:
 
   ```bash
@@ -351,7 +360,8 @@ docker logs --since 10m openclaw-google-workspace-mcp-fleet-1 | grep -E 'create_
 four Gmail names and none of the Drive ones, and `create_drive_file` is not
 offered by Kit's connector.
 
-**Rollout order.** (1) Merge: the deploy recreates `openclaw-google-workspace-mcp-1`
+**Rollout order.** (1) Merge: the deploy creates the fleet credentials folder if it
+is missing, recreates `openclaw-google-workspace-mcp-1`
 at `drive:readonly` (Kit's token and Gmail/Calendar reads are unaffected) and
 starts the fleet connector without credentials; the gateway itself is not
 recreated for this change, since nothing in the gateway's service definition

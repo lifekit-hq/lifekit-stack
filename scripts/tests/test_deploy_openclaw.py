@@ -1120,6 +1120,91 @@ def test_cutover_removes_only_the_old_openclaw_containers_before_the_new_up(env)
     ]
 
 
+CREDS_TARGET = "/home/app/.google_workspace_mcp/credentials"
+
+# Replaces the shared docker stub: the openclaw project's `config` lists the
+# two Workspace connectors with $KIT_CREDS / $FLEET_CREDS as their credentials
+# bind sources (the platform project's `config` still only names the project);
+# `docker run` (the folder creator) exits $RUN_RC.
+CREDS_DOCKER_STUB = """#!/bin/sh
+printf '%s\\n' "$*" >> "$DOCKER_CALL_LOG"
+case " $* " in
+  *" -p openclaw "*" config --format json "*)
+    cat <<JSON
+{"name":"openclaw","services":{
+ "openclaw-gateway":{"image":"gw:local","volumes":[
+   {"type":"bind","source":"/srv/openclaw/config","target":"/home/node/.openclaw"}]},
+ "google-workspace-mcp":{"image":"upstream:2.1.0","volumes":[
+   {"type":"bind","source":"$KIT_CREDS","target":"$CREDS_TARGET"}]},
+ "google-workspace-mcp-fleet":{"image":"upstream:2.1.0","volumes":[
+   {"type":"bind","source":"$FLEET_CREDS","target":"$CREDS_TARGET"}]}}}
+JSON
+    ;;
+  *" config --format json "*) echo '{"name":"proj"}' ;;
+  " run "*) exit "${RUN_RC:-0}" ;;
+esac
+exit 0
+"""
+
+
+def creds_up(env, tmp_path, fleet_exists, run_rc=0):
+    stub(Path(env["PATH"].split(":")[0]) / "docker", CREDS_DOCKER_STUB)
+    kit = tmp_path / "srv/google-workspace-mcp/credentials"
+    kit.mkdir(parents=True)
+    fleet = tmp_path / "srv/google-workspace-mcp-fleet/credentials"
+    if fleet_exists:
+        fleet.mkdir(parents=True)
+    r = run_phases(
+        env,
+        ["up"],
+        {
+            "KIT_CREDS": str(kit),
+            "FLEET_CREDS": str(fleet),
+            "CREDS_TARGET": CREDS_TARGET,
+            "RUN_RC": str(run_rc),
+        },
+    )
+    calls = Path(env["DOCKER_CALL_LOG"]).read_text().splitlines()
+    return r, calls, fleet
+
+
+def test_up_creates_a_missing_connector_credentials_folder_before_compose_up(
+    env, tmp_path
+):
+    # Issue 495: a bind source Docker had to create is root-owned and the
+    # connector (uid 1000) cannot write it. The throwaway container makes it for
+    # `app` first, from the connector's own image, and only for the missing one.
+    r, calls, fleet = creds_up(env, tmp_path, fleet_exists=False)
+    assert r.returncode == 0, r.stdout + r.stderr
+    runs = [c for c in calls if c.startswith("run ")]
+    assert runs == [
+        f"run --rm --user 0:0 --entrypoint sh -v {tmp_path}/srv:/host upstream:2.1.0 "
+        '-c install -d -o app -g app -m 0700 "/host/$1" sh '
+        "google-workspace-mcp-fleet/credentials"
+    ]
+    up = next(
+        i
+        for i, c in enumerate(calls)
+        if c.endswith("openclaw/docker-compose.yml up -d")
+    )
+    assert calls.index(runs[0]) < up
+
+
+def test_up_leaves_existing_writable_credentials_folders_alone(env, tmp_path):
+    r, calls, _ = creds_up(env, tmp_path, fleet_exists=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not [c for c in calls if c.startswith("run ")]
+
+
+def test_a_failed_credentials_folder_create_warns_and_still_brings_the_stack_up(
+    env, tmp_path
+):
+    r, calls, _ = creds_up(env, tmp_path, fleet_exists=False, run_rc=1)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "could not create it" in r.stderr
+    assert calls[-1].endswith("openclaw/docker-compose.yml up -d")
+
+
 def test_cutover_is_a_no_op_once_the_old_containers_are_gone(env):
     r = run_phases(env, ["up"])
     assert r.returncode == 0, r.stdout + r.stderr

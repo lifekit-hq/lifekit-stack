@@ -13,7 +13,9 @@
 # Idempotent: re-running it is safe; each step is a no-op when state is already
 # correct.
 #
-# Run as root on the VPS, before `docker compose -p openclaw up -d <service>`:
+# The deploy makes these folders itself (openclaw_ensure_google_creds_dirs in
+# deploy-openclaw.sh); this script is the by-hand equivalent, run as root on the
+# VPS before `docker compose -p openclaw up -d <service>`:
 #
 #     sudo ./scripts/google-mcp-bootstrap.sh          # Kit's connector
 #     sudo ./scripts/google-mcp-bootstrap.sh fleet    # the fleet's connector

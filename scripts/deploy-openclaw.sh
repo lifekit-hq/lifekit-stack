@@ -77,6 +77,52 @@ openclaw_cutover() {
   done
 }
 
+# The Google Workspace connectors bind-mount a host folder for their refresh
+# tokens (/home/app/.google_workspace_mcp/credentials). When that folder is
+# missing at `up`, Docker creates it root-owned, the connector (uid 1000, `app`)
+# cannot write its credentials check and exits at start - the critical
+# "container exited abnormally" alert (issue 495, the fleet connector's first
+# deploy). The deploy account has no sudo, so a throwaway container from the
+# connector's own image creates the folder (and re-owns a root-owned one a
+# failed first start left) for `app`, 0700, the same state
+# scripts/google-mcp-bootstrap.sh leaves. The folders are read from the
+# resolved compose config, so a new connector service is covered by its mount
+# alone. A folder the connector can already write is not touched; a failure
+# warns and lets `up` go on (the connector then alerts as before).
+openclaw_google_creds_dirs() {
+  openclaw_compose config --format json 2>/dev/null | python3 -c '
+import json, sys
+
+for svc in json.load(sys.stdin).get("services", {}).values():
+    for vol in svc.get("volumes") or []:
+        src = vol.get("source", "")
+        if (
+            vol.get("type") == "bind"
+            and vol.get("target") == "/home/app/.google_workspace_mcp/credentials"
+            and src.startswith("/")
+        ):
+            print(src + "\t" + svc.get("image", ""))
+'
+}
+openclaw_ensure_google_creds_dirs() {
+  local rows src image root
+  rows="$(openclaw_google_creds_dirs)" || { warn "google credentials folders: compose config unreadable, skipping"; return 0; }
+  while IFS=$'\t' read -r src image; do
+    [[ -n "${src}" && -n "${image}" ]] || continue
+    if [[ -d "${src}" && -w "${src}" ]]; then
+      continue
+    fi
+    # Two levels up (/srv for /srv/<connector>/credentials): the connector's
+    # own folder may not exist either.
+    root="$(dirname "$(dirname "${src}")")"
+    say "google connector credentials folder ${src} is missing or not writable: creating it for the connector's app user"
+    if ! docker run --rm --user 0:0 --entrypoint sh -v "${root}:/host" "${image}" \
+      -c 'install -d -o app -g app -m 0700 "/host/$1"' sh "${src#"${root}"/}"; then
+      warn "google connector credentials folder ${src}: could not create it (the connector will fail its start check)"
+    fi
+  done <<<"${rows}"
+}
+
 # ═══ prepare ═════════════════════════════════════════════════════════════════
 openclaw_phase_prepare() {
 # ─── claw state: /srv/memory/state -> /var/lib/lifekit/state (one-time move) ─────
@@ -376,6 +422,7 @@ openclaw_phase_up() {
 # build phase already built the image. Same one-shot retry as the platform
 # `up` for docker's stale temp-name reservation (#94).
 openclaw_cutover
+openclaw_ensure_google_creds_dirs
 say "docker compose -p ${OPENCLAW_PROJECT} up -d"
 local up_log conflict_svc
 up_log="$(mktemp)"
