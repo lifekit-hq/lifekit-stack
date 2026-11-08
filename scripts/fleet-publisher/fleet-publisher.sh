@@ -53,6 +53,11 @@
 # lifekit-fleet-status.py): each on-host home's backlog records whole, a
 # per-repo rollup, capacity, queue, intake depth and how-it-works links. It is
 # null when the helper fails; the rest of the summary publishes regardless.
+# Also writes OUT_DIR/taken-for-you.json, the "Taken for you" feed (contract in
+# README.md): the last 200 actions the fleet took under a standing ruling,
+# newest first, from the read-only fleet-policy logs in FLEET_POLICY_DIR
+# (default ~/.local/state/fleet-policy), built by taken_feed.py beside this
+# script (FLEET_TAKEN overrides; installed as lifekit-fleet-taken.py).
 # The dashboard never reads Lavish or fleet-home state. Writes TEXTFILE_DIR/fleet.prom:
 #   fleet_workers{state}                          active children by state, all homes
 #   fleet_decisions_open                          open captain decisions, all homes
@@ -740,6 +745,45 @@ publish_quota() {
 }
 if ! publish_quota; then
   echo "fleet-publisher: quota metrics were not published" >&2
+  ((rc != 0)) || rc=1
+fi
+# The "Taken for you" feed, beside home-summary.json: taken_feed.py beside this
+# script (FLEET_TAKEN overrides; installed as lifekit-fleet-taken.py) reads the
+# fleet-policy audit logs in FLEET_POLICY_DIR (default
+# ~/.local/state/fleet-policy) read-only and prints the feed. Neither log
+# readable (the helper exits 3) leaves the previous feed as it was; any other
+# failure, or output that looks like a credential, is logged and fails the run;
+# a missing helper is only logged, as for the status page.
+publish_taken() {
+  local helper="${FLEET_TAKEN:-}" here tmp status=0
+  here="$(dirname "$(realpath "$0")")"
+  if [[ -z "$helper" ]]; then
+    for helper in "$here/taken_feed.py" "$here/lifekit-fleet-taken.py" ""; do
+      [[ -z "$helper" || -r "$helper" ]] && break
+    done
+  fi
+  [[ -n "$helper" ]] || {
+    echo "fleet-publisher: no taken_feed.py; the taken feed is not published" >&2
+    return 0
+  }
+  tmp="$(mktemp "$OUT_DIR/.taken.XXXXXX")" || return 1
+  CREDENTIAL_RE="$CREDENTIAL_RE" timeout 20 python3 -I "$helper" --now "$NOW" > "$tmp" || status=$?
+  if ((status == 3)); then
+    rm -f "$tmp"
+    return 0
+  elif ((status != 0)) || ! jq -e 'objects and (.items | type == "array")' "$tmp" > /dev/null 2>&1; then
+    rm -f "$tmp"
+    return 1
+  elif grep -Eq "$CREDENTIAL_RE" "$tmp"; then
+    rm -f "$tmp"
+    echo "fleet-publisher: the taken feed looks like it holds a credential; not publishing" >&2
+    return 1
+  fi
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$OUT_DIR/taken-for-you.json" || { rm -f "$tmp"; return 1; }
+}
+if ! publish_taken; then
+  echo "fleet-publisher: the taken feed was not published" >&2
   ((rc != 0)) || rc=1
 fi
 exit "$rc"

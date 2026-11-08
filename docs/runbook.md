@@ -2637,6 +2637,22 @@ project"): the alias list that folds a repo spelling naming no project, such as
 the vault's, into its project's row. It is host config, so a re-install without
 it drops the line.
 
+The same run writes `/var/lib/lifekit-fleet/taken-for-you.json`, the dashboard's
+"Taken for you" feed: the last 200 actions the fleet took under a standing
+ruling (P16) instead of asking, newest first, one line each with a stable `id`
+(contract in the README "Taken for you feed"). Its sources are two host logs
+read-only, in the admin account's `~/.local/state/fleet-policy/` (the unit
+runs as that account; `FLEET_POLICY_DIR` overrides): `p16.jsonl`, the
+permission engine's audit log, and `self-calls.jsonl`, the calls the fleet
+answered itself. Only the subject line, ruling, outcome, time and id leave the
+host - a self-answered call's answer text never does. Lines that do not parse
+are skipped and counted in the file's `sources.<log>.skipped`, so a nonzero
+count there is the place to look when the writer's format drifts; a log that
+does not exist yet shows `read: false`, and with neither log present the
+previous file stays. The new file and `lifekit-fleet-taken.py` appear only
+after the install command below is re-run (no sudo is needed beyond that, and
+no container is touched).
+
 **Alerts:** *fleet summary is stale* fires when the oldest home summary's
 `generated_epoch` is over 15 minutes old (that home's watch loop died; the
 per-home series names it); *textfile metrics are stale* covers a dead publisher
