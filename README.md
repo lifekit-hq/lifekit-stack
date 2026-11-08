@@ -20,7 +20,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ## Services
 
-[`compose/docker-compose.yml`](./compose/docker-compose.yml), compose project `compose`, defines the services below. OpenClaw's three services run as their own compose project, `openclaw` (see [OpenClaw services](#openclaw-services)). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo (devclaw spec 005), so they no longer appear below; the `ops-agent` watchdog that used to be built here was retired on 2026-09-06 in favour of the observability stack's alert rules. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
+[`compose/docker-compose.yml`](./compose/docker-compose.yml), compose project `compose`, defines the services below. OpenClaw's four services run as their own compose project, `openclaw` (see [OpenClaw services](#openclaw-services)). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo (devclaw spec 005), so they no longer appear below; the `ops-agent` watchdog that used to be built here was retired on 2026-09-06 in favour of the observability stack's alert rules. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
 
 | Service | Image | Role |
 | --- | --- | --- |
