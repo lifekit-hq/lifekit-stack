@@ -195,6 +195,13 @@ services:
       # Until the operator creates it, Docker creates it empty and the relay
       # simply fails to connect.
       - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/kit-relay:/run/lifekit/kit-relay:ro
+      # Fleet-gate relay (docs/runbook.md, "Fleet gate"): the SSH key, pinned
+      # host key and ssh_config the fleet-gate plugin files its P16 stops with,
+      # through the same kit-relay forced command under its own `openclaw`
+      # sender (oc- request ids). Read-only and its own directory, like the Kit
+      # relay's. Until the operator creates it, Docker creates it empty and a
+      # stop is still blocked but reports that filing it failed.
+      - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/oc-relay:/run/lifekit/oc-relay:ro
       # Vault (~/memory): the one path cron jobs, skills and agents use, and the
       # path openclaw-gateway/platform.patch.json indexes via
       # memory.search.extraPaths. (The second bind at ~/.openclaw/wiki/main was
@@ -212,8 +219,9 @@ services:
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/kit/memory:/home/node/.openclaw/agents/kit/workspace/memory
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/finance/memory:/home/node/.openclaw/agents/finance/workspace/memory
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
-      # Claude CLI home, used if an agent runs the claude-cli runtime (the live
-      # agents run agentRuntime.id "openclaw"): session files land in
+      # Claude CLI home, used by the claude-cli runtime (the live agents run
+      # agentRuntime.id "claude-cli"; only the openai/gpt-5.5 model entry keeps
+      # "openclaw"): session files land in
       # .claude/projects (scripts/quota-share reads them). Anthropic auth does
       # not come from a login stored here: every agent's anthropic:setup-token
       # profile resolves CLAUDE_OAUTH_TOKEN through the sops SecretRef

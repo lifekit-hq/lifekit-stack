@@ -26,7 +26,8 @@ cooldown so upstream's own hotfix cycle has landed. The loop:
    overrides) in a throwaway `deploy-smoke-<agent>` session - one turn per
    runtime, and every agent is Claude-primary since the 2026-09-16 all-agents
    switch (see the smoke-turn comment in `scripts/deploy-openclaw.sh`; the live
-   `agents` config sets `agentRuntime.id` `openclaw` on each model entry);
+   `agents` config sets `agentRuntime.id` `claude-cli` on each Claude model entry; only
+   the `openai/gpt-5.5` entry keeps `openclaw`);
    OpenAI/codex is not primary for any agent right now. `fable`, the second
    smoke agent, was retired in the 2026-09 fleet reshape. A runtime error fails the run; auth and quota
    errors (expired OAuth, weekly cap) only warn. On a version change it also
@@ -1039,7 +1040,8 @@ Kit's main session never reads mail. A second row, `needs-you-mail-reader`, runs
 15 minutes earlier (`45 8,16 * * *`, `--exact`) as an isolated session whose
 tool allow-list is exactly `google-workspace__search_gmail_messages` and
 `google-workspace__get_gmail_messages_content_batch`. That is the row's
-`payload.toolsAllow`, which the gateway's `openclaw` agent runtime enforces: the run has
+`payload.toolsAllow`, a cap the gateway enforced when the agents ran on the `openclaw`
+runtime and has not been re-verified under `claude-cli`, which they run on now: the run has
 no relay, `ask_user`, `sessions_send`, `message`, exec, file-write or Gmail-write tool,
 whatever the mail says. It delivers nothing; its run stays in its run history, whose
 `summary` is all of the run's text, kept from the head and cut at 2000 characters. The
@@ -1395,6 +1397,42 @@ printf 'restrict,command="/usr/local/libexec/kit-relay finance-sentry",from="172
 - **Rollback:** delete that authorized_keys line and `sudo rm -r /srv/lifekit-secrets/fs-relay`.
   The `finance-sentry` arm can stay in the installed copy (re-running step 1 without it is
   not needed); Kit's and the dashboard's relays are untouched.
+
+#### openclaw sender (fleet-gate stops)
+
+The gateway's `fleet-gate` plugin files the P16 stops it blocks ("Fleet gate" below) as
+`note oc-<day>-<hash>`. It is a fourth authorized key on the same root-owned forced
+command, not a second script:
+
+- **Sender:** the key's `command=` passes the sender as an argument,
+  `command="/usr/local/libexec/kit-relay openclaw"`. The sender picks the request-id
+  prefix (`oc-`), the rate bucket (30 new `oc-` notes per rolling hour, per home, counted
+  apart from the other senders') and the `receipts` view (only `oc-` notes and their
+  replies). Body limits are unchanged (1 B to 32 KiB of UTF-8 without NUL, exit 65).
+  `oc-` notes are fleet-internal, not a person's: the reply pusher routes only `kit-`
+  notes, so no reply is pushed to Telegram for one.
+- **Key:** `/srv/lifekit-secrets/oc-relay/` (`id_ed25519`, pinned `known_hosts`,
+  `ssh_config`, the same shape as `kit-relay/`), mounted read-only into the gateway at
+  `/run/lifekit/oc-relay` by `compose/openclaw/docker-compose.yml`. The plugin runs
+  `ssh -F /run/lifekit/oc-relay/ssh_config relay note oc-...` with the body on stdin.
+- **Operator step** (once per host, after the PR that adds the sender and the mount has
+  deployed; nothing is filed until it is done, and a stop is still blocked meanwhile, with
+  the reason saying filing failed). Same as the finance-sentry steps above with these
+  changes: step 1 first (the installed copy needs the `openclaw` arm, else exit 78); in
+  step 2 use `oc-relay` for the directory and `-C oc-relay@openclaw-gateway`, `IdentityFile`
+  and `UserKnownHostsFile` under `/run/lifekit/oc-relay/`, and hand the directory to the
+  gateway's uid (`docker exec openclaw-openclaw-gateway-1 id -u`, 1000); authorize it with
+
+  ```bash
+  printf 'restrict,command="/usr/local/libexec/kit-relay openclaw",from="172.16.0.0/12" %s\n' \
+    "$(sudo cat /srv/lifekit-secrets/oc-relay/id_ed25519.pub)" >> ~/.ssh/authorized_keys
+  ```
+
+  Verify with `docker exec "$G" ssh -F /run/lifekit/oc-relay/ssh_config relay 'note oc-smoke-<day>' <<< 'relay smoke test - ignore'`
+  (outcome `created`; answer and ack it from the second mate's home afterwards), and
+  `... relay 'note kit-x' </dev/null` is refused, exit 64.
+- **Rollback:** delete that authorized_keys line and `sudo rm -r /srv/lifekit-secrets/oc-relay`.
+  The other relays are untouched.
 
 #### Home argument (answers for the main home)
 
@@ -2020,6 +2058,99 @@ prose included, reaches Kit's model unchanged.
   `platform.patch.json` (a PR), or, at once, `docker exec "$G" openclaw config patch` with
   `{"plugins":{"entries":{"video-drop-door":{"enabled":false}}}}`; Kit then takes every message
   again.
+
+### Fleet gate
+
+Part of the P16 permission engine: an OpenClaw agent that reaches an action the owner has
+ruled stop-and-file is stopped and the request is filed for him, instead of the agent
+asking in chat. The agents run on the `claude-cli` runtime, and a tool call there still
+passes OpenClaw's `before_tool_call` hook (checked inside the running gateway, 2026.10.7),
+so a plugin can see and veto it.
+
+- **Seam:** the `fleet-gate` gateway plugin (`compose/openclaw-gateway/plugins/fleet-gate`),
+  `before_tool_call` for every tool and `after_tool_call` for the outcome of the logged
+  ones. Same shape and install path as the video drop door: `scripts/ensure-fleet-gate.sh`
+  copies it to `/srv/openclaw/config/extensions/fleet-gate` in the deploy's configure phase,
+  `platform.patch.json` allows and enables it, and a code change is applied with
+  `openclaw plugins reload fleet-gate`.
+- **The table:** `p16-openclaw.json` (schema `p16-openclaw.v1`) is rendered by fleet-policy
+  from the P16 rows, so the rules live once; the plugin makes no network call and holds no
+  second copy. `ensure-fleet-gate.sh` validates it and copies it next to the plugin
+  (source: `P16_OPENCLAW_TABLE`, default `/var/lib/lifekit/fleet-policy/p16-openclaw.json`);
+  the plugin re-reads it when its mtime changes, so a new table needs no reload. Shape:
+  `{"schema": "p16-openclaw.v1", "tools": {"<tool>" | "<prefix>*": {"class": "A"|"L"|"S",
+  "id": "<resource.action>", "ruling": "<pointer>", "when": "non-owner"|"non-owner-to-main"}}}`.
+  An exact name beats a prefix, the longest prefix beats a shorter one, and `mcp__x__y` is
+  looked up as itself and as `x__y`. A row whose `when` does not hold for the call is
+  skipped; an unknown `when` counts as holding, so a stop is never silently relaxed.
+  `non-owner` is a run whose host-derived `requester.senderIsOwner` is not `true` (missing
+  counts: it is unproven); `non-owner-to-main` adds that a `sessions_send` target is the
+  main agent (`kit`): its `sessionKey` is `main` or `agent:kit:...`, its `agentId` is `kit`,
+  or it names no agent (a bare `label`).
+- **Classes:** `A` returns nothing and writes nothing. `L` returns nothing and writes one
+  `taken` line, and `after_tool_call` one `outcome` line (`returned`, `error`, or `unknown`
+  when the harness gave neither: no result is not proof of success). `S` blocks the call
+  with `Stopped under P16 (<id>): filed for the owner as oc-<id>. Carry on with other
+  work; do not ask him in chat.` and files the request through the relay; if filing fails
+  (key not set up, rate limit, ssh down) it is still blocked, the reason says filing failed
+  and why, and the `stopped` log line carries `filed: false` and the error. A tool the table
+  does not list is allowed and logged as `unlisted` (P16: reversible and inside the fleet's
+  space is taken, not asked).
+- **The filed note** is the body of `note oc-<day>-<hash>` to the second mate's inbox
+  (the `openclaw` sender, "openclaw sender" above): the class, ruling, agent, tool, session,
+  run and the call's params (keys that look like tokens, passwords or cookies replaced with
+  `[redacted]`, long strings and the whole cut). The id is `oc-`, the UTC day and a hash of
+  agent, tool, class and params, so the same ask the same day is a replay of one note.
+  Nothing the agent sent reaches a shell: `execFile` of `ssh`, the body on stdin.
+- **Log:** `/srv/openclaw/config/logs/fleet-gate.jsonl` (in the gateway,
+  `~/.openclaw/logs/fleet-gate.jsonl`), one JSON line per event (`taken`, `outcome`,
+  `stopped`, `unlisted`, and the problems below), one older generation kept past 8 MiB. It
+  is readable by the `lifekit` account; fleet-policy's audit reads it from there.
+- **When it cannot decide:** a missing or unreadable table, or one that is not valid
+  (`table-missing`, `table-malformed`), blocks nothing and logs the reason once a minute,
+  with a gateway warning; an unexpected error in the lookup does the same (`gate-error`).
+  `ensure-fleet-gate.sh` warns at deploy when no table is installed and fails on an invalid
+  one without replacing the installed copy. A single bad row is skipped and the rest of the
+  table applies. The host fails `before_tool_call` closed after 15 s; the plugin leaves that
+  default alone and keeps its own filing budget (9 s) inside it.
+- **What it cannot see:** the gate judges the tool call, not what the tool then does. What a
+  script, `gh` or `curl` does after `exec` starts; side effects inside an MCP server; and
+  command-kind cron jobs (they run no agent tool call) are all outside it. Server-side
+  scoping (the Google and finance-sentry MCP scopes, the repo and token permissions) stays
+  the strongest boundary; the gate is the place a stop is filed, not the lock.
+- **Per-agent `devclaw__*` deny:** the devclaw MCP tools are for the main agent only, but
+  today every agent shares one global `tools.allow` and there is no per-agent deny. That is
+  the personal half of `openclaw.json` (host state), so it is an operator patch, for every
+  agent except `kit` (the roster is `openclaw agents list`):
+
+  ```bash
+  cat > deny-devclaw.json <<'JSON'
+  {"agents": {"entries": {
+    "finance":   {"tools": {"deny": ["devclaw__*", "mcp__devclaw__*"]}},
+    "career":    {"tools": {"deny": ["devclaw__*", "mcp__devclaw__*"]}},
+    "learnclaw": {"tools": {"deny": ["devclaw__*", "mcp__devclaw__*"]}}
+  }}}
+  JSON
+  docker exec -i openclaw-openclaw-gateway-1 openclaw config patch --stdin --dry-run < deny-devclaw.json
+  docker exec -i openclaw-openclaw-gateway-1 openclaw config patch --stdin < deny-devclaw.json
+  ```
+
+  Per-agent allow and deny lists were not enforced under `claude-cli` when last tried
+  (2026-05-25, `docs/openclaw-agent-design.md`); it is not re-verified under 2026.10.7, so
+  treat the patch as intent until a `devclaw__*` call from a non-main agent is seen refused,
+  and give the table a `devclaw__*` stop row if it is not.
+- **Rehearse:** `scripts/rehearse-fleet-gate.sh` loads the repo's plugin in node with a
+  scratch table and state dir and a recording `ssh`, plays one `A`, one `L` and one `S`
+  call, and prints what each returned and what was filed. It touches no container and no
+  production state; run it as any user before and after a change.
+- **Verify live:** `docker exec "$G" openclaw plugins inspect fleet-gate` shows it loaded
+  with `before_tool_call` and `after_tool_call`; `tail /srv/openclaw/config/logs/fleet-gate.jsonl`
+  as `lifekit` shows `taken`/`unlisted` lines as agents work. The first deploy that enables
+  the plugin recreates the gateway through the platform patch's restart hint, as for any new
+  plugin; later changes reload it in place. No other container restarts.
+- **Turn it off:** remove `fleet-gate` from `plugins.allow` and its entry in
+  `platform.patch.json` (a PR), or at once `docker exec "$G" openclaw config patch` with
+  `{"plugins":{"entries":{"fleet-gate":{"enabled":false}}}}`; calls are no longer gated.
 
 ### Document door
 

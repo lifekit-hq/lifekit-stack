@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Any
 
 # request-id prefix -> hook name under the hooks path. A prefix not listed here
-# (dash-, fs-, fleet-, term-, anything else) and a note with no request id are
+# (dash-, fs-, oc-, fleet-, term-, anything else) and a note with no request id are
 # skipped: only the owner's own notes sent through Kit are ever pushed.
 ROUTES: dict[str, str] = {"kit-": "firstmate-reply"}
 

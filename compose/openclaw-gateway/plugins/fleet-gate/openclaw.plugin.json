@@ -1,0 +1,13 @@
+{
+  "id": "fleet-gate",
+  "name": "Fleet gate",
+  "description": "Stops an agent's P16 stop-and-file tool calls and files them for the owner instead of asking in chat",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

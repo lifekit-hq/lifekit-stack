@@ -27,6 +27,7 @@ openclaw_path_matches() {
     scripts/deploy-openclaw.sh | scripts/deploy-trusted-proxies.sh | scripts/memory-audit/*) return 0 ;;
     scripts/ensure-youtube-transcript.sh | scripts/ensure-video-eval.sh | scripts/ensure-job-queue.sh) return 0 ;;
     scripts/ensure-video-drop-door.sh | scripts/ensure-learnclaw.sh | scripts/ensure-doc-door.sh) return 0 ;;
+    scripts/ensure-fleet-gate.sh) return 0 ;;
     scripts/openclaw-smoke-verdict.py) return 0 ;;
     secrets/lifekit-gateway.env.sops) return 0 ;;
   esac

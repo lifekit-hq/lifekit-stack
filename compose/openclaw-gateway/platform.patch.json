@@ -33,10 +33,14 @@
       "talk-voice",
       "telegram",
       "web-readability",
-      "video-drop-door"
+      "video-drop-door",
+      "fleet-gate"
     ],
     "entries": {
       "video-drop-door": {
+        "enabled": true
+      },
+      "fleet-gate": {
         "enabled": true
       },
       "diagnostics-prometheus": {

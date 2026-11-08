@@ -409,6 +409,17 @@ say "video drop door plugin -> ${OPENCLAW_CONFIG_DIR}/extensions"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-video-drop-door.sh" \
   || fail_later "video drop door plugin install failed (output above)"
 
+# ─── fleet gate plugin ───────────────────────────────────────────────────────
+#
+# compose/openclaw-gateway/plugins/fleet-gate gates every agent tool call
+# against the P16 table fleet-policy renders (docs/runbook.md, "Fleet gate").
+# Installed before the platform patch for the same reason as the drop door: the
+# restart that patch asks for on first enable finds the files. A table that is
+# absent is a warning in the script, not a red deploy; one that is invalid is.
+say "fleet gate plugin -> ${OPENCLAW_CONFIG_DIR}/extensions"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-fleet-gate.sh" \
+  || fail_later "fleet gate plugin install failed (output above)"
+
 # ─── OpenClaw platform config: the repo's half of openclaw.json ──────────────
 #
 # openclaw.json is host state (agents.entries, channels, auth profiles, MCP
@@ -785,7 +796,7 @@ openclaw_phase_smoke() {
 # were dead (claude-cli binary without its native part, codex auth expired).
 # The only check that sees that is a real turn. Keep this list in step with
 # agents.entries.*.model when routing changes. Every agent is Claude-primary
-# (agentRuntime.id "openclaw") since the 2026-09-16 all-agents switch off OpenAI-primary (guard-45
+# (agentRuntime.id "claude-cli") since the 2026-09-16 all-agents switch off OpenAI-primary (guard-45
 # report), so one kit turn covers the one live runtime. fable was the
 # second smoke agent (the Claude-only, no-fallback shape) until the
 # 2026-09 fleet reshape retired it, and kit's fallbacks were emptied in the
