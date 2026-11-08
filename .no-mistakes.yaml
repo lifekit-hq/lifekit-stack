@@ -49,3 +49,8 @@ review:
       instructions: |
         Prose: block only on a wrong fact, a broken link, or a contract
         the code contradicts.
+    - path: "**/tests/**"
+      instructions: |
+        A test that regex-matches or greps source text instead of running
+        the code does not cover changed behaviour; flag it as a missing
+        test.
