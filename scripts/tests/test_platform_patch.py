@@ -349,6 +349,9 @@ def test_fleet_connector_is_drive_only_create_only_with_its_own_identity():
         "set_drive_file_permissions",
         "get_drive_shareable_link",
         "copy_drive_file",
+        "import_to_google_doc",
+        "import_to_google_sheets",
+        "import_to_google_slides",
     ]
     for key in (
         "TOOLS",

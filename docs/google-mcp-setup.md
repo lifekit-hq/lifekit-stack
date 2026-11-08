@@ -276,8 +276,11 @@ same image and the same flow as steps 1 to 9, with these differences.
 project of its own, an OAuth client of type *Desktop app* in that project, and
 the consent screen *In production* (step 3) so its refresh token does not
 expire after 7 days. Only the Drive API needs enabling. The tool surface is the
-literal `drive:full` with the five non-create Drive tools blocked by name
-(`compose/openclaw/docker-compose.yml`): it can read Drive and create folders and
+literal `drive:full` with the eight other Drive write tools blocked by name
+(`update_drive_file`, `manage_drive_access`, `set_drive_file_permissions`,
+`get_drive_shareable_link`, `copy_drive_file` and the three `import_to_google_doc`,
+`import_to_google_sheets`, `import_to_google_slides` tools, which also create
+files; `compose/openclaw/docker-compose.yml`): it can read Drive and create folders and
 files, and cannot edit, move, share, copy or delete anything. Files land in the
 fleet account's Drive, or in a folder the owner shares with the fleet account
 (share it with Editor access; the connector can then create inside it, and the
@@ -295,7 +298,9 @@ is not the owner's to revoke.
 
 - Secrets are `FLEET_GOOGLE_OAUTH_CLIENT_ID`, `FLEET_GOOGLE_OAUTH_CLIENT_SECRET`
   and `FLEET_GOOGLE_EMAIL` in the master file (step 5, same commands), never the
-  `GOOGLE_OAUTH_*` / `USER_GOOGLE_EMAIL` names.
+  `GOOGLE_OAUTH_*` / `USER_GOOGLE_EMAIL` names. The two `oauth-client`
+  inventory rows are added to `docs/secrets.md` in the same change that stores
+  the values in the master file (`scripts/tests/test_secrets.py` holds the pair).
 - On the VPS: `sudo /srv/lifekit-stack/scripts/google-mcp-bootstrap.sh fleet`
   creates `/srv/google-workspace-mcp-fleet/credentials/` (mode 0700, owner
   `lifekit`). Run it before the first sign-in; the compose service starts without
