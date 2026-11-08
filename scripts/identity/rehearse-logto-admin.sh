@@ -217,6 +217,48 @@ assert_eq "friend has no username or password" \
 expect_ok "people status (the friend)" people status friend@rehearsal.invalid
 expect_ok "people status (everyone; the owner holds only admin)" people status
 
+echo "== fleet identity (resource, scopes, M2M app; scripts/identity/fleet-agent.sh runs these)"
+FLEET_RES="https://fleet.rehearsal.invalid/api"
+fleet_scopes=(--scope fleet:read --scope fleet:recategorise)
+ledger_lines() { wc -l <"${LOGTO_ADMIN_LEDGER}"; }
+expect_ok "ensure-resource (creates resource and three scopes)" admin ensure-resource "${FLEET_RES}" \
+  --name "Fleet apps" --scope fleet:read --scope fleet:recategorise --scope fleet:ungranted
+expect_ok "ensure-m2m-app (creates app, role and grant; writes secret file)" admin ensure-m2m-app fleet-agent \
+  --resource "${FLEET_RES}" "${fleet_scopes[@]}" --secret-file "${WORK}/fleet.secret"
+assert_eq "fleet secret file mode" "$(stat -c %a "${WORK}/fleet.secret")" 600
+cat "${WORK}/fleet.secret" >>"${WORK}/secrets.pat"
+echo >>"${WORK}/secrets.pat"
+lines_before="$(ledger_lines)"
+expect_ok "ensure-m2m-app (again: no change)" admin ensure-m2m-app fleet-agent \
+  --resource "${FLEET_RES}" "${fleet_scopes[@]}"
+assert_eq "ledger lines unchanged by the re-run" "$(ledger_lines)" "${lines_before}"
+fleet_role="$(api_get /api/roles '[r["id"] for r in items if r["name"] == "fleet-agent"][0]' | tr -d '"')"
+assert_eq "fleet-agent role scopes as stored" "$(api_get "/api/roles/${fleet_role}/scopes" 'sorted(s["name"] for s in items)')" \
+  '["fleet:read", "fleet:recategorise"]'
+fleet_app="$(api_get /api/applications '[a["id"] for a in items if a["name"] == "fleet-agent"][0]' | tr -d '"')"
+fleet_token() { LOGTO_M2M_APP_ID="${fleet_app}" LOGTO_M2M_APP_SECRET="$(cat "${WORK}/fleet.secret")" \
+  admin token-check --resource "${FLEET_RES}" "$@"; }
+expect_ok "fleet-agent gets a token for its scopes" fleet_token --scope fleet:read --scope fleet:recategorise
+assert_eq "a scope the role lacks is not granted" \
+  "$(fleet_token --scope fleet:ungranted | sed -n 's/^token ok: \(scope [^,]*\),.*/\1/p')" "scope (none)"
+expect_ok "app-status (roles, scopes, secret count; no value)" admin app-status fleet-agent
+expect_ok "rotate-secret (new secret to a file, old deleted)" admin rotate-secret fleet-agent \
+  --secret-file "${WORK}/fleet.secret.new"
+cat "${WORK}/fleet.secret.new" >>"${WORK}/secrets.pat"
+echo >>"${WORK}/secrets.pat"
+expect_fail "the old secret no longer gets a token" fleet_token --scope fleet:read
+mv -f "${WORK}/fleet.secret.new" "${WORK}/fleet.secret"
+expect_ok "the new secret gets a token" fleet_token --scope fleet:read
+expect_ok "revoke-app (role taken away)" admin revoke-app fleet-agent
+assert_eq "revoked: Logto still issues a token, but with no scope" \
+  "$(fleet_token --scope fleet:read | sed -n 's/^token ok: \(scope [^,]*\),.*/\1/p')" "scope (none)"
+expect_ok "revoke-app again (already revoked)" admin revoke-app fleet-agent
+expect_ok "undo the revocation (role back)" admin undo
+assert_eq "restored: the scope is back" \
+  "$(fleet_token --scope fleet:read | sed -n 's/^token ok: \(scope [^,]*\),.*/\1/p')" "scope fleet:read"
+expect_ok "revoke-app --delete (no undo)" admin revoke-app fleet-agent --delete
+expect_fail "deleted: no token at all" fleet_token --scope fleet:read
+
 echo "== ledger, then undo every change in reverse"
 admin ledger
 while python3 "${HERE}/logto-admin.py" ledger | python3 -c '
@@ -229,6 +271,8 @@ done
 expect_fail "undo with nothing left" admin undo
 assert_eq "apps after undo (Grafana and gate deleted)" "$(api_get /api/applications '[a["name"] for a in items]')" '["firstmate-ops"]'
 assert_eq "connectors after undo (email connector deleted)" "$(api_get /api/connectors '[c["connectorId"] for c in items]')" '[]'
+assert_eq "M2M roles and API resources after undo (fleet identity gone)" \
+  "$(api_get /api/roles '[r["name"] for r in items if r["type"] == "MachineToMachine" and r["name"] == "fleet-agent"]')$(api_get /api/resources '[r["indicator"] for r in items if "rehearsal.invalid" in r["indicator"]]')" '[][]'
 assert_eq "User roles after undo" "$(api_get /api/roles '[r["name"] for r in items if r["type"] == "User"]')" '[]'
 
 echo "== removal"

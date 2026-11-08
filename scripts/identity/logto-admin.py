@@ -5,7 +5,7 @@ Replaces the admin-console clicks in docs/runbook.md ("Identity provider
 (Logto)", "Grafana sign-in through Logto", "Tailnet sign-in gate"). Every
 command is idempotent: it reads first and changes only what differs.
 
-    logto-admin.py token-check
+    logto-admin.py token-check [--resource INDICATOR] [--scope NAME]...
     logto-admin.py ensure-role NAME [--description TEXT]
     logto-admin.py assign-role USER ROLE
     logto-admin.py role-users ROLE
@@ -13,6 +13,12 @@ command is idempotent: it reads first and changes only what differs.
     logto-admin.py ensure-app NAME [--redirect-uri URI]... [--post-logout-uri URI]...
                               [--secret-file PATH]
     logto-admin.py set-redirects APP [--redirect-uri URI]... [--post-logout-uri URI]...
+    logto-admin.py ensure-resource INDICATOR --name NAME --scope NAME[=DESCRIPTION]...
+    logto-admin.py ensure-m2m-app NAME --resource INDICATOR --scope NAME... [--secret-file PATH]
+                              [--description TEXT]
+    logto-admin.py rotate-secret APP --secret-file PATH
+    logto-admin.py revoke-app APP [--delete]
+    logto-admin.py app-status APP
     logto-admin.py set-sign-in-exp [--logo-url URL] [--dark-logo-url URL] [--favicon URL]
                               [--dark-favicon URL]
                               [--primary-color HEX] [--dark-primary-color HEX]
@@ -48,6 +54,17 @@ it is also in --sign-in-identifiers); Logto accepts it only once an email
 connector exists. The two lists together replace the whole methods list.
 Logto replaces a PATCHed object whole, so the current color, branding, signIn
 and signUp are read first and merged.
+
+ensure-resource creates an API resource (token lifetime one hour) and any scope
+it lacks; it never removes a scope. ensure-m2m-app creates a machine-to-machine
+app, a MachineToMachine role of the same name that holds exactly the given
+scopes of that resource (extra scopes on the role are taken away), and the
+grant between them. rotate-secret adds a new client secret, writes it to a
+new 0600 file, then deletes the older ones (the old secret gets HTTP 401 at
+once). revoke-app takes the app's roles away: Logto still issues the app a
+token, but one that carries no scope, which every scope-checking API refuses;
+--delete removes the app, after which no token is issued at all. A token
+already issued stays valid until it expires.
 
 --clear-terms-links empties the tenant's Terms of use and Privacy policy
 links, so the sign-in page shows none. set-app-sign-in-exp sets one
@@ -124,14 +141,14 @@ class Api:
                 body = raw.decode(errors="replace")[:200]
         return status, headers, body
 
-    def token(self) -> dict:
+    def token(self, resource: str = RESOURCE, scope: str = "all") -> dict:
         """POST /oidc/token, client_credentials. Returns the response minus the token."""
         basic = base64.b64encode(
             f"{urllib.parse.quote(self._app_id, safe='')}:"
             f"{urllib.parse.quote(self._app_secret, safe='')}".encode()
         ).decode()
         data = urllib.parse.urlencode(
-            {"grant_type": "client_credentials", "resource": RESOURCE, "scope": "all"}
+            {"grant_type": "client_credentials", "resource": resource, "scope": scope}
         ).encode()
         req = urllib.request.Request(
             f"{self.endpoint}/oidc/token",
@@ -253,10 +270,10 @@ def find_app(api: Api, ref: str) -> dict | None:
     return by_id[0] if by_id else one(apps, "application", "name", ref)
 
 
-def cmd_token_check(api: Api, _ledger: Ledger, _args) -> None:
-    info = api.token()
+def cmd_token_check(api: Api, _ledger: Ledger, args) -> None:
+    info = api.token(args.resource, " ".join(args.scope) if args.scope else "all")
     say(
-        f"token ok: scope {info.get('scope', '?')}, expires in {info.get('expires_in', '?')}s"
+        f"token ok: scope {info.get('scope') or '(none)'}, expires in {info.get('expires_in', '?')}s"
     )
 
 
@@ -476,6 +493,296 @@ def cmd_set_redirects(api: Api, ledger: Ledger, args) -> None:
     if not app:
         raise AdminError(f"no application with id or name {args.app!r}")
     patch_redirects(api, ledger, app, args.redirect_uri, args.post_logout_uri)
+
+
+def find_resource(api: Api, indicator: str) -> dict | None:
+    return one(api.list_all("/api/resources"), "API resource", "indicator", indicator)
+
+
+def parse_scope(spec: str) -> tuple[str, str]:
+    """`NAME` or `NAME=DESCRIPTION` -> (name, description)."""
+    name, _, description = spec.partition("=")
+    if not re.fullmatch(r"[A-Za-z0-9:._-]+", name):
+        raise argparse.ArgumentTypeError(
+            f"scope name {name!r}: letters, digits and : . _ - only"
+        )
+    return name, description or name
+
+
+def cmd_ensure_resource(api: Api, ledger: Ledger, args) -> None:
+    """Get-or-create an API resource and add any scope it lacks (never removes one)."""
+    res = find_resource(api, args.indicator)
+    if res:
+        say(f"resource {args.indicator}: exists ({res['id']})")
+    else:
+        _, _, res = api.call(
+            "POST",
+            "/api/resources",
+            {"name": args.name, "indicator": args.indicator, "accessTokenTtl": 3600},
+        )
+        n = ledger.append(
+            {
+                "action": "create-resource",
+                "resource": {"id": res["id"], "indicator": args.indicator},
+                "undo": {"method": "DELETE", "path": f"/api/resources/{res['id']}"},
+            }
+        )
+        say(f"resource {args.indicator}: created ({res['id']}), ledger #{n}")
+    have = {s["name"] for s in api.list_all(f"/api/resources/{res['id']}/scopes")}
+    for name, description in args.scope:
+        if name in have:
+            continue
+        _, _, scope = api.call(
+            "POST",
+            f"/api/resources/{res['id']}/scopes",
+            {"name": name, "description": description},
+        )
+        n = ledger.append(
+            {
+                "action": "create-scope",
+                "resource": {"id": res["id"], "indicator": args.indicator},
+                "scope": {"id": scope["id"], "name": name},
+                "undo": {
+                    "method": "DELETE",
+                    "path": f"/api/resources/{res['id']}/scopes/{scope['id']}",
+                },
+            }
+        )
+        say(f"resource {args.indicator}: scope {name} created, ledger #{n}")
+    say(
+        f"resource {args.indicator}: scopes {', '.join(sorted(have | {n for n, _ in args.scope}))}"
+    )
+
+
+def ensure_m2m_role(
+    api: Api, ledger: Ledger, name: str, scope_ids: dict[str, str], indicator: str
+) -> dict:
+    """The MachineToMachine role NAME holding exactly scope_ids (name -> id)."""
+    role = find_role(api, name)
+    if role and role.get("type") != "MachineToMachine":
+        raise AdminError(
+            f"role {name!r} exists as type {role.get('type')}, not MachineToMachine"
+        )
+    if not role:
+        _, _, role = api.call(
+            "POST",
+            "/api/roles",
+            {
+                "name": name,
+                "description": f"{name} scopes on {indicator}",
+                "type": "MachineToMachine",
+                "scopeIds": list(scope_ids.values()),
+            },
+        )
+        n = ledger.append(
+            {
+                "action": "create-role",
+                "role": {"id": role["id"], "name": name, "type": "MachineToMachine"},
+                "undo": {"method": "DELETE", "path": f"/api/roles/{role['id']}"},
+            }
+        )
+        say(
+            f"role {name}: created with {len(scope_ids)} scope(s) ({role['id']}), ledger #{n}"
+        )
+        return role
+    say(f"role {name}: exists ({role['id']})")
+    base = f"/api/roles/{role['id']}/scopes"
+    held = {s["id"]: s["name"] for s in api.list_all(base)}
+    for sid, sname in held.items():
+        if sid in scope_ids.values():
+            continue
+        api.call("DELETE", f"{base}/{sid}")
+        n = ledger.append(
+            {
+                "action": "remove-role-scope",
+                "role": {"id": role["id"], "name": name},
+                "scope": {"id": sid, "name": sname},
+                "undo": {"method": "POST", "path": base, "body": {"scopeIds": [sid]}},
+            }
+        )
+        say(f"role {name}: scope {sname} removed, ledger #{n}")
+    for sname, sid in scope_ids.items():
+        if sid in held:
+            continue
+        api.call("POST", base, {"scopeIds": [sid]})
+        n = ledger.append(
+            {
+                "action": "add-role-scope",
+                "role": {"id": role["id"], "name": name},
+                "scope": {"id": sid, "name": sname},
+                "undo": {"method": "DELETE", "path": f"{base}/{sid}"},
+            }
+        )
+        say(f"role {name}: scope {sname} added, ledger #{n}")
+    return role
+
+
+def cmd_ensure_m2m_app(api: Api, ledger: Ledger, args) -> None:
+    """A machine-to-machine app that holds exactly the given scopes of one API resource.
+
+    The scopes ride on a MachineToMachine role of the same name; the app's
+    token can carry no scope outside it. Re-running changes nothing.
+    """
+    res = find_resource(api, args.resource)
+    if not res:
+        raise AdminError(
+            f"no API resource {args.resource!r}; run ensure-resource first"
+        )
+    known = {
+        s["name"]: s["id"] for s in api.list_all(f"/api/resources/{res['id']}/scopes")
+    }
+    missing = sorted(set(args.scope) - known.keys())
+    if missing:
+        raise AdminError(
+            f"resource {args.resource!r} has no scope {', '.join(missing)}"
+        )
+    scope_ids = {name: known[name] for name in sorted(set(args.scope))}
+    held_role = find_role(api, args.name)
+    if held_role and held_role.get("type") != "MachineToMachine":
+        raise AdminError(
+            f"role {args.name!r} exists as type {held_role.get('type')}, not MachineToMachine"
+        )
+    app = find_app(api, args.name)
+    if app:
+        if app.get("type") != "MachineToMachine":
+            raise AdminError(
+                f"application {args.name!r} exists as type {app.get('type')}, not MachineToMachine"
+            )
+        say(f"app {args.name}: exists ({app['id']})")
+    else:
+        _, _, app = api.call(
+            "POST",
+            "/api/applications",
+            {
+                "name": args.name,
+                "type": "MachineToMachine",
+                "description": args.description or f"{args.name} service identity",
+            },
+        )
+        n = ledger.append(
+            {
+                "action": "create-app",
+                "app": {"id": app["id"], "name": args.name, "type": "MachineToMachine"},
+                "undo": {"method": "DELETE", "path": f"/api/applications/{app['id']}"},
+            }
+        )
+        say(f"app {args.name}: created ({app['id']}), ledger #{n}")
+    role = ensure_m2m_role(api, ledger, args.name, scope_ids, args.resource)
+    grant_app_role(api, ledger, app, role)
+    if args.secret_file:
+        write_secret(api, app["id"], Path(args.secret_file))
+
+
+def grant_app_role(api: Api, ledger: Ledger, app: dict, role: dict) -> None:
+    base = f"/api/applications/{app['id']}/roles"
+    if any(r["id"] == role["id"] for r in api.list_all(base)):
+        say(f"app {app['name']}: role {role['name']} already granted")
+        return
+    api.call("POST", base, {"roleIds": [role["id"]]})
+    n = ledger.append(
+        {
+            "action": "grant-app-role",
+            "app": {"id": app["id"], "name": app["name"]},
+            "role": {"id": role["id"], "name": role["name"]},
+            "undo": {"method": "DELETE", "path": f"{base}/{role['id']}"},
+        }
+    )
+    say(f"app {app['name']}: role {role['name']} granted, ledger #{n}")
+
+
+def cmd_rotate_secret(api: Api, ledger: Ledger, args) -> None:
+    """Add a fresh client secret, write it to --secret-file, then delete the older ones."""
+    app = find_app(api, args.app)
+    if not app:
+        raise AdminError(f"no application with id or name {args.app!r}")
+    path = Path(args.secret_file)
+    if path.exists():
+        raise AdminError(f"{path} exists; not overwriting a secret file")
+    base = f"/api/applications/{app['id']}/secrets"
+    _, _, old = api.call("GET", base)
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+    name = f"rotated-{stamp}"
+    _, _, fresh = api.call("POST", base, {"name": name, "expiresAt": None})
+    value = fresh.get("value") if isinstance(fresh, dict) else None
+    if not value:
+        raise AdminError(f"app {app['id']}: the new secret came back without a value")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(value)
+    for s in old or []:
+        api.call("DELETE", f"{base}/{urllib.parse.quote(s['name'], safe='')}")
+    # No inverse: the old secret's value is gone for good, and the ledger never holds one.
+    n = ledger.append(
+        {
+            "action": "rotate-secret",
+            "app": {"id": app["id"], "name": app["name"]},
+            "secret": name,
+            "removed": len(old or []),
+        }
+    )
+    say(
+        f"app {app['name']}: secret {name!r} written to {path} (0600), "
+        f"{len(old or [])} older secret(s) deleted, ledger #{n}"
+    )
+
+
+def cmd_revoke_app(api: Api, ledger: Ledger, args) -> None:
+    """Strip an M2M app of every scope (its roles), or --delete it."""
+    app = find_app(api, args.app)
+    if not app:
+        say(f"app {args.app}: absent, nothing to revoke")
+        return
+    if app.get("type") != "MachineToMachine":
+        raise AdminError(f"application {args.app!r} is not MachineToMachine")
+    if args.delete:
+        api.call("DELETE", f"/api/applications/{app['id']}")
+        n = ledger.append(
+            {"action": "delete-app", "app": {"id": app["id"], "name": app["name"]}}
+        )
+        say(f"app {app['name']}: deleted ({app['id']}), ledger #{n}")
+        return
+    base = f"/api/applications/{app['id']}/roles"
+    roles = api.list_all(base)
+    if not roles:
+        say(f"app {app['name']}: holds no roles, already revoked")
+        return
+    for role in roles:
+        api.call("DELETE", f"{base}/{role['id']}")
+        n = ledger.append(
+            {
+                "action": "revoke-app-role",
+                "app": {"id": app["id"], "name": app["name"]},
+                "role": {"id": role["id"], "name": role["name"]},
+                "undo": {
+                    "method": "POST",
+                    "path": base,
+                    "body": {"roleIds": [role["id"]]},
+                },
+            }
+        )
+        say(f"app {app['name']}: role {role['name']} taken away, ledger #{n}")
+
+
+def cmd_app_status(api: Api, _ledger: Ledger, args) -> None:
+    """One line per M2M app role: what the app holds. Prints no secret."""
+    app = find_app(api, args.app)
+    if not app:
+        say(f"app {args.app}: absent")
+        return
+    roles = api.list_all(f"/api/applications/{app['id']}/roles")
+    scopes = sorted(
+        s["name"] for r in roles for s in api.list_all(f"/api/roles/{r['id']}/scopes")
+    )
+    secrets = [
+        s
+        for s in api.call("GET", f"/api/applications/{app['id']}/secrets")[2] or []
+        if not s.get("expiresAt")
+    ]
+    say(
+        f"app {app['name']}: {app['id']}, type {app.get('type')}, "
+        f"roles [{', '.join(sorted(r['name'] for r in roles))}], "
+        f"scopes [{', '.join(scopes)}], {len(secrets)} live secret(s)"
+    )
 
 
 HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
@@ -838,7 +1145,20 @@ def parser() -> argparse.ArgumentParser:
         description="Idempotent Logto admin steps over the Management API (docs/runbook.md).",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("token-check", help="get a token; prints its scope and lifetime")
+    tc = sub.add_parser(
+        "token-check", help="get a token; prints its scope and lifetime"
+    )
+    tc.add_argument(
+        "--resource",
+        default=RESOURCE,
+        help="API resource to ask for (default: Management API)",
+    )
+    tc.add_argument(
+        "--scope",
+        action="append",
+        metavar="NAME",
+        help="scope to ask for (default: all)",
+    )
     r = sub.add_parser("ensure-role", help="get-or-create a User role")
     r.add_argument("name")
     r.add_argument("--description")
@@ -860,6 +1180,39 @@ def parser() -> argparse.ArgumentParser:
         s.add_argument("--post-logout-uri", action="append", metavar="URI")
         if name == "ensure-app":
             s.add_argument("--secret-file", metavar="PATH")
+    er = sub.add_parser(
+        "ensure-resource", help="get-or-create an API resource and its scopes"
+    )
+    er.add_argument("indicator", help="the resource indicator (token audience), a URI")
+    er.add_argument("--name", required=True)
+    er.add_argument(
+        "--scope",
+        action="append",
+        required=True,
+        type=parse_scope,
+        metavar="NAME[=DESCRIPTION]",
+    )
+    em = sub.add_parser(
+        "ensure-m2m-app",
+        help="get-or-create a machine-to-machine app holding exactly the given scopes",
+    )
+    em.add_argument("name")
+    em.add_argument("--resource", required=True, metavar="INDICATOR")
+    em.add_argument("--scope", action="append", required=True, metavar="NAME")
+    em.add_argument("--description")
+    em.add_argument("--secret-file", metavar="PATH")
+    rs = sub.add_parser(
+        "rotate-secret", help="add a client secret, write it to a file, delete the old"
+    )
+    rs.add_argument("app", help="application id or exact name")
+    rs.add_argument("--secret-file", required=True, metavar="PATH")
+    ra = sub.add_parser(
+        "revoke-app", help="take a machine-to-machine app's roles away (or delete it)"
+    )
+    ra.add_argument("app", help="application id or exact name")
+    ra.add_argument("--delete", action="store_true")
+    st = sub.add_parser("app-status", help="print an app's roles, scopes, secret count")
+    st.add_argument("app", help="application id or exact name")
     x = sub.add_parser(
         "set-sign-in-exp", help="set sign-in experience branding, color and methods"
     )
@@ -930,6 +1283,11 @@ COMMANDS = {
     "role-users": cmd_role_users,
     "create-user": cmd_create_user,
     "ensure-app": cmd_ensure_app,
+    "ensure-resource": cmd_ensure_resource,
+    "ensure-m2m-app": cmd_ensure_m2m_app,
+    "rotate-secret": cmd_rotate_secret,
+    "revoke-app": cmd_revoke_app,
+    "app-status": cmd_app_status,
     "set-redirects": cmd_set_redirects,
     "set-sign-in-exp": cmd_set_sign_in_exp,
     "set-app-sign-in-exp": cmd_set_app_sign_in_exp,
