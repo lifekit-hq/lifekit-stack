@@ -169,7 +169,7 @@ groups:
               # series 30 minutes ago and has none now - label_replace gives
               # it a `name` (the service) so the alert and its recovery line
               # carry a subject. Today's unscraped services this covers:
-              # google-workspace-mcp, finance-sentry-postgres,
+              # google-workspace-mcp, google-workspace-mcp-fleet, finance-sentry-postgres,
               # xui-web, xui-db. Not covered:
               # openclaw-cli (an on-demand profile service) and one-shot
               # projects outside the regex.

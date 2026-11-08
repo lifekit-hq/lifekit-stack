@@ -7,7 +7,8 @@
 #   openclaw-gateway     - the runtime gateway (channels, cron, skills, agent); loopback bind on 18789
 #   openclaw-cli         - same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations.
 #                          On-demand only (compose profile `cli`); not started by `up -d`.
-#   google-workspace-mcp - taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
+#   google-workspace-mcp - taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS); Kit's personal connector
+#   google-workspace-mcp-fleet - the same image as the fleet's own Google identity (all fleet Drive writes), internal-only on :8000
 #
 # Relative paths resolve from this directory (compose/openclaw/).
 #
@@ -25,7 +26,7 @@
 #
 # The x-policy anchor is a copy of the platform file's (YAML anchors do not
 # cross files); keep the two in step. It drops every capability and sets
-# no-new-privileges for all three services; none needs a capability back.
+# no-new-privileges for every service; none needs a capability back.
 ---
 name: openclaw
 
@@ -402,13 +403,13 @@ services:
       # env tools + env permissions is a startup error. Services are selected by
       # the permission list itself.
       TOOLS: ""
-      # gmail:send is cumulative (readonly + organize + drafts + send); drive:full
-      # is the full Drive level (the server has only readonly|full); every
-      # other service stays at readonly. Each wider level needs its one-time
-      # consent (docs/google-mcp-setup.md, "Widening the consent"); the token
-      # works with the older narrower config too, and a Drive create is refused
-      # until the Drive consent is in.
-      WORKSPACE_MCP_PERMISSIONS: "gmail:send drive:full calendar:readonly docs:readonly sheets:readonly tasks:readonly"
+      # gmail:send is cumulative (readonly + organize + drafts + send); every
+      # other service stays at readonly, Drive included: this is Kit's personal
+      # connector (the owner's account), and every fleet Drive write goes
+      # through google-workspace-mcp-fleet below. The wider level needs its
+      # one-time consent (docs/google-mcp-setup.md, "Widening the consent"); the
+      # token works with the older narrower config too.
+      WORKSPACE_MCP_PERMISSIONS: "gmail:send drive:readonly calendar:readonly docs:readonly sheets:readonly tasks:readonly"
       # The server's ONLY write tool is send_gmail_message: the rest of what
       # the gmail:send level exposes (draft, labels, modify, batch modify) is
       # blocked by name, and block wins over the permission list. A send is
@@ -417,16 +418,10 @@ services:
       # Once upstream ships the recipient allowlist (WORKSPACE_ALLOWED_RECIPIENTS,
       # taylorwilsdon/google_workspace_mcp#1078, unmerged at 2.1.0), set it here
       # as a literal too: until then a prompt-injected agent can send anywhere.
-      # Drive: the full level is only there so the document door can file an
-      # original into a subject folder, so the Drive write tools left are
-      # create_drive_folder and create_drive_file (create only). Editing,
-      # sharing, permission changes and copies are blocked by name (block wins
-      # over the permission list). Creates log as `[create_drive_file]` /
-      # `[create_drive_folder]` (alert: agent-drive-created, a warning). To undo:
-      # set drive:readonly above and remove the five Drive names below.
+      # Drive is read-only here (the server has only readonly|full), so no
+      # Drive write tool is registered and none needs a block by name.
       WORKSPACE_MCP_DISABLED_TOOLS: "draft_gmail_message,manage_gmail_label,modify_gmail_message_labels,\
-        batch_modify_gmail_message_labels,update_drive_file,manage_drive_access,\
-        set_drive_file_permissions,get_drive_shareable_link,copy_drive_file"
+        batch_modify_gmail_message_labels"
       # 2.x binds 127.0.0.1 by default for the legacy (non-OAuth 2.1) HTTP
       # mode; the gateway reaches us over the compose network, so bind all
       # interfaces. Still internal-only: no `ports:` mapping below.
@@ -449,6 +444,68 @@ services:
     # possible; verify that on its own, not as part of a scope change.
     # Internal-only — gateway reaches us via the compose network DNS name.
     # No `ports:` mapping: do not publish to the host.
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://localhost:8000/health
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  google-workspace-mcp-fleet:
+    <<: *policy
+    # The fleet's own Google identity: the same upstream image as Kit's
+    # connector above, run as the fleet Gmail account with an OAuth client in
+    # the fleet's own Cloud project (consent app In production, so its refresh
+    # token does not expire after 7 days). Every fleet Drive write goes through
+    # it; Kit's connector no longer writes Drive. The fleet account has no
+    # Gmail or Calendar surface here: the permission list is Drive alone.
+    # Files land in the fleet account's Drive, or in folders the owner shares
+    # with it. See docs/google-mcp-setup.md, "The fleet connector".
+    image: ghcr.io/taylorwilsdon/google_workspace_mcp:2.1.0
+    labels:
+      lifekit.contract: "none"  # upstream image we do not change, not a product
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          pids: 256
+    environment:
+      # The fleet's own client and account, under FLEET_ names so the two
+      # connectors never share a value (docs/secrets.md). Empty until the
+      # owner-side Cloud project and consent exist; the service still starts
+      # and answers /health, and a Drive call reports that sign-in is needed.
+      GOOGLE_OAUTH_CLIENT_ID: ${FLEET_GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${FLEET_GOOGLE_OAUTH_CLIENT_SECRET:-}
+      USER_GOOGLE_EMAIL: ${FLEET_GOOGLE_EMAIL:-}
+      # Same guards as Kit's connector: literals, TOOLS empty (a non-empty value
+      # makes the server ignore permissions), WORKSPACE_MCP_TOOLS unset.
+      TOOLS: ""
+      # drive:full is the full Drive level (the server has only readonly|full).
+      # The write tools left are create_drive_folder and create_drive_file
+      # (create only): editing, sharing, permission changes, copies and the
+      # three import_to_google_* tools (they also create Drive files) are
+      # blocked by name (block wins over the permission list). Creates log as
+      # `[create_drive_file]` / `[create_drive_folder]` (alert:
+      # agent-drive-created, a warning). Widening this to edit or share is a
+      # reviewed change here and needs the owner's ruling.
+      WORKSPACE_MCP_PERMISSIONS: "drive:full"
+      WORKSPACE_MCP_DISABLED_TOOLS: "update_drive_file,manage_drive_access,\
+        set_drive_file_permissions,get_drive_shareable_link,copy_drive_file,\
+        import_to_google_doc,import_to_google_sheets,import_to_google_slides"
+      WORKSPACE_MCP_HOST: "0.0.0.0"
+      WORKSPACE_MCP_SESSION_IDLE_TIMEOUT: "0"
+      WORKSPACE_EXTERNAL_URL: "http://google-workspace-mcp-fleet:8000"
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      # The fleet account's own refresh-token store, apart from Kit's. Host dir
+      # is created by scripts/google-mcp-bootstrap.sh (fleet argument).
+      - /srv/google-workspace-mcp-fleet/credentials:/home/app/.google_workspace_mcp/credentials
     expose:
       - "8000"
     healthcheck:

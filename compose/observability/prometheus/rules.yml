@@ -14,7 +14,7 @@ groups:
       - record: lifekit:group_memory_bytes
         expr: >-
           sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
-            project="openclaw", service=~"openclaw-gateway|google-workspace-mcp"}),
+            project="openclaw", service=~"openclaw-gateway|google-workspace-mcp|google-workspace-mcp-fleet"}),
             "name", "openclaw", "", ""))
           or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
             project="compose"}),
@@ -36,7 +36,8 @@ groups:
           or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes{
             project=~"identity|edge"}), "name", "identity", "", ""))
           or sum by (name) (label_replace(sum(docker_container_memory_usage_bytes unless (
-              docker_container_memory_usage_bytes{project="openclaw", service=~"openclaw-gateway|google-workspace-mcp"}
+              docker_container_memory_usage_bytes{project="openclaw",
+                service=~"openclaw-gateway|google-workspace-mcp|google-workspace-mcp-fleet"}
               or docker_container_memory_usage_bytes{project="compose"}
               or docker_container_memory_usage_bytes{project=~"docker|finance-sentry", name=~"finance-sentry-.*"}
               or docker_container_memory_usage_bytes{project="devclaw", service="devclaw-mcp"}

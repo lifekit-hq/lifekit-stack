@@ -3,7 +3,9 @@
 # compose service.
 #
 # What it does:
-#   - Creates /srv/google-workspace-mcp/credentials/ if missing.
+#   - Creates /srv/google-workspace-mcp/credentials/ if missing (Kit's
+#     connector), or /srv/google-workspace-mcp-fleet/credentials/ when run with
+#     the `fleet` argument (the fleet's own connector, a separate token store).
 #   - Sets owner to lifekit:lifekit (matches sibling /srv/openclaw/* dirs created
 #     by bootstrap-vps.sh).
 #   - Sets mode 0700 (refresh tokens are bearer-equivalent secrets).
@@ -11,9 +13,10 @@
 # Idempotent: re-running it is safe; each step is a no-op when state is already
 # correct.
 #
-# Run as root on the VPS, before `docker compose -p openclaw up -d google-workspace-mcp`:
+# Run as root on the VPS, before `docker compose -p openclaw up -d <service>`:
 #
-#     sudo ./scripts/google-mcp-bootstrap.sh
+#     sudo ./scripts/google-mcp-bootstrap.sh          # Kit's connector
+#     sudo ./scripts/google-mcp-bootstrap.sh fleet    # the fleet's connector
 #
 # After this script: scp your refresh-token credentials from your PC, then
 # bring the service up. See docs/google-mcp-setup.md for the full flow.
@@ -21,7 +24,15 @@
 set -euo pipefail
 
 LIFEKIT_USER="${LIFEKIT_USER:-lifekit}"
-CREDS_DIR="${GOOGLE_MCP_CREDS_DIR:-/srv/google-workspace-mcp/credentials}"
+case "${1:-kit}" in
+  kit) SERVICE="google-workspace-mcp" ;;
+  fleet) SERVICE="google-workspace-mcp-fleet" ;;
+  *)
+    echo "usage: $0 [kit|fleet]" >&2
+    exit 2
+    ;;
+esac
+CREDS_DIR="${GOOGLE_MCP_CREDS_DIR:-/srv/${SERVICE}/credentials}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Must run as root (sudo)." >&2
@@ -44,4 +55,4 @@ echo "  1. On your PC, generate the refresh token (see docs/google-mcp-setup.md)
 echo "  2. scp ~/.google_workspace_mcp/credentials/* \\"
 echo "         ${LIFEKIT_USER}@<vps>:${CREDS_DIR}/"
 echo "  3. docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \\"
-echo "         --env-file /srv/lifekit-secrets/stack.env up -d google-workspace-mcp"
+echo "         --env-file /srv/lifekit-secrets/stack.env up -d ${SERVICE}"

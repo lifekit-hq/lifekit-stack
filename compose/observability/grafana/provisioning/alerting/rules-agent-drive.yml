@@ -1,12 +1,15 @@
 # Provisioned alert rule: an agent created a folder or file in Drive through the
-# google-workspace MCP (the document door's filing, skills/doc-door). A copy of
-# rules-agent-mail.yml's shape (Loki count over a 2m window, evaluated every
+# fleet's google-workspace MCP connector (the document door's filing,
+# skills/doc-door). The query matches the log line of either connector, so a
+# create through Kit's connector would raise it too, though Kit's is read-only.
+# A copy of rules-agent-mail.yml's shape (Loki count over a 2m window, evaluated every
 # 1m, noDataState OK, nothing from the log line forwarded) with one difference:
 # severity is warning, so policies.yml.tmpl does not page it (only critical
 # routes to the phone) and it is visible in Grafana alerting only. Filing runs
 # up to a few times a day by design, so a page per file would be noise; the
-# permission itself is the guard (compose/openclaw/docker-compose.yml blocks
-# every Drive tool except these two creates by name).
+# permission itself is the guard (compose/openclaw/docker-compose.yml: the fleet
+# connector blocks every Drive tool except these two creates by name, Kit's
+# connector is read-only).
 #
 # The server logs each call BEFORE the Drive API is hit, in the same shape as
 # the Gmail tools:
@@ -67,5 +70,5 @@ groups:
           description: >-
             Agents made {{ printf "%.0f" $values.B.Value }} Drive create call(s)
             in the last 2 minutes. Check the Drive subject folders for what was
-            added. Calls are in the container log: `docker logs --since 1h
-            openclaw-google-workspace-mcp-1 | grep create_drive_`.
+            added. Calls are in the fleet connector's container log: `docker logs
+            --since 1h openclaw-google-workspace-mcp-fleet-1 | grep create_drive_`.
