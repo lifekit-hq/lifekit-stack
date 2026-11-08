@@ -3392,7 +3392,7 @@ nothing):
 ```bash
 bash scripts/identity/fleet-agent.sh issue     # resource, scopes, app, role, grant, secret store
 bash scripts/identity/fleet-agent.sh status    # what Logto holds; whether the store matches
-bash scripts/identity/fleet-agent.sh verify    # a token from the stored credentials: scope + lifetime
+bash scripts/identity/fleet-agent.sh verify    # a token from the stored credentials; fails if any scope is missing
 ```
 
 The client secret is created once by Logto and written only to the host
@@ -3439,7 +3439,7 @@ bash scripts/identity/fleet-agent.sh revoke --delete   # delete the app and the 
 `revoke` is the pause: Logto has no per-application disable, so the app
 keeps its credentials but its role (and with it every scope) is gone. It
 still gets a token, one that carries no scope, and a scope-checking app
-refuses it. `logto-admin.py undo` puts the role back. `revoke --delete` is
+refuses it (`verify` then fails, naming the missing scopes). `logto-admin.py undo` puts the role back. `revoke --delete` is
 retirement: the app is gone, no token is issued at all, and `issue` later
 makes a new app with a new client id and secret. For a leaked secret, run
 `rotate` first (the leaked one stops at once), then decide.
