@@ -4027,6 +4027,7 @@ the apps, so rolling back is pointing them back.
 | Session | cookie `_lifekit_edge`, 30 days, refreshed against Logto at most hourly, so a removed role or a deleted user is out within the hour. Host-only, so it covers every port of the tailnet name: one sign-in for both surfaces |
 | Dashboard `/api/*` with no session | 401, not a redirect (a `fetch()` cannot follow the sign-in page) |
 | devclaw machine clients | unchanged: a request with an `Authorization` header or a `?token=` query, and `/mcp`, `/webhooks/`, `/health`, `/metrics`, go straight to devclaw, which checks them itself |
+| Dashboard machine clients | one door: a `GET` with a bearer on `/api/fleet`, `/api/fleet/metrics` or `/api/fleet/quota` goes straight to the dashboard, which checks the fleet-agent token itself ([Fleet agent on the dashboard and basket](#fleet-agent-on-the-dashboard-and-basket)) |
 | devclaw console | after sign-in, the gate adds devclaw's bearer (`DEVCLAW_MCP_TOKEN`), so no token is asked for |
 | Dashboard relay proof | after sign-in, the dashboard route adds `X-Lifekit-Edge-Proof` (`RELAY_EDGE_PROOF`) and the signed-in `X-Auth-Request-Email`; the dashboard's relay endpoint requires both, so a container on `lifekit-shared` that calls the dashboard directly is refused. The dashboard's own env carries the same `RELAY_EDGE_PROOF` (`docs/secrets-runbook.md`) |
 | Not behind it | finance-sentry (its own Logto client), Grafana, Logto itself. The OpenClaw gateway goes behind it with its own cutover: [OpenClaw behind the sign-in gate](#openclaw-behind-the-sign-in-gate) |
