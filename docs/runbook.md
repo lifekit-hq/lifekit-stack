@@ -2826,7 +2826,7 @@ which runs `reply_pusher.py`. The pusher reads a home only through
 `{home, noteId, cursor}` - identifiers only, never a note or reply body - and
 `Idempotency-Key: <home>:<cursor>`. Kit's turn (the "Firstmate reply" paragraph of the
 `secondmate-relay` skill) reads the reply back with `relay.sh replies <home>` and says it.
-Only `kit-` replies push; `dash-`, `fs-`, `fleet-`, `term-`, any other prefix and no prefix are
+Only `kit-` replies push; `dash-`, `fs-`, `oc-`, `fleet-`, `term-`, any other prefix and no prefix are
 skipped (the cursor still moves past them).
 
 A failed POST keeps its outbox entry; the unit exits 1 and systemd retries it with a
