@@ -14,7 +14,8 @@
 #   status           what Logto holds for the app and whether the store
 #                    matches it; no secret value.
 #   verify           get a token with the stored credentials and print its
-#                    scope and lifetime (the token is not printed).
+#                    scope and lifetime (the token is not printed). Exits 1
+#                    when the token lacks any of the fleet scopes.
 #   rotate           new client secret, written to the store, older ones
 #                    deleted in Logto. Callers that hold the old one stop.
 #   revoke [--delete]  take the app's role away: Logto still issues it a token,
@@ -191,8 +192,15 @@ cmd_verify() {
   [[ -n "${id}" && -n "${secret}" ]] || die "could not read ${STORE}"
   local -a scope_args=()
   while IFS= read -r s; do scope_args+=(--scope "${s}"); done < <(scope_names)
-  LOGTO_M2M_APP_ID="${id}" LOGTO_M2M_APP_SECRET="${secret}" \
-    admin token-check --resource "${RESOURCE}" "${scope_args[@]}"
+  local out granted missing=""
+  out="$(LOGTO_M2M_APP_ID="${id}" LOGTO_M2M_APP_SECRET="${secret}" \
+    admin token-check --resource "${RESOURCE}" "${scope_args[@]}")" || return 1
+  echo "${out}"
+  granted=" $(printf '%s\n' "${out}" | sed -n 's/^token ok: scope \(.*\), expires in .*/\1/p') "
+  while IFS= read -r s; do
+    [[ "${granted}" == *" ${s} "* ]] || missing="${missing} ${s}"
+  done < <(scope_names)
+  [[ -z "${missing}" ]] || die "token lacks scope(s):${missing} (run issue)"
 }
 
 cmd_rotate() {

@@ -119,12 +119,25 @@ def handler_for(fake: FakeLogto):
                 form = urllib.parse.parse_qs(raw.decode())
                 want = base64.b64encode(f"{APP_ID}:{APP_SECRET}".encode()).decode()
                 ok = self.headers.get("Authorization") == f"Basic {want}"
+                granted = None
                 for app in fake.apps:
                     for sec in fake.secrets.get(app["id"], []):
                         pair = base64.b64encode(
                             f"{app['id']}:{sec['value']}".encode()
                         ).decode()
-                        ok = ok or self.headers.get("Authorization") == f"Basic {pair}"
+                        if self.headers.get("Authorization") == f"Basic {pair}":
+                            ok = True
+                            held = {
+                                sid
+                                for rid in fake.app_roles.get(app["id"], [])
+                                for sid in fake.role_scopes.get(rid, [])
+                            }
+                            granted = {
+                                sc["name"]
+                                for scs in fake.resource_scopes.values()
+                                for sc in scs
+                                if sc["id"] in held
+                            }
                 audiences = ["https://default.logto.app/api"] + [
                     r["indicator"] for r in fake.resources
                 ]
@@ -136,13 +149,16 @@ def handler_for(fake: FakeLogto):
                     return self.reply(
                         400, {"error": "invalid_client", "error_description": "bad"}
                     )
+                scope = form.get("scope", ["all"])[0]
+                if granted is not None:
+                    scope = " ".join(s for s in scope.split() if s in granted)
                 return self.reply(
                     200,
                     {
                         "access_token": TOKEN,
                         "expires_in": 3600,
                         "token_type": "Bearer",
-                        "scope": form.get("scope", ["all"])[0],
+                        "scope": scope,
                     },
                 )
             if self.headers.get("Authorization") != f"Bearer {TOKEN}":
@@ -1492,6 +1508,16 @@ def test_fleet_verify_gets_a_token_with_the_stored_credentials(fleet):
     assert proc.returncode == 0, proc.stderr
     assert "token ok: scope fleet:read" in proc.stdout
     assert TOKEN not in proc.stdout
+
+
+def test_fleet_verify_fails_once_the_role_is_revoked(fleet):
+    assert fleet("issue").returncode == 0
+    assert fleet("verify").returncode == 0
+    assert fleet("revoke").returncode == 0
+    proc = fleet("verify")
+    assert proc.returncode == 1
+    assert "lacks scope" in proc.stderr
+    assert "fleet:read" in proc.stderr
 
 
 def test_fleet_rotate_replaces_the_stored_secret(fleet):
