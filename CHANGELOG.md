@@ -18,6 +18,34 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.11](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.10...v0.1.11) (2026-11-08)
+
+
+### Features
+
+* **edge:** add dashboard-machine route for fleet-agent bearer reads ([#492](https://github.com/lifekit-hq/lifekit-stack/issues/492)) ([3f521b5](https://github.com/lifekit-hq/lifekit-stack/commit/3f521b5c10248870e609b0b7572d145b6683b351))
+* **fleet-publisher:** publish the "Taken for you" feed of actions taken under a standing ruling ([#489](https://github.com/lifekit-hq/lifekit-stack/issues/489)) ([266734b](https://github.com/lifekit-hq/lifekit-stack/commit/266734bd835216190e6147e38b434dc09da0be2e))
+* **identity:** fleet-agent Logto application, API resource and scopes ([#490](https://github.com/lifekit-hq/lifekit-stack/issues/490)) ([4be4216](https://github.com/lifekit-hq/lifekit-stack/commit/4be4216ddd91c70c8e640e5faae8c5c4e4e4ceaa))
+* **observability:** onboard basket to the memory budget and weekly ops report ([#483](https://github.com/lifekit-hq/lifekit-stack/issues/483)) ([50a948c](https://github.com/lifekit-hq/lifekit-stack/commit/50a948c7a455a1fed6ac472c5ab9e859be2eba1f))
+* **offbox-backup:** back up basket's database off-box ([#477](https://github.com/lifekit-hq/lifekit-stack/issues/477)) ([205b1c3](https://github.com/lifekit-hq/lifekit-stack/commit/205b1c378e340e5ccfe125f5b780c31017ad52b0))
+* **openclaw:** add fleet Google Workspace connector and narrow Kit's to read-only Drive ([#493](https://github.com/lifekit-hq/lifekit-stack/issues/493)) ([218a345](https://github.com/lifekit-hq/lifekit-stack/commit/218a34551ee0e72304cb445c5762ad919ead27e6))
+* **openclaw:** add fleet-gate plugin to stop and file P16 tool calls ([#496](https://github.com/lifekit-hq/lifekit-stack/issues/496)) ([55a0df2](https://github.com/lifekit-hq/lifekit-stack/commit/55a0df20662020fae969cc02f70884b8955bf804))
+* **openclaw:** give the gateway DEVCLAW_MCP_TOKEN for the devclaw MCP entry ([#475](https://github.com/lifekit-hq/lifekit-stack/issues/475)) ([0eea48f](https://github.com/lifekit-hq/lifekit-stack/commit/0eea48f62587c88857249bdcb7463da842dc87ec))
+* **ops-report:** add weekly per-job list-price cost view ([#470](https://github.com/lifekit-hq/lifekit-stack/issues/470)) ([1a3666a](https://github.com/lifekit-hq/lifekit-stack/commit/1a3666a273be54233cc06be92de23b3b46fb056d))
+
+
+### Bug Fixes
+
+* **defaults:** make modules.yaml match the live MCP modules ([#476](https://github.com/lifekit-hq/lifekit-stack/issues/476)) ([8c74a1a](https://github.com/lifekit-hq/lifekit-stack/commit/8c74a1a12a2aec3d598c47457f115a19192ca036))
+* **deploy:** create the Google connector credentials folders before compose up ([#498](https://github.com/lifekit-hq/lifekit-stack/issues/498)) ([fbfb071](https://github.com/lifekit-hq/lifekit-stack/commit/fbfb071be1ebfc4448e86503c63ef41d75ac04ef)), closes [#495](https://github.com/lifekit-hq/lifekit-stack/issues/495)
+* **doc-door:** follow the Workspace MCP 307 and drop the trailing slash from the default URL ([#472](https://github.com/lifekit-hq/lifekit-stack/issues/472)) ([73957b4](https://github.com/lifekit-hq/lifekit-stack/commit/73957b4a47718f00926f2fc00ce807c667f43d6d))
+* **doc-door:** pass content_mime_type so Drive filing succeeds ([#473](https://github.com/lifekit-hq/lifekit-stack/issues/473)) ([3b2962c](https://github.com/lifekit-hq/lifekit-stack/commit/3b2962cb6068fbbecdec9514a39ee401babd0038))
+
+
+### Documentation
+
+* **runbook:** add --light-context operator step for today-brief and ledger-opportunity crons ([#482](https://github.com/lifekit-hq/lifekit-stack/issues/482)) ([81d763e](https://github.com/lifekit-hq/lifekit-stack/commit/81d763ee71f0cc08c51df5820b0538e3d30aee08))
+
 ## [0.1.10](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.9...v0.1.10) (2026-11-01)
 
 
