@@ -524,6 +524,69 @@ def test_finance_sentry_can_name_the_main_home(relay):
     assert relay.requests() == []
 
 
+# ─── the openclaw sender (fleet-gate P16 stops) ──────────────────────────────
+
+OC = ("openclaw",)
+
+
+def test_openclaw_note_uses_the_oc_prefix(relay):
+    result = relay.run("note oc-20261108-abc", b"fleet-gate P16 stop\n", OC)
+    assert result.returncode == 0, result.stderr
+    assert lines(result)[1]["outcome"] == "created"
+    assert relay.requests() == ["oc-20261108-abc"]
+    assert "rid=oc-20261108-abc" in relay.logged()
+
+
+@pytest.mark.parametrize(
+    ("sender", "rid", "must_match"),
+    [
+        (OC, "kit-1", "oc-"),
+        (OC, "dash-1", "oc-"),
+        (OC, "fs-1", "oc-"),
+        ((), "oc-1", "kit-"),
+        (DASH, "oc-1", "dash-"),
+        (FS, "oc-1", "fs-"),
+    ],
+)
+def test_openclaw_and_the_other_senders_refuse_each_others_prefix(
+    relay, sender, rid, must_match
+):
+    result = relay.run(f"note {rid}", b"body\n", sender)
+    assert result.returncode == 64
+    assert f"must match {must_match}" in result.stderr.decode()
+    assert relay.calls() == []
+
+
+def test_openclaw_rate_bucket_is_its_own(relay):
+    fill_requests(relay, 30, prefix="kit-old-")
+    fill_requests(relay, 30, prefix="fs-old-")
+    assert relay.run("note oc-new", b"body\n", OC).returncode == 0
+    fill_requests(relay, 30, prefix="oc-old-")
+    result = relay.run("note oc-new2", b"body\n", OC)
+    assert result.returncode == 75
+    assert relay.run("note oc-old-3", b"body\n", OC).returncode == 0  # replay
+
+
+def test_openclaw_refuses_a_bad_body_whole(relay):
+    assert relay.run("note oc-empty", b"", OC).returncode == 65
+    assert relay.run("note oc-big", b"x" * 32769, OC).returncode == 65
+    assert relay.requests() == []
+
+
+def test_openclaw_receipts_show_only_oc_notes(relay):
+    data = receipts_fixture()
+    data["pending"].append({"id": "p6", "request_id": "oc-1", "body": "o"})
+    data["handled"].append({"id": "ho", "request_id": "oc-2", "body": "o"})
+    data["replies"].append({"id": "ho", "at": "2026-11-08T00:00:00Z", "body": "ok"})
+    (relay.home / "receipts.json").write_text(json.dumps(data))
+    [out] = lines(relay.run("receipts", sender=OC))
+    assert [n["id"] for n in out["pending"]] == ["p6"]
+    assert [n["id"] for n in out["handled"]] == ["ho"]
+    assert [r["id"] for r in out["replies"]] == ["ho"]
+    [kit] = lines(relay.run("receipts"))
+    assert all(n["id"] not in ("p6", "ho") for n in kit["pending"] + kit["handled"])
+
+
 # ─── the home argument ───────────────────────────────────────────────────────
 
 

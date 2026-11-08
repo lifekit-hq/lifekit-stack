@@ -19,10 +19,11 @@
 # Root owns the installed copy, so the key's holder cannot rewrite what the
 # key runs. Re-running converges.
 #
-# One installed script serves three authorized keys, told apart by the argument
+# One installed script serves four authorized keys, told apart by the argument
 # pinned in each authorized_keys command=: none (Kit's key, kit- request ids),
-# "dashboard" (the dashboard's key, dash- ids) or "finance-sentry"
-# (finance-sentry's key, fs- ids). Installing does not touch authorized_keys;
+# "dashboard" (the dashboard's key, dash- ids), "finance-sentry"
+# (finance-sentry's key, fs- ids) or "openclaw" (the gateway fleet-gate
+# plugin's key, oc- ids). Installing does not touch authorized_keys;
 # the operator adds each line (runbook).
 
 set -euo pipefail
@@ -64,6 +65,7 @@ grep -q "^readonly ALT_HOME='${FM_HOME_ALT}'" "$rendered" || die "render did not
 bash -n "$rendered" || die "rendered script does not parse"
 grep -q '^  dashboard) ID_PREFIX=dash- ;;$' "$rendered" || die "rendered script lacks the dashboard sender"
 grep -q '^  finance-sentry) ID_PREFIX=fs- ;;$' "$rendered" || die "rendered script lacks the finance-sentry sender"
+grep -q '^  openclaw) ID_PREFIX=oc- ;;$' "$rendered" || die "rendered script lacks the openclaw sender"
 
 if [[ "$mode" == print ]]; then
   cat "$rendered"

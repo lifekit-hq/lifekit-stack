@@ -16,11 +16,13 @@
 # default home. A client never supplies a path: an unknown name, a path or a
 # traversal is refused (exit 64) before anything is read or written.
 #
-# One script, three keys. authorized_keys names the sender as the command's
+# One script, four keys. authorized_keys names the sender as the command's
 # argument: no argument or "kit" is Kit's key (request ids kit-*); "dashboard"
 # is the dashboard's key (dash-*); "finance-sentry" is finance-sentry's key
-# (fs-*). Each sender has its own request-id prefix, rate bucket and receipts
-# view; nothing in the client's input picks the sender.
+# (fs-*); "openclaw" is the gateway's fleet-gate plugin key (oc-*, the P16
+# stops it files for the owner; fleet-internal, not a person's note). Each
+# sender has its own request-id prefix, rate bucket and receipts view;
+# nothing in the client's input picks the sender.
 #
 # This is the repo copy: install-kit-relay.sh renders it with the homes
 # pinned below and installs it root-owned at
@@ -44,6 +46,7 @@ case "${1-kit}" in
   kit) ID_PREFIX=kit- ;;
   dashboard) ID_PREFIX=dash- ;;
   finance-sentry) ID_PREFIX=fs- ;;
+  openclaw) ID_PREFIX=oc- ;;
   *) printf 'kit-relay: unknown sender\n' >&2; exit 78 ;;
 esac
 readonly ID_PREFIX

@@ -13,7 +13,8 @@
 # session whose tool allow-list is exactly the two Gmail read tools (READER_TOOLS
 # below): no relay, ask_user, sessions_send, message, file write, exec or Gmail
 # write tool exists in that run. The allow-list is the job's stored toolsAllow
-# cap, enforced by the gateway's `openclaw` agent runtime, not by the prompt.
+# cap, enforced by the gateway (verified under the `openclaw` runtime; not
+# re-verified under `claude-cli`, which the agents run on now), not by the prompt.
 # The reader has no delivery; its run stays in its run history, where the
 # summary is all of the run's text, head-kept and cut at 2000 characters. The
 # reader wraps its reply (the mail section, within 1500 characters) in the

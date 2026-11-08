@@ -10,7 +10,7 @@ This page is the design, not a mirror of live state. The live fleet is host stat
 
 - **kit** is the front door and the general-purpose agent: the default and system agent, the catch-all for Telegram traffic nothing else claims, and the dispatcher for domain work that arrives there. Anything without a domain agent is kit's, including food and workouts (it runs the `nutrition-claw`, `workout-claw` and `life-state` CLIs itself, with targets read from the vault's `domains/health.md`) and dev work (which it hands off as a GitHub issue, see [DevClaw - retired](#devclaw---retired)).
 - **Domain agents** each own one domain, with their own workspace, memory, sessions and, where the owner talks to them directly, their own Telegram bot. Since 2026-10-09: `finance` and `career`; since 2026-10-28 also `learnclaw`.
-- **One gateway, one config.** Every agent runs in the same `openclaw-gateway` container on the `openclaw` agent runtime (`agentRuntime.id`), authenticated by the owner's Claude subscription. No API keys ([[pro-subscription-is-the-design]] in memory); a domain agent never brings a paid service with it.
+- **One gateway, one config.** Every agent runs in the same `openclaw-gateway` container on the `claude-cli` agent runtime (`agentRuntime.id`, set per Claude model entry; only the `openai/gpt-5.5` entry keeps `openclaw`), authenticated by the owner's Claude subscription. No API keys ([[pro-subscription-is-the-design]] in memory); a domain agent never brings a paid service with it.
 
 | Agent | Domain | How work reaches it |
 | --- | --- | --- |
@@ -98,7 +98,7 @@ The first v2 design was a multi-agent modular monolith: an orchestrator dispatch
 The current shape does not repeat that design:
 
 - **Routing is the gateway's job, not the model's.** Work reaches a domain agent through a binding or an explicit kit subagent call, not through an orchestrator deciding to delegate.
-- **The separation that holds is workspace, memory, sessions and channel.** Treat per-agent tool policy (including `tools.exec.mode`) as advisory under `claude-cli` until it is re-verified; it is not an isolation boundary. Under the `openclaw` runtime the agents use now, a cron job's own tool allow-list (`--tools`, stored as `payload.toolsAllow`) is enforced per run; the needs-you mail reader relies on it. The hard rules in each `AGENTS.md` and the owner's review of drafts are.
+- **The separation that holds is workspace, memory, sessions and channel.** Treat per-agent tool policy (including `tools.exec.mode`) as advisory under `claude-cli` until it is re-verified; it is not an isolation boundary. A cron job's own tool allow-list (`--tools`, stored as `payload.toolsAllow`) was verified as enforced per run under the `openclaw` runtime the agents used then and is not re-verified under `claude-cli`; the needs-you mail reader relies on it. What binds under `claude-cli` is the `before_tool_call` hook: the `fleet-gate` plugin stops and files the calls the P16 table marks stop-and-file (`docs/runbook.md`, "Fleet gate"), and server-side scoping stays the strongest boundary. The hard rules in each `AGENTS.md` and the owner's review of drafts are.
 - **Domain agents that act outward stay drafts-only.** `career` never posts, messages or submits on the owner's behalf.
 
 ---
