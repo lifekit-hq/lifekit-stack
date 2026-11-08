@@ -64,8 +64,10 @@ class FakeMcp:
     folders: dict[str, str] = {}  # folder name -> id
     files: dict[str, list[str]] = {}  # folder id -> file names
     uploads: list[dict] = []
+    routes: list[tuple[str, str]] = []  # (tool, server url) per call
 
-    def __init__(self, *a, **k):
+    def __init__(self, url=None, *a, **k):
+        self.url = url or door.MCP_URL
         if FakeMcp.fail:
             raise RuntimeError("Google sign-in required")
 
@@ -101,6 +103,7 @@ class FakeMcp:
 
     def call(self, tool, **args):
         FakeMcp.calls.append(tool)
+        FakeMcp.routes.append((tool, self.url))
         if tool in door.ALLOWED_TOOLS and "drive" in tool:
             return self.drive(tool, args)
         if tool == "search_gmail_messages":
@@ -129,6 +132,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(door, "MARKITDOWN", str(conv))
     monkeypatch.setattr(door, "Mcp", FakeMcp)
     FakeMcp.calls, FakeMcp.fail, FakeMcp.drive_error = [], False, None
+    FakeMcp.routes = []
     FakeMcp.folders, FakeMcp.files, FakeMcp.uploads = {}, {}, []
     return tmp_path
 
@@ -310,6 +314,50 @@ def test_filing_creates_the_folder_and_uploads_the_original_once(env, capsys):
     assert FakeMcp.calls.count("create_drive_file") == 1
 
 
+def test_mail_goes_to_kits_connector_and_every_drive_call_to_the_fleet_one(env, capsys):
+    reported(capsys)
+    drive = {t: u for t, u in FakeMcp.routes if "drive" in t}
+    assert set(drive) == {
+        "search_drive_files",
+        "create_drive_folder",
+        "list_drive_items",
+        "create_drive_file",
+    }
+    assert set(drive.values()) == {door.DRIVE_MCP_URL}
+    mail = {u for t, u in FakeMcp.routes if "gmail" in t}
+    assert mail == {door.MCP_URL}
+
+
+def test_the_parent_folder_is_configurable_for_a_folder_the_owner_shared(
+    env, capsys, monkeypatch
+):
+    monkeypatch.setattr(door, "DRIVE_PARENT", "shared-parent")
+    seen = []
+    real = FakeMcp.drive
+
+    def spy(self, tool, args):
+        seen.append((tool, args))
+        return real(self, tool, args)
+
+    monkeypatch.setattr(FakeMcp, "drive", spy)
+    reported(capsys)
+    (search,) = [a for t, a in seen if t == "search_drive_files"]
+    assert "'shared-parent' in parents" in search["query"]
+    (made,) = [a for t, a in seen if t == "create_drive_folder"]
+    assert made["parent_folder_id"] == "shared-parent"
+
+
+def test_a_folder_id_cached_from_another_drive_is_not_reused(env, capsys):
+    run(["scan"])
+    d = doc_id()
+    state = door.load_state()
+    state["folders"] = {"Employment": "kit-drive-folder"}  # the pre-fleet cache shape
+    door.save_state(state)
+    FakeMcp.folders["Employment"] = "fleet-folder"
+    assert run(["report", d], GOOD) == 0
+    assert FakeMcp.uploads[0]["folder_id"] == "fleet-folder"
+
+
 def test_existing_folder_is_reused(env, capsys):
     FakeMcp.folders["Employment"] = "fold-existing"
     reported(capsys)
@@ -442,3 +490,9 @@ def test_mcp_client_works_with_and_without_trailing_slash(path):
 
 def test_default_url_has_no_trailing_slash():
     assert door.MCP_URL.endswith(":8000/mcp")
+
+
+def test_default_drive_url_is_the_fleet_connector_not_kits():
+    assert door.DRIVE_MCP_URL.endswith(":8000/mcp")
+    assert "google-workspace-mcp-fleet" in door.DRIVE_MCP_URL
+    assert door.DRIVE_MCP_URL != door.MCP_URL

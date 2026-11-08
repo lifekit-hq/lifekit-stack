@@ -53,7 +53,7 @@ MIB = 1024**2
 # budgets themselves come from docs/resource-budget.md; a group in the doc
 # with no entry here is reported as "no selector" (and a test fails).
 GROUP_SELECTORS = {
-    "openclaw": 'project="openclaw",service=~"openclaw-gateway|google-workspace-mcp"',
+    "openclaw": 'project="openclaw",service=~"openclaw-gateway|google-workspace-mcp|google-workspace-mcp-fleet"',
     "platform": 'project="compose"',
     "finance-sentry": 'project=~"docker|finance-sentry",name=~"finance-sentry-.*"',
     "devclaw-mcp": 'project="devclaw",service="devclaw-mcp"',

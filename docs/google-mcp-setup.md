@@ -1,11 +1,23 @@
 # Google Workspace MCP — one-time setup
 
-This is the one-time setup for the `google-workspace-mcp` compose service
-(upstream: [taylorwilsdon/google_workspace_mcp]). The service runs single-user,
-streamable-HTTP on `:8000` inside the compose network, and is consumed by
-`openclaw-gateway` over that internal network at
-`http://google-workspace-mcp:8000/mcp/`. The port is **not** published to the
-host.
+There are **two** Workspace connectors, two instances of the same upstream image
+([taylorwilsdon/google_workspace_mcp]), each with its own Google account, OAuth
+client, refresh token and credentials directory:
+
+| | Kit's connector | The fleet connector |
+| --- | --- | --- |
+| Compose service | `google-workspace-mcp` | `google-workspace-mcp-fleet` |
+| Signs in as | the owner's personal Google account | the fleet Gmail account |
+| Reach | Gmail (read and send), Calendar, Docs, Sheets, Tasks and Drive, all read-only except `send_gmail_message` | Drive only; create only (`create_drive_folder`, `create_drive_file`) |
+| Cloud project and client | the owner's (`GOOGLE_OAUTH_CLIENT_*`, `USER_GOOGLE_EMAIL`) | the fleet's own (`FLEET_GOOGLE_OAUTH_CLIENT_*`, `FLEET_GOOGLE_EMAIL`) |
+| Token store | `/srv/google-workspace-mcp/credentials/` | `/srv/google-workspace-mcp-fleet/credentials/` |
+| Internal URL | `http://google-workspace-mcp:8000/mcp/` | `http://google-workspace-mcp-fleet:8000/mcp/` |
+| Owner of the account and its revocation | the owner | the owner (see "The fleet connector") |
+
+Sections 1 to 9 below set up **Kit's** connector; "The fleet connector" after them
+lists what differs for the second one. Both run single-user, streamable-HTTP on
+`:8000` inside the compose network and are consumed by `openclaw-gateway` over
+that internal network. Neither port is published to the host.
 
 Most of this happens once on your PC (the OAuth consent flow needs a browser).
 The VPS just receives the resulting refresh token and brings the container up.
@@ -50,26 +62,21 @@ Tasks) needs these six:
 (Add Slides / Forms / Chat / People / Custom Search later if you broaden the
 permissions.)
 
-The compose service sets the tool surface with literals, not env values:
-`WORKSPACE_MCP_PERMISSIONS` is `gmail:send` and `drive:full` plus `readonly` for
-Calendar, Docs, Sheets and Tasks, and `WORKSPACE_MCP_DISABLED_TOOLS` removes the
-other write tools those levels pull in: for Gmail `draft_gmail_message`,
+Kit's compose service sets the tool surface with literals, not env values:
+`WORKSPACE_MCP_PERMISSIONS` is `gmail:send` plus `readonly` for Drive, Calendar,
+Docs, Sheets and Tasks, and `WORKSPACE_MCP_DISABLED_TOOLS` removes the other
+write tools the Gmail `send` level pulls in: `draft_gmail_message`,
 `manage_gmail_label`, `modify_gmail_message_labels`,
-`batch_modify_gmail_message_labels`; for Drive `update_drive_file`,
-`manage_drive_access`, `set_drive_file_permissions`, `get_drive_shareable_link`
-and `copy_drive_file`. Drive has only the levels `readonly` and `full`; the
-block-by-name list wins over the permission list, so the only tools that write
-anywhere are `send_gmail_message`, `create_drive_folder` and `create_drive_file`
-(create only: the document door files an original into a subject folder; nothing
-edits, moves, deletes or shares an existing Drive file). This is the guard that
-binds: per-agent tool allow and deny lists are not enforced under the
-claude-cli runtime. `TOOLS` stays an empty literal: a non-empty value puts
-`--tools` on the start command and the server then ignores permissions
-(full mode); `WORKSPACE_MCP_TOOLS` is no longer read. Every call is logged and
-send pings the owner through the `agent-mail-sent` Grafana alert
-(`compose/observability/grafana/provisioning/alerting/rules-agent-mail.yml`); a
-Drive create raises the warning-level `agent-drive-created` alert
-(`rules-agent-drive.yml`), visible in Grafana and not paged.
+`batch_modify_gmail_message_labels`. The block-by-name list wins over the
+permission list, so the only tool that writes anywhere is `send_gmail_message`.
+Kit's connector is read-only for Drive on purpose: every Drive write is the fleet
+connector's (below). This is the guard that binds: per-agent tool allow and deny
+lists are not enforced under the claude-cli runtime. `TOOLS` stays an empty
+literal: a non-empty value puts `--tools` on the start command and the server
+then ignores permissions (full mode); `WORKSPACE_MCP_TOOLS` is no longer read.
+Every call is logged and send pings the owner through the `agent-mail-sent`
+Grafana alert
+(`compose/observability/grafana/provisioning/alerting/rules-agent-mail.yml`).
 To change the surface, change the literals in `compose/openclaw/docker-compose.yml`
 in a reviewed PR. When upstream ships `WORKSPACE_ALLOWED_RECIPIENTS`
 ([taylorwilsdon/google_workspace_mcp#1078](https://github.com/taylorwilsdon/google_workspace_mcp/pull/1078),
@@ -92,25 +99,17 @@ from a read-only consent cannot send. Order matters:
    it after the compose change is live. Then check the granted scopes include
    `gmail.send`.
 
-### Widening the consent for Drive
+### Drive consent moved to the fleet connector
 
-Filing needs the full Drive scope (and `drive.file`), so the token must come from
-a consent that includes it; a token from a read-only Drive consent keeps working
-for reads and a Drive create is refused (the document door then reports
-`Drive: pending` and retries on its next scan). Order matters:
-
-1. Merge the compose change (`drive:full`, five Drive tools blocked by name).
-2. Redo step 6 with `drive:full` in the `--permissions` flag, sign in once, and
-   copy the new token (step 7). Run it after the compose change is live: the
-   sign-in asks only for the scopes the running config needs.
-3. Check the granted scopes include the Drive scope.
-
-Undo, back to read-only: set `drive:readonly` in `WORKSPACE_MCP_PERMISSIONS`,
-remove the five Drive names from `WORKSPACE_MCP_DISABLED_TOOLS`, and merge. A
-token with the wider scope keeps working at the narrower config and no new
-consent is required to go down; to be thorough, revoke the app's access on the
-Google account's third-party access page and redo the consent with the narrower
-flag. The document door then reports `Drive: pending` again.
+Until 2026-11-08 Kit's connector held the full Drive level so the document door
+could file originals. That moved: Kit's connector is `drive:readonly` and the
+document door sends every Drive call to `google-workspace-mcp-fleet`, which is
+where the full Drive consent now lives ("The fleet connector"). A refresh token
+that Kit's connector already holds with the wider Drive scope keeps working at
+the narrower config and no new consent is needed to go down. To be thorough,
+revoke the app's access on the owner's Google account third-party access page
+and redo step 6 with the narrower flag
+(`--permissions gmail:send drive:readonly calendar:readonly docs:readonly sheets:readonly tasks:readonly`).
 
 ## 3. Configure the OAuth consent screen
 
@@ -194,7 +193,7 @@ export GOOGLE_OAUTH_CLIENT_SECRET=...
 export USER_GOOGLE_EMAIL=you@example.com
 export OAUTHLIB_INSECURE_TRANSPORT=1   # needed for http://localhost callback
 uvx workspace-mcp --transport streamable-http --single-user \
-    --permissions gmail:send drive:full calendar:readonly \
+    --permissions gmail:send drive:readonly calendar:readonly \
     docs:readonly sheets:readonly tasks:readonly
 ```
 
@@ -267,6 +266,111 @@ docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose
     restart openclaw-gateway
 ```
 
+## The fleet connector
+
+`google-workspace-mcp-fleet` gives the fleet its own Google identity instead of
+borrowing the owner's consent per scope (owner decision 2026-11-08). It is the
+same image and the same flow as steps 1 to 9, with these differences.
+
+**What it is.** A Google account of the fleet's own (the fleet Gmail), a Cloud
+project of its own, an OAuth client of type *Desktop app* in that project, and
+the consent screen *In production* (step 3) so its refresh token does not
+expire after 7 days. Only the Drive API needs enabling. The tool surface is the
+literal `drive:full` with the five non-create Drive tools blocked by name
+(`compose/openclaw/docker-compose.yml`): it can read Drive and create folders and
+files, and cannot edit, move, share, copy or delete anything. Files land in the
+fleet account's Drive, or in a folder the owner shares with the fleet account
+(share it with Editor access; the connector can then create inside it, and the
+document door can be pointed at it with `DOC_DOOR_DRIVE_PARENT_ID`, default
+`root`, the fleet account's own Drive).
+
+**Who owns it.** The owner owns the account, the Cloud project and the
+revocation. Record, once, when the account is first signed in: whether its
+recovery phone and 2-Step Verification belong to the owner, and put the answer in
+this section (it is not known from the repo). If they do not, move them to the
+owner before relying on the account: a fleet identity the owner cannot recover
+is not the owner's to revoke.
+
+**Differences from Kit's setup.**
+
+- Secrets are `FLEET_GOOGLE_OAUTH_CLIENT_ID`, `FLEET_GOOGLE_OAUTH_CLIENT_SECRET`
+  and `FLEET_GOOGLE_EMAIL` in the master file (step 5, same commands), never the
+  `GOOGLE_OAUTH_*` / `USER_GOOGLE_EMAIL` names.
+- On the VPS: `sudo /srv/lifekit-stack/scripts/google-mcp-bootstrap.sh fleet`
+  creates `/srv/google-workspace-mcp-fleet/credentials/` (mode 0700, owner
+  `lifekit`). Run it before the first sign-in; the compose service starts without
+  it and without credentials, and answers `/health`, so the merge is safe to land
+  first.
+- Step 6 on the PC, signed in as the fleet account, with only Drive asked for:
+
+  ```bash
+  export GOOGLE_OAUTH_CLIENT_ID=<the fleet client id>
+  export GOOGLE_OAUTH_CLIENT_SECRET=<the fleet client secret>
+  export USER_GOOGLE_EMAIL=<the fleet account>
+  export OAUTHLIB_INSECURE_TRANSPORT=1
+  uvx workspace-mcp --transport streamable-http --single-user \
+      --permissions drive:full
+  ```
+
+  The sign-in is the one step only a person can take: the fleet account's
+  password, any re-verification and 2-Step Verification prompt, and the consent
+  click. Nothing here scripts or works around any of it. Check the granted scopes
+  include the Drive scope.
+- Step 7 copies the token to `/srv/google-workspace-mcp-fleet/credentials/`; step 8
+  brings up `google-workspace-mcp-fleet`.
+- Step 9 registers a second MCP server, keyed `google-workspace-fleet` in the
+  `mcp.servers` object (the live schema is an object keyed by server id), by
+  applying the body of
+  [`compose/openclaw-gateway/mcp-servers/google-workspace-fleet.json`](../compose/openclaw-gateway/mcp-servers/google-workspace-fleet.json)
+  with `openclaw config patch` (host state, an operator step). Its tools then
+  appear as `google-workspace-fleet__*`. The document door does not need the
+  entry (it speaks MCP to the fleet connector itself); an agent that should call
+  fleet Drive tools does.
+
+**Rehearsal, in this order.** Read first: with the token in place, a
+`search_drive_files` (or `list_drive_items` on a folder the owner shared) over the
+internal URL returns the folder list and writes nothing. Then one write: create a
+folder, and a small file in it, inside a folder the owner shared with the fleet
+account, and confirm the owner sees both in Drive. A Drive create is logged as
+`[create_drive_folder]` / `[create_drive_file]` and raises the warning
+`agent-drive-created`; that is the alert working, not a fault.
+
+```bash
+docker compose -p openclaw -f /srv/lifekit-stack/compose/openclaw/docker-compose.yml \
+    exec openclaw-gateway curl -fsS http://google-workspace-mcp-fleet:8000/health
+docker logs --since 10m openclaw-google-workspace-mcp-fleet-1 | grep -E 'create_drive|Invoked|invalid_grant'
+```
+
+**Verify Kit's connector is narrowed.** After the deploy,
+`docker logs openclaw-google-workspace-mcp-1 | grep -c "Block list"` shows the
+four Gmail names and none of the Drive ones, and `create_drive_file` is not
+offered by Kit's connector.
+
+**Rollout order.** (1) Merge: the deploy recreates `openclaw-google-workspace-mcp-1`
+at `drive:readonly` (Kit's token and Gmail/Calendar reads are unaffected) and
+starts the fleet connector without credentials; the gateway itself is not
+recreated for this change, since nothing in the gateway's service definition
+changes. Until the fleet sign-in is in, the document door reports
+`Drive: pending (...)` and retries on its next scan. (2) The owner-side steps
+above. (3) The next scan files the pending originals.
+
+## Revoking either connector
+
+Revoking stops the connector at Google, whatever the VPS holds.
+
+- **Kit's:** the owner's Google account, *Security → Third-party apps with
+  account access* (or *Manage third-party access*), remove the app; then delete
+  the files in `/srv/google-workspace-mcp/credentials/`.
+- **The fleet's:** the same page on the fleet account, remove the app; delete the
+  files in `/srv/google-workspace-mcp-fleet/credentials/`; for a full stop also
+  disable the Drive API or delete the OAuth client in the fleet's Cloud project.
+  The owner can do this alone, because the account and the project are the
+  owner's. Files the fleet created stay in Drive until the owner deletes them;
+  folders the owner shared can be un-shared in Drive.
+- Then stop the container (`docker compose -p openclaw ... stop
+  google-workspace-mcp-fleet`) or remove its service in a PR. The document door
+  keeps reporting `Drive: pending` and never fails a scan.
+
 ## Troubleshooting
 
 **Container is unhealthy.**  Check the logs — most failures here are credential
@@ -302,8 +406,9 @@ comma-separated. The container log at INFO level shows one
 `Block list: disabling tool '<name>'` line per disabled tool; a banner saying
 `Mode: Full` means `TOOLS` is non-empty or `WORKSPACE_MCP_TOOLS` leaked back in.
 
-**Token expired.**  If the container logs `invalid_grant` errors, the refresh
-token is dead. The usual cause is a consent screen still in *Testing*
+**Token expired.**  If a connector's container logs `invalid_grant` errors (Kit's:
+`openclaw-google-workspace-mcp-1`; the fleet's:
+`openclaw-google-workspace-mcp-fleet-1`), its refresh token is dead. The usual cause is a consent screen still in *Testing*
 status, where Google expires refresh tokens after 7 days: check **Google Auth
 Platform → Audience**, choose **Publish app** if it says *Testing*, then
 repeat steps 6–7 to regenerate. Gmail tools then answer "ACTION REQUIRED: Google

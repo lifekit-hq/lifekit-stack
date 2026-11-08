@@ -8,9 +8,11 @@ them on the server and keep one cited report per document (SKILL.md).
     door.py report <doc id>               file the agent's report (stdin)
     door.py status                        counts per state, one line each
 
-Toward Google it speaks MCP to the google-workspace server and calls only the
-tools in ALLOWED_TOOLS: three mail reads, the Drive reads needed to find a
-folder (search_drive_files, list_drive_items) and the two Drive creates
+Toward Google it speaks MCP to two servers and calls only the tools in
+ALLOWED_TOOLS: three mail reads on the google-workspace server (Kit's personal
+connector, MCP_URL), and on the google-workspace-fleet server (the fleet's own
+Google identity, DRIVE_MCP_URL) the Drive reads needed to find a folder
+(search_drive_files, list_drive_items) and the two Drive creates
 (create_drive_folder, create_drive_file). It never sends, drafts or labels, and
 never edits, moves, deletes or shares a Drive file; Mcp.call refuses any other
 tool. After a report is accepted, the original is filed into the report's
@@ -52,6 +54,13 @@ ALLOWED_TOOLS = frozenset(
 FILE_PER_PASS = 5  # Drive filings attempted per scan or report
 
 MCP_URL = os.environ.get("DOC_DOOR_MCP_URL", "http://google-workspace-mcp:8000/mcp")
+# Every Drive call goes to the fleet's connector, never Kit's (read-only Drive).
+DRIVE_MCP_URL = os.environ.get(
+    "DOC_DOOR_DRIVE_MCP_URL", "http://google-workspace-mcp-fleet:8000/mcp"
+)
+# Where subject folders live. "root" is the fleet account's own Drive; set the id
+# of a folder the owner shared with the fleet account to file into the owner's tree.
+DRIVE_PARENT = os.environ.get("DOC_DOOR_DRIVE_PARENT_ID", "root")
 HOME = Path(os.environ.get("DOC_DOOR_DIR", Path.home() / ".life-state" / "doc-door"))
 VAULT = Path(os.environ.get("VAULT", Path.home() / "memory"))
 MARKITDOWN = os.environ.get(
@@ -289,7 +298,7 @@ def scan(days: int, limit: int) -> int:
         save_state(state)
         print(f"mail unavailable: {exc}")
         return 0
-    file_pending(state, mcp)
+    file_pending(state)
     seen_msgs = {r["message_id"] for r in docs.values()} | set(state.get("skipped", []))
     for mid in ids:
         if mid in seen_msgs or shown >= MAX_NEW:
@@ -374,12 +383,15 @@ def short_reason(exc: Exception) -> str:
 
 
 def find_or_create_folder(mcp, state: dict, name: str) -> str:
+    # Keyed by the Drive connector and parent, so ids from another account's
+    # Drive (Kit's, before the fleet connector took over) are never reused.
     cache = state.setdefault("folders", {})
-    if name in cache:
-        return cache[name]
+    key = f"{DRIVE_MCP_URL}|{DRIVE_PARENT}|{name}"
+    if key in cache:
+        return cache[key]
     found = mcp.call(
         "search_drive_files",
-        query=f"name = '{name}' and mimeType = '{FOLDER_MIME}' and 'root' in parents and trashed = false",
+        query=f"name = '{name}' and mimeType = '{FOLDER_MIME}' and '{DRIVE_PARENT}' in parents and trashed = false",
         page_size=10,
     )
     hits = [i for n, i, t in parse_items(found) if n == name and t == FOLDER_MIME]
@@ -387,13 +399,13 @@ def find_or_create_folder(mcp, state: dict, name: str) -> str:
         fid = hits[0]
     else:
         made = mcp.call(
-            "create_drive_folder", folder_name=name, parent_folder_id="root"
+            "create_drive_folder", folder_name=name, parent_folder_id=DRIVE_PARENT
         )
         m = ANY_ID.search(made)
         if not m:
             raise RuntimeError("folder created but no id in the reply")
         fid = m[1]
-    cache[name] = fid
+    cache[key] = fid
     return fid
 
 
@@ -456,7 +468,7 @@ def file_pending(state: dict, mcp=None) -> None:
     if not todo:
         return
     try:
-        mcp = mcp or Mcp()
+        mcp = mcp or Mcp(DRIVE_MCP_URL)
     except Exception as exc:  # noqa: BLE001
         for d, r in todo:
             r["drive_why"] = short_reason(exc)

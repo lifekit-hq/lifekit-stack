@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "google-workspace-fleet": {
+        "transport": "streamable-http",
+        "url": "http://google-workspace-mcp-fleet:8000/mcp/"
+      }
+    }
+  }
+}

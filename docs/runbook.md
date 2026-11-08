@@ -2026,7 +2026,8 @@ prose included, reaches Kit's model unchanged.
 New document attachments in the owner's mailbox become one short cited report each, with no step
 for the owner. `skills/doc-door` (`door.py`, stdlib only) is run by the `doc-door` cron job
 (`scripts/ensure-doc-door.sh`, declared on every deploy; 07:20, 13:20 and 19:20 Dublin): `scan`
-speaks MCP to `google-workspace-mcp` itself and calls only `search_gmail_messages`,
+speaks MCP to `google-workspace-mcp` (Kit's connector) itself for mail, and to
+`google-workspace-mcp-fleet` (the fleet's own Google identity) for Drive, and calls only `search_gmail_messages`,
 `get_gmail_message_content` and `get_gmail_attachment_content` (PDF, DOCX, XLSX and PPTX of
 4 KiB to 15 MiB, mail from the last 3 days), converts each new attachment with MarkItDown, and
 prints it with numbered lines for kit to read. Kit files the report with `door.py report`, which
@@ -2045,20 +2046,25 @@ retried by the next scan. The page edit stays a proposal in the report.
   script exits 1 if the live row differs. A failed run alerts the owner through the `default`
   Telegram account, like the needs-you digest.
 - **Filing into Drive.** After a report is accepted, `door.py` files the original: it finds the
-  report's subject folder under the Drive root (`search_drive_files`), creates it if absent
+  report's subject folder under the Drive root of the fleet account, or of the folder named by
+  `DOC_DOOR_DRIVE_PARENT_ID` when the owner has shared one (`search_drive_files`), creates it if absent
   (`create_drive_folder`), lists the folder (`list_drive_items`) and uploads the bytes with
   `create_drive_file` (`base64_content` with the `content_mime_type` the server requires beside it,
   plus `base64_sha256`), under the original name, or suffixed with a short content hash when that name is taken, so nothing is overwritten. The Drive file id
   goes in the report's `Drive:` line and the private state, never in the vault log. One upload per
   content hash. Any Drive error (token without the Drive scope, size, server) leaves
-  `Drive: pending (<short reason>)` and the next scan retries; it never fails the scan. These are
-  the only Drive tools the door may call (`ALLOWED_TOOLS`, enforced in `Mcp.call`), and the
-  server blocks every other Drive write by name (`docs/google-mcp-setup.md`, "Widening the
-  consent for Drive"; undo is `drive:readonly` plus removing the five blocks). Each create logs
+  `Drive: pending (<short reason>)` and the next scan retries; it never fails the scan. All of these
+  calls go to `google-workspace-mcp-fleet` (`DOC_DOOR_DRIVE_MCP_URL`); Kit's connector is
+  read-only for Drive. These are the only Drive tools the door may call (`ALLOWED_TOOLS`, enforced
+  in `Mcp.call`), and the fleet connector blocks every other Drive write by name
+  (`docs/google-mcp-setup.md`, "The fleet connector"). A folder id the door cached from another
+  Drive is never reused: the cache is keyed by connector and parent. Each create logs
   `[create_drive_file]` / `[create_drive_folder]`; the `agent-drive-created` rule
   (`rules-agent-drive.yml`) raises a warning for it, not a page (only critical routes to the
-  phone), and `poll_alerts` does not read that file. Before the one-time Drive re-consent every
-  report stays `Drive: pending (...)`.
+  phone), and `poll_alerts` does not read that file. Until the fleet account's one-time sign-in is in
+  (an owner step, `docs/google-mcp-setup.md`, "The fleet connector") every report stays
+  `Drive: pending (...)`; filing before 2026-11-08 went to the owner's Drive through Kit's
+  connector and those originals stay where they are.
 - **Not a queue job:** a mailbox scan and a MarkItDown conversion fit one cron tick. If either
   proves slow, move conversion to the shared job queue then.
 - **Files handed to an agent in chat** (the second source) and a Drive `Inbox` folder (the third)

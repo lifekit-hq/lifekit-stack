@@ -293,9 +293,10 @@ def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
     assert "WORKSPACE_MCP_READ_ONLY" not in env
     assert "WORKSPACE_MCP_TOOLS" not in env
     # Literals, so widening the consent is a reviewed compose change, not an
-    # env-file edit.
+    # env-file edit. Drive is read-only here: every fleet Drive write goes
+    # through google-workspace-mcp-fleet.
     assert env["WORKSPACE_MCP_PERMISSIONS"] == (
-        "gmail:send drive:full calendar:readonly "
+        "gmail:send drive:readonly calendar:readonly "
         "docs:readonly sheets:readonly tasks:readonly"
     )
     # The other write tools that gmail:send pulls in (cumulative levels).
@@ -304,18 +305,12 @@ def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
         "manage_gmail_label",
         "modify_gmail_message_labels",
         "batch_modify_gmail_message_labels",
-        # drive:full is create-only: every other Drive write is blocked by name.
-        "update_drive_file",
-        "manage_drive_access",
-        "set_drive_file_permissions",
-        "get_drive_shareable_link",
-        "copy_drive_file",
     ]
-    # Nothing wider than drive:full, and no other service above its level.
+    # Nothing wider than send for Gmail, and no other service above readonly.
     levels = dict(p.split(":") for p in env["WORKSPACE_MCP_PERMISSIONS"].split())
     assert levels == {
         "gmail": "send",
-        "drive": "full",
+        "drive": "readonly",
         "calendar": "readonly",
         "docs": "readonly",
         "sheets": "readonly",
@@ -336,3 +331,45 @@ def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
     ):
         assert "${" not in str(env[key])
     assert svc["image"] == "ghcr.io/taylorwilsdon/google_workspace_mcp:2.1.0"
+
+
+def test_fleet_connector_is_drive_only_create_only_with_its_own_identity():
+    services = compose_services()
+    kit, svc = services["google-workspace-mcp"], services["google-workspace-mcp-fleet"]
+    env = svc["environment"]
+    assert env["TOOLS"] == ""
+    assert "WORKSPACE_MCP_READ_ONLY" not in env
+    assert "WORKSPACE_MCP_TOOLS" not in env
+    # Drive alone: no Gmail, Calendar, Docs, Sheets or Tasks surface at all.
+    assert env["WORKSPACE_MCP_PERMISSIONS"] == "drive:full"
+    # Create only: every other Drive write is blocked by name.
+    assert env["WORKSPACE_MCP_DISABLED_TOOLS"].split(",") == [
+        "update_drive_file",
+        "manage_drive_access",
+        "set_drive_file_permissions",
+        "get_drive_shareable_link",
+        "copy_drive_file",
+    ]
+    for key in (
+        "TOOLS",
+        "WORKSPACE_MCP_PERMISSIONS",
+        "WORKSPACE_MCP_DISABLED_TOOLS",
+        "WORKSPACE_MCP_HOST",
+        "WORKSPACE_MCP_SESSION_IDLE_TIMEOUT",
+        "WORKSPACE_EXTERNAL_URL",
+    ):
+        assert "${" not in str(env[key])
+    assert env["WORKSPACE_MCP_HOST"] == "0.0.0.0"
+    assert env["WORKSPACE_EXTERNAL_URL"] == "http://google-workspace-mcp-fleet:8000"
+    assert svc["image"] == kit["image"]
+    assert svc["labels"]["lifekit.contract"] == "none"
+    # Its own client, account and token store: nothing shared with Kit's.
+    for key in ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"):
+        assert env[key] == "${FLEET_" + key + ":-}"
+    assert env["USER_GOOGLE_EMAIL"] == "${FLEET_GOOGLE_EMAIL:-}"
+    (fleet_vol,) = svc["volumes"]
+    (kit_vol,) = kit["volumes"]
+    assert fleet_vol.split(":")[0] != kit_vol.split(":")[0]
+    assert fleet_vol.split(":")[0] == "/srv/google-workspace-mcp-fleet/credentials"
+    # Internal only, like Kit's connector.
+    assert "ports" not in svc and svc["expose"] == ["8000"]
