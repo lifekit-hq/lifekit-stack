@@ -23,6 +23,7 @@ NO_LIVE_SOURCES = {
     "FLEET_GH": "",
     "FLEET_INTAKE_CMD": "",
     "FLEET_VAULT": "/nonexistent",
+    "FLEET_POLICY_DIR": "/nonexistent",
 }
 
 
@@ -1397,6 +1398,9 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     helper = root / "usr/local/bin/lifekit-fleet-status.py"
     assert os.access(helper, os.X_OK)
     assert helper.read_text() == (DIR / "fleet_status.py").read_text()
+    taken = root / "usr/local/bin/lifekit-fleet-taken.py"
+    assert os.access(taken, os.X_OK)
+    assert taken.read_text() == (DIR / "taken_feed.py").read_text()
     assert service["Service"]["ExecStart"].startswith(
         "/usr/local/bin/lifekit-fleet-publisher.sh "
     )
@@ -2699,3 +2703,263 @@ def test_an_installed_publisher_finds_the_helper_beside_itself(homes, tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert [r["id"] for r in status(homes)["records"]] == ["a1"]
+
+
+# ── The "Taken for you" feed ────────────────────────────────────────────────
+
+
+def p16_row(
+    ts, subject="lifekit-dashboard#212", ruling="P8", outcome="merged", **extra
+):
+    return {
+        "ts": ts,
+        "actor": "firstmate",
+        "home": "fm-vps",
+        "class": "github.merge-green",
+        "cell": "firstmate",
+        "ruling": ruling,
+        "subject": subject,
+        "outcome": outcome,
+        **extra,
+    }
+
+
+def self_call(ts, question="Merge the green PR 995?", **extra):
+    return {
+        "ts": ts,
+        "id": "dc-979-merge",
+        "home": "firstmate",
+        "question": question,
+        "answer": "merge, with a long free-text reason that must not be published",
+        "record": "agent-behavior.md#P8 (merge green PRs) and #P2",
+        **extra,
+    }
+
+
+def policy_dir(tmp, p16=None, self_calls=None):
+    directory = tmp / "policy"
+    directory.mkdir()
+    for name, lines in (("p16.jsonl", p16), ("self-calls.jsonl", self_calls)):
+        if lines is not None:
+            (directory / name).write_text(
+                "".join(
+                    x if isinstance(x, str) else json.dumps(x) + "\n" for x in lines
+                )
+            )
+    return directory
+
+
+def taken(fleet):
+    return json.loads((fleet.out / "taken-for-you.json").read_text())
+
+
+def test_taken_feed_merges_both_logs_newest_first(fleet):
+    fleet.write(summary())
+    directory = policy_dir(
+        fleet.tmp,
+        p16=[
+            p16_row("2026-11-08T10:00:00+00:00"),
+            p16_row("2026-11-08T12:00:00Z", subject="skills#4", outcome="labelled"),
+        ],
+        self_calls=[self_call("2026-11-08T11:00:00+00:00")],
+    )
+    result = fleet.run(FLEET_POLICY_DIR=str(directory))
+    assert result.returncode == 0, result.stderr
+    assert (fleet.out / "taken-for-you.json").stat().st_mode & 0o777 == 0o644
+    feed = taken(fleet)
+    assert feed["schema"] == "fleet-taken-feed.v1"
+    assert feed["generated_epoch"] == NOW
+    assert feed["sources"] == {
+        "p16": {"read": True, "lines": 2, "skipped": 0},
+        "self_calls": {"read": True, "lines": 1, "skipped": 0},
+    }
+    assert [(i["source"], i["line"]) for i in feed["items"]] == [
+        ("p16", "labelled skills#4 (P8)"),
+        ("self_calls", "self-answered Merge the green PR 995? (P8)"),
+        ("p16", "merged lifekit-dashboard#212 (P8)"),
+    ]
+    first = feed["items"][0]
+    assert first == {
+        "id": first["id"],
+        "source": "p16",
+        "ts": 1_794_139_200,
+        "ruling": "P8",
+        "subject": "skills#4",
+        "outcome": "labelled",
+        "line": "labelled skills#4 (P8)",
+        "class": "github.merge-green",
+        "actor": "firstmate",
+        "home_id": "fm-vps",
+    }
+    assert (
+        first["id"].startswith("p16-") and len(set(i["id"] for i in feed["items"])) == 3
+    )
+    # The self-answered call's answer and record text never leave the host.
+    assert "free-text" not in (fleet.out / "taken-for-you.json").read_text()
+    # Ids are stable across reruns.
+    assert fleet.run(FLEET_POLICY_DIR=str(directory)).returncode == 0
+    assert [i["id"] for i in taken(fleet)["items"]] == [i["id"] for i in feed["items"]]
+    assert not [p for p in fleet.out.iterdir() if p.name.startswith(".taken.")]
+
+
+def test_taken_feed_skips_and_counts_lines_it_cannot_use(fleet):
+    fleet.write(summary())
+    good = p16_row(1_794_139_000)
+    no_ruling = {k: v for k, v in p16_row(1_794_139_001).items() if k != "ruling"}
+    directory = policy_dir(
+        fleet.tmp,
+        p16=[
+            json.dumps(good) + "\n",
+            "{not json\n",
+            "\n",
+            "[1, 2]\n",
+            json.dumps(no_ruling) + "\n",
+            json.dumps(p16_row("yesterday")) + "\n",
+            json.dumps(p16_row(1_794_139_002, subject="   ")) + "\n",
+            json.dumps(p16_row(1_794_139_003, outcome=7)) + "\n",
+            json.dumps(p16_row("PLACEHOLDER")).replace('"PLACEHOLDER"', "1e999") + "\n",
+            json.dumps(p16_row("PLACEHOLDER")).replace('"PLACEHOLDER"', "9" * 400)
+            + "\n",
+            "[" * 60_000 + "\n",
+        ],
+        self_calls=["not json at all\n", json.dumps({"ts": 1_794_139_004}) + "\n"],
+    )
+    result = fleet.run(FLEET_POLICY_DIR=str(directory))
+    assert result.returncode == 0, result.stderr
+    feed = taken(fleet)
+    assert [i["subject"] for i in feed["items"]] == ["lifekit-dashboard#212"]
+    assert feed["sources"]["p16"] == {"read": True, "lines": 10, "skipped": 9}
+    assert feed["sources"]["self_calls"] == {"read": True, "lines": 2, "skipped": 2}
+
+
+def test_taken_feed_is_empty_for_empty_logs(fleet):
+    fleet.write(summary())
+    directory = policy_dir(fleet.tmp, p16=[], self_calls=[])
+    assert fleet.run(FLEET_POLICY_DIR=str(directory)).returncode == 0
+    feed = taken(fleet)
+    assert feed["items"] == []
+    assert feed["sources"]["p16"] == {"read": True, "lines": 0, "skipped": 0}
+
+
+def test_taken_feed_reports_a_missing_log_and_publishes_the_other(fleet):
+    fleet.write(summary())
+    directory = policy_dir(fleet.tmp, self_calls=[self_call(1_794_139_000)])
+    assert fleet.run(FLEET_POLICY_DIR=str(directory)).returncode == 0
+    feed = taken(fleet)
+    assert feed["sources"]["p16"] == {"read": False, "lines": 0, "skipped": 0}
+    assert [i["source"] for i in feed["items"]] == ["self_calls"]
+
+
+def test_taken_feed_with_no_log_leaves_the_previous_feed_alone(fleet):
+    fleet.write(summary())
+    (fleet.out / "taken-for-you.json").write_text('{"previous": true}')
+    result = fleet.run(FLEET_POLICY_DIR=str(fleet.tmp / "absent"))
+    assert result.returncode == 0, result.stderr
+    assert json.loads((fleet.out / "taken-for-you.json").read_text()) == {
+        "previous": True
+    }
+    assert not [p for p in fleet.out.iterdir() if p.name.startswith(".taken.")]
+
+
+def test_taken_feed_cuts_a_very_long_subject_to_one_line(fleet):
+    fleet.write(summary())
+    long_subject = "line one\nline two\t" + "x" * 5000
+    directory = policy_dir(
+        fleet.tmp, p16=[p16_row(1_794_139_000, subject=long_subject)]
+    )
+    assert fleet.run(FLEET_POLICY_DIR=str(directory)).returncode == 0
+    (item,) = taken(fleet)["items"]
+    assert item["subject"].startswith("line one line two xxx")
+    assert item["subject"].endswith("…") and len(item["subject"]) == 160
+    assert "\n" not in item["line"]
+    # A line past the size bound is skipped, not truncated.
+    huge = json.dumps(p16_row(1_794_139_001, subject="y" * 70_000)) + "\n"
+    directory = tmp_dir = fleet.tmp / "policy2"
+    directory.mkdir()
+    (tmp_dir / "p16.jsonl").write_text(huge)
+    assert fleet.run(FLEET_POLICY_DIR=str(directory)).returncode == 0
+    feed = taken(fleet)
+    assert feed["items"] == [] and feed["sources"]["p16"]["skipped"] == 1
+
+
+def test_taken_feed_is_bounded_to_the_newest_200(fleet):
+    fleet.write(summary())
+    rows = [p16_row(1_794_000_000 + n, subject=f"pr#{n}") for n in range(250)]
+    directory = policy_dir(fleet.tmp, p16=rows)
+    assert fleet.run(FLEET_POLICY_DIR=str(directory)).returncode == 0
+    items = taken(fleet)["items"]
+    assert len(items) == 200
+    assert items[0]["subject"] == "pr#249" and items[-1]["subject"] == "pr#50"
+
+
+def test_taken_feed_keeps_duplicate_lines_apart_and_withholds_credentials(fleet):
+    fleet.write(summary())
+    row = p16_row(1_794_139_000)
+    leaked = p16_row(1_794_139_001, subject="tskey-auth-abcdef0123456789")
+    directory = policy_dir(fleet.tmp, p16=[row, row, leaked])
+    result = fleet.run(FLEET_POLICY_DIR=str(directory))
+    assert result.returncode == 0, result.stderr
+    feed = taken(fleet)
+    assert len({i["id"] for i in feed["items"]}) == 2
+    assert feed["sources"]["p16"]["skipped"] == 1
+    assert "tskey-" not in (fleet.out / "taken-for-you.json").read_text()
+
+
+def test_taken_feed_reads_only_the_tail_of_a_large_log(fleet):
+    fleet.write(summary())
+    directory = fleet.tmp / "policy"
+    directory.mkdir()
+    old = json.dumps(p16_row(1_794_000_000, subject="old " + "z" * 900)) + "\n"
+    new = json.dumps(p16_row(1_794_139_000, subject="new")) + "\n"
+    (directory / "p16.jsonl").write_text(old * 6000 + new)  # about 5.7 MiB
+    assert fleet.run(FLEET_POLICY_DIR=str(directory)).returncode == 0
+    feed = taken(fleet)
+    assert feed["items"][0]["subject"] == "new"
+    # The cut first line is dropped, not counted as a bad line.
+    assert feed["sources"]["p16"]["skipped"] == 0
+
+
+def test_a_failing_taken_helper_fails_the_run_but_not_the_summary(fleet):
+    fleet.write(summary())
+    broken = fleet.tmp / "broken.py"
+    broken.write_text("raise SystemExit(1)\n")
+    result = fleet.run(FLEET_TAKEN=str(broken))
+    assert result.returncode == 1
+    assert "the taken feed was not published" in result.stderr
+    assert fleet.published()["published_epoch"] == NOW
+    assert not (fleet.out / "taken-for-you.json").exists()
+    assert not [p for p in fleet.out.iterdir() if p.name.startswith(".taken.")]
+
+
+def test_an_installed_publisher_finds_the_taken_helper_beside_itself(fleet, tmp_path):
+    bindir = tmp_path / "usr-local-bin"
+    bindir.mkdir()
+    shutil.copy(SCRIPT, bindir / "lifekit-fleet-publisher.sh")
+    shutil.copy(DIR / "taken_feed.py", bindir / "lifekit-fleet-taken.py")
+    fleet.write(summary())
+    directory = policy_dir(fleet.tmp, p16=[p16_row(1_794_139_000)])
+    result = subprocess.run(
+        [
+            "bash",
+            str(bindir / "lifekit-fleet-publisher.sh"),
+            str(fleet.out),
+            str(fleet.prom),
+        ],
+        env={
+            **os.environ,
+            "FM_HOME": str(fleet.tmp),
+            "SUMMARY_FILE": str(fleet.tmp / "home-summary.json"),
+            "LEDGER_FILE": str(fleet.tmp / "ledger.jsonl"),
+            "DATA_DIR": str(fleet.tmp / "data"),
+            "LAVISH_STATE": str(fleet.tmp / "lavish.json"),
+            "FLEET_NOW": str(NOW),
+            "FLEET_STATE_DIR": str(fleet.tmp / "state"),
+            **NO_LIVE_SOURCES,
+            "FLEET_POLICY_DIR": str(directory),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert [i["subject"] for i in taken(fleet)["items"]] == ["lifekit-dashboard#212"]

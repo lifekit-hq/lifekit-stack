@@ -81,6 +81,8 @@ install -d -m 755 "$INSTALL_ROOT/usr/local/bin" "$UNIT_DIR"
 install -m 755 "$HERE/fleet-publisher.sh" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-publisher.sh"
 # The status page helper; the publisher finds it beside itself under this name.
 install -m 755 "$HERE/fleet_status.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-status.py"
+# The "Taken for you" feed helper, found the same way.
+install -m 755 "$HERE/taken_feed.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-taken.py"
 sed -e "s|__ADMIN_USER__|${ADMIN_USER}|" -e "s|__FM_HOMES__|${FM_HOMES}|" -e "s|__TASKS_AXI__|${TASKS_AXI}|" \
   -e "s|__FLEET_PLAN_MAP_ENV__|${plan_map_env}|" \
   "$HERE/lifekit-fleet-publisher.service" > "$UNIT_DIR/lifekit-fleet-publisher.service"

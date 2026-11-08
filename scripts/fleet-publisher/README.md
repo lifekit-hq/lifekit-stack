@@ -241,3 +241,56 @@ email, plan detail, source tool or error text ever leaves the host.
 - A failed write is logged and fails the run; missing sources leave the files as
   they were. The dashboard backend's `backend/infra.json` needs entries for the
   two new files before it can serve them.
+
+## Taken for you feed (`OUT_DIR/taken-for-you.json`)
+
+The actions the fleet took under a standing ruling instead of asking the owner
+(permission engine, `agent-behavior.md#P16`), one short line each, newest first,
+for the dashboard's "Taken for you" feed. `taken_feed.py` (beside the script;
+installed as `/usr/local/bin/lifekit-fleet-taken.py`; `FLEET_TAKEN` overrides)
+builds it and the publisher writes it world-readable, atomically, beside
+`home-summary.json`. Nothing is pushed or sent: the dashboard reads the file.
+
+**Sources**, read-only, from `FLEET_POLICY_DIR` (default
+`~/.local/state/fleet-policy` of the admin account the unit runs as):
+
+| File | Fields read | Becomes |
+| --- | --- | --- |
+| `p16.jsonl` (permission engine audit log) | `ts`, `ruling`, `subject`, `outcome`; also `class`, `actor`, `home` | one item as written |
+| `self-calls.jsonl` (calls the fleet answered itself) | `ts`, `question`, `home`; the ruling is the first `P<n>`, `Tier <n>` or `Q<n>` cited in `record` | `subject` = the question, `outcome` = `self-answered`, `ruling` = the one cited (else `self-answered`); `answer` and `record` are never published |
+
+```json
+{"schema": "fleet-taken-feed.v1", "generated_epoch": 1800000000,
+ "sources": {"p16": {"read": true, "lines": 12, "skipped": 1},
+             "self_calls": {"read": false, "lines": 0, "skipped": 0}},
+ "items": [{"id": "p16-0123456789abcdef", "source": "p16", "ts": 1799999000,
+            "ruling": "P8", "subject": "lifekit-dashboard#212", "outcome": "merged",
+            "line": "merged lifekit-dashboard#212 (P8)",
+            "class": "github.merge-green", "actor": "firstmate", "home_id": "fm-vps"}]}
+```
+
+- **`items`** merge both logs, newest `ts` first (ties by `id`), at most 200.
+  `line` is `<outcome> <subject> (<ruling>)`. `ts` is epoch seconds, from a
+  number or an ISO 8601 time in the log. `class`, `actor` and `home_id` are
+  `null` when the log has no such field (self-calls carry no class or actor).
+- **`id`** is stable: `p16-` or `self-calls-` plus the first 16 hex of the
+  sha256 of the raw log line (with its occurrence number, so a line repeated
+  verbatim stays two items). The dashboard keys a reverse action on it; it
+  survives reruns and the tail moving, and changes only if the line does.
+- **Text**: every string is one line (control characters become spaces);
+  `subject` is cut at 160 characters with `…`, the other fields at 64. No free
+  text beyond the subject line is published. An item matching a credential
+  pattern is withheld and counted as skipped, and the whole file is checked
+  again before it is written.
+- **Skipped lines**: a line that is not a JSON object, is over 64 KiB, or lacks
+  a parseable `ts` or a non-empty `subject`/`outcome`/`ruling` (self-calls:
+  `question`) is skipped and counted in `sources.<name>.skipped`; `lines` is
+  the non-blank lines read. Only the last 4 MiB of a log is read (a cut first
+  line is dropped, not counted).
+- **Missing sources**: a log that does not exist or is not a regular file shows
+  `read: false`. When neither exists the file is not written and the previous
+  one stays; an existing but empty log is `read: true` with no items.
+- **Failure**: a helper that fails, overruns 20 s, or prints non-JSON is logged
+  and fails the run; the summary is already published. A missing helper script
+  is only logged, as for the status page. The dashboard backend's
+  `backend/infra.json` needs an entry for the file before it can serve it.
