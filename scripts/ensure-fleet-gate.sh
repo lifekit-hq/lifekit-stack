@@ -50,6 +50,42 @@ for f in index.js openclaw.plugin.json package.json; do
 done
 chmod 0755 "$dest"
 
+reload_gateway() {
+  GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+    --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
+  if [ -z "$GATEWAY" ]; then
+    echo "no running openclaw-gateway container; it loads the plugin when it starts"
+    return 0
+  fi
+  # Before platform.patch.json first allows the plugin there is nothing to
+  # reload: the restart that patch asks for loads it.
+  allowed="$(python3 - "${config_dir}/openclaw.json" "$PLUGIN" <<'PY' 2>/dev/null || echo unknown
+import json, sys
+plugins = json.load(open(sys.argv[1])).get("plugins", {})
+on = sys.argv[2] in plugins.get("allow", []) and plugins.get("entries", {}).get(sys.argv[2], {}).get("enabled")
+print("yes" if on else "no")
+PY
+)"
+  case "$allowed" in
+    yes)
+      docker exec "$GATEWAY" openclaw plugins reload "$PLUGIN"
+      echo "reloaded $PLUGIN in the running gateway"
+      ;;
+    no) echo "$PLUGIN is not enabled in the live config yet; the platform patch enables it" ;;
+    *)
+      echo "could not read the live config; reloading $PLUGIN anyway"
+      docker exec "$GATEWAY" openclaw plugins reload "$PLUGIN"
+      ;;
+  esac
+}
+
+if [ "$changed" -eq 0 ]; then
+  echo "fleet gate unchanged -> $dest"
+else
+  echo "fleet gate installed -> $dest"
+  reload_gateway
+fi
+
 if [ -f "$table_src" ]; then
   python3 - "$table_src" <<'PY' || { echo "fleet gate table $table_src is not a valid p16-openclaw.v1 table; installed copy left alone" >&2; exit 1; }
 import json, sys
@@ -70,36 +106,3 @@ elif [ -f "$dest/$TABLE_NAME" ]; then
 else
   echo "no P16 table at $table_src yet: the gate logs table-missing and stops nothing until fleet-policy renders one" >&2
 fi
-
-if [ "$changed" -eq 0 ]; then
-  echo "fleet gate unchanged -> $dest"
-  exit 0
-fi
-echo "fleet gate installed -> $dest"
-
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
-if [ -z "$GATEWAY" ]; then
-  echo "no running openclaw-gateway container; it loads the plugin when it starts"
-  exit 0
-fi
-# Before platform.patch.json first allows the plugin there is nothing to
-# reload: the restart that patch asks for loads it.
-allowed="$(python3 - "${config_dir}/openclaw.json" "$PLUGIN" <<'PY' 2>/dev/null || echo unknown
-import json, sys
-plugins = json.load(open(sys.argv[1])).get("plugins", {})
-on = sys.argv[2] in plugins.get("allow", []) and plugins.get("entries", {}).get(sys.argv[2], {}).get("enabled")
-print("yes" if on else "no")
-PY
-)"
-case "$allowed" in
-  yes)
-    docker exec "$GATEWAY" openclaw plugins reload "$PLUGIN"
-    echo "reloaded $PLUGIN in the running gateway"
-    ;;
-  no) echo "$PLUGIN is not enabled in the live config yet; the platform patch enables it" ;;
-  *)
-    echo "could not read the live config; reloading $PLUGIN anyway"
-    docker exec "$GATEWAY" openclaw plugins reload "$PLUGIN"
-    ;;
-esac

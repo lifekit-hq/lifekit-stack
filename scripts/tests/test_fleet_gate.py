@@ -642,6 +642,12 @@ def test_ensure_refuses_an_invalid_table_and_leaves_the_installed_one(tmp_path, 
     assert json.loads((dest / "p16-openclaw.json").read_text()) == STANDARD
 
 
+def test_ensure_reloads_new_plugin_code_even_when_the_table_is_invalid(tmp_path):
+    r, dest, docker = _ensure(tmp_path, live_config=ENABLED, table_doc="{nope")
+    assert r.returncode == 1 and "not a valid p16-openclaw.v1 table" in r.stderr
+    assert "exec gw1 openclaw plugins reload fleet-gate" in docker
+
+
 # --- the rehearsal ------------------------------------------------------------
 
 

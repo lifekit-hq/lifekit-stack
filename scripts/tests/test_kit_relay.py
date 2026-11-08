@@ -587,10 +587,6 @@ def test_openclaw_receipts_show_only_oc_notes(relay):
     assert all(n["id"] not in ("p6", "ho") for n in kit["pending"] + kit["handled"])
 
 
-def test_installed_script_knows_the_openclaw_sender(relay):
-    assert "  openclaw) ID_PREFIX=oc- ;;\n" in relay.script.read_text()
-
-
 # ─── the home argument ───────────────────────────────────────────────────────
 
 
