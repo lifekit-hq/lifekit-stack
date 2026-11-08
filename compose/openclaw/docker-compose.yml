@@ -445,7 +445,8 @@ services:
       # Refresh-token store. Upstream image runs as non-root user `app`, so the
       # default credentials dir is /home/app/.google_workspace_mcp/credentials —
       # NOT /root/... Document the divergence in docs/google-mcp-setup.md.
-      # Host dir is created by scripts/google-mcp-bootstrap.sh.
+      # Host dir is created by the deploy (openclaw_ensure_google_creds_dirs),
+      # or by hand with scripts/google-mcp-bootstrap.sh.
       - /srv/google-workspace-mcp/credentials:/home/app/.google_workspace_mcp/credentials
     # No read_only: left off on purpose. 2.x starts /app/.venv/bin/python
     # directly (no `uv run` writing /app/uv.lock any more), so it may be
@@ -512,7 +513,8 @@ services:
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # The fleet account's own refresh-token store, apart from Kit's. Host dir
-      # is created by scripts/google-mcp-bootstrap.sh (fleet argument).
+      # is created by the deploy before `up` (openclaw_ensure_google_creds_dirs;
+      # google-mcp-bootstrap.sh fleet is the by-hand equivalent).
       - /srv/google-workspace-mcp-fleet/credentials:/home/app/.google_workspace_mcp/credentials
     expose:
       - "8000"
