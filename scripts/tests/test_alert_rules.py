@@ -19,6 +19,7 @@ import pytest
 yaml = pytest.importorskip("yaml")
 
 REPO = Path(__file__).resolve().parents[2]
+PROM_RULES = REPO / "compose/observability/prometheus/rules.yml"
 DOC = yaml.safe_load(
     (REPO / "compose/observability/grafana/provisioning/alerting/rules.yml").read_text()
 )
@@ -289,9 +290,7 @@ def test_host_memory_pressure_message_lists_the_top_three_groups():
     )
     ranks = re.findall(r"\d\. ([A-Za-z ]+?) \{\{", rendered)
     assert ranks == list(names.values())
-    prom = yaml.safe_load(
-        (REPO / "compose/observability/prometheus/rules.yml").read_text()
-    )
+    prom = yaml.safe_load(PROM_RULES.read_text())
     recorded = {r["record"] for g in prom["groups"] for r in g["rules"]}
     assert set(re.findall(r"topk\(\d, ([\w:]+)\)", by_ref["G1"]["expr"])) == recorded
 
@@ -316,22 +315,29 @@ def test_claude_token_expiry_rule_matches_the_documented_date():
     assert rule["labels"]["severity"] == "warning"
 
 
-def test_memory_group_selectors_match_weekly_report():
-    """The recording rule and the weekly report must name the same members."""
+def weekly_report_module():
+    """scripts/ops-report/weekly.py, loaded by path (it is a script, not a package)."""
     spec = importlib.util.spec_from_file_location(
         "weekly", REPO / "scripts/ops-report/weekly.py"
     )
     weekly = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(weekly)
+    return weekly
 
-    rules = yaml.safe_load(
-        (REPO / "compose/observability/prometheus/rules.yml").read_text()
-    )
-    expr = rules["groups"][0]["rules"][0]["expr"]
 
-    def squash(text):
-        return re.sub(r"\s+", "", text)
+def group_memory_expr():
+    """The `lifekit:group_memory_bytes` recording rule's expression."""
+    rules = yaml.safe_load(PROM_RULES.read_text())
+    return rules["groups"][0]["rules"][0]["expr"]
 
+
+def squash(text):
+    return re.sub(r"\s+", "", text)
+
+
+def test_memory_group_selectors_match_weekly_report():
+    """The recording rule and the weekly report must name the same members."""
+    expr = group_memory_expr()
     in_rule = {
         name: squash(selector)
         for selector, name in re.findall(
@@ -339,8 +345,24 @@ def test_memory_group_selectors_match_weekly_report():
             expr,
         )
     }
-    in_report = {n: squash(sel) for n, sel in weekly.GROUP_SELECTORS.items()}
+    in_report = {
+        n: squash(sel) for n, sel in weekly_report_module().GROUP_SELECTORS.items()
+    }
     assert in_rule == in_report
+
+
+def test_burst_pool_subtracts_every_named_group():
+    """The burst pool is everything minus the named groups, so a group missing
+    from its `unless` list is counted twice - once in its own series and once in
+    the pool. The parity test above cannot see this list: its regex matches only
+    the `label_replace(..., "name", ...)` branches."""
+    block = group_memory_expr().split("unless (", 1)[1].split("))", 1)[0]
+    subtracted = {
+        squash(sel)
+        for sel in re.findall(r"docker_container_memory_usage_bytes\{([^}]*)\}", block)
+    }
+    named = {squash(sel) for sel in weekly_report_module().GROUP_SELECTORS.values()}
+    assert subtracted == named
 
 
 def test_finance_job_age_rules_wait_an_hour_and_stay_quiet_without_data():
@@ -375,6 +397,34 @@ def promtool_cmd(workdir: Path) -> list[str] | None:
         "docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{workdir}:{workdir}",
         "--entrypoint", "promtool", PROMTOOL_IMAGE,
     ]  # fmt: skip
+
+
+def test_prometheus_recording_rules_are_valid_promql():
+    """`promtool check rules` over the real Prometheus rule file.
+
+    Every other test that reads this file parses it as YAML and regex-matches
+    the expression text, so a typo *inside* an expression - an unbalanced
+    paren, a malformed label matcher - passes all of them. Prometheus rejects
+    the whole file at load, goes on serving the previous rule set and says so
+    only in its own log; `scripts/deploy.sh` reloads it with `kill -s HUP` and
+    never reads the result, so nothing downstream notices either. This is the
+    one gate that reads the expressions as PromQL rather than as strings.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp)
+        cmd = promtool_cmd(workdir)
+        if cmd is None:
+            pytest.skip("promtool (or the prom/prometheus image) is not available")
+        # Staged inside workdir because the docker form mounts only that path.
+        staged = workdir / "rules.yml"
+        staged.write_text(PROM_RULES.read_text())
+        proc = subprocess.run(
+            [*cmd, "check", "rules", str(staged)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def promtool_alerts(uid: str, input_series: list[tuple[str, float]]) -> tuple[int, str]:

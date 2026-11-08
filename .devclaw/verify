@@ -1,0 +1,348 @@
+#!/usr/bin/env bash
+# What CI runs (.github/workflows/ci.yml), reproduced in this worktree.
+#
+# CI jobs and their local equivalent:
+#   lint                  -> pre-commit run --all-files (+ scripts/check-doc-drift.sh)
+#   pytest                -> the four pytest suites below, including the 44 promtool
+#                            cases in scripts/tests/test_alert_rules.py. Those need a
+#                            promtool, which this script provisions - CI's pytest job
+#                            runs on ubuntu-latest with neither a promtool nor the
+#                            prom/prometheus image (and promtool_cmd never pulls), so
+#                            CI skips all 44. This script is the only place they run;
+#                            a green CI does not mean the rule expressions parse.
+#   notify-relay-tests    -> node --test in compose/notify-relay (CI runs it inside
+#                            node:22-trixie-slim with --network none, proving nothing
+#                            reaches Telegram; here it runs on the host node 22.x,
+#                            so that one property is CI's to prove)
+#   gitleaks-full         -> gitleaks over the commits this branch adds
+#   secrets-gateway-decrypt -> NOT runnable off-box: the gateway age key never leaves
+#                            the self-hosted runner. Only an input change triggers it
+#                            in CI (secrets/lifekit-gateway.env.sops,
+#                            compose/openclaw-gateway/install-sops.sh, ci.yml), so this
+#                            script REFUSES when the branch touches one of the three.
+#   deploy                -> main only, never from here.
+#
+# Tooling: the script provisions its own venv (.devclaw/.venv, gitignored) and, where
+# the box lacks them, the pinned jq and rsync the shell-script tests shell out to.
+#
+# Two pre-commit hooks run in docker (shellcheck-precommit, hadolint-docker). Where
+# there is no docker this script runs shellcheck from shellcheck-py over the same
+# file set, and REFUSES to go green when the branch touched a Dockerfile it cannot
+# lint - a green here has to mean a green CI.
+#
+# That rule binds everywhere, not just for hadolint: every required CI job this
+# environment cannot reproduce (hadolint, secrets-gateway-decrypt, notify-relay's
+# node --test) exits non-zero instead of printing a note, and so does a missing base
+# revision - without it the script cannot tell which of those jobs the branch
+# triggers, which is the whole input to that decision.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+REPO="$PWD"
+VENV="$REPO/.devclaw/.venv"
+SHELLCHECK_PIN=0.10.0.1  # matches shellcheck-precommit v0.10.0 in .pre-commit-config.yaml
+BASE="${VERIFY_BASE:-origin/main}"
+JQ_VERSION=1.7.1  # the shell-script tests shell out to it; CI's runner image ships it
+# Read from the test file rather than pinned twice: PROMTOOL_IMAGE is the promtool
+# those tests reach for, and a different build can judge an expression differently.
+PROMETHEUS_VERSION="$(
+  sed -n 's/^PROMTOOL_IMAGE = "prom\/prometheus:v\(.*\)"$/\1/p' \
+    scripts/tests/test_alert_rules.py
+)"
+if [[ -z "$PROMETHEUS_VERSION" ]]; then
+  echo "FAIL: cannot read PROMTOOL_IMAGE from scripts/tests/test_alert_rules.py," >&2
+  echo "      so the promtool to provision is unknown. Did that constant move?" >&2
+  exit 1
+fi
+RSYNC_VERSION=3.4.1  # likewise; no upstream static build exists, so it is built here
+RSYNC_SHA256=2924bcb3a1ed8b551fc101f740b9f0fe0a202b115027647cf69850d65fd88c52
+
+step() { printf '\n=== %s\n' "$1"; }
+note() { printf 'NOTE: %s\n' "$1"; }
+
+step "base revision"
+# Checked before anything is provisioned: three gates below read the file list this
+# produces, and a script that cannot name the changed files cannot honestly refuse.
+if ! git rev-parse --verify --quiet "$BASE" >/dev/null; then
+  echo "FAIL: no base revision '$BASE' in this clone, so the changed-file list is" >&2
+  echo "      unknowable - and the hadolint, decrypt-input and gitleaks-range gates" >&2
+  echo "      all read it. A green without it would mean nothing." >&2
+  echo "      Fetch it, or point VERIFY_BASE at the revision to diff against." >&2
+  exit 1
+fi
+if ! git merge-base "$BASE" HEAD >/dev/null 2>&1; then
+  echo "FAIL: '$BASE' shares no merge base with HEAD, so '$BASE...HEAD' is not a" >&2
+  echo "      diff git can take - which would abort the gates below mid-run. A" >&2
+  echo "      shallow or grafted clone does this; fetch the base's history." >&2
+  exit 1
+fi
+note "diffing against $BASE ($(git rev-parse --short "$BASE"))"
+
+step "python environment"
+if [[ ! -x "$VENV/bin/python" ]]; then
+  python3 -m venv "$VENV"
+fi
+"$VENV/bin/pip" install --quiet --upgrade pip
+"$VENV/bin/pip" install --quiet -r requirements.txt pre-commit "shellcheck-py==$SHELLCHECK_PIN"
+PATH="$VENV/bin:$PATH"
+export PATH
+
+# Many tests under scripts/tests drive repo shell scripts that pipe through jq
+# (a fake `gh` in a tmpdir, for one), and fail with "jq: command not found"
+# where the box has none - CI's ubuntu-latest runner ships it. Provision the
+# pinned release into the venv (gitignored, never committed), checksum first.
+ensure_jq() {
+  command -v jq >/dev/null 2>&1 && return 0
+  local arch sha url dir
+  case "$(uname -m)" in
+    aarch64 | arm64)
+      arch=arm64
+      sha=4dd2d8a0661df0b22f1bb9a1f9830f06b6f3b8f7d91211a1ef5d7c4f06a8b4a5
+      ;;
+    x86_64 | amd64)
+      arch=amd64
+      sha=5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5
+      ;;
+    *)
+      echo "FAIL: no pinned jq for $(uname -m); install jq and re-run" >&2
+      return 1
+      ;;
+  esac
+  url="https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-${arch}"
+  dir="$(mktemp -d)"
+  curl -fsSL -o "$dir/jq" "$url"
+  printf '%s  %s\n' "$sha" "$dir/jq" | sha256sum --check --quiet
+  chmod +x "$dir/jq"
+  mv "$dir/jq" "$VENV/bin/jq"
+  rmdir "$dir"
+  note "installed the pinned jq ${JQ_VERSION} into the venv"
+}
+ensure_jq
+
+# scripts/deploy-openclaw.sh syncs the memory-audit directory with
+# `rsync -a --delete --exclude`, and the deploy tests run that phase for real.
+# Upstream publishes no static rsync, so build the pinned release once into the
+# venv with every optional dependency off - plain -a is all the tested calls use.
+ensure_rsync() {
+  command -v rsync >/dev/null 2>&1 && return 0
+  command -v cc >/dev/null 2>&1 || {
+    echo "FAIL: no rsync and no C compiler to build the pinned one" >&2
+    return 1
+  }
+  local dir
+  dir="$(mktemp -d)"
+  curl -fsSL -o "$dir/rsync.tar.gz" \
+    "https://download.samba.org/pub/rsync/src/rsync-${RSYNC_VERSION}.tar.gz"
+  printf '%s  %s\n' "$RSYNC_SHA256" "$dir/rsync.tar.gz" | sha256sum --check --quiet
+  tar -xzf "$dir/rsync.tar.gz" -C "$dir"
+  if ! (
+    cd "$dir/rsync-${RSYNC_VERSION}" &&
+      ./configure --disable-openssl --disable-xxhash --disable-zstd --disable-lz4 \
+        --disable-md2man --disable-acl-support --disable-xattr-support &&
+      make -j2
+  ) > "$dir/build.log" 2>&1; then
+    echo "FAIL: the pinned rsync did not build; log in $dir/build.log" >&2
+    return 1
+  fi
+  mv "$dir/rsync-${RSYNC_VERSION}/rsync" "$VENV/bin/rsync"
+  rm -rf "$dir"
+  note "built the pinned rsync ${RSYNC_VERSION} into the venv (no optional deps)"
+}
+ensure_rsync
+
+# scripts/tests/test_alert_rules.py evaluates the Grafana alert rules and the
+# Prometheus recording rules in promtool, reaching for a `promtool` on PATH and
+# falling back to the prom/prometheus image - which it never pulls. Without
+# either, 44 of its 78 tests skip, and that is what CI does: its pytest job runs
+# on ubuntu-latest, which has neither. So this is not a case of catching up with
+# CI; it is the only place those 44 run at all, which is worth the download.
+# The release tarball carries a static promtool, so provision it the way jq and
+# rsync are provisioned.
+ensure_promtool() {
+  local arch sha url dir
+  if command -v promtool >/dev/null 2>&1; then
+    # Version-checked, not just present: the tests take the first promtool on
+    # PATH, so a foreign build would quietly become the judge of the rules.
+    if promtool --version 2>&1 | grep -q "version ${PROMETHEUS_VERSION} "; then
+      return 0
+    fi
+    note "a promtool that is not ${PROMETHEUS_VERSION} is on PATH; installing the"
+    note "pinned one into the venv, which precedes it"
+  fi
+  case "$(uname -m)" in
+    aarch64 | arm64)
+      arch=arm64
+      sha=3d9946ca730f2679bbd63e9d40e559a0ba227a638d237e723af1a99bd7098263
+      ;;
+    x86_64 | amd64)
+      arch=amd64
+      sha=31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f
+      ;;
+    *)
+      echo "FAIL: no pinned promtool for $(uname -m); install promtool and re-run" >&2
+      return 1
+      ;;
+  esac
+  url="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-${arch}.tar.gz"
+  dir="$(mktemp -d)"
+  curl -fsSL -o "$dir/prometheus.tar.gz" "$url"
+  printf '%s  %s\n' "$sha" "$dir/prometheus.tar.gz" | sha256sum --check --quiet
+  tar -xzf "$dir/prometheus.tar.gz" -C "$dir" \
+    "prometheus-${PROMETHEUS_VERSION}.linux-${arch}/promtool"
+  mv "$dir/prometheus-${PROMETHEUS_VERSION}.linux-${arch}/promtool" "$VENV/bin/promtool"
+  rm -rf "$dir"
+  note "installed the pinned promtool ${PROMETHEUS_VERSION} into the venv"
+}
+ensure_promtool
+
+have_docker=no
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  have_docker=yes
+fi
+
+# Everything this branch touches: its commits over the base, plus staged,
+# unstaged and untracked work - a guard that reads only committed history goes
+# green on a file that is still in the working tree. Materialised once, outside
+# any `$(... || true)`, so a `git diff` failure (a grafted clone has no merge
+# base for `$BASE...HEAD`) aborts instead of reading as "nothing changed".
+CHANGED="$VENV/changed"
+{
+  git diff --name-only "$BASE...HEAD"
+  git diff --name-only HEAD
+  git ls-files --others --exclude-standard
+} | sort -u > "$CHANGED"
+
+step "pre-commit (gitleaks, hygiene, yamllint, shellcheck, hadolint, ruff, doc-drift)"
+if [[ "$have_docker" == yes ]]; then
+  pre-commit run --all-files --show-diff-on-failure
+else
+  note "no docker: the shellcheck and hadolint hooks are skipped here, see below"
+  SKIP=shellcheck,hadolint-docker pre-commit run --all-files --show-diff-on-failure
+
+  step "shellcheck (shellcheck-py $SHELLCHECK_PIN, the docker hook's file set)"
+  # identify is pre-commit's own file-type library, so this is the hook's file set.
+  python - > "$VENV/shellfiles" <<'SHFILES'
+import subprocess
+from identify.identify import tags_from_path
+
+tracked = subprocess.run(
+    ["git", "ls-files", "-z"], capture_output=True, check=True
+).stdout.split(b"\0")
+for raw in tracked:
+    if not raw:
+        continue
+    path = raw.decode()
+    try:
+        if "shell" in tags_from_path(path):
+            print(path)
+    except OSError:
+        pass
+SHFILES
+  xargs -a "$VENV/shellfiles" -r -d '\n' shellcheck
+  printf 'shellcheck: %s files clean\n' "$(wc -l < "$VENV/shellfiles")"
+
+  step "hadolint"
+  touched_dockerfiles="$(python - "$CHANGED" <<'DOCKERFILES'
+import sys
+from pathlib import Path
+
+from identify.identify import tags_from_filename
+
+for line in Path(sys.argv[1]).read_text().splitlines():
+    # By name, not by path: a renamed or deleted file is no longer on disk.
+    if line and "dockerfile" in tags_from_filename(line.rsplit("/", 1)[-1]):
+        print(line)
+DOCKERFILES
+  )"
+  if [[ -n "$touched_dockerfiles" ]]; then
+    echo "FAIL: this branch changes a file hadolint lints and hadolint needs" >&2
+    echo "      docker, which this environment has none of:" >&2
+    while IFS= read -r touched; do
+      echo "        $touched" >&2
+    done <<< "$touched_dockerfiles"
+    echo "      Hand back: BLOCKED: env - no docker for the hadolint hook." >&2
+    exit 1
+  fi
+  note "no Dockerfile changed on this branch; hadolint has nothing to catch here"
+fi
+
+step "secrets-gateway-decrypt inputs (a job this environment cannot run)"
+# CI's `changes` job decides whether secrets-gateway-decrypt runs on a pull request,
+# from exactly this regex (.github/workflows/ci.yml). The check itself decrypts with
+# the on-box gateway age key, which never leaves the self-hosted runner, so a green
+# here over a touched input would be a green over a job that can still fail red.
+DECRYPT_INPUTS='secrets/lifekit-gateway\.env\.sops|compose/openclaw-gateway/install-sops\.sh|\.github/workflows/ci\.yml'
+touched_decrypt="$(grep -xE "$DECRYPT_INPUTS" "$CHANGED" || true)"
+if [[ -n "$touched_decrypt" ]]; then
+  echo "FAIL: this branch changes an input of CI's secrets-gateway-decrypt job," >&2
+  echo "      which needs the on-box gateway age key:" >&2
+  while IFS= read -r touched; do
+    echo "        $touched" >&2
+  done <<< "$touched_decrypt"
+  echo "      Hand back: BLOCKED: env - no gateway age key for secrets-gateway-decrypt." >&2
+  exit 1
+fi
+note "no decrypt-check input changed, so CI skips that job for this pull request"
+note "(push, dispatch and the weekly schedule always run it)"
+
+step "doc drift (README <-> compose service count)"
+bash scripts/check-doc-drift.sh
+
+step "pytest (container-exporter, quota-share, ops-report, platform-contract)"
+# Serial on purpose: the box is shared with other sessions.
+python -m pytest -q -p no:cacheprovider \
+  compose/container-exporter/tests scripts/quota-share/tests \
+  scripts/ops-report/tests scripts/tests
+
+step "notify-relay (node --test)"
+# CI runs this inside node:22-trixie-slim, so on a box with docker the closer
+# reproduction is that container, not host node - worth doing when a worker with
+# docker but no host node shows up; it has not yet, and an untested docker
+# invocation here would be worse than this refusal.
+if ! command -v node >/dev/null 2>&1; then
+  echo "FAIL: CI's notify-relay-tests job is required and runs node --test, so a" >&2
+  echo "      green here without node would cover a job that can still fail red." >&2
+  echo "      With docker, run CI's own command (see the header); otherwise hand" >&2
+  echo "      back: BLOCKED: env - no node for notify-relay-tests." >&2
+  exit 1
+fi
+(cd compose/notify-relay && node --test)
+
+step "gitleaks (this branch's commits)"
+# pre-commit installs the pinned gitleaks for its own hook; reuse that binary
+# rather than fetching a second copy that could drift from the hook's rev.
+# pre-commit builds gitleaks from source in a golang hook env, so `gitleaks version`
+# prints "version is set by build process" and cannot identify the rev. Hence: use
+# the cached binary when there is exactly one, and refuse rather than pick when a
+# second rev is cached - `head -1` there would silently scan with an unpinned build,
+# the exact drift this reuse is meant to avoid. GITLEAKS_BIN settles it by hand.
+mapfile -t leaks_found < <(
+  find "${PRE_COMMIT_HOME:-$HOME/.cache/pre-commit}" -type f -name gitleaks -perm -u+x 2>/dev/null | sort
+)
+if [[ -n "${GITLEAKS_BIN:-}" ]]; then
+  leaks="$GITLEAKS_BIN"
+  note "using GITLEAKS_BIN=$leaks"
+elif [[ "${#leaks_found[@]}" -eq 1 ]]; then
+  leaks="${leaks_found[0]}"
+elif [[ "${#leaks_found[@]}" -eq 0 ]]; then
+  echo "FAIL: no gitleaks binary under the pre-commit cache, so CI's full-history" >&2
+  echo "      scan has no stand-in here. Re-run after the pre-commit step installs" >&2
+  echo "      its hook environments." >&2
+  exit 1
+else
+  echo "FAIL: ${#leaks_found[@]} gitleaks binaries are cached, so this script cannot" >&2
+  echo "      tell which one is the rev pinned in .pre-commit-config.yaml:" >&2
+  for found in "${leaks_found[@]}"; do
+    echo "        $found" >&2
+  done
+  echo "      Clear the stale hook envs (pre-commit gc), or set GITLEAKS_BIN." >&2
+  exit 1
+fi
+"$leaks" detect --no-banner --redact --log-opts="$BASE..HEAD"
+note "the commits this branch adds; CI scans the whole history"
+# The hook above is `gitleaks protect --staged`: it reads the index, so work that
+# is neither committed nor staged is in neither scan. Hence the tree scan here.
+"$leaks" detect --no-banner --redact --no-git --source "$REPO"
+note "and the working tree, this repo's files only"
+
+printf '\nverify: green\n'
