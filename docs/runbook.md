@@ -3830,14 +3830,18 @@ is harmless alone, because an app with no issuer refuses every bearer):
    external `identity-oidc` network so it reads Logto's keys at
    `http://logto:3001/oidc/jwks` (its defaults for audience and key URL
    stay). The dashboard repo's `docs/MACHINE-ACCESS.md` has the detail. The
-   change recreates the dashboard container.
+   change recreates the dashboard container, which needs an explicit routed
+   instruction naming the dashboard container before it is merged or deployed
+   (a general merge word does not cover it).
 3. **Basket.** In `~/.config/basket/env`:
    `FLEET_AGENT_AUTHORITY=<IDENTITY_ENDPOINT>/oidc` (the issuer it pins) and
    `FLEET_AGENT_BACKCHANNEL_AUTHORITY=http://logto:3001/oidc` (where it
    fetches discovery and keys), with the `basket-app` container joined to
    `identity-oidc` by basket's compose. Basket's `docs/decisions.md` "Fleet
    identity" has the detail. The change recreates `basket-app` only, not its
-   database. The Funnel that makes basket public is untouched: the machine
+   database, and needs an explicit routed instruction naming the `basket-app`
+   container before it is merged or deployed (a general merge word does not
+   cover it). The Funnel that makes basket public is untouched: the machine
    endpoints are reachable as before, and a fleet token is only accepted on
    the three it names.
 4. **finance-sentry.** The same issuer setting when its change lands (its
