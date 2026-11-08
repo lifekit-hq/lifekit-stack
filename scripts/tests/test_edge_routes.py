@@ -112,6 +112,50 @@ def test_the_proof_is_added_to_the_dashboard_only():
     assert users == {"dashboard"}
 
 
+FLEET_PATHS = ("/api/fleet", "/api/fleet/metrics", "/api/fleet/quota")
+
+
+def test_dashboard_machine_door_takes_a_get_with_a_bearer_on_the_three_fleet_paths_only():
+    r = ROUTERS["dashboard-machine"]
+    assert r["entryPoints"] == ["dashboard"]
+    rule = re.sub(r"\s+", " ", r["rule"])
+    assert "Method(`GET`)" in rule
+    assert "HeaderRegexp(`Authorization`, `^Bearer .+`)" in rule
+    # Exact paths: no prefix, so nothing under /api/fleet/ is added by accident.
+    assert sorted(re.findall(r"Path\(`([^`]+)`\)", rule)) == sorted(FLEET_PATHS)
+    assert "PathPrefix" not in rule
+    assert r["service"] == ROUTERS["dashboard"]["service"]
+
+
+def test_dashboard_machine_door_outranks_the_gate_and_skips_the_sign_in_check():
+    r = ROUTERS["dashboard-machine"]
+    assert r["priority"] > ROUTERS["dashboard"]["priority"]
+    assert "sso" not in r["middlewares"]
+    assert "dashboard-edge-proof" not in r["middlewares"]
+    assert r["middlewares"] == ["dashboard-machine-headers"]
+
+
+def test_dashboard_machine_door_strips_the_proof_and_the_email():
+    # An empty value removes the header, so a client cannot supply either.
+    assert MIDDLEWARES["dashboard-machine-headers"] == {
+        "headers": {
+            "customRequestHeaders": {
+                "X-Lifekit-Edge-Proof": "",
+                "X-Auth-Request-Email": "",
+            }
+        }
+    }
+
+
+def test_dashboard_machine_door_is_the_only_dashboard_route_without_the_gate():
+    open_routes = {
+        n
+        for n, r in _entrypoint_routers("dashboard").items()
+        if "sso" not in r.get("middlewares", [])
+    }
+    assert open_routes == {"dashboard-oauth2", "dashboard-machine"}
+
+
 def test_the_sign_in_routes_stay_outside_the_gate():
     for name in ("dashboard-oauth2", "devclaw-oauth2"):
         assert "middlewares" not in ROUTERS[name]
