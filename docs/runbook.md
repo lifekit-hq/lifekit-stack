@@ -3803,6 +3803,92 @@ Tests: `scripts/tests/test_people_serve.py` (auth rejections, every route, the
 ledger actor, and that a deploy render does not include the service) against
 fake Logto, Tailscale and SMTP servers.
 
+### Fleet agent on the dashboard and basket
+
+The fleet-agent identity (above) is accepted by two of the owner's apps, each
+dormant until its issuer setting is present. The apps live in their own
+repos and deploy from them; this repo owns the edge route and the host
+settings. Owner decision 2026-11-08 is the authority; lifekit-stack#491 is
+the tracking issue. What each switch is, in the order to turn them on (each
+is harmless alone, because an app with no issuer refuses every bearer):
+
+1. **Edge route (this repo).** `dashboard-machine` in
+   `compose/edge/traefik/dynamic.yml`: a `GET` with an `Authorization: Bearer`
+   header on exactly `/api/fleet`, `/api/fleet/metrics` and `/api/fleet/quota`
+   skips the sign-in check and goes to the dashboard, with
+   `X-Lifekit-Edge-Proof` and `X-Auth-Request-Email` removed. The edge
+   checks nothing about the token. Any other request, a bearer on another
+   path or a non-`GET` included, stays on the `dashboard` router and the
+   sign-in check. Traefik watches the directory, so the merge deploy applies
+   it live with no container restart. Before the dashboard is switched on, a
+   bearer through this route is answered `401` by the dashboard.
+2. **Dashboard.** `FLEET_AGENT_ISSUER=<IDENTITY_ENDPOINT>/oidc` in
+   `/srv/dashboard/.env` (not a secret; the value `deploy.sh` prints on its
+   `identity: issuer` line, the same as the edge's
+   `OAUTH2_PROXY_OIDC_ISSUER_URL`), passed through by the dashboard repo's
+   `deploy/docker-compose.dashboard.yml`, plus the container joining the
+   external `identity-oidc` network so it reads Logto's keys at
+   `http://logto:3001/oidc/jwks` (its defaults for audience and key URL
+   stay). The dashboard repo's `docs/MACHINE-ACCESS.md` has the detail. The
+   change recreates the dashboard container.
+3. **Basket.** In `~/.config/basket/env`:
+   `FLEET_AGENT_AUTHORITY=<IDENTITY_ENDPOINT>/oidc` (the issuer it pins) and
+   `FLEET_AGENT_BACKCHANNEL_AUTHORITY=http://logto:3001/oidc` (where it
+   fetches discovery and keys), with the `basket-app` container joined to
+   `identity-oidc` by basket's compose. Basket's `docs/decisions.md` "Fleet
+   identity" has the detail. The change recreates `basket-app` only, not its
+   database. The Funnel that makes basket public is untouched: the machine
+   endpoints are reachable as before, and a fleet token is only accepted on
+   the three it names.
+4. **finance-sentry.** The same issuer setting when its change lands (its
+   own repo; not part of this activation until then).
+
+No secret is set anywhere: the apps verify a signature against Logto's
+published keys, and the fleet's client secret stays in
+`~/.config/firstmate/fleet-agent.env.sops`.
+
+**Verify** after the deploys (a token read from the store, never printed;
+the dashboard through the edge's loopback entrypoint, basket on its
+loopback port):
+
+```bash
+tok() { SCOPE=$1 sops exec-env ~/.config/firstmate/fleet-agent.env.sops \
+  'curl -s -u "$FLEET_AGENT_CLIENT_ID:$FLEET_AGENT_CLIENT_SECRET" \
+   -d grant_type=client_credentials --data-urlencode "resource=$FLEET_AGENT_RESOURCE" \
+   -d "scope=$SCOPE" http://127.0.0.1:3001/oidc/token' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'; }
+T=$(tok fleet:read)
+for p in /api/fleet /api/fleet/metrics /api/fleet/quota; do
+  curl -s -o /dev/null -w "$p %{http_code}\n" -H "Authorization: Bearer $T" http://127.0.0.1:18890$p   # 200
+  curl -s -o /dev/null -w "$p no token %{http_code}\n" http://127.0.0.1:18890$p                       # sign-in redirect, not 200
+done
+P=$(tok basket:catalog-read)
+curl -s -o /dev/null -w "catalog read %{http_code}\n" -H "Authorization: Bearer $P" http://127.0.0.1:3310/api/products       # 200
+curl -s -o /dev/null -w "catalog, wrong scope %{http_code}\n" -H "Authorization: Bearer $T" http://127.0.0.1:3310/api/products   # 403
+```
+
+A token with the wrong scope is `403`, a missing, malformed, expired or
+wrong-issuer token is `401`. Sign-in is checked by opening the dashboard in a
+browser: it must still send an unsigned-in visit to Logto and back.
+
+**Rollback**, quickest first; each leaves people's sign-in as it is:
+
+- **Stop the dashboard's machine reads at the edge:** remove the
+  `dashboard-machine` router (and its `dashboard-machine-headers`
+  middleware) from `compose/edge/traefik/dynamic.yml` and merge. Traefik
+  reloads it live; no container restarts. A bearer then meets the sign-in
+  check and is refused.
+- **Stop an app accepting the token:** empty `FLEET_AGENT_ISSUER` in
+  `/srv/dashboard/.env` and redeploy the dashboard; empty
+  `FLEET_AGENT_AUTHORITY` (and the backchannel) in `~/.config/basket/env`
+  and redeploy basket. Every bearer is then refused (`401`). Each redeploy
+  recreates that one container.
+- **Stop the identity itself:** Logto has no disable. `fleet-agent.sh revoke`
+  makes tokens scopeless (every app answers `403`); `revoke --delete` stops
+  issuing; both leave a token already issued valid for up to an hour (see
+  "Fleet identity"). The `identity-oidc` membership can stay; it only lets
+  the app read public keys.
+
 ## Sign-in page branding
 
 The Logto sign-in page shows each application's own mark and primary color:

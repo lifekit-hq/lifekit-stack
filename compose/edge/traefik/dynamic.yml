@@ -14,6 +14,16 @@
 # The dashboard router also adds `X-Lifekit-Edge-Proof` (the dashboard's relay
 # gate); devclaw's router does not.
 #
+# The dashboard has one machine door, `dashboard-machine`: a GET with a bearer
+# on the three fleet read paths skips the sign-in check and goes to the
+# dashboard, which validates the fleet-agent token itself (issuer, audience,
+# expiry, signature, scope `fleet:read`). The edge checks nothing about the
+# token. It strips the edge proof and the signed-in email, so a machine call
+# can never carry either. Every other request, a bearer on any other path
+# included, stays on the `dashboard` router and the sign-in check. Removing
+# this router is the switch-off (docs/runbook.md "Fleet agent on the dashboard
+# and basket").
+#
 # This file is a Go template (Traefik's file provider): `env` reads the
 # container environment once at start.
 ---
@@ -29,6 +39,16 @@ http:
       rule: PathPrefix(`/`)
       priority: 1
       middlewares: [sso, dashboard-edge-proof]
+      service: dashboard
+
+    dashboard-machine:
+      entryPoints: [dashboard]
+      rule: >-
+        Method(`GET`) && HeaderRegexp(`Authorization`, `^Bearer .+`)
+        && (Path(`/api/fleet`) || Path(`/api/fleet/metrics`)
+        || Path(`/api/fleet/quota`))
+      priority: 50
+      middlewares: [dashboard-machine-headers]
       service: dashboard
 
     devclaw-oauth2:
@@ -77,6 +97,14 @@ http:
       headers:
         customRequestHeaders:
           X-Lifekit-Edge-Proof: '{{ env "RELAY_EDGE_PROOF" }}'
+
+    # A machine call carries neither the proof nor an email: an empty value
+    # removes the header, including any copy the client sent.
+    dashboard-machine-headers:
+      headers:
+        customRequestHeaders:
+          X-Lifekit-Edge-Proof: ''
+          X-Auth-Request-Email: ''
 
   services:
     oauth2-proxy:
