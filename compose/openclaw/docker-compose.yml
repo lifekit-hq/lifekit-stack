@@ -202,6 +202,15 @@ services:
       # relay's. Until the operator creates it, Docker creates it empty and a
       # stop is still blocked but reports that filing it failed.
       - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/oc-relay:/run/lifekit/oc-relay:ro
+      # Document door report copies (docs/runbook.md, "Report copies in Drive
+      # (rclone)"): the rclone config of the door's own OAuth consent, which holds
+      # the drive.file scope and nothing else. Its own directory only, outside the
+      # state mount. Read-write on purpose: rclone saves the refreshed access
+      # token beside the config (a single-file mount would break its rename-
+      # replace). The operator creates it, mode 0700 for the gateway's uid, before
+      # the consent; until then (or if Docker made it root-owned) the door's
+      # report copies stay off or pending and nothing else is affected.
+      - ${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/doc-door-drive:/run/lifekit/doc-door-drive
       # Vault (~/memory): the one path cron jobs, skills and agents use, and the
       # path openclaw-gateway/platform.patch.json indexes via
       # memory.search.extraPaths. (The second bind at ~/.openclaw/wiki/main was

@@ -19,6 +19,11 @@ tool. After a report is accepted, the original is filed into the report's
 subject folder; a Drive failure leaves `Drive: pending (<reason>)` and the next
 scan retries, and never fails the scan.
 
+The accepted report itself is also copied into Drive by drive_upload.py (rclone,
+a drive.file-only consent of its own), once that consent is in; until then
+nothing is attempted. A failure there leaves the copy pending and the next scan
+retries it, and never fails the scan either.
+
 State lives in DOC_DOOR_DIR (default ~/.life-state/doc-door, mode 700, outside
 the vault, never cited as a source): state.json (idempotency: one record per
 attachment content hash), documents/ (the file and its converted text),
@@ -39,6 +44,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import drive_upload  # noqa: E402 - the sibling module, found through the line above
 
 ALLOWED_TOOLS = frozenset(
     {
@@ -278,6 +286,7 @@ def show(doc_id: str, rec: dict, text: str, start: int = 1) -> None:
 def scan(days: int, limit: int) -> int:
     state = load_state()
     flush_logs(state)
+    copy_pending(state)
     docs = state["docs"]
     shown = 0
     # Documents converted earlier but not yet reported are shown again first.
@@ -488,6 +497,49 @@ def file_pending(state: dict, mcp=None) -> None:
         save_state(state)
 
 
+# --- report copies (rclone, drive.file) ------------------------------------------------
+
+
+def copy_name(rec: dict, doc_id: str) -> str:
+    """<title> [<short content hash>].md - unique per document, safe as a file name."""
+    stem = re.sub(r"[^A-Za-z0-9 &_()-]+", "-", rec.get("title", "report")).strip(" -")
+    return f"{stem[:60] or 'report'} [{doc_id[:8]}].md"
+
+
+def copy_pending(state: dict) -> None:
+    """Copy every accepted, not yet copied report to Drive. Never raises.
+
+    Does nothing until the uploader has a config (the one-time consent), so a
+    stack without it behaves exactly as before.
+    """
+    if not drive_upload.configured():
+        return
+    todo = [
+        (d, r)
+        for d, r in sorted(state["docs"].items())
+        if r["status"] == "reported" and r.get("copy") != "filed"
+    ][:FILE_PER_PASS]
+    for doc_id, rec in todo:
+        try:
+            rec["copy_ref"] = drive_upload.put(
+                HOME / "reports" / f"{doc_id}.md", rec["folder"], copy_name(rec, doc_id)
+            )
+            rec["copy"] = "filed"
+            rec.pop("copy_why", None)
+        except Exception as exc:  # noqa: BLE001 - retried by the next scan
+            rec["copy"] = "pending"
+            rec["copy_why"] = short_reason(exc)
+        save_state(state)
+
+
+def copy_line(rec: dict) -> str | None:
+    if not drive_upload.configured():
+        return None
+    if rec.get("copy") == "filed":
+        return f"Report copy: filed in {rec['copy_ref']}"
+    return f"Report copy: pending ({rec.get('copy_why', 'not tried yet')})"
+
+
 # --- report -------------------------------------------------------------------------
 
 FACT = re.compile(r'^- (?P<fact>.+?) \| "(?P<quote>[^"]{4,200})" \[L(?P<n>\d+)\]$')
@@ -602,10 +654,13 @@ def report(doc_id: str) -> int:
     save_state(state)
     flush_logs(state)
     file_pending(state)
+    copy_pending(state)
     print(
         f"filed report {doc_id}: {fields['Title']} -> folder {fields['Folder']}, page {fields['Page']}"
     )
     print(f"Drive: {state['docs'][doc_id].get('drive', 'pending')}")
+    if line := copy_line(state["docs"][doc_id]):
+        print(line)
     print(f"Proposal for {fields['Page']}: {fields['Proposal']}")
     return 0
 

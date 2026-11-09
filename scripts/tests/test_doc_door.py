@@ -27,6 +27,7 @@ door = importlib.util.module_from_spec(spec)
 sys.modules["door"] = door
 spec.loader.exec_module(door)
 REAL_MCP = door.Mcp
+drive_upload = door.drive_upload
 
 PDF = b"%PDF-1.4 " + b"x" * 5000
 TEXT = "# Offer letter\n\nStart date: 4 January 2027\nNotice period: two months\nProbation lasts six months\nSalary review each April\n"
@@ -131,6 +132,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(door, "VAULT", vault)
     monkeypatch.setattr(door, "MARKITDOWN", str(conv))
     monkeypatch.setattr(door, "Mcp", FakeMcp)
+    # No report copies unless a test sets the uploader up (tests/test_doc_door_drive.py).
+    monkeypatch.setattr(drive_upload, "CONFIG", tmp_path / "no-secret" / "rclone.conf")
+    monkeypatch.setattr(drive_upload, "REHEARSAL", False)
     FakeMcp.calls, FakeMcp.fail, FakeMcp.drive_error = [], False, None
     FakeMcp.routes = []
     FakeMcp.folders, FakeMcp.files, FakeMcp.uploads = {}, {}, []

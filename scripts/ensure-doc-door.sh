@@ -13,6 +13,12 @@
 # server's one-time Drive consent (docs/google-mcp-setup.md); until then a report
 # says "Drive: pending (<reason>)" and the next scan retries.
 #
+# The accepted report is also copied into Drive by drive_upload.py (rclone, a
+# drive.file-only consent of its own, docs/runbook.md "Report copies in Drive
+# (rclone)"). This script installs that module beside door.py and the pinned
+# rclone next to the job's venv; the copies stay off until the operator's
+# one-time consent has written the rclone config.
+#
 # The deploy runs it (deploy-openclaw.sh, post-up phase). By hand, on the VPS
 # host as lifekit, from the repo checkout:
 #   /srv/lifekit-stack/scripts/ensure-doc-door.sh
@@ -45,6 +51,7 @@ if [ ! -d "$workspace" ]; then
 fi
 install -D -m 0644 "${repo_root}/skills/${SKILL}/SKILL.md" "$skill_dest/SKILL.md"
 install -D -m 0755 "${repo_root}/skills/${SKILL}/door.py" "$skill_dest/door.py"
+install -D -m 0755 "${repo_root}/skills/${SKILL}/drive_upload.py" "$skill_dest/drive_upload.py"
 echo "skill installed -> $skill_dest"
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
@@ -64,6 +71,13 @@ docker exec "$GATEWAY" sh -c '
     "$1/venv/bin/pip" install --quiet --no-cache-dir "markitdown[pdf,docx,xlsx,pptx]==$2"
     echo "markitdown $2 installed"
   fi' sh "$door_dir" "$MARKITDOWN_VERSION"
+
+# The report copies' rclone: the version and sha256 are pinned in drive_upload.py
+# (the same pair as the off-box backup's), downloaded and checked there, kept in
+# the job's own state dir. Then one line on whether the consent is in.
+container_skill=/home/node/.openclaw/agents/${AGENT}/workspace/skills/${SKILL}
+docker exec "$GATEWAY" python3 "${container_skill}/drive_upload.py" install-rclone
+docker exec "$GATEWAY" python3 "${container_skill}/drive_upload.py" status
 
 ALERT_CHAT="${DOC_DOOR_ALERT_CHAT:-}"
 if [ -z "$ALERT_CHAT" ] && [ -r "$ENV_FILE" ]; then

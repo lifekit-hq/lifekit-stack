@@ -358,7 +358,9 @@ docker logs --since 10m openclaw-google-workspace-mcp-fleet-1 | grep -E 'create_
 **Verify Kit's connector is narrowed.** After the deploy,
 `docker logs openclaw-google-workspace-mcp-1 | grep -c "Block list"` shows the
 four Gmail names and none of the Drive ones, and `create_drive_file` is not
-offered by Kit's connector.
+offered by Kit's connector. The same check, asked of
+the connector over MCP instead of read from its log, is `drive_upload.py verify kit`
+(`docs/runbook.md`, "Report copies in Drive (rclone)").
 
 **Rollout order.** (1) Merge: the deploy creates the fleet credentials folder if it
 is missing, recreates `openclaw-google-workspace-mcp-1`
