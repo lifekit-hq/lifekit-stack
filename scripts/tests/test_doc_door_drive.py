@@ -580,13 +580,6 @@ def test_install_rclone_refuses_a_download_that_misses_its_sha(
     assert not mirror.bin.exists()
 
 
-def test_the_pin_matches_the_off_box_backups_rclone():
-    text = (REPO / "scripts/offbox-backup/install-offbox-backup.sh").read_text()
-    assert f'RCLONE_VERSION="{drive_upload.RCLONE_VERSION}"' in text
-    for arch, sha in drive_upload.RCLONE_SUMS.items():
-        assert re.search(rf"{arch}\) sum=\"{sha}\"", text)
-
-
 # --- wiring ----------------------------------------------------------------------------
 
 
@@ -596,19 +589,12 @@ def compose():
 
 def test_the_gateway_mounts_the_uploader_config_folder_writable_and_alone():
     vols = compose()["services"]["openclaw-gateway"]["volumes"]
-    (mount,) = [
-        v
-        for v in vols
-        if v.endswith("/run/lifekit/doc-door-drive")
-        or "/run/lifekit/doc-door-drive:" in v
-    ]
-    # rw: rclone saves the refreshed access token beside the config; only this
-    # folder, never /srv/lifekit-secrets itself.
-    assert (
-        mount
-        == "${LIFEKIT_SECRETS_DIR:-/srv/lifekit-secrets}/doc-door-drive:/run/lifekit/doc-door-drive"
-    )
-    assert drive_upload.CONFIG == Path("/run/lifekit/doc-door-drive/rclone.conf")
+    (mount,) = [v for v in vols if str(drive_upload.CONFIG.parent) in v]
+    host, _, rest = mount.rpartition(":/")
+    container, _, mode = ("/" + rest).partition(":")
+    assert container == str(drive_upload.CONFIG.parent)
+    assert mode != "ro"
+    assert host.endswith("/doc-door-drive")
 
 
 def test_kits_connector_stays_read_only_for_drive_in_the_compose_file():

@@ -56,6 +56,26 @@ Facts:
 """
 
 
+@pytest.mark.parametrize(
+    "folder",
+    ["Finance//Tax", "Finance/", "Employment/-2027", "Finance/../Tax", "a" * 61],
+)
+def test_a_folder_the_uploader_would_refuse_is_rejected_at_validation(folder):
+    _, errs = door.check_report(
+        GOOD.replace("Folder: Employment", f"Folder: {folder}"), TEXT
+    )
+    assert any(e.startswith("Folder:") for e in errs)
+
+
+@pytest.mark.parametrize("folder", ["Employment", "Finance/Tax 2027", "R&D/Q1_plan-b"])
+def test_every_folder_the_validator_accepts_is_one_the_uploader_takes(folder, tmp_path):
+    _, errs = door.check_report(
+        GOOD.replace("Folder: Employment", f"Folder: {folder}"), TEXT
+    )
+    assert not [e for e in errs if e.startswith("Folder:")]
+    drive_upload._segments(folder)
+
+
 class FakeMcp:
     """Stubbed Workspace MCP: mail fixtures plus a tiny in-memory Drive."""
 

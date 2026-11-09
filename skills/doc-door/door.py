@@ -543,7 +543,9 @@ def copy_line(rec: dict) -> str | None:
 # --- report -------------------------------------------------------------------------
 
 FACT = re.compile(r'^- (?P<fact>.+?) \| "(?P<quote>[^"]{4,200})" \[L(?P<n>\d+)\]$')
-SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 &_/-]{0,59}$")
+SAFE = re.compile(
+    r"^(?=.{1,60}$)[A-Za-z0-9][A-Za-z0-9 &_-]*(/[A-Za-z0-9][A-Za-z0-9 &_-]*)*$"
+)
 PAGE = re.compile(r"^(domains|projects)/[a-z0-9][a-z0-9/_-]*\.md$")
 
 
@@ -559,7 +561,10 @@ def check_report(report: str, text: str) -> tuple[dict, list[str]]:
         if k not in fields:
             errs.append(f"missing '{k}:' line")
     if "Folder" in fields and not SAFE.match(fields["Folder"]):
-        errs.append("Folder: letters, digits, space, & _ / - only, up to 60 characters")
+        errs.append(
+            "Folder: letters, digits, space, & _ - only, each / -separated part "
+            "starting with a letter or digit, up to 60 characters"
+        )
     if "Page" in fields:
         if not PAGE.match(fields["Page"]):
             errs.append("Page: a vault path like domains/<topic>.md")
