@@ -900,6 +900,27 @@ def test_a_video_judged_before_answers_with_the_earlier_verdict(box):
     assert box.log.read_text() == "" and len(box.index()) == 1
 
 
+def test_a_video_judged_under_an_older_rubric_is_judged_again(box, tmp_path):
+    jid = _judged(box, YT, YT_CAPTIONS="yes")
+    box.cli("report", jid, stdin=report_text("drop"))
+    bumped = tmp_path / "rubric.md"
+    bumped.write_text(
+        (SKILL / "rubric.md").read_text().replace("version: 6\n", "version: 7\n", 1)
+    )
+    r = box.cli("enqueue", YT, "--origin", "firstmate", VIDEO_RUBRIC=str(bumped))
+    assert "already judged" not in r.stdout, r.stdout
+    r = box.start(box.jid(YT), YT_CAPTIONS="yes", VIDEO_RUBRIC=str(bumped))
+    assert r.stdout.startswith("Video: "), r.stdout + r.stderr
+    r = box.cli(
+        "report", box.jid(YT), stdin=report_text("park"), VIDEO_RUBRIC=str(bumped)
+    )
+    assert r.returncode == 0, r.stderr
+    assert [(row["rubric"], row["verdict"]) for row in box.index()] == [
+        ("v6", "drop"),
+        ("v7", "park"),
+    ]
+
+
 def test_the_same_video_from_another_source_is_matched_by_title(box):
     jid = _judged(box, YT, YT_CAPTIONS="yes")
     box.cli("report", jid, stdin=report_text())
