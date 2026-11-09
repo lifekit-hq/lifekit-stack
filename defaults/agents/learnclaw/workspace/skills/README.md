@@ -7,12 +7,13 @@ The agent's allowlist is `agents.entries.learnclaw.skills` in the live `openclaw
 | Skill | What learnclaw uses it for |
 | --- | --- |
 | `learning-record` | Reading the artefact record with its projections computed now, and appending one row per artefact step. The only vault write learnclaw has. |
+| `learnharness` | Reading the LearnHarness learning record (sessions, answers, thinking, confidence, knowledge graph) from the synced copy at `~/.life-state/learnharness/data`. Read-only; LearnHarness's own skill, unedited. |
 
-`learning-record` is vendored in this repo (`skills/learning-record/`): `scripts/ensure-learnclaw.sh` copies it into this workspace on every deploy, together with `AGENTS.md`, `SOUL.md` and `IDENTITY.md`.
+`learnharness` is fetched from upstream (amosblomqvist/learnharness) at a pinned commit and checked file by file by `scripts/ensure-learnclaw.sh`; it is never copied into this repo or edited. `learning-record` is vendored in this repo (`skills/learning-record/`): `scripts/ensure-learnclaw.sh` copies it into this workspace on every deploy, together with `AGENTS.md`, `SOUL.md` and `IDENTITY.md`.
 
 ## Check
 
 ```bash
 # Run inside the gateway container.
-openclaw skills --agent learnclaw list       # learning-record should read ready
+openclaw skills --agent learnclaw list       # learning-record and learnharness should read ready
 ```
