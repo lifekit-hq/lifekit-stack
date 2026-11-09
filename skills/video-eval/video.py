@@ -45,7 +45,8 @@ media.py, shared by both skills; this file is what video-eval adds to them.
 
 Before a fresh judgment the index is searched for the same item (its
 normalized URL, or once fetched its title): a repeat answers with the earlier
-verdict, date and reason, and is not judged again.
+verdict, date and reason, and is not judged again under the same rubric
+version; after a rubric change, sending it again judges it again.
 
 `run` is the queue's handler: the queue runs it on its own, never an agent
 turn, since a fetch and a transcription can outlast any turn's tool timeout.
@@ -708,7 +709,7 @@ def _file_job(
     if origin not in ORIGINS:
         raise ValueError(f"unknown origin {origin!r}: one of {', '.join(ORIGINS)}")
     root = private_root()
-    row = earlier(root, item.url, "")
+    row = earlier(root, item.url, "", load_rubric().stamp)
     if row is not None:
         if path is not None:
             path.unlink(missing_ok=True)
@@ -981,7 +982,7 @@ def run_job(jid: str) -> str:
     except (OSError, ValueError) as e:
         m, line, error = None, "", str(e)
     if m is not None:
-        row = earlier(root, m.url, m.title)
+        row = earlier(root, m.url, m.title, rubric.stamp)
         if row is not None:
             if normalize_url(row["source"]) != m.url:
                 kind = p.get("kind", KIND)
@@ -1389,7 +1390,7 @@ def _file_direct(
             f"- {e}" for e in errors
         )
     root = private_root()
-    row = earlier(root, url, "" if kind == NOTE else r.head["title"])
+    row = earlier(root, url, "" if kind == NOTE else r.head["title"], rubric.stamp)
     if row is not None:
         if normalize_url(row["source"]) != url:
             _append_repeat(root, row, url, origin, rubric, kind)
@@ -1458,13 +1459,17 @@ def append_row(root: Path, row: dict) -> bool:
     return True
 
 
-def earlier(root: Path, url: str, title: str) -> dict | None:
-    """The first index row for the same item: its normalized URL, else its
-    normalized title. Any producer's row counts: the index is shared. A note
-    is matched by its source only: its title is the judge's own wording."""
+def earlier(root: Path, url: str, title: str, stamp: str) -> dict | None:
+    """The first index row for the same item under this rubric version (stamp):
+    its normalized URL, else its normalized title. Any producer's row counts:
+    the index is shared. A note is matched by its source only: its title is the
+    judge's own wording. A verdict holds only for the rubric it was judged
+    under, so an item sent again after a rubric change is judged again."""
     url = normalize_url(url)
     title = normalize_title(_cell(title))
     for row in read_index(root):
+        if row["rubric"] != stamp:
+            continue
         if normalize_url(row["source"]) == url:
             return row
         if title and row["kind"] != NOTE and normalize_title(row["title"]) == title:
