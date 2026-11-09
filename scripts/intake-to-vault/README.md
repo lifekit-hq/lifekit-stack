@@ -3,7 +3,7 @@
 The software half of "take the knowledge from a judged video as reference": an hourly systemd
 timer (installed by `install-intake-to-vault.sh`, runbook "Intake to vault") that files each
 accepted [video-eval](../../skills/video-eval/SKILL.md) report into the memory vault, with no
-model turn. Per report whose `Verdict:` is `accept`, `intake_to_vault.py` writes, through the
+model turn. Per report whose `Verdict:` is `adopt` or `accept`, `intake_to_vault.py` writes, through the
 vault's own `bin/` gates:
 
 | What | Where | Gate |

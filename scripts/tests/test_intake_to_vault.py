@@ -75,6 +75,7 @@ def report(
     url: str | None = None,
 ) -> str:
     tail = {
+        "adopt": "",
         "accept": f"Project: {project}",
         "park": "Recheck: 2026-12-01",
         "drop": "Reason: unsupported - no primary source",
@@ -91,8 +92,7 @@ A synthetic fixture ([[not-a-page]]).
 ## Verdict
 Tests: evidence pass, cost pass, goal-trace pass, no-overengineering pass
 Verdict: {verdict}
-{tail}
-Next step: {next_step}
+{tail + chr(10) if tail else ""}Next step: {next_step}
 
 ## Confidence
 High.
@@ -228,6 +228,18 @@ def test_no_matching_project_goes_to_the_cross_project_log(env):
     assert line.startswith(
         "## [2026-10-26] intake | video accepted for a home lab idea: "
     )
+    assert calls(vault, "log")[0].startswith("log -k intake ")
+
+
+def test_an_adopted_tool_is_filed_with_a_try_it_line_on_the_cross_project_log(env):
+    vault, intake = env
+    add(intake, "AbcSynth_1", report(verdict="adopt", next_step="install it."))
+    assert itv.main() == 0
+    line = (vault / "log.md").read_text().splitlines()[-1]
+    assert line.startswith(
+        "## [2026-10-26] intake | adopt as it is: Synthetic clip AbcSynth_1"
+    )
+    assert "next: install it." in line
     assert calls(vault, "log")[0].startswith("log -k intake ")
 
 

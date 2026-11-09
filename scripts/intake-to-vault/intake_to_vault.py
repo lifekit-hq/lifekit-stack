@@ -6,7 +6,7 @@ intake directory. This job is the software half of "take the knowledge from
 the video as reference": no model turn, only a mechanical copy through the
 vault's own gates, in the vault README's shape for raw evidence.
 
-For each report whose verdict is accept (ROUTED_VERDICTS) it writes:
+For each report whose verdict is adopt or accept (ROUTED_VERDICTS) it writes:
 
   1. one immutable source page, sources/<judged date>-video-<key>-<rubric>.md:
      clipper frontmatter, then the report and the transcript it was judged
@@ -50,7 +50,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-ROUTED_VERDICTS = ("accept",)
+ROUTED_VERDICTS = ("adopt", "accept")
 MODEL_LOCK = ".model-pass"
 MODEL_LOCK_SECONDS = 60 * 60
 LOG_LINE_MAX = (
@@ -342,7 +342,10 @@ def log_args(r: Report, stem: str, project: str | None) -> list[str]:
     """bin/log.sh's arguments for the page's line, within the vault's cap."""
     link = f" [[{stem}|report]]"
     title = clip(r.title, TITLE_MAX)
-    if project:
+    if r.verdict == "adopt":
+        args, prefix = ["-k", "intake"], f"## [{r.judged}] intake | "
+        head = f"adopt as it is: {title}"
+    elif project:
         args, prefix = ["-p", project], f"## [{r.judged}] "
         head = f"video intake accepted: {title}"
     else:

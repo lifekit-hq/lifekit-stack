@@ -88,7 +88,7 @@ case "$listed" in
 esac
 
 # Read-only: the tools the skill shells out to, the modules it imports, and the
-# owner's goals file, inside the gateway.
+# owner's goals page in the vault, inside the gateway.
 # shellcheck disable=SC2016  # expanded by sh inside the container
 docker exec "$GATEWAY" sh -c '
 for t in ffmpeg whisper; do
@@ -101,7 +101,7 @@ yt="$HOME/.openclaw/skills/youtube-transcript"
 [ -f "$HOME/.openclaw/skills/job-queue/jobq.py" ] \
   && echo "tool: jobq.py present (job-queue skill)" \
   || echo "tool: jobq.py MISSING - run scripts/ensure-job-queue.sh"
-[ -s "$HOME/.life-state/intake/goals.md" ] \
-  && echo "goals: on file" \
-  || echo "goals: none on file - the judge says so; write /var/lib/lifekit/intake/goals.md (docs/runbook.md, \"Video evaluation\")"
+grep -q "^## " "$HOME/memory/system/goals.md" 2>/dev/null \
+  && echo "goals: read from the vault goals page" \
+  || echo "goals: vault goals page MISSING in the gateway - the judge says so; check the /srv/memory mount (docs/runbook.md, \"Video evaluation\")"
 ' 2>/dev/null || echo "tools: could not check inside the gateway"
