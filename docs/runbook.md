@@ -2196,10 +2196,133 @@ retried by the next scan. The page edit stays a proposal in the report.
   (an owner step, `docs/google-mcp-setup.md`, "The fleet connector") every report stays
   `Drive: pending (...)`; filing before 2026-11-08 went to the owner's Drive through Kit's
   connector and those originals stay where they are.
+- **Report copies.** The accepted report itself is also copied into Drive, by rclone under a
+  consent of its own that holds `drive.file` only ("Report copies in Drive (rclone)" below). Off
+  until that consent is in; the fleet connector and Kit's connector are not involved.
 - **Not a queue job:** a mailbox scan and a MarkItDown conversion fit one cron tick. If either
   proves slow, move conversion to the shared job queue then.
 - **Files handed to an agent in chat** (the second source) and a Drive `Inbox` folder (the third)
   are not built; the video drop door's plugin shape is the model for the first.
+
+### Report copies in Drive (rclone)
+
+The document door files its cited report, not only the original, into Google Drive. A small
+rclone-based uploader (`skills/doc-door/drive_upload.py`, stdlib Python around a pinned rclone) does
+it under an OAuth consent of its own that holds the **`drive.file`** scope and nothing else. Under
+that scope Google shows the app only files it created itself, so the uploader sees one folder,
+`Document door reports` (made on first use, one subfolder per report `Folder:`), and nothing else in
+the account. The Workspace connectors stay as they are: Kit's is read-only for Drive; the fleet
+connector keeps filing originals (`docs/google-mcp-setup.md`, "The fleet connector"). Moving the
+originals onto this narrower consent as well, and then taking the fleet connector down to
+`drive:readonly`, is a separate change.
+
+- **Wiring.** `door.py` calls the uploader after a report is accepted (`report`) and again on every
+  scan for a report not yet copied (up to 5 per pass). The file is `<Title> [<8-char content
+  hash>].md` under `Document door reports/<Folder>/`, the report as stored in
+  `/var/lib/lifekit/doc-door/reports/`, so it carries the cited facts and the proposal and nothing
+  else. `report` prints `Report copy: filed in <path>` or `Report copy: pending (<reason>)`; a
+  failure never fails the scan. With no config the door prints no such line and attempts nothing.
+  Reports filed before the consent are copied by the first scans after it.
+- **rclone.** Pinned in `drive_upload.py` (the same version and sha256 as the off-box backup's;
+  bump both installers together), downloaded and checked by `scripts/ensure-doc-door.sh` on every deploy
+  into the job's state dir (`/var/lib/lifekit/doc-door/bin/`, not the image). Every call passes an
+  explicit `--config` and `--drive-scope drive.file`, a minimal environment and no `-v`
+  (debug logging prints credentials).
+- **Where the secret lives.** `/srv/lifekit-secrets/doc-door-drive/rclone.conf` on the host, mode
+  0600, in a 0700 folder owned by the gateway's uid, mounted read-write at
+  `/run/lifekit/doc-door-drive` (read-write because rclone saves the refreshed access token
+  beside the config). It holds the OAuth client id and secret and the refresh token; it is never
+  in git, a log, a PR or a chat, and `configure` and `verify` print none of it. Any process in the
+  gateway container can read it, which is why the scope is the guard: the token reaches only files
+  this client created.
+
+**One-time consent.** Run it right after the fleet account's sign-in
+(`docs/google-mcp-setup.md`, "The fleet connector", step 6), in the same browser session, so there is
+one sitting. Only a person can take the sign-in and the consent click; nothing here scripts either.
+
+1. **OAuth client (Google Cloud console, the fleet's project).** *Google Auth Platform → Clients →
+   Create client → Desktop app*, name `doc-door-uploader`. *Data access → Add or remove scopes*:
+   only `.../auth/drive.file`. The consent screen is already *In production* (the fleet connector
+   needs that too), so the refresh token does not expire after 7 days. Keep the client id and
+   secret to hand for step 3.
+2. **Host folder (`denys`, sudo), before or after the deploy that merged the mount:**
+
+   ```bash
+   sudo install -d -m 0700 -o lifekit -g lifekit /srv/lifekit-secrets/doc-door-drive
+   ```
+
+   If the deploy ran first, Docker made the folder root-owned; the same command fixes it in place
+   and the running container sees the change, no recreate.
+3. **Consent (the PC, in the browser signed in as the fleet account).** Needs rclone on that machine (any current release):
+
+   ```bash
+   RCLONE_DRIVE_SCOPE=drive.file rclone authorize drive "<client id>" "<client secret>" --auth-no-open-browser
+   ```
+
+   It prints one link, `http://127.0.0.1:53682/auth?state=...`. Open it in that browser. Google's
+   consent page must ask for exactly one permission, "See, edit, create, and delete only the
+   specific Google Drive files you use with this app"; if it lists anything wider, click Cancel
+   and stop. After *Allow*, rclone prints the token between `--->` and `<---End paste`. Leave that
+   terminal open for step 4; the output is a credential, so no screenshot and no chat.
+4. **Install it (the VPS, as `lifekit`).**
+
+   ```bash
+   G=$(docker ps -q --filter label=com.docker.compose.project=openclaw --filter label=com.docker.compose.service=openclaw-gateway)
+   docker exec -it "$G" python3 /home/node/.openclaw/agents/kit/workspace/skills/doc-door/drive_upload.py configure
+   ```
+
+   It asks for the client id, then the client secret (hidden), then the pasted token block
+   (hidden), and writes `rclone.conf` (0600). It refuses to replace an existing config without
+   `--force`.
+5. **Verify.**
+
+   ```bash
+   docker exec "$G" python3 /home/node/.openclaw/agents/kit/workspace/skills/doc-door/drive_upload.py verify
+   ```
+
+   `VERIFY OK` means all of: the config is mode 0600 and asks for `drive.file`; **Google itself
+   reports the live token's scope as exactly `drive.file`** (tokeninfo, and that it was issued to the
+   config's client); the uploader created one test file in its own folder
+   (`Document door reports/_verify/`), read it back byte for byte and removed it; the account root
+   shows only `Document door reports` (a `drive.file` token sees nothing else); and Kit's
+   connector offers no Drive write tool (below). Any `FAIL` line names the cause; the exit code is 1.
+   `verify uploader` and `verify kit` run one half.
+6. The next scan copies the pending reports; `docker exec "$G" python3 .../drive_upload.py status`
+   shows the install, and a report's `Report copy:` line shows the result.
+
+**Drive narrowing check for Kit's connector.** `verify kit` (also part of the bare `verify`) asks
+Kit's connector, over MCP, which tools it offers: it fails if any Drive create, update, delete,
+share, copy, move or import tool is among them, or if no Drive tool is offered at all (the level
+cannot then be shown). The compose file's `drive:readonly` literal is held by
+`scripts/tests/test_doc_door_drive.py`; the container log check in `docs/google-mcp-setup.md`
+("Verify Kit's connector is narrowed") is the third leg.
+
+**Rehearsal without Google.** `DOC_DOOR_RCLONE_REMOTE` swaps Drive for any rclone remote, a local
+folder for a rehearsal; the config is not needed and `verify` says plainly that it did not check
+the token's scope.
+
+```bash
+docker exec -e DOC_DOOR_RCLONE_REMOTE=':local:/tmp/doc-door-rehearsal/' "$G" \
+  python3 /home/node/.openclaw/agents/kit/workspace/skills/doc-door/drive_upload.py verify uploader
+```
+
+CI covers the door-to-uploader handoff the same way, with no Google and no secret
+(`scripts/tests/test_doc_door_drive.py`): a stub rclone maps the Drive remote to a folder and
+logs each call; the tests check the file lands in the right subfolder, that every call carries the
+config and `drive.file`, that a failure leaves the copy pending and a later scan files it once,
+and that no credential is printed. Where a real rclone is installed the same handoff also runs
+against it on a local remote.
+
+**Notes.**
+
+- `drive.file` visibility is per OAuth client. If the client is ever replaced, the new one cannot
+  see the old folder and makes a new `Document door reports`; the old files stay where they are.
+- Revoke: remove the app on the fleet account's *Third-party apps with account access* page,
+  `sudo rm /srv/lifekit-secrets/doc-door-drive/rclone.conf`, and delete the `doc-door-uploader`
+  client in the Cloud project. Reports then stay `Report copy: pending` and no scan fails. Files
+  already created stay in Drive until the owner deletes them.
+- A token that stops working (`invalid_grant`, a revoked app) shows as `pending (...)` in the
+  report line; redo steps 3 and 4 with `--force`.
 
 ### learnclaw (the learning loop)
 

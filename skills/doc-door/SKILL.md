@@ -58,3 +58,8 @@ the Drive reference in the report's `Drive:` line. `report` prints that line; if
 `Drive: pending (...)`, nothing is needed from you, the next scan retries. You call no Drive
 tool yourself, and you never delete, move, edit or share an existing Drive file, nor change
 anyone's access to one. No other route to Drive exists; do not look for one.
+
+Once the owner's separate report-copy consent is in, `report` also prints a `Report copy:` line:
+the script copies the accepted report itself into a Drive folder of its own, `filed in <path>`
+or `pending (...)`, retried by the next scan. Nothing is needed from you, and you never run
+`drive_upload.py`: it is the operator's tool. Without that consent no such line appears.

@@ -27,6 +27,7 @@ door = importlib.util.module_from_spec(spec)
 sys.modules["door"] = door
 spec.loader.exec_module(door)
 REAL_MCP = door.Mcp
+drive_upload = door.drive_upload
 
 PDF = b"%PDF-1.4 " + b"x" * 5000
 TEXT = "# Offer letter\n\nStart date: 4 January 2027\nNotice period: two months\nProbation lasts six months\nSalary review each April\n"
@@ -53,6 +54,26 @@ Facts:
 - Two months of notice are required | "Notice period: two months" [L4]
 - Probation is six months | "Probation lasts six months" [L5]
 """
+
+
+@pytest.mark.parametrize(
+    "folder",
+    ["Finance//Tax", "Finance/", "Employment/-2027", "Finance/../Tax", "a" * 61],
+)
+def test_a_folder_the_uploader_would_refuse_is_rejected_at_validation(folder):
+    _, errs = door.check_report(
+        GOOD.replace("Folder: Employment", f"Folder: {folder}"), TEXT
+    )
+    assert any(e.startswith("Folder:") for e in errs)
+
+
+@pytest.mark.parametrize("folder", ["Employment", "Finance/Tax 2027", "R&D/Q1_plan-b"])
+def test_every_folder_the_validator_accepts_is_one_the_uploader_takes(folder, tmp_path):
+    _, errs = door.check_report(
+        GOOD.replace("Folder: Employment", f"Folder: {folder}"), TEXT
+    )
+    assert not [e for e in errs if e.startswith("Folder:")]
+    drive_upload._segments(folder)
 
 
 class FakeMcp:
@@ -131,6 +152,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(door, "VAULT", vault)
     monkeypatch.setattr(door, "MARKITDOWN", str(conv))
     monkeypatch.setattr(door, "Mcp", FakeMcp)
+    # No report copies unless a test sets the uploader up (tests/test_doc_door_drive.py).
+    monkeypatch.setattr(drive_upload, "CONFIG", tmp_path / "no-secret" / "rclone.conf")
+    monkeypatch.setattr(drive_upload, "REHEARSAL", False)
     FakeMcp.calls, FakeMcp.fail, FakeMcp.drive_error = [], False, None
     FakeMcp.routes = []
     FakeMcp.folders, FakeMcp.files, FakeMcp.uploads = {}, {}, []
