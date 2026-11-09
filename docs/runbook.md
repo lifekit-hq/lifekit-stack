@@ -2333,10 +2333,26 @@ predict before reading, read, build one from-scratch artefact, apply it in a rea
 about it, and get grilled. learnclaw reviews the artefact and grills the owner on it, but never
 writes the artefact. "Where am I" is computed from the rows each time it is asked: the last
 artefact, checkpoints met (an artefact row dated by the checkpoint), due or missed, and what
-each open topic still lacks. Nothing stores that state separately. There is no app, UI or MCP server, and other agents only read the page.
+each open topic still lacks. Nothing stores that state separately. Other agents only read the page.
 
 - **Contract:** `defaults/agents/learnclaw/workspace/` (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`,
   `skills/README.md`). Change the persona here; the deploy overwrites the live files.
+- **LearnHarness (adopted 2026-11-09):** the owner learns in the LearnHarness desktop app on the
+  PC, which teaches and keeps the learning record; learnclaw reads that record and never teaches.
+  - `scripts/ensure-learnclaw.sh` fetches LearnHarness's own `learnharness` skill from upstream at
+    a pinned commit (`LH_SKILL_COMMIT`), checks each file against its sha256 manifest and installs
+    it unedited into the workspace; a failed fetch or checksum keeps the installed copy.
+  - `scripts/learnharness-sync/` pulls the record (`chats/`, `graph/`, `jobs/` only, never
+    `settings.json` or keys) every 10 minutes into `/var/lib/lifekit/learnharness/data`, the
+    gateway's `~/.life-state/learnharness/data`. The PC side is one `authorized_keys` line,
+    `rrsync -ro` on the LearnHarness data folder, tailnet only, which the installer prints. The PC
+    off is ssh exit 255, which the unit treats as success. Install once per host, as the admin
+    account: `LH_SYNC_HOST=<PC tailnet name> LH_SYNC_USER=<PC account>
+    scripts/learnharness-sync/install-learnharness-sync.sh`; check with
+    `systemctl status learnharness-sync.service`.
+  - learnclaw's Telegram door is the `reading` account (token: the sops ref `learning-bot-token`),
+    bound with `openclaw agents bind --agent learnclaw --bind telegram:reading`; its allowlist
+    `agents.entries.learnclaw.skills` is `["learning-record", "learnharness"]` (host state).
 - **Skill:** `skills/learning-record` (`record.py`, stdlib only).
   - `record.py status` prints the projections. A row whose date is not a real calendar date is
     reported on its own line, not counted, and does not stop the report.

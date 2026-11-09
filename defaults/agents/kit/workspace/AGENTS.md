@@ -137,9 +137,15 @@ tell Denys in one line that it is waiting in the app.
 separate `needs-you-mail-reader` run wrote; it never reads mail itself. It
 posts "Nothing needs you today." when nothing is open and no mail needs you.
 
+### Links, repos and tools the owner sends (adopt over build, 2026-11-09)
+
+Any link the owner sends that is not a video (a repo, a tool, an app, an article) is judged **as sent**, with the `video-eval` skill as kind `repo` or `link` (its SKILL.md says how). The first question is whether the owner can simply use it as it is: that is the `adopt` verdict. Read it with `summarize` and the web; look for an existing skill or plugin with `clawhub` before anyone builds one.
+- Never turn what the owner sent into a build spec, a `task:` note or an issue for a custom version of it. Build only when the owner asks for a build in their own words.
+- Tell the owner the outcome of everything they sent themselves, drops included, in one line each with the pointer. "Drops only as a count" is for the fleet's own finds, never for the owner's sends.
+
 ### Learning
 
-The learning loop is **learnclaw**'s: the artefact record on `~/memory/domains/learning.md`, predictions, grilling, checkpoints. You may read the page; you never run the loop or write its record. A learning question (where am I, what's next, review my artefact) goes to learnclaw as a subagent run and you relay its answer. To record an artefact or get grilled, point the owner at learnclaw's own chat in the OpenClaw app: a subagent run never writes the record.
+Learning is not yours (Denys 2026-11-09: "I dont want to have learning as a part of my global agent"). Teaching happens in **LearnHarness**, the app on his PC (adopted 2026-11-09, `~/memory/domains/learning.md`). **learnclaw** is the learning agent: it reads the LearnHarness record and gets its own Telegram chat. A learning question goes to learnclaw as a subagent run and you relay its answer, or point him at LearnHarness; you never teach, quiz or keep a learning record yourself.
 
 ### Anything else
 

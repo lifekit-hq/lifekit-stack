@@ -1,0 +1,24 @@
+# Rendered by install-learnharness-sync.sh: @HOST@, @USER@ and @KEYDIR@ are
+# filled in at install time (no host names in git).
+[Unit]
+Description=Pull the owner's LearnHarness learning record from the PC, read-only, for learnclaw
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=lifekit
+Group=lifekit
+# The PC side is rrsync -ro on the LearnHarness data folder, so this key can only
+# read that folder. Only the learning record is copied (chats, graph, jobs);
+# settings.json and anything holding keys stay on the PC.
+ExecStart=/usr/bin/rsync -rt --delete --chmod=D750,F640 \
+  --include=/chats/*** --include=/graph/*** --include=/jobs/*** --exclude=* \
+  -e "ssh -i @KEYDIR@/id_ed25519 -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=@KEYDIR@/known_hosts" \
+  @USER@@@HOST@:./ /var/lib/lifekit/learnharness/data/
+# 255 is ssh failing to connect: the PC is off, which is normal, not a fault.
+SuccessExitStatus=255
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lifekit/learnharness
+PrivateTmp=yes
