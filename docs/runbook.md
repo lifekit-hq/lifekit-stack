@@ -2223,8 +2223,8 @@ originals onto this narrower consent as well, and then taking the fleet connecto
   else. `report` prints `Report copy: filed in <path>` or `Report copy: pending (<reason>)`; a
   failure never fails the scan. With no config the door prints no such line and attempts nothing.
   Reports filed before the consent are copied by the first scans after it.
-- **rclone.** Pinned in `drive_upload.py` (the same version and sha256 as the off-box backup's,
-  a test holds the pair), downloaded and checked by `scripts/ensure-doc-door.sh` on every deploy
+- **rclone.** Pinned in `drive_upload.py` (the same version and sha256 as the off-box backup's;
+  bump both installers together), downloaded and checked by `scripts/ensure-doc-door.sh` on every deploy
   into the job's state dir (`/var/lib/lifekit/doc-door/bin/`, not the image). Every call passes an
   explicit `--config` and `--drive-scope drive.file`, a minimal environment and no `-v`
   (debug logging prints credentials).
