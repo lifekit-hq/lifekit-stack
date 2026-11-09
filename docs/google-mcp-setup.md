@@ -67,7 +67,8 @@ Kit's compose service sets the tool surface with literals, not env values:
 Docs, Sheets and Tasks, and `WORKSPACE_MCP_DISABLED_TOOLS` removes the other
 write tools the Gmail `send` level pulls in: `draft_gmail_message`,
 `manage_gmail_label`, `modify_gmail_message_labels`,
-`batch_modify_gmail_message_labels`. The block-by-name list wins over the
+`batch_modify_gmail_message_labels`, plus `get_drive_shareable_link`, which the
+server still lists at `drive:readonly`. The block-by-name list wins over the
 permission list, so the only tool that writes anywhere is `send_gmail_message`.
 Kit's connector is read-only for Drive on purpose: every Drive write is the fleet
 connector's (below). This is the guard that binds: per-agent tool allow and deny

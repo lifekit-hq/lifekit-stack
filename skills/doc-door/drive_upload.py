@@ -64,6 +64,7 @@ RCLONE_SUMS = {
 RCLONE_BASE_URL = os.environ.get(
     "DOC_DOOR_RCLONE_BASE_URL", "https://downloads.rclone.org"
 )
+RCLONE_USER_AGENT = "lifekit-doc-door-drive-upload/1 (rclone installer)"
 RCLONE = os.environ.get("DOC_DOOR_RCLONE", str(DOOR_HOME / "bin" / "rclone"))
 CONFIG = Path(
     os.environ.get("DOC_DOOR_RCLONE_CONFIG", "/run/lifekit/doc-door-drive/rclone.conf")
@@ -189,7 +190,9 @@ def install_rclone() -> int:
     arch = _arch()
     stem = f"rclone-{RCLONE_VERSION}-linux-{arch}"
     url = f"{RCLONE_BASE_URL}/{RCLONE_VERSION}/{stem}.zip"
-    with urllib.request.urlopen(url, timeout=180) as resp:  # noqa: S310 - pinned host
+    # downloads.rclone.org answers 403 to Python's default user agent.
+    req = urllib.request.Request(url, headers={"User-Agent": RCLONE_USER_AGENT})  # noqa: S310
+    with urllib.request.urlopen(req, timeout=180) as resp:  # noqa: S310 - pinned host
         blob = resp.read()
     if hashlib.sha256(blob).hexdigest() != RCLONE_SUMS[arch]:
         print(

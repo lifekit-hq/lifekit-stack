@@ -519,8 +519,10 @@ def test_configure_reads_piped_stdin_lines(monkeypatch, tmp_path):
 
 class _Serve(BaseHTTPRequestHandler):
     body = b""
+    agents: list = []
 
     def do_GET(self):
+        _Serve.agents.append(self.headers.get("User-Agent", ""))
         self.send_response(200)
         self.send_header("Content-Length", str(len(_Serve.body)))
         self.end_headers()
@@ -541,6 +543,7 @@ def mirror(monkeypatch, tmp_path):
             f"#!/bin/sh\necho 'rclone {drive_upload.RCLONE_VERSION}'\n",
         )
     _Serve.body = zpath.read_bytes()
+    _Serve.agents = []
     srv = HTTPServer(("127.0.0.1", 0), _Serve)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     import hashlib
@@ -567,6 +570,13 @@ def test_install_rclone_checks_the_pin_then_installs_once(mirror, capsys):
     assert "installed" in capsys.readouterr().out
     assert uploader("install-rclone") == 0
     assert "already in place" in capsys.readouterr().out
+
+
+def test_install_rclone_sends_an_explicit_user_agent(mirror):
+    assert uploader("install-rclone") == 0
+    (agent,) = _Serve.agents
+    assert agent == drive_upload.RCLONE_USER_AGENT
+    assert "Python-urllib" not in agent
 
 
 def test_install_rclone_refuses_a_download_that_misses_its_sha(

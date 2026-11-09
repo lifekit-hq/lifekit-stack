@@ -305,6 +305,7 @@ def test_google_workspace_mcp_exposes_send_as_its_only_write_tool():
         "manage_gmail_label",
         "modify_gmail_message_labels",
         "batch_modify_gmail_message_labels",
+        "get_drive_shareable_link",
     ]
     # Nothing wider than send for Gmail, and no other service above readonly.
     levels = dict(p.split(":") for p in env["WORKSPACE_MCP_PERMISSIONS"].split())
