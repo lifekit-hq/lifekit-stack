@@ -76,8 +76,11 @@ docker exec "$GATEWAY" sh -c '
 # (the same pair as the off-box backup's), downloaded and checked there, kept in
 # the job's own state dir. Then one line on whether the consent is in.
 container_skill=/home/node/.openclaw/agents/${AGENT}/workspace/skills/${SKILL}
-docker exec "$GATEWAY" python3 "${container_skill}/drive_upload.py" install-rclone
-docker exec "$GATEWAY" python3 "${container_skill}/drive_upload.py" status
+# An optional add-on: a failure here must not stop the door job's own declaration.
+docker exec "$GATEWAY" python3 "${container_skill}/drive_upload.py" install-rclone \
+  || echo "rclone install failed: report copies stay off until the next deploy" >&2
+docker exec "$GATEWAY" python3 "${container_skill}/drive_upload.py" status \
+  || echo "report copy status unavailable" >&2
 
 ALERT_CHAT="${DOC_DOOR_ALERT_CHAT:-}"
 if [ -z "$ALERT_CHAT" ] && [ -r "$ENV_FILE" ]; then
