@@ -2292,8 +2292,10 @@ one sitting. Only a person can take the sign-in and the consent click; nothing h
 
 **Drive narrowing check for Kit's connector.** `verify kit` (also part of the bare `verify`) asks
 Kit's connector, over MCP, which tools it offers: it fails if any Drive create, update, delete,
-share, copy, move or import tool is among them, or if no Drive tool is offered at all (the level
-cannot then be shown). The compose file's `drive:readonly` literal is held by
+share, copy, move or import tool (the sharing-link tool `get_drive_shareable_link` included) is
+among them, or if no Drive tool is offered at all (the level cannot then be shown). The server
+still lists `get_drive_shareable_link` at `drive:readonly`, so Kit's compose service blocks it by
+name in `WORKSPACE_MCP_DISABLED_TOOLS`. The compose file's `drive:readonly` literal is held by
 `scripts/tests/test_doc_door_drive.py`; the container log check in `docs/google-mcp-setup.md`
 ("Verify Kit's connector is narrowed") is the third leg.
 
