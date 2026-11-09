@@ -60,8 +60,10 @@ Everything is kept on this host in a private directory (INTAKE_DIR, default
 ~/.life-state/intake, mode 0700): reports/ and index.md for good (index.md is
 appended to by this script only, never rewritten), transcripts/ and inbox/
 (files waiting for their run) VIDEO_RETENTION_DAYS (default 14) days, pruned
-at the start of every run. goals.md there, written by the operator, is the
-owner's standing goals the judge reads; without it the judge says so.
+at the start of every run. The owner's standing goals the judge reads are the
+section headings of the vault's goals page (GOALS_PAGE, default
+~/memory/system/goals.md, the vault the gateway mounts) - read live, never a
+copy; without the page the judge says so.
 
 `idea` files an item that is not a video: an idea the ideas scout proposes,
 already judged against the same rubric by its producer. Its report carries the
@@ -895,11 +897,22 @@ def _report_path(root: Path, item: Item, rubric: Rubric, kind: str = KIND) -> Pa
     return reports / f"{item.key}.{rubric.stamp}.md"
 
 
-def _goals(root: Path) -> str:
+def goals_page() -> Path:
+    return Path(
+        os.environ.get("GOALS_PAGE") or Path.home() / "memory" / "system" / "goals.md"
+    )
+
+
+def _goals() -> str:
+    """The owner's ranked goals: the `## ` headings of the vault's goals page,
+    in page order, read at every run so the judge never sees a stale copy."""
     try:
-        goals = (root / "goals.md").read_text().strip()
+        page = goals_page().read_text()
     except OSError:
-        goals = ""
+        page = ""
+    goals = "\n".join(
+        ln[3:].strip() for ln in page.splitlines() if ln.startswith("## ")
+    ).strip()
     if not goals:
         return "none on file - judge against what you know of them and say so under Confidence"
     return goals[:GOALS_LIMIT] + ("\n[goals cut]" if len(goals) > GOALS_LIMIT else "")
@@ -928,7 +941,7 @@ def material_text(
         f"Rubric: {rubric.path} (video-eval {rubric.stamp}) - read it before judging",
         f"Mode: {mode}",
         "Goals:",
-        _goals(root),
+        _goals(),
         "",
         chunks[0],
     ]
@@ -1110,11 +1123,9 @@ def _verdict(
     out = {"tests": tests, "verdict": v, "next": f.get("next step", "")}
     if v not in rubric.list("verdicts"):
         errors.append(f"Verdict: must be one of: {', '.join(rubric.list('verdicts'))}")
+    if v in ("accept", "adopt") and any(r != "pass" for r in tests.values()):
+        errors.append(f"{v} needs every test passed; a failed test is a park or a drop")
     if v == "accept":
-        if any(r != "pass" for r in tests.values()):
-            errors.append(
-                "accept needs every test passed; a failed test is a park or a drop"
-            )
         out["project"] = f.get("project", "")
         if not out["project"]:
             errors.append("accept needs a Project: line naming what it feeds")
@@ -1491,6 +1502,8 @@ def _verdict_word(row: dict) -> str:
         return f"{v} ({row['reason']})"
     if v == "accept" and row.get("project"):
         return f"{v} -> {row['project']}"
+    if v == "adopt":
+        return "adopt - try it as it is"
     if v == "park" and row.get("recheck"):
         return f"{v} until {row['recheck']}"
     return v

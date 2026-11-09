@@ -1872,8 +1872,9 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
   - `transcripts/<key>.txt` holds the transcripts, and `inbox/` the backfilled files waiting
     for their run. Both are deleted after 14 days (`VIDEO_RETENTION_DAYS`) by the next run,
     and an inbox file as soon as its run used it.
-  - `goals.md` holds the owner's ranked standing goals, written by the operator, which the
-    judge reads. It is host state, never in the repo. Without it the judge says so under
+  - The owner's ranked standing goals are not kept here: the judge reads the `## ` headings of
+    the vault's goals page (`~/memory/system/goals.md` in the gateway, the `/srv/memory` mount;
+    `GOALS_PAGE` overrides), live at every run. Without the page the judge says so under
     Confidence.
 
   None of it is served, in git or in the openclaw-config mirror. The transcript is also kit's
@@ -1905,10 +1906,8 @@ docker exec -i "$G" openclaw config patch --stdin < /tmp/kit-skills.patch.json
 rm /tmp/kit-skills.patch.json
 ```
 
-2. The goals file: the owner's standing goals, ranked, one per line, a few lines (the judge
-   reads the first 2000 characters):
-   `docker exec -i "$G" sh -c 'mkdir -p -m 700 ~/.life-state/intake && umask 077 && cat > ~/.life-state/intake/goals.md' < goals.md`.
-   Edit it the same way when the goals change.
+2. The goals: nothing to write. The judge reads the headings of the vault's goals page through
+   the gateway's `/srv/memory` mount; a goal changes for the judge when it changes in the vault.
 3. **Kit's `AGENTS.md`** is live host state: replace the reel line with one that a YouTube or
    Instagram link the owner wants judged, or a video file, goes to the `video-eval` skill.
 4. The old transcripts: `rm -r /var/lib/lifekit/reel-claim-check` on the host. Nothing prunes
