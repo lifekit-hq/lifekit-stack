@@ -2237,7 +2237,7 @@ originals onto this narrower consent as well, and then taking the fleet connecto
 
 **One-time consent.** Run it right after the fleet account's sign-in
 (`docs/google-mcp-setup.md`, "The fleet connector", step 6), in the same browser session, so there is
-one sitting. Only a person can take the sign-in and the consent click; nothing here scripts either.
+one sitting. Who takes the sign-in and the consent click, and where, is in that section; nothing here scripts either.
 
 1. **OAuth client (Google Cloud console, the fleet's project).** *Google Auth Platform → Clients →
    Create client → Desktop app*, name `doc-door-uploader`. *Data access → Add or remove scopes*:
