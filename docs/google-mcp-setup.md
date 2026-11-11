@@ -291,11 +291,22 @@ document door can be pointed at it with `DOC_DOOR_DRIVE_PARENT_ID`, default
 `root`, the fleet account's own Drive).
 
 **Who owns it.** The owner owns the account, the Cloud project and the
-revocation. Record, once, when the account is first signed in: whether its
-recovery phone and 2-Step Verification belong to the owner, and put the answer in
-this section (it is not known from the repo). If they do not, move them to the
-owner before relying on the account: a fleet identity the owner cannot recover
-is not the owner's to revoke.
+revocation. The fleet Gmail is a throwaway Gmail the owner created on 2026-10-26.
+It keeps the owner's recovery phone and recovery email: they stay his, so the
+account is always recoverable by him and revocable by him.
+
+The agreed arrangement (owner approval recorded) is that the fleet signs in to
+its own account with nobody at the PC. The fleet holds a fleet-generated account
+password and the authenticator secret for 2-Step Verification, both in the fleet
+secret store (`docs/secrets.md`), never in this repo or in a doc. **Pending:** the
+rotation to that password and authenticator is a separate follow-up step that
+has not been done. Until it happens the owner still holds the current password
+and the phone prompts, and the sign-in below still needs him.
+
+The consent steps (step 6 and any re-consent) run in the fleet-owned Chrome
+profile on the PC, `C:\Users\denys\fleet-chrome-profile`, which holds only the
+fleet account's sign-in. The fleet drives that profile for the Google consent
+click; the owner's own browser profile is not used for it.
 
 **Differences from Kit's setup.**
 
@@ -327,9 +338,10 @@ is not the owner's to revoke.
       --permissions drive:full
   ```
 
-  The sign-in is the one step only a person can take: the fleet account's
-  password, any re-verification and 2-Step Verification prompt, and the consent
-  click. Nothing here scripts or works around any of it. Check the granted scopes
+  The sign-in is the account's own password, any re-verification and 2-Step
+  Verification prompt, and the consent click. Until the rotation above is done
+  these are the owner's to take; after it, the fleet takes them with the secrets
+  it holds, in the fleet Chrome profile. Nothing here works around any prompt. Check the granted scopes
   include the Drive scope.
 - Step 7 copies the token to `/srv/google-workspace-mcp-fleet/credentials/`; step 8
   brings up `google-workspace-mcp-fleet`.
