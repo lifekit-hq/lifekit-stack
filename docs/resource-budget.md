@@ -100,9 +100,10 @@ already be there. The same issue carries backstage's older estimate, which needs
 window at all: its series has been recorded since 2026-10-12, so the seven days are already
 behind it and the measurement waits on box access alone.
 
-**Nothing scrapes basket (2026-11-06).** It exposes no `/metrics` endpoint this stack knows of,
-so it has no scrape job in `compose/observability/prometheus/prometheus.yml` and no alert rule
-of its own; its only lines in `prometheus/rules.yml` are the `lifekit:group_memory_bytes`
+**Basket is scraped but has no alert rule (2026-11-12).** Its `basket-app` serves `/metrics` on
+`:3310` over `lifekit-shared`, scraped as job `basket` in
+`compose/observability/prometheus/prometheus.yml` (platform contract `scraped` and `labels`);
+its only lines in `prometheus/rules.yml` are the `lifekit:group_memory_bytes`
 branch and burst-pool exclusion the budget row above requires, and those read the container
 exporter's series, not basket's. The deploy-time census does see its containers, and reports
 them as undeclared: nothing in this repo settles which classification that is - a lifekit
