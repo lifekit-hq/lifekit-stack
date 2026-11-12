@@ -1806,11 +1806,13 @@ docker exec "$G" openclaw cron edit "$ID" \
 
 ### Video evaluation
 
-One intake judge for videos the owner wants weighed: what it is, what it claims and how that
-holds, what serves the owner's standing goals, what adopting it would cost, and a verdict
-(`accept`, `park` or `drop`, with a reason code for a drop) with a confidence line. The owner
-sends Kit a YouTube or Instagram link (or a video file) in Telegram; firstmate files the same
-typed job from the host with `scripts/video-eval.sh`; a scout can file it with origin `scout`.
+One intake judge for videos the owner sends, asking adoption first: should we adopt what the
+video shows (a tool, practice or pattern) into how we already work. It reports what the item
+is, what it claims and how that holds, what in it we could adopt for the owner's standing
+goals, what adopting it takes, and a verdict (`adopt`, `accept`, `park` or `drop`, with a
+reason code for a drop) with a confidence line; a build is only a separately named follow-up,
+considered when nothing adoptable exists. The owner sends Kit a YouTube or Instagram link (or a
+video file) in Telegram; firstmate files the same typed job from the host with `scripts/video-eval.sh`; a scout can file it with origin `scout`.
 Every item is one job on the shared job queue ("Shared job queue"), one Claude pass against one
 versioned rubric, one report and one index row. Free: no API key, no cookies, no login, no paid
 transcription. It replaced the Instagram reel claim check, which is now its `claim-check` mode.
@@ -1980,7 +1982,7 @@ Then:
 - **Verify:**
   - Send Kit a public YouTube link. It answers `video queued` at once, and with the PC on the
     three-line answer arrives within a few minutes. Then `scripts/video-eval.sh index` shows
-    its row, and its report has a `Rubric: video-eval v5 (standard)` line.
+    its row, and its report has a `Rubric: video-eval v7 (standard)` line.
   - `scripts/video-eval.sh enqueue <the same link>` answers `already judged`.
   - A made-up reel link ends as an `unavailable` line, which proves the yt-dlp and the route
     to Instagram.

@@ -424,7 +424,7 @@ def test_a_shared_reel_is_judged_and_indexed_as_the_reel(box, monkeypatch):
     code, _ = video.file_report(jid, report_text())
     assert code == 0
     assert box.index()[0]["source"] == REEL
-    assert (box.root / f"reports/ig-{CODE}.v6.md").is_file()
+    assert (box.root / f"reports/ig-{CODE}.v7.md").is_file()
 
 
 def test_an_unresolvable_share_link_is_a_normal_answer_without_a_download(
@@ -493,7 +493,7 @@ def test_a_kit_item_answers_the_owner_in_three_lines(box):
     assert lines[1] == (
         "video · dev-tooling · accept -> the agent fleet: try it on one job"
     )
-    assert lines[2] == f"report: {box.root}/reports/ig-{CODE}.v6.md"
+    assert lines[2] == f"report: {box.root}/reports/ig-{CODE}.v7.md"
 
 
 @pytest.mark.parametrize("origin", ["firstmate", "scout"])
@@ -508,7 +508,7 @@ def test_another_producers_item_says_nothing_and_is_polled(box, origin):
     status = box.cli("status", jid).stdout.strip().splitlines()
     assert status[0] == "done" and len(status) == 4
     assert status[2] == ("video · dev-tooling · drop (paid-funnel): It sells a course.")
-    assert status[3] == f"report: {box.root}/reports/yt-{VID}.v6.md"
+    assert status[3] == f"report: {box.root}/reports/yt-{VID}.v7.md"
     shown = box.cli("show", jid).stdout
     assert shown.startswith("Title: A talk about agents\n")
 
@@ -728,39 +728,39 @@ def test_the_report_is_stamped_with_the_rubric_version_and_mode(box):
     jid = _judged(box, YT, YT_CAPTIONS="yes")
     r = box.cli("report", jid, stdin=report_text("park"))
     assert r.returncode == 0, r.stderr
-    saved = box.root / f"reports/yt-{VID}.v6.md"
+    saved = box.root / f"reports/yt-{VID}.v7.md"
     head = saved.read_text().splitlines()[:5]
     today = time.strftime("%Y-%m-%d", time.gmtime())
     assert head == [
         "Title: A talk about agents",
         "Kind: video | Category: dev-tooling | Origin: kit",
         f"Source: {YT}",
-        f"Evaluated: {today} | Rubric: video-eval v6 (standard)",
+        f"Evaluated: {today} | Rubric: video-eval v7 (standard)",
         "Gist: a pitch that agents halve costs",
     ]
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     row = box.index()[0]
-    assert (row["rubric"], row["verdict"], row["recheck"]) == ("v6", "park", TOMORROW)
+    assert (row["rubric"], row["verdict"], row["recheck"]) == ("v7", "park", TOMORROW)
 
 
 def test_a_new_rubric_version_is_the_one_stamped(box, tmp_path):
     bumped = tmp_path / "rubric.md"
     bumped.write_text(
-        (SKILL / "rubric.md").read_text().replace("version: 6\n", "version: 7\n", 1)
+        (SKILL / "rubric.md").read_text().replace("version: 7\n", "version: 8\n", 1)
     )
     jid = _judged(box, VIDEO_RUBRIC=str(bumped))
     r = box.cli("report", jid, stdin=report_text(), VIDEO_RUBRIC=str(bumped))
     assert r.returncode == 0, r.stderr
-    saved = box.root / f"reports/ig-{CODE}.v7.md"
-    assert "| Rubric: video-eval v7 (claim-check)" in saved.read_text()
-    assert box.index()[0]["rubric"] == "v7"
+    saved = box.root / f"reports/ig-{CODE}.v8.md"
+    assert "| Rubric: video-eval v8 (claim-check)" in saved.read_text()
+    assert box.index()[0]["rubric"] == "v8"
 
 
 def test_a_claim_check_report_says_so(box):
     jid = _judged(box)
     box.cli("report", jid, stdin=report_text())
-    text = (box.root / f"reports/ig-{CODE}.v6.md").read_text()
-    assert "Rubric: video-eval v6 (claim-check)" in text
+    text = (box.root / f"reports/ig-{CODE}.v7.md").read_text()
+    assert "Rubric: video-eval v7 (claim-check)" in text
     assert '"Agents cut costs by half" - Partly true.' in text
 
 
@@ -827,7 +827,7 @@ def test_a_long_report_is_cut_to_the_cap_with_a_marker(box):
     claims = "\n".join(f'"Claim {i}" - Holds up. ' + "why " * 30 for i in range(40))
     r = box.cli("report", jid, stdin=report_text(claims=claims))
     assert r.returncode == 0, r.stderr
-    text = (box.root / f"reports/ig-{CODE}.v6.md").read_text()
+    text = (box.root / f"reports/ig-{CODE}.v7.md").read_text()
     rubric = video.load_rubric()
     # The cap is the judge's body; the stamp adds three header lines.
     assert len(text.splitlines()) <= rubric.list("max-lines") + 3
@@ -879,8 +879,8 @@ def test_the_index_columns_carry_the_intake_fields(box):
         "project": "",
         "recheck": "",
         "next step or why": "It sells a course.",
-        "rubric": "v6",
-        "report": f"reports/ig-{CODE}.v6.md",
+        "rubric": "v7",
+        "report": f"reports/ig-{CODE}.v7.md",
     }
     assert box.cli("index").stdout.startswith("# Intake index")
 
@@ -894,7 +894,7 @@ def test_a_video_judged_before_answers_with_the_earlier_verdict(box):
     assert r.stdout.strip().splitlines() == [
         "A talk about agents",
         f"video · dev-tooling · already judged {today}: drop (paid-funnel): It sells a course.",
-        f"report: {box.root}/reports/yt-{VID}.v6.md",
+        f"report: {box.root}/reports/yt-{VID}.v7.md",
     ]
     assert box.job(jid)["status"] == "done"  # not queued again
     assert box.log.read_text() == "" and len(box.index()) == 1
@@ -905,7 +905,7 @@ def test_a_video_judged_under_an_older_rubric_is_judged_again(box, tmp_path):
     box.cli("report", jid, stdin=report_text("drop"))
     bumped = tmp_path / "rubric.md"
     bumped.write_text(
-        (SKILL / "rubric.md").read_text().replace("version: 6\n", "version: 7\n", 1)
+        (SKILL / "rubric.md").read_text().replace("version: 7\n", "version: 8\n", 1)
     )
     r = box.cli("enqueue", YT, "--origin", "firstmate", VIDEO_RUBRIC=str(bumped))
     assert "already judged" not in r.stdout, r.stdout
@@ -916,8 +916,8 @@ def test_a_video_judged_under_an_older_rubric_is_judged_again(box, tmp_path):
     )
     assert r.returncode == 0, r.stderr
     assert [(row["rubric"], row["verdict"]) for row in box.index()] == [
-        ("v6", "drop"),
-        ("v7", "park"),
+        ("v7", "drop"),
+        ("v8", "park"),
     ]
 
 
@@ -1926,7 +1926,7 @@ def test_skill_frontmatter_parses_into_the_name_and_bins_openclaw_reads():
 
 def test_the_rubric_carries_the_intake_lists_and_the_four_tests():
     rubric = video.load_rubric()
-    assert rubric.version == 6
+    assert rubric.version == 7
     assert rubric.list("kinds") == ["video", "idea", "link", "note", "repo"]
     assert rubric.list("categories") == [
         "persona",
