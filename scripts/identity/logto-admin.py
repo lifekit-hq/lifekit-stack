@@ -764,10 +764,29 @@ def cmd_revoke_app(api: Api, ledger: Ledger, args) -> None:
 
 
 def cmd_app_status(api: Api, _ledger: Ledger, args) -> None:
-    """One line per M2M app role: what the app holds. Prints no secret."""
+    """One line per app: an M2M app's roles and scopes, any other app's redirect URIs.
+
+    Prints no secret.
+    """
     app = find_app(api, args.app)
     if not app:
         say(f"app {args.app}: absent")
+        return
+    if app.get("type") != "MachineToMachine":
+        # Only M2M apps can hold roles (the API answers 422 otherwise): show the
+        # URIs a sign-in app is registered with instead.
+        oidc = app.get("oidcClientMetadata") or {}
+        secrets = [
+            s
+            for s in api.call("GET", f"/api/applications/{app['id']}/secrets")[2] or []
+            if not s.get("expiresAt")
+        ]
+        say(
+            f"app {app['name']}: {app['id']}, type {app.get('type')}, "
+            f"redirect [{', '.join(oidc.get('redirectUris') or [])}], "
+            f"post-logout [{', '.join(oidc.get('postLogoutRedirectUris') or [])}], "
+            f"{len(secrets)} live secret(s)"
+        )
         return
     roles = api.list_all(f"/api/applications/{app['id']}/roles")
     scopes = sorted(
@@ -1211,7 +1230,10 @@ def parser() -> argparse.ArgumentParser:
     )
     ra.add_argument("app", help="application id or exact name")
     ra.add_argument("--delete", action="store_true")
-    st = sub.add_parser("app-status", help="print an app's roles, scopes, secret count")
+    st = sub.add_parser(
+        "app-status",
+        help="print an app's roles and scopes (M2M) or redirect URIs, and its secret count",
+    )
     st.add_argument("app", help="application id or exact name")
     x = sub.add_parser(
         "set-sign-in-exp", help="set sign-in experience branding, color and methods"

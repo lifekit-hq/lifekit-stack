@@ -1369,6 +1369,26 @@ def test_app_status_prints_roles_scopes_and_count_only(logto):
     assert "absent" in logto("app-status", "nope").stdout
 
 
+def test_app_status_of_a_sign_in_app_shows_its_uris(logto, tmp_path):
+    secret = tmp_path / "web.secret"
+    logto(
+        "ensure-app",
+        "Web",
+        "--redirect-uri",
+        "https://x.invalid/cb",
+        "--post-logout-uri",
+        "https://x.invalid/out",
+        "--secret-file",
+        str(secret),
+    )
+    proc = logto("app-status", "Web")
+    assert proc.returncode == 0, proc.stderr
+    assert "redirect [https://x.invalid/cb]" in proc.stdout
+    assert "post-logout [https://x.invalid/out]" in proc.stdout
+    assert "1 live secret(s)" in proc.stdout
+    assert secret.read_text().strip() not in proc.stdout
+
+
 def test_token_check_asks_for_the_resource_and_scopes_given(logto):
     ensure_fleet_resource(logto)
     proc = logto(

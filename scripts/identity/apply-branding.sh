@@ -12,7 +12,7 @@
 # scripts/identity/branding/; seeds and mark provenance are in its README.
 #
 # Env: LOGTO_ENDPOINT, LOGTO_M2M_APP_ID, LOGTO_M2M_APP_SECRET (as logto-admin.py);
-# GATE_APP, FS_APP, GRAFANA_APP override the Logto application names.
+# GATE_APP, FS_APP, BK_APP, GRAFANA_APP override the Logto application names.
 
 set -euo pipefail
 
@@ -20,16 +20,19 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADMIN=(python3 "${HERE}/logto-admin.py")
 GATE_APP="${GATE_APP:-lifekit sign-in gate}"
 FS_APP="${FS_APP:-finance-sentry}"
+BK_APP="${BK_APP:-basket}"
 GRAFANA_APP="${GRAFANA_APP:-Grafana}"
 
 # Seeds (light primary) and their dark-theme counterparts, from the lk-theme
 # seed engine: fs Petrol, lk Indigo.
 LK_LIGHT="#4f46e5" LK_DARK="#8e9aff"
 FS_LIGHT="#175a6d" FS_DARK="#71afc4"
+BK_LIGHT="#7c3aed"
 
 mark() { printf 'data:image/svg+xml;base64,%s' "$(base64 -w0 "${HERE}/branding/$1.svg")"; }
 LK_MARK="$(mark lk)"
 FS_MARK="$(mark fs)"
+BK_MARK="$(mark bk)"
 
 # Tenant default: the lifekit mark and indigo, and no Terms/Privacy links
 # (lifekit publishes neither page; the links used to point at a placeholder).
@@ -47,6 +50,11 @@ FS_MARK="$(mark fs)"
 "${ADMIN[@]}" set-app-sign-in-exp "${FS_APP}" --if-exists --display-name "Finance Sentry" \
   --logo-url "${FS_MARK}" --dark-logo-url "${FS_MARK}" \
   --primary-color "${FS_LIGHT}" --dark-primary-color "${FS_DARK}"
+
+# Basket: its own Logto client, the bk mark in violet (no dark primary picked yet).
+"${ADMIN[@]}" set-app-sign-in-exp "${BK_APP}" --if-exists --display-name "basket" \
+  --logo-url "${BK_MARK}" --dark-logo-url "${BK_MARK}" \
+  --primary-color "${BK_LIGHT}"
 
 # Grafana has no mark of its own: it keeps the tenant default, named.
 "${ADMIN[@]}" set-app-sign-in-exp "${GRAFANA_APP}" --if-exists --display-name "Grafana"

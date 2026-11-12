@@ -3751,7 +3751,8 @@ sops exec-env ~/.config/firstmate/logto-m2m.env.sops 'python3 scripts/identity/l
 
 `ensure-m2m-app` makes the app's role hold exactly the scopes given (extras
 are taken away), `rotate-secret` and `revoke-app` take the app name, and
-`app-status` prints roles, scopes and the live-secret count without a value.
+`app-status` prints an M2M app's roles and scopes (a sign-in app's redirect URIs
+instead) and the live-secret count without a value.
 Each is also in the ledger for `logto-admin.py undo`, except a secret
 rotation and an app deletion, which cannot be taken back. The secret file
 goes into its own SOPS file the same way as above, then is shredded.
@@ -3849,6 +3850,7 @@ the admin console policy editor (Access controls) with *Preview* before saving.
      // BEGIN people-managed: written by `people sync`, hand edits are overwritten
      "group:finance-sentry": [],
      "group:backstage": [],
+     "group:basket": [],
      // END people-managed
    },
    ```
@@ -4177,8 +4179,9 @@ browser: it must still send an unsigned-in visit to Logto and back.
 The Logto sign-in page shows each application's own mark and primary color:
 the lifekit mark in Indigo `#4f46e5` for the sign-in gate (dashboard and devclaw
 console share that one Logto client), the fs mark in Petrol `#175a6d` for
-finance-sentry's client, the tenant default (lifekit mark, Indigo) for anything
-else. Logto's per-application sign-in experience carries the logo and color;
+finance-sentry's client, the bk mark in Violet `#7c3aed` for basket's client
+(no dark primary picked yet), the tenant default (lifekit mark, Indigo) for
+anything else. Logto's per-application sign-in experience carries the logo and color;
 the tenant's Terms/Privacy links are cleared, because lifekit publishes no such
 pages. `scripts/identity/branding/README.md` has the seeds and where the marks
 come from. Operator step, with the M2M credentials; it changes the live
@@ -4189,7 +4192,7 @@ sops exec-env <file>.sops 'bash scripts/identity/apply-branding.sh'
 ```
 
 Idempotent; an application it cannot find by name is reported and skipped
-(override with `GATE_APP`, `FS_APP`, `GRAFANA_APP`). Reverse each change with
+(override with `GATE_APP`, `FS_APP`, `BK_APP`, `GRAFANA_APP`). Reverse each change with
 `logto-admin.py undo`. Logto 1.44 stores an app display name but does not draw
 it on the sign-in page. No restart is needed. Re-add Terms/Privacy links once
 real pages exist, in the console or by extending `set-sign-in-exp`.

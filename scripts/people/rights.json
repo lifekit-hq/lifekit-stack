@@ -11,6 +11,12 @@
       "port": 18810,
       "role": "backstage",
       "hint": "Add it to your home screen for one-tap access."
+    },
+    "basket": {
+      "name": "basket",
+      "port": 3310,
+      "role": "basket",
+      "hint": "Add it to your home screen."
     }
   },
   "always_ports": [3001],
