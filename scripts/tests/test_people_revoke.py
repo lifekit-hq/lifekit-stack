@@ -106,6 +106,7 @@ def test_revoke_cuts_network_and_signin_and_records_it(env, tmp_path):
     assert block_groups(env.ts.policy) == {
         "group:finance-sentry": [],
         "group:backstage": [],
+        "group:basket": [],
     }
     assert outside_block(env.ts.policy) == outside_block(POLICY)
     assert role_names(env.logto, user["id"]) == []
@@ -114,7 +115,7 @@ def test_revoke_cuts_network_and_signin_and_records_it(env, tmp_path):
     assert env.ts.suspended == []
     last = ledger(tmp_path)[-1]
     assert last["action"] == "people-revoke" and last["email"] == "friend@example.com"
-    assert last["rights"] == ["finance-sentry", "backstage"] and last["whole"] is True
+    assert last["rights"] == ["finance-sentry", "backstage", "basket"] and last["whole"] is True
 
 
 def test_revoke_ledger_entries_carry_undo_data(env, tmp_path):
@@ -147,6 +148,7 @@ def test_revoke_one_right_keeps_the_other_and_does_not_suspend(env):
     assert block_groups(env.ts.policy) == {
         "group:finance-sentry": ["friend@example.com"],
         "group:backstage": [],
+        "group:basket": [],
     }
     assert role_names(env.logto, user["id"]) == ["finance-sentry"]
     assert not user.get("isSuspended")

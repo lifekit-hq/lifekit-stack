@@ -49,12 +49,14 @@ POLICY = """\
     // BEGIN people-managed: written by `people sync`, hand edits are overwritten
     "group:finance-sentry": [],
     "group:backstage": [],
+    "group:basket": [],
     // END people-managed
   },
   "grants": [
     /* static, written once by hand */
     { "src": ["group:finance-sentry"], "dst": ["box"], "ip": ["tcp:4200", "tcp:3001"] },
     { "src": ["group:backstage"], "dst": ["box"], "ip": ["tcp:18810", "tcp:3001"] },
+    { "src": ["group:basket"], "dst": ["box"], "ip": ["tcp:3310", "tcp:3001"] },
     { "src": ["group:ops"], "dst": ["box"], "ip": ["*"] },
   ],
   "tests": [
@@ -318,6 +320,7 @@ def test_sync_rebuilds_groups_from_logto_roles_and_is_idempotent(env):
     assert block_groups(env.ts.policy) == {
         "group:finance-sentry": ["member@example.com"],
         "group:backstage": ["friend@example.com", "member@example.com"],
+        "group:basket": [],
     }
     assert outside_block(env.ts.policy) == outside_block(POLICY)
     writes = len(env.ts.acl_writes())
@@ -428,6 +431,7 @@ def test_invite_adds_the_email_to_its_group_and_yields_the_invite_url(env):
     assert block_groups(env.ts.policy) == {
         "group:finance-sentry": [],
         "group:backstage": ["friend@example.com"],
+        "group:basket": [],
     }
     assert outside_block(env.ts.policy) == outside_block(POLICY)
     assert "tailnet group:backstage: added" in proc.stdout
