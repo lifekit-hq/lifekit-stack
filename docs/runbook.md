@@ -1811,9 +1811,8 @@ video shows (a tool, practice or pattern) into how we already work. It reports w
 is, what it claims and how that holds, what in it we could adopt for the owner's standing
 goals, what adopting it takes, and a verdict (`adopt`, `accept`, `park` or `drop`, with a
 reason code for a drop) with a confidence line; a build is only a separately named follow-up,
-considered when nothing adoptable exists. The owner
-sends Kit a YouTube or Instagram link (or a video file) in Telegram; firstmate files the same
-typed job from the host with `scripts/video-eval.sh`; a scout can file it with origin `scout`.
+considered when nothing adoptable exists. The owner sends Kit a YouTube or Instagram link (or a
+video file) in Telegram; firstmate files the same typed job from the host with `scripts/video-eval.sh`; a scout can file it with origin `scout`.
 Every item is one job on the shared job queue ("Shared job queue"), one Claude pass against one
 versioned rubric, one report and one index row. Free: no API key, no cookies, no login, no paid
 transcription. It replaced the Instagram reel claim check, which is now its `claim-check` mode.

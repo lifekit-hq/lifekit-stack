@@ -1,6 +1,6 @@
 ---
 name: video-eval
-description: Evaluate a video the owner sends - what it is, whether its claims hold, what is useful for the owner's goals, the cost of adopting it, and an accept / park / drop verdict - against a fixed rubric, with a three-line answer and the full report kept on this server. Use when the user sends a YouTube link (watch, youtu.be, shorts, live), an Instagram reel link (reel, reels, p, tv or share URL) or a video file, alone or with "is this true", "check this", "worth it?", "is this useful", or when a queued video job's turn names this skill. For only a summary of what a YouTube video says, or a question about its content, use youtube-transcript instead.
+description: Evaluate a video the owner sends - what it is, whether its claims hold, what in it we could adopt for the owner's goals, what adopting it takes, and an adopt / accept / park / drop verdict - against a fixed rubric, with a three-line answer and the full report kept on this server. Use when the user sends a YouTube link (watch, youtu.be, shorts, live), an Instagram reel link (reel, reels, p, tv or share URL) or a video file, alone or with "is this true", "check this", "worth it?", "is this useful", or when a queued video job's turn names this skill. For only a summary of what a YouTube video says, or a question about its content, use youtube-transcript instead.
 metadata: { "openclaw": { "requires": { "bins": ["python3", "ffmpeg", "whisper"] } } }
 ---
 
