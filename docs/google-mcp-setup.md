@@ -298,10 +298,12 @@ account is always recoverable by him and revocable by him.
 The agreed arrangement (owner approval recorded) is that the fleet signs in to
 its own account with nobody at the PC. The fleet holds a fleet-generated account
 password and the authenticator secret for 2-Step Verification, both in the fleet
-secret store ([`secrets.md`](./secrets.md)), never in this repo or in a doc. **Pending:** the
-rotation to that password and authenticator is a separate follow-up step that
-has not been done. Until it happens the owner still holds the current password
-and the phone prompts, and the sign-in below still needs him.
+secret store ([`secrets.md`](./secrets.md)), never in this repo or in a doc. Both were rotated on
+2026-11-12 (stored as `PARKED_FLEET_GOOGLE_PASSWORD` and `PARKED_FLEET_GOOGLE_TOTP_SECRET`,
+read by the fleet with its own operator key, never rendered into `stack.env`) and 2-Step
+Verification is on. The owner's own passkeys on the PC profile and his recovery phone stay as
+fallbacks, and the sign-in below no longer needs him except to approve a passkey when Google
+asks for one in the fleet Chrome profile.
 
 The consent steps (step 6 and any re-consent) run in the fleet-owned Chrome
 profile on the PC, `C:\Users\denys\fleet-chrome-profile`, which holds only the
