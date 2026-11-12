@@ -7,6 +7,7 @@ Marks and colors for Logto's sign-in page, applied by
 | --- | --- | --- | --- |
 | lk (lifekit dashboard, devclaw console via the gate) | Indigo `#4f46e5` | `#8e9aff` | `lk.svg` |
 | fs (Finance Sentry) | Petrol `#175a6d` | `#71afc4` | `fs.svg` |
+| bk (basket) | Violet `#7c3aed` | not picked | `bk.svg` |
 
 The marks are `markSvg({app, tile: <seed>, ink: '#ffffff'})` from
 `@lifekit-hq/tokens` (`projects/tokens/brand/mark.mjs`, lifekit-common at

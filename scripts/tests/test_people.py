@@ -81,6 +81,7 @@ def test_catalog_has_the_agreed_shape():
         18810,
         "backstage",
     )
+    assert (rights["basket"]["port"], rights["basket"]["role"]) == (3310, "basket")
     assert cat["always_ports"] == [3001]
     assert cat["never_ports"] == [3002, 4387, 18789, 8303, 22]
     assert not {r["port"] for r in rights.values()} & set(cat["never_ports"])
