@@ -115,7 +115,10 @@ def test_revoke_cuts_network_and_signin_and_records_it(env, tmp_path):
     assert env.ts.suspended == []
     last = ledger(tmp_path)[-1]
     assert last["action"] == "people-revoke" and last["email"] == "friend@example.com"
-    assert last["rights"] == ["finance-sentry", "backstage", "basket"] and last["whole"] is True
+    assert (
+        last["rights"] == ["finance-sentry", "backstage", "basket"]
+        and last["whole"] is True
+    )
 
 
 def test_revoke_ledger_entries_carry_undo_data(env, tmp_path):
