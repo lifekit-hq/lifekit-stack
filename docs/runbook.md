@@ -569,10 +569,10 @@ rebuilt one.
    to every turn of that agent. Drop the six deck and model skills from
    Anthropic's `equity-research` marketplace plugin that no wake turn uses
    (`earnings-analysis`, `earnings-preview`, `sector-overview`, `dcf-model`,
-   `comps-analysis`, `competitive-analysis`); keep `thesis-tracker`,
-   `catalyst-calendar` (the ceremonies the persona describes) and
-   `idea-generation` (the daily `ledger-opportunity` job). Arrays replace
-   under `config patch`, so the list below is the whole allowlist:
+   `comps-analysis`, `competitive-analysis`) and the three leftovers of the
+   retired scan (`thesis-tracker`, `catalyst-calendar`, `idea-generation`);
+   keep `github`, `notion`, `skill-creator`. Arrays replace under
+   `config patch`, so the list below is the whole allowlist:
 
    ```json5
    {
@@ -581,7 +581,6 @@ rebuilt one.
          finance: {
            skills: [
              "github", "notion", "skill-creator",
-             "thesis-tracker", "catalyst-calendar", "idea-generation",
            ],
          },
        },
@@ -619,7 +618,7 @@ rebuilt one.
    On a scratch copy of the 2026-09-19 file the three edits leave 18,169
    bytes (17,933 characters) - the size step 3 will produce, not the live
    file's: the scan mechanics were about 500 characters of the persona;
-   the rest of the bootstrap cut comes from the six skills and from
+   the rest of the bootstrap cut comes from the dropped skills and from
    `lightContext` on the pulse. Anything beyond these three edits is a persona
    rewrite, which this change does not do.
 
@@ -700,8 +699,7 @@ agent (dry-run first, the same two commands as above; the keys hot-reload):
       },
       finance: {
         skills: [
-          "github", "notion", "skill-creator", "thesis-tracker",
-          "catalyst-calendar", "idea-generation", "earnings-analysis",
+          "github", "notion", "skill-creator", "earnings-analysis",
           "earnings-preview", "sector-overview", "dcf-model", "comps-analysis",
           "competitive-analysis", "youtube-transcript",
         ],
