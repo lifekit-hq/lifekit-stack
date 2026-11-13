@@ -618,7 +618,7 @@ rebuilt one.
    On a scratch copy of the 2026-09-19 file the three edits leave 18,169
    bytes (17,933 characters) - the size step 3 will produce, not the live
    file's: the scan mechanics were about 500 characters of the persona;
-   the rest of the bootstrap cut comes from the six skills and from
+   the rest of the bootstrap cut comes from the dropped skills and from
    `lightContext` on the pulse. Anything beyond these three edits is a persona
    rewrite, which this change does not do.
 
