@@ -4692,6 +4692,12 @@ through `gh api` on the contents API with gh's existing login; no secret is
 added), joins them with a `---` rule, and writes the result to the finance
 agent's workspace `AGENTS.md`. Bump the pin by a PR that edits `PIN`.
 
+Ledger runs the thesis loop itself: finance-sentry emits `ThesisReviewDue` and
+`CandidateReviewDue` companion events, the pulse (`scripts/finance-pulse.md`, step 1)
+hands them to the persona's review loop, and Ledger's service token writes theses
+(audited) and promotes candidates through the server's risk gate. The owner's call is
+only to buy or not; Ledger does not ask the owner to confirm a thesis or a promotion.
+
 Every deploy runs `install` and then `check` as `lifekit` (no sudo; a step near
 the end of `scripts/deploy.sh`), so a merged `PIN` bump reaches the live persona
 without a manual step. `install` is idempotent: when `AGENTS.md` already equals
@@ -4853,7 +4859,7 @@ bash /srv/lifekit-stack/scripts/ledger-drift/lifekit-ledger-drift.sh; echo "exit
 ```
 
 When it alerts: read the file. Anything still true goes into finance-sentry as
-a proposal the owner confirms; then retire the file by hand (the check never
+a proposal for Ledger to act on (a thesis or candidate is Ledger's own write, not an owner confirm); then retire the file by hand (the check never
 does). A legitimate new workspace file is a PR that adds it to
 `WORKSPACE_ALLOW`. The alert resolves on the next run after the file is gone.
 
