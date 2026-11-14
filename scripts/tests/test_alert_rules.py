@@ -986,3 +986,51 @@ def test_agent_drive_pattern_matches_creates_only():
         'level=info msg="executing query" query="{service_name=\\"docker\\"} |~ \\"\\\\[create_drive_(file|folder)\\\\] Invoked\\\\.\\""',
     ):
         assert not pat.search(line), line
+
+
+def test_openclaw_api_credit_bands_page_once_per_crossing():
+    # Three exclusive bands over the guard's used-percent gauge: a 91% reading
+    # matches only the 90 rule, so crossing 90 never re-fires 50 and 75.
+    bands = {
+        "openclaw-api-credit-50": ("warning", 50, 75),
+        "openclaw-api-credit-75": ("critical", 75, 90),
+        "openclaw-api-credit-90": ("critical", 90, None),
+    }
+    for uid, (severity, low, high) in bands.items():
+        rule = RULES[uid]
+        (expr,) = queries(rule)
+        assert f"openclaw_api_credit_used_percent >= {low}" in expr
+        assert (f"< {high}" in expr) == (high is not None)
+        assert rule["labels"]["severity"] == severity
+        assert rule["labels"]["service"] == "openclaw"
+        assert threshold(rule) == ("gt", 0)
+        assert rule["for"] == "0s"
+        assert rule["noDataState"] == "OK"
+
+
+def test_openclaw_fallback_alert_names_the_reason_and_pages():
+    rule = RULES["openclaw-api-fallback-engaged"]
+    (expr,) = queries(rule)
+    assert expr == "openclaw_api_fallback_active"
+    assert rule["labels"]["severity"] == "critical"
+    assert "$labels.reason" in rule["annotations"]["summary"]
+    assert "auth-mode.sh api" in rule["annotations"]["description"]
+
+
+def test_openclaw_spend_guard_metrics_are_what_the_guard_writes():
+    # The alert expressions only mean something if the guard emits these names.
+    spec = importlib.util.spec_from_file_location(
+        "spend_guard", REPO / "scripts/openclaw-auth/spend_guard.py"
+    )
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    est = {
+        "since_topup_usd": 1,
+        "month_usd": 1,
+        "credit_usd": 100,
+        "used_percent": 1,
+        "unpriced_tokens": 0,
+    }
+    text = guard.render_prom(est, {"mode": "api"}, "ok", {"reason": "spend", "at": 1})
+    for metric in ("openclaw_api_credit_used_percent", "openclaw_api_fallback_active"):
+        assert any(line.startswith(metric) for line in text.splitlines())

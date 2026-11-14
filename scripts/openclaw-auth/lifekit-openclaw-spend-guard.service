@@ -1,0 +1,18 @@
+[Unit]
+Description=Estimate OpenClaw API spend, export it to node-exporter's textfile collector, and fall back to subscription mode when the credit runs out
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+# The admin account (README "VPS users"): it is in the docker group, which the
+# gateway exec calls need, and owns the textfile directory and the state
+# directory. install-host-gauges.sh substitutes the placeholder at install time.
+User=__ADMIN_USER__
+# A pass is a handful of openclaw CLI calls at ~20 s each; a hung gateway must
+# not pile up runs behind the 10-minute timer.
+TimeoutStartSec=8min
+ExecStart=/usr/local/bin/lifekit-openclaw-spend-guard.sh /var/lib/node_exporter/textfile
+
+[Install]
+WantedBy=multi-user.target

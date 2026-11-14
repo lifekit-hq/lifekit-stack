@@ -67,7 +67,7 @@ moves with its own key and never the captain's:
 | **storage-key** | `OFFBOX_BACKUP_R2_ACCESS_KEY_ID`, `OFFBOX_BACKUP_R2_SECRET_ACCESS_KEY` | the same R2 token as finance-sentry's `BACKUP_R2_ACCESS_KEY`/`BACKUP_R2_SECRET_KEY` (shared bucket, `lifekit/` prefix; `docs/runbook.md` "Off-box backup (R2)"), so a rotation is one change in both repos. Cloudflare dashboard, R2, Manage API tokens: a new token with the same scope ("Object Read & Write" on that bucket); the new values into finance-sentry `docker/.env.sops` and here, copied sops-to-sops (`sops decrypt --extract '["BACKUP_R2_ACCESS_KEY"]' <finance-sentry>/docker/.env.sops` piped through `json.dumps` into `sops set ... '["OFFBOX_BACKUP_R2_ACCESS_KEY_ID"]'`, likewise the secret), merge both, render, then delete the old token. No redeploy here: the host timer reads `stack.env` on each run. Verify: `sudo systemctl start lifekit-offbox-backup.service` and its journal. |
 | **age-identity** | `OFFBOX_BACKUP_AGE_IDENTITY` | the on-box key the monthly restore check decrypts with. Mint and store it in one step, never printed or written to a file: `SOPS_AGE_KEY_FILE=~/.config/sops/age/firstmate.agekey sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops '["OFFBOX_BACKUP_AGE_IDENTITY"]' "$(age-keygen 2>/dev/null \| grep '^AGE-SECRET-KEY-1' \| python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')"`; update the public half in the inventory row (`sops decrypt --extract ... \| age-keygen -y`), merge, render. Sets written before the change stay readable by the captain key only, so run a backup and then the restore check by hand right after. On compromise also treat every stored set as seen (it is the same data the box holds). |
 | **api-token, gateway file** | `CLAUDE_OAUTH_TOKEN` | yearly, before it expires: "Claude service token" below. |
-| **api-token, gateway file** | `ANTHROPIC_API_KEY` | Console key `lifekit-vps`; its prepaid credits expire 2026-11-09. Rotate on exposure or at expiry: new key in the Anthropic Console (revoke the old one), `scripts/secrets/edit.sh gateway`, update the inventory row, merge; the deploy runs `openclaw secrets reload`. Verify with "Claude service token" below. |
+| **api-token, gateway file** | `ANTHROPIC_API_KEY` | Console key with prepaid credit. Rotate on exposure, or when `auth-mode.sh probe` says `rejected`/`exhausted`: new key in the Anthropic Console (revoke the old one), `scripts/secrets/edit.sh gateway`, update the inventory row, merge; the deploy runs `openclaw secrets reload`. Verify with "Claude service token" below; `auth-mode.sh api` switches OpenClaw onto it. |
 | **admin-password** | `GRAFANA_ADMIN_PASSWORD` | `docker exec compose-grafana-1 grafana cli admin reset-admin-password '<new>'` (the env value is read at first boot only), then the same value with `edit.sh master`, merge, render, redeploy. Verify: `deploy.sh`'s provisioning reload succeeds. |
 | **db-password** | `LOGTO_DB_PASSWORD` | the env value sets the password on the first boot of an empty volume only, so change the role first: `openssl rand -hex 32`, then `docker exec identity-postgres-1 psql -U logto -d logto -c "ALTER ROLE logto PASSWORD '<new>'"`, then the same value with `edit.sh master`, merge, render, redeploy (recreates logto with the new `DB_URL`; it cannot open new connections in between). Verify: the deploy's identity step turns healthy. |
 | **parked** | `PARKED_BINANCE_API_KEY`, `PARKED_BINANCE_API_SECRET` | captain's call: rotate at Binance, `edit.sh master`. When a consumer appears, drop the prefix and move the row; if none by 2026-12-31, delete both. |
@@ -166,19 +166,20 @@ the plaintext backstop.
 
 ## Claude service token
 
-Every OpenClaw agent authenticates to Anthropic with two credentials in the
-gateway file: `ANTHROPIC_API_KEY`, a Console key (`lifekit-vps`, prepaid
-credits that expire 2026-11-09), and `CLAUDE_OAUTH_TOKEN`, a one-year token
-from `claude setup-token`, as the fallback. The pieces on the box are host
-state, not the platform patch:
+The gateway file holds two Anthropic credentials, and OpenClaw uses at most
+one of them at a time (runbook, "OpenClaw auth mode"): `ANTHROPIC_API_KEY`, a
+Console key with prepaid credit, used in `api` mode; and `CLAUDE_OAUTH_TOKEN`,
+a one-year token from `claude setup-token`, which OpenClaw does **not** use as a
+fallback (its own client must not present a subscription token; the fallback
+from the key is the switch to the `claude-cli` runtime, which uses the Claude
+Code login, not this token). The pieces on the box are host state, not the
+platform patch:
 
 - each agent's own auth store holds an `anthropic:api-key` profile (type
-  `api_key`) with `tokenRef {source: exec, provider: sops, id: anthropic-api-key}`
-  and an `anthropic:setup-token` profile (type `token`) with
-  `tokenRef {source: exec, provider: sops, id: claude-oauth-token}`;
-- `auth.order.anthropic` is `["anthropic:api-key", "anthropic:setup-token"]`
-  in `openclaw.json`: the key is used while its credits last, the setup-token
-  after they lapse.
+  `api_key`) with `tokenRef {source: exec, provider: sops, id: anthropic-api-key}`,
+  added by `scripts/openclaw-auth/auth-mode.sh api` (or `ensure-profiles`);
+- `auth.order.anthropic` is `["anthropic:api-key"]` in `api` mode and empty in
+  `subscription` mode; `auth-mode.sh` sets it together with the model runtimes.
 
 **Current token:** created 2026-09-30, expires **2027-09-30**. The Grafana
 rule `claude-oauth-token-expiring` fires 30 days before the expiry. That date
@@ -204,26 +205,31 @@ is the rotation date: it is written in two places, the rule's epoch and the
 **Check:**
 
 ```bash
-docker exec openclaw-openclaw-gateway-1 openclaw models status --agent <id>
-#   anthropic ... effective=profiles:.../agents/<id>/agent/openclaw-agent.sqlite
-#   ... anthropic:api-key=...ref(exec:anthropic-api-key)
-#   ... anthropic:setup-token=token:ref(exec:claude-oauth-token)
+bash /srv/lifekit-stack/scripts/openclaw-auth/auth-mode.sh status
+#   mode, runtimes, auth.order, "key profile present/missing" per agent,
+#   "key probe: ok|rejected|exhausted|...", the spend estimate
 docker exec openclaw-openclaw-gateway-1 openclaw secrets audit --allow-exec
 #   no unresolved ref
-# live proof: one minimal turn in a throwaway session, not delivered anywhere
-docker exec openclaw-openclaw-gateway-1 openclaw agent --agent <id> \
-  --session-key agent:<id>:auth-check --message "Reply OK" --thinking off --json
-#   status ok; the profile that answered is anthropic:api-key, or
-#   anthropic:setup-token once the credits have lapsed (either is healthy)
 ```
 
-`models status --probe` refuses to run while the gateway is up.
+`auth-mode.sh api` ends with a live proof (one minimal turn per agent in
+`AUTH_CHECK_AGENTS`, in a throwaway session, not delivered anywhere) and rolls
+back when it does not pass. `openclaw models status --probe` refuses to run
+while the gateway is up; `auth-mode.sh probe` is the live check that works.
+
+**Replacing the API key (captain):** new key in the Anthropic Console (revoke
+the old one), `scripts/secrets/edit.sh gateway` (replace `ANTHROPIC_API_KEY`),
+update the inventory row, merge (the OpenClaw deploy runs `openclaw secrets
+reload`), then `auth-mode.sh probe` must say `ok` and `auth-mode.sh api`
+switches over. A top-up of the same key only needs `credit_usd` in
+`scripts/openclaw-auth/credit.json` raised by the amount.
 
 **A newly added agent must get the refs.** The refs are per agent: a new agent
-has no `anthropic:api-key` or `anthropic:setup-token` of its own and reads the shared-store profile,
-which does not follow a rotation. Give it the setup-token ref before its first turn, with
-one plan target per new agent (the same shape, with `anthropic:api-key` and id
-`anthropic-api-key`, for the key):
+has no `anthropic:api-key` of its own. `auth-mode.sh ensure-profiles` (or `api`)
+adds the key profile to every agent that lacks it. For a profile of another
+kind, the plan shape is one target per agent (shown for a setup-token; the key
+profile uses type `auth-profiles.api_key.key`, path `profiles.anthropic:api-key.key`
+and id `anthropic-api-key`):
 
 ```bash
 cat > plan.json <<'JSON'
