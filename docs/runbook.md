@@ -2063,7 +2063,8 @@ prose included, reaches Kit's model unchanged.
 Part of the P16 permission engine: an OpenClaw agent that reaches an action the owner has
 ruled stop-and-file is stopped and the request is filed for him, instead of the agent
 asking in chat. The agents run on the `claude-cli` runtime, and a tool call there still
-passes OpenClaw's `before_tool_call` hook (checked inside the running gateway, 2026.10.7),
+passes OpenClaw's `before_tool_call` hook (checked inside the running gateway, 2026.10.7; not yet re-verified under the 2026.10.9
+the gateway now runs, which needs `openclaw plugins inspect fleet-gate` and a live call),
 so a plugin can see and veto it.
 
 - **Seam:** the `fleet-gate` gateway plugin (`compose/openclaw-gateway/plugins/fleet-gate`),
@@ -2135,7 +2136,7 @@ so a plugin can see and veto it.
   ```
 
   Per-agent allow and deny lists were not enforced under `claude-cli` when last tried
-  (2026-05-25, `docs/openclaw-agent-design.md`); it is not re-verified under 2026.10.7, so
+  (2026-05-25, `docs/openclaw-agent-design.md`); it is not re-verified under 2026.10.7 or 2026.10.9, so
   treat the patch as intent until a `devclaw__*` call from a non-main agent is seen refused,
   and give the table a `devclaw__*` stop row if it is not.
 - **Rehearse:** `scripts/rehearse-fleet-gate.sh` loads the repo's plugin in node with a
