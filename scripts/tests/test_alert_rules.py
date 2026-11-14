@@ -988,24 +988,45 @@ def test_agent_drive_pattern_matches_creates_only():
         assert not pat.search(line), line
 
 
+def band_matcher(expr: str):
+    """`m >= LOW [and m < HIGH]` -> a function of the gauge value (PromQL filter semantics)."""
+    low, high = re.fullmatch(
+        r"openclaw_api_credit_used_percent >= (\d+)(?: and openclaw_api_credit_used_percent < (\d+))?",
+        expr,
+    ).groups()
+    return lambda v: v >= float(low) and (high is None or v < float(high))
+
+
 def test_openclaw_api_credit_bands_page_once_per_crossing():
-    # Three exclusive bands over the guard's used-percent gauge: a 91% reading
-    # matches only the 90 rule, so crossing 90 never re-fires 50 and 75.
+    # Three exclusive bands over the guard's used-percent gauge: a reading
+    # matches exactly one rule once it passes 50, so crossing 90 never re-fires
+    # 50 and 75, and below 50 nothing fires.
     bands = {
-        "openclaw-api-credit-50": ("warning", 50, 75),
-        "openclaw-api-credit-75": ("critical", 75, 90),
-        "openclaw-api-credit-90": ("critical", 90, None),
+        "openclaw-api-credit-50": "warning",
+        "openclaw-api-credit-75": "critical",
+        "openclaw-api-credit-90": "critical",
     }
-    for uid, (severity, low, high) in bands.items():
+    matchers = {}
+    for uid, severity in bands.items():
         rule = RULES[uid]
         (expr,) = queries(rule)
-        assert f"openclaw_api_credit_used_percent >= {low}" in expr
-        assert (f"< {high}" in expr) == (high is not None)
+        matchers[uid] = band_matcher(expr)
         assert rule["labels"]["severity"] == severity
         assert rule["labels"]["service"] == "openclaw"
         assert threshold(rule) == ("gt", 0)
         assert rule["for"] == "0s"
         assert rule["noDataState"] == "OK"
+
+    def firing(value):
+        return [uid for uid, match in matchers.items() if match(value)]
+
+    assert firing(0) == [] and firing(49.9) == []
+    assert firing(50) == ["openclaw-api-credit-50"]
+    assert firing(74.9) == ["openclaw-api-credit-50"]
+    assert firing(75) == ["openclaw-api-credit-75"]
+    assert firing(89.9) == ["openclaw-api-credit-75"]
+    assert firing(90) == ["openclaw-api-credit-90"]
+    assert firing(100) == ["openclaw-api-credit-90"]
 
 
 def test_openclaw_fallback_alert_names_the_reason_and_pages():

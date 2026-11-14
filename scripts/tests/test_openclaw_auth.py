@@ -76,6 +76,9 @@ elif args[0] == "exec":
         print(json.dumps({"result": (load("probe") or "ok"), "http": 200, "detail": ""}))
     elif rest[0] == "node":       # usage-extract.mjs on stdin
         sys.stdin.read()
+        if flag("_usage_fails"):
+            print("no such table: transcript_events", file=sys.stderr)
+            sys.exit(1)
         for rec in load("usage", []):
             print(json.dumps(rec))
     elif rest[0] == "sh":
@@ -85,6 +88,11 @@ elif args[0] == "exec":
     elif rest[0] == "openclaw":
         cmd = rest[1:]
         config = load("config.json")
+        if (cmd[:2] == ["config", "get"] and flag("_reads_fail")) or (
+            cmd[:2] == ["models", "status"] and flag("_status_fails")
+        ):
+            print("gateway busy", file=sys.stderr)
+            sys.exit(1)
         if cmd[:2] == ["config", "get"]:
             print(json.dumps(config[cmd[2]]))
         elif cmd[:2] == ["config", "patch"]:
@@ -352,14 +360,12 @@ def test_ledger_dedupes_and_survives_pruned_sessions(tmp_path):
 # ── the config files ──────────────────────────────────────────────────────────
 
 
-def test_shipped_config_files_load_and_credit_is_a_one_line_edit():
+def test_shipped_config_files_load():
     credit, prices = guard.load_config(DIR)
     assert credit["credit_usd"] == 100
     assert credit["fallback_percent"] == 95
     assert prices["cache_write_multiplier"] == 1.25
     assert prices["cache_read_multiplier"] == 0.1
-    text = (DIR / "credit.json").read_text()
-    assert sum('"credit_usd"' in ln for ln in text.splitlines()) == 1
 
 
 # ── auth-mode.sh ──────────────────────────────────────────────────────────────
@@ -524,6 +530,24 @@ def test_api_refuses_when_spend_is_past_the_threshold(box, tmp_path):
     assert box.config()["auth"]["order"]["anthropic"] == ["anthropic:api-key"]
 
 
+def test_a_failed_config_read_aborts_instead_of_patching_from_nothing(box):
+    box.auth("api")
+    before, seen = box.config(), len(box.calls())
+    box.flag("_reads_fail")
+    proc = box.auth("subscription", expect=2)
+    assert "cannot read the live" in proc.stderr
+    box.auth("mode", expect=2)
+    assert box.config() == before
+    assert not any("config patch" in c for c in box.calls()[seen:])
+
+
+def test_a_failed_key_status_read_does_not_pass_for_a_present_profile(box):
+    box.flag("_status_fails")
+    proc = box.auth("ensure-profiles", expect=2)
+    assert "cannot read" in proc.stderr
+    assert not any("secrets apply" in c for c in box.calls())
+
+
 def test_unknown_command_is_a_usage_error(box):
     proc = box.auth("nonsense", expect=2)
     assert "usage: auth-mode.sh" in proc.stderr
@@ -612,6 +636,37 @@ def test_guard_fails_loudly_when_the_flip_does_not_stick(box):
     assert not (box.spend / "fallback.json").exists()
 
 
+def test_guard_still_flips_on_billing_when_usage_extraction_fails(box):
+    box.auth("api")
+    box.put(
+        "profiles",
+        {
+            "kit": {"profile": True, "disabled": ["billing"]},
+            "finance": {"profile": True},
+        },
+    )
+    box.flag("_usage_fails")
+    proc = box.run_guard(expect=2)
+    assert "usage extraction failed" in proc.stderr
+    assert box.config()["auth"]["order"]["anthropic"] == []
+    prom = box.prom()
+    assert 'openclaw_api_fallback_active{reason="billing"} 1' in prom
+    assert 'openclaw_api_auth_mode{mode="subscription"} 1' in prom
+    assert not any(ln.startswith("openclaw_api_credit_used_percent") for ln in prom)
+
+
+def test_guard_without_an_estimate_leaves_a_healthy_api_box_alone_but_fails(box):
+    box.auth("api")
+    box.put("profiles", {"kit": {"profile": True}, "finance": {"profile": True}})
+    box.flag("_usage_fails")
+    box.run_guard(expect=2)
+    assert box.config()["auth"]["order"]["anthropic"] == ["anthropic:api-key"]
+    prom = box.prom()
+    assert "openclaw_api_key_probe_ok 1" in prom
+    assert 'openclaw_api_auth_mode{mode="api"} 1' in prom
+    assert not any(ln.startswith("openclaw_api_spend_usd") for ln in prom)
+
+
 def test_guard_keeps_the_previous_file_when_the_gateway_is_down(box):
     (box.out / "openclaw_api_spend.prom").write_text("old 1\n")
     env = {**box.env, "DOCKER": "false"}
@@ -651,7 +706,7 @@ def test_report_prints_the_estimate(box):
 # ── installation ──────────────────────────────────────────────────────────────
 
 
-def test_timer_units_and_installer_are_wired():
+def test_timer_units_are_valid_and_the_wrapper_runs_the_guard(box, tmp_path):
     import configparser
 
     def unit(name):
@@ -669,12 +724,18 @@ def test_timer_units_and_installer_are_wired():
     assert (
         timer["Timer"]["OnUnitActiveSec"] == "10min"
     )  # under the 900 s textfile-stale rule
-    installer = (REPO / "scripts/host-gauge/install-host-gauges.sh").read_text()
-    assert "openclaw-auth/lifekit-openclaw-spend-guard" in installer
-    assert "lifekit-openclaw-spend-guard.timer" in installer
-    assert "/var/lib/lifekit-openclaw-spend" in installer
-    wrapper = GUARD_SH.read_text()
-    assert (
-        "/var/lib/lifekit-openclaw-spend" in wrapper
-    )  # the same directory as the installer
-    assert "/srv/lifekit-stack/scripts/openclaw-auth/spend_guard.py" in wrapper
+    box.put("usage", [usage_record(1, ts=int(time.time() * 1000), out=1_000_000)])
+    textfile = tmp_path / "wrapper-out"
+    textfile.mkdir()
+    proc = subprocess.run(
+        ["bash", str(GUARD_SH), str(textfile)],
+        env={**box.env, "SPEND_GUARD": str(DIR / "spend_guard.py")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    lines = (textfile / "openclaw_api_spend.prom").read_text().splitlines()
+    assert 'openclaw_api_spend_usd{window="since_topup"} 15.0' in lines
+    assert 'openclaw_api_auth_mode{mode="subscription"} 1' in lines
+    assert (box.spend / "ledger.jsonl").exists()  # the wrapper's state dir

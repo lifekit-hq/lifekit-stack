@@ -18,8 +18,11 @@ fallback_percent, OpenClaw disabled the anthropic:api-key profile for billing,
 or a live probe says the key is rejected or out of credit. The reason is kept in
 a marker file and exported as openclaw_api_fallback_active{reason} until the
 guard next sees mode "api" again, which is what the Grafana rule alerts on.
-Exit 0 on a completed pass, 1 when a needed flip failed, 2 when the inputs
-cannot be read (the previous textfile is then left in place).
+When the usage extraction fails the pass still checks the mode, the billing
+state and the key probe (the signals that do not need the estimate), skips the
+spend rule and the spend metrics, and exits 2 afterwards.
+Exit 0 on a completed pass, 1 when a needed flip failed, 2 when an input cannot
+be read (without the mode the previous textfile is left in place).
 
 Metrics (openclaw_api_spend.prom):
   openclaw_api_spend_usd{window="since_topup|month"}   estimated dollars
@@ -126,7 +129,7 @@ def summarize(records: list[dict], credit: dict, prices: dict, now_ms: int) -> d
 
 
 def decide(
-    mode: str, est: dict, billing_disabled: bool, probe: str | None
+    mode: str, est: dict | None, billing_disabled: bool, probe: str | None
 ) -> str | None:
     """The reason to fall back to subscription, or None. Only an api-mode box flips."""
     if mode != "api":
@@ -135,7 +138,7 @@ def decide(
         return "billing"
     if probe in ("rejected", "exhausted"):
         return "key-refused"
-    if est["used_percent"] >= est["fallback_percent"]:
+    if est and est["used_percent"] >= est["fallback_percent"]:
         return "spend"
     return None
 
@@ -279,26 +282,37 @@ def esc(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
-def render_prom(est: dict, state: dict, probe: str | None, marker: dict | None) -> str:
-    metrics: list[tuple[str, str, list[tuple[str, float]]]] = [
-        (
-            "openclaw_api_spend_usd|Estimated API spend in USD at list prices.",
-            "gauge",
-            [
-                ('{window="since_topup"}', est["since_topup_usd"]),
-                ('{window="month"}', est["month_usd"]),
-            ],
-        ),
-        (
-            "openclaw_api_credit_usd|Prepaid API credit in USD (scripts/openclaw-auth/credit.json).",
-            "gauge",
-            [("", est["credit_usd"])],
-        ),
-        (
-            "openclaw_api_credit_used_percent|Share of the credit estimated spent since its start date.",
-            "gauge",
-            [("", est["used_percent"])],
-        ),
+def render_prom(
+    est: dict | None, state: dict, probe: str | None, marker: dict | None
+) -> str:
+    metrics: list[tuple[str, str, list[tuple[str, float]]]] = []
+    if est:
+        metrics += [
+            (
+                "openclaw_api_spend_usd|Estimated API spend in USD at list prices.",
+                "gauge",
+                [
+                    ('{window="since_topup"}', est["since_topup_usd"]),
+                    ('{window="month"}', est["month_usd"]),
+                ],
+            ),
+            (
+                "openclaw_api_credit_usd|Prepaid API credit in USD (scripts/openclaw-auth/credit.json).",
+                "gauge",
+                [("", est["credit_usd"])],
+            ),
+            (
+                "openclaw_api_credit_used_percent|Share of the credit estimated spent since its start date.",
+                "gauge",
+                [("", est["used_percent"])],
+            ),
+            (
+                "openclaw_api_spend_unpriced_tokens|Tokens priced at the default rate because prices.json has no row for their model.",
+                "gauge",
+                [("", est["unpriced_tokens"])],
+            ),
+        ]
+    metrics += [
         (
             "openclaw_api_auth_mode|1 for the mode OpenClaw's anthropic models run in.",
             "gauge",
@@ -308,11 +322,6 @@ def render_prom(est: dict, state: dict, probe: str | None, marker: dict | None) 
             "openclaw_api_key_billing_disabled|1 when OpenClaw disabled an anthropic:api-key profile for billing.",
             "gauge",
             [("", int(bool(state.get("billingDisabled"))))],
-        ),
-        (
-            "openclaw_api_spend_unpriced_tokens|Tokens priced at the default rate because prices.json has no row for their model.",
-            "gauge",
-            [("", est["unpriced_tokens"])],
         ),
     ]
     if probe is not None:
@@ -352,7 +361,14 @@ def write_atomic(path: Path, text: str) -> None:
 
 
 def run_pass(args, credit: dict, prices: dict, now_ms: int) -> int:
-    est = collect(args, credit, prices, now_ms)
+    est = None
+    try:
+        est = collect(args, credit, prices, now_ms)
+    except InputError as err:
+        print(
+            f"spend guard: {err}; carrying on without the spend estimate",
+            file=sys.stderr,
+        )
     state = current_state(args)
     marker_path = Path(args.state_dir) / "fallback.json"
     marker = None
@@ -365,14 +381,16 @@ def run_pass(args, credit: dict, prices: dict, now_ms: int) -> int:
     reason = decide(state["mode"], est, bool(state.get("billingDisabled")), probe)
     code = 0
     if reason:
-        text = f"spend guard: {reason} (estimated {est['used_percent']}% of ${est['credit_usd']:.0f} credit used)"
+        text = f"spend guard: {reason}"
+        if est:
+            text += f" (estimated {est['used_percent']}% of ${est['credit_usd']:.0f} credit used)"
         proc = auth_mode(args, "subscription", "--reason", text)
         print(text, file=sys.stderr)
         if proc.returncode == 0:
             marker = {
                 "reason": reason,
                 "at": now_ms // 1000,
-                "used_percent": est["used_percent"],
+                "used_percent": est["used_percent"] if est else None,
             }
             Path(args.state_dir).mkdir(parents=True, exist_ok=True)
             marker_path.write_text(json.dumps(marker))
@@ -390,7 +408,7 @@ def run_pass(args, credit: dict, prices: dict, now_ms: int) -> int:
         write_atomic(
             Path(args.textfile) / PROM_NAME, render_prom(est, state, probe, marker)
         )
-    return code
+    return code or (2 if est is None else 0)
 
 
 def main(argv: list[str] | None = None) -> int:

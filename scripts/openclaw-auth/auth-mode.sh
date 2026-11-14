@@ -86,11 +86,17 @@ trap 'rm -rf "$work"' EXIT
 #
 # live_config -> the agents + auth halves of the live config, as one JSON object
 live_config() {
+  local pa pb
   oc config get agents > "$work/agents.json" 2> /dev/null &
+  pa=$!
   oc config get auth > "$work/auth.json" 2> /dev/null &
-  wait
-  jq -n --slurpfile agents "$work/agents.json" --slurpfile auth "$work/auth.json" \
-    '{agents: $agents[0], auth: $auth[0]}' || die "cannot read the live config through the gateway"
+  pb=$!
+  wait "$pa" || die "cannot read the live agents config through the gateway"
+  wait "$pb" || die "cannot read the live auth config through the gateway"
+  jq -n -c --slurpfile agents "$work/agents.json" --slurpfile auth "$work/auth.json" \
+    'if ($agents[0] | type) == "object" and ($auth[0] | type) == "object"
+     then {agents: $agents[0], auth: $auth[0]} else error("not objects") end' ||
+    die "the live config read through the gateway is not valid"
 }
 
 # api | subscription | mixed | unknown, from the runtime of every anthropic/* model entry
@@ -108,15 +114,26 @@ agent_ids() { jq -r '.agents.entries // {} | keys[]' <<< "$1"; }
 
 # key_states LIVE -> JSON array, per agent {agent, profile: bool, disabled: [reason]}
 key_states() {
-  local a
+  local a pid
+  local -a pids=()
   for a in $(agent_ids "$1"); do
-    oc models status --agent "$a" --json 2> /dev/null | jq -c --arg p "$PROFILE" --arg a "$a" '
+    oc models status --agent "$a" --json 2> /dev/null | jq -ce --arg p "$PROFILE" --arg a "$a" '
       {agent: $a,
        profile: ([.auth.oauth.profiles[]? | select(.profileId == $p)] | length > 0),
        disabled: [.auth.unusableProfiles[]? | select(.profileId == $p) | (.reason // .classification // "unusable")]}' \
       > "$work/key-$a.json" &
+    pids+=("$!")
   done
-  wait
+  for pid in "${pids[@]}"; do
+    wait "$pid" || {
+      say "cannot read an agent's key state through the gateway"
+      return 1
+    }
+  done
+  if ((${#pids[@]} == 0)); then
+    echo '[]'
+    return 0
+  fi
   jq -s -c '.' "$work"/key-*.json
   rm -f "$work"/key-*.json
 }
@@ -132,8 +149,8 @@ spend_json() {
 
 build_state() {
   local live agents_state
-  live="$(live_config)"
-  agents_state="$(key_states "$live")"
+  live="$(live_config)" || exit 2
+  agents_state="$(key_states "$live")" || exit 2
   jq -c -n --argjson live "$live" --arg mode "$(mode_of "$live")" --argjson agents "$agents_state" '
     {mode: $mode,
      runtimes: ([ ($live.agents.defaults.models // {}), (($live.agents.entries // {}) | to_entries[] | .value.models // {}) ]
@@ -277,9 +294,10 @@ other_mode() { [[ "$1" == api ]] && echo subscription || echo api; }
 provider_of() { [[ "$1" == api ]] && echo anthropic || echo claude-cli; }
 
 ensure_profiles() {
-  local live a missing plan targets="[]"
-  live="$(live_config)"
-  mapfile -t missing < <(key_states "$live" | jq -r '.[] | select(.profile | not) | .agent')
+  local live states a missing plan targets="[]"
+  live="$(live_config)" || exit 2
+  states="$(key_states "$live")" || exit 2
+  mapfile -t missing < <(jq -r '.[] | select(.profile | not) | .agent' <<< "$states")
   if ((${#missing[@]} == 0)); then
     say "every agent already has $PROFILE"
     return 0
@@ -307,7 +325,7 @@ ensure_profiles() {
 # switch_to api|subscription
 switch_to() {
   local target="$1" live patch rollback pending changed=0
-  live="$(live_config)"
+  live="$(live_config)" || exit 2
   patch="$(patch_for "$target" "$live")"
   rollback="$(rollback_for "$patch" "$live")"
   pending="$(pending_paths "$patch" "$live")"
@@ -362,7 +380,10 @@ cmd_api() {
 
 case "$cmd" in
   status) cmd_status ;;
-  mode) mode_of "$(live_config)" ;;
+  mode)
+    live="$(live_config)" || exit 2
+    mode_of "$live"
+    ;;
   probe) probe_key ;;
   api) cmd_api ;;
   subscription) switch_to subscription || exit 1 ;;
