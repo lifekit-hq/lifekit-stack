@@ -57,11 +57,11 @@ git history is the change log (one rotation, one commit). Recipients are in
   protocol (ids in on stdin, JSON values out on stdout), runs the image's
   pinned `sops` once per request against the file mounted read-only from this
   checkout, with the gateway key mounted read-only from
-  `/srv/lifekit-secrets/gateway/`. Every agent's `anthropic:api-key` and
-  `anthropic:setup-token` auth profiles point at it too (`anthropic-api-key`,
-  `claude-oauth-token`); those refs live in
-  each agent's auth store on the box, not in the patch (secrets runbook,
-  "Claude service token"). The deploy's platform-patch dry run
+  `/srv/lifekit-secrets/gateway/`. Every agent's `anthropic:api-key` auth profile
+  points at it too (`anthropic-api-key`, added by
+  `scripts/openclaw-auth/auth-mode.sh api`); that ref lives in each agent's
+  auth store on the box, not in the patch (secrets runbook, "Claude service
+  token"). It is used only in `api` mode (runbook, "OpenClaw auth mode"). The deploy's platform-patch dry run
   resolves those refs (`--allow-exec`) before writing anything, and
   `openclaw secrets reload` after every deploy picks up rotated values.
 
@@ -94,8 +94,8 @@ this inventory sets it.
 | `FINANCE_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `finance`. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
 | `LEARNING_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `reading`. The account is disabled, so the platform patch drops its ref and the value stays in the file unread. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
 | `SOCIAL_BOT_TOKEN` | gateway | telegram-bot | openclaw-gateway, Telegram account `social`. Literal copies in two `openclaw.json` backups from 2026-07 - purged by the runbook. The account is disabled, so the platform patch drops its ref and the value stays in the file unread. | captain (BotFather) | on exposure; migration debt accepted (runbook: Rotation on migration) | not recorded | `secrets/lifekit-gateway.env.sops` |
-| `CLAUDE_OAUTH_TOKEN` | gateway | api-token | openclaw-gateway, through SecretRef id `claude-oauth-token`: an exec/sops `tokenRef` on the `anthropic:setup-token` profile in every agent's own auth store (secrets runbook, "Claude service token"); devclaw reads it too once it resumes. A one-year setup-token from `claude setup-token`. | captain (`claude setup-token`) | yearly, before it expires: the `claude-oauth-token-expiring` alert fires 30 days ahead. Expires 2027-09-30. | 2026-09-30 (created) | `secrets/lifekit-gateway.env.sops` |
-| `ANTHROPIC_API_KEY` | gateway | api-token | openclaw-gateway, through SecretRef id `anthropic-api-key`: an exec/sops `tokenRef` on the `anthropic:api-key` profile in every agent's own auth store, first in `auth.order` ahead of the setup-token fallback. Console key `lifekit-vps`, prepaid credits that expire 2026-11-09; not valid for Claude Code. | captain (Anthropic Console) | on exposure, or when the credits expire (2026-11-09) | 2026-10-09 (created) | `secrets/lifekit-gateway.env.sops` |
+| `CLAUDE_OAUTH_TOKEN` | gateway | api-token | openclaw-gateway, through SecretRef id `claude-oauth-token`: a SecretRef target for the `anthropic:setup-token` profile (secrets runbook, "Claude service token"); NOT an OpenClaw fallback (its own client must not present a subscription token, runbook "OpenClaw auth mode"); devclaw reads it too once it resumes. A one-year setup-token from `claude setup-token`. | captain (`claude setup-token`) | yearly, before it expires: the `claude-oauth-token-expiring` alert fires 30 days ahead. Expires 2027-09-30. | 2026-09-30 (created) | `secrets/lifekit-gateway.env.sops` |
+| `ANTHROPIC_API_KEY` | gateway | api-token | openclaw-gateway, through SecretRef id `anthropic-api-key`: an exec/sops `tokenRef` on the `anthropic:api-key` profile in every agent's own auth store, the only entry of `auth.order.anthropic` in `api` mode (`scripts/openclaw-auth/auth-mode.sh`; in `subscription` mode the models run on the Claude Code runtime and the key is unused). Console key, prepaid credit tracked in `scripts/openclaw-auth/credit.json`; the credit is not valid for Claude Code. The key stored on 2026-10-09 answered 401 `invalid x-api-key` on the 2026-11-14 probe: a new Console key is needed before `api` mode can be switched on. | captain (Anthropic Console) | on exposure, or when the live probe says `rejected` or `exhausted` | 2026-10-09 (created; replacement pending) | `secrets/lifekit-gateway.env.sops` |
 
 ### master - `secrets/lifekit.env.sops`
 

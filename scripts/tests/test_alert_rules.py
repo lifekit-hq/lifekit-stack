@@ -986,3 +986,72 @@ def test_agent_drive_pattern_matches_creates_only():
         'level=info msg="executing query" query="{service_name=\\"docker\\"} |~ \\"\\\\[create_drive_(file|folder)\\\\] Invoked\\\\.\\""',
     ):
         assert not pat.search(line), line
+
+
+def band_matcher(expr: str):
+    """`m >= LOW [and m < HIGH]` -> a function of the gauge value (PromQL filter semantics)."""
+    low, high = re.fullmatch(
+        r"openclaw_api_credit_used_percent >= (\d+)(?: and openclaw_api_credit_used_percent < (\d+))?",
+        expr,
+    ).groups()
+    return lambda v: v >= float(low) and (high is None or v < float(high))
+
+
+def test_openclaw_api_credit_bands_page_once_per_crossing():
+    # Three exclusive bands over the guard's used-percent gauge: a reading
+    # matches exactly one rule once it passes 50, so crossing 90 never re-fires
+    # 50 and 75, and below 50 nothing fires.
+    bands = {
+        "openclaw-api-credit-50": "warning",
+        "openclaw-api-credit-75": "critical",
+        "openclaw-api-credit-90": "critical",
+    }
+    matchers = {}
+    for uid, severity in bands.items():
+        rule = RULES[uid]
+        (expr,) = queries(rule)
+        matchers[uid] = band_matcher(expr)
+        assert rule["labels"]["severity"] == severity
+        assert rule["labels"]["service"] == "openclaw"
+        assert threshold(rule) == ("gt", 0)
+        assert rule["for"] == "0s"
+        assert rule["noDataState"] == "OK"
+
+    def firing(value):
+        return [uid for uid, match in matchers.items() if match(value)]
+
+    assert firing(0) == [] and firing(49.9) == []
+    assert firing(50) == ["openclaw-api-credit-50"]
+    assert firing(74.9) == ["openclaw-api-credit-50"]
+    assert firing(75) == ["openclaw-api-credit-75"]
+    assert firing(89.9) == ["openclaw-api-credit-75"]
+    assert firing(90) == ["openclaw-api-credit-90"]
+    assert firing(100) == ["openclaw-api-credit-90"]
+
+
+def test_openclaw_fallback_alert_names_the_reason_and_pages():
+    rule = RULES["openclaw-api-fallback-engaged"]
+    (expr,) = queries(rule)
+    assert expr == "openclaw_api_fallback_active"
+    assert rule["labels"]["severity"] == "critical"
+    assert "$labels.reason" in rule["annotations"]["summary"]
+    assert "auth-mode.sh api" in rule["annotations"]["description"]
+
+
+def test_openclaw_spend_guard_metrics_are_what_the_guard_writes():
+    # The alert expressions only mean something if the guard emits these names.
+    spec = importlib.util.spec_from_file_location(
+        "spend_guard", REPO / "scripts/openclaw-auth/spend_guard.py"
+    )
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    est = {
+        "since_topup_usd": 1,
+        "month_usd": 1,
+        "credit_usd": 100,
+        "used_percent": 1,
+        "unpriced_tokens": 0,
+    }
+    text = guard.render_prom(est, {"mode": "api"}, "ok", {"reason": "spend", "at": 1})
+    for metric in ("openclaw_api_credit_used_percent", "openclaw_api_fallback_active"):
+        assert any(line.startswith(metric) for line in text.splitlines())

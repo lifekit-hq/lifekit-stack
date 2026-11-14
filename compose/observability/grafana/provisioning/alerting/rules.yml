@@ -1425,8 +1425,10 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              # Days until CLAUDE_OAUTH_TOKEN (the gateway's one-year
-              # `claude setup-token`, SecretRef claude-oauth-token) expires.
+              # Days until CLAUDE_OAUTH_TOKEN (the gateway file's one-year
+              # `claude setup-token`, SecretRef claude-oauth-token; read by
+              # devclaw and the other setup-token holders, not used by
+              # OpenClaw's own client) expires.
               # Nothing exports the expiry, so the date is written here: the
               # epoch is the expiry date in the token's docs/secrets.md
               # inventory row (a test keeps them equal). The yearly rotation
@@ -1463,9 +1465,11 @@ groups:
         annotations:
           summary: 'Claude service token expires in {{ printf "%.0f" $values.B.Value }} days'
           description: >-
-            CLAUDE_OAUTH_TOKEN (every OpenClaw agent's anthropic:setup-token
-            profile) expires in {{ printf "%.0f" $values.B.Value }} days; after
-            that every agent turn fails. Rotate it: `claude setup-token`, then
+            CLAUDE_OAUTH_TOKEN (the one-year `claude setup-token` read by
+            devclaw and the other setup-token holders; OpenClaw's own client
+            does not use it, its fallback is the claude-cli runtime) expires
+            in {{ printf "%.0f" $values.B.Value }} days; after that those
+            consumers fail. Rotate it: `claude setup-token`, then
             `scripts/secrets/edit.sh gateway` (replace CLAUDE_OAUTH_TOKEN),
             and move the expiry date in this rule and in docs/secrets.md in
             the same PR (docs/secrets-runbook.md, "Claude service token").
@@ -1522,6 +1526,211 @@ groups:
             finance-sentry as a proposal the owner confirms, then retire the
             file by hand; or, for a legitimate new workspace file, add it to
             WORKSPACE_ALLOW by PR (docs/runbook.md, "Ledger finance drift").
+
+      - uid: openclaw-api-credit-50
+        title: OpenClaw API credit half spent
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Estimated share of the prepaid API credit spent since its start
+              # (scripts/openclaw-auth/spend_guard.py, from OpenClaw's token
+              # records at list prices). The three bands are exclusive so one
+              # crossing pages once, not once per lower threshold.
+              expr: openclaw_api_credit_used_percent >= 50 and openclaw_api_credit_used_percent < 75
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # An empty result is the normal state (below the band, or the guard's
+        # file absent - textfile-collector-stale and host-unit-down-or-failed
+        # report a guard that stopped).
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: openclaw
+          severity: warning
+        annotations:
+          summary: 'About {{ printf "%.0f" $values.B.Value }}% of the OpenClaw API credit is spent'
+          description: >-
+            openclaw_api_credit_used_percent is {{ printf "%.0f" $values.B.Value }}: half of the prepaid credit
+            is gone by the guard's estimate. `scripts/openclaw-auth/auth-mode.sh status` shows the estimate and
+            the key state. At 95% the guard flips OpenClaw to the subscription by itself (docs/runbook.md,
+            "OpenClaw auth mode").
+
+      - uid: openclaw-api-credit-75
+        title: OpenClaw API credit 75% spent
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Estimated share of the prepaid API credit spent since its start
+              # (scripts/openclaw-auth/spend_guard.py, from OpenClaw's token
+              # records at list prices). The three bands are exclusive so one
+              # crossing pages once, not once per lower threshold.
+              expr: openclaw_api_credit_used_percent >= 75 and openclaw_api_credit_used_percent < 90
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # An empty result is the normal state (below the band, or the guard's
+        # file absent - textfile-collector-stale and host-unit-down-or-failed
+        # report a guard that stopped).
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: openclaw
+          severity: critical
+        annotations:
+          summary: 'About {{ printf "%.0f" $values.B.Value }}% of the OpenClaw API credit is spent'
+          description: >-
+            openclaw_api_credit_used_percent is {{ printf "%.0f" $values.B.Value }}: a quarter of the prepaid
+            credit is left. Top up in the Anthropic Console and add the amount to credit_usd in
+            scripts/openclaw-auth/credit.json, or leave it: at 95% the guard flips OpenClaw to the subscription
+            by itself (docs/runbook.md, "OpenClaw auth mode").
+
+      - uid: openclaw-api-credit-90
+        title: OpenClaw API credit 90% spent
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # Estimated share of the prepaid API credit spent since its start
+              # (scripts/openclaw-auth/spend_guard.py, from OpenClaw's token
+              # records at list prices). The three bands are exclusive so one
+              # crossing pages once, not once per lower threshold.
+              expr: openclaw_api_credit_used_percent >= 90
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # An empty result is the normal state (below the band, or the guard's
+        # file absent - textfile-collector-stale and host-unit-down-or-failed
+        # report a guard that stopped).
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: openclaw
+          severity: critical
+        annotations:
+          summary: 'About {{ printf "%.0f" $values.B.Value }}% of the OpenClaw API credit is spent - fallback is next'
+          description: >-
+            openclaw_api_credit_used_percent is {{ printf "%.0f" $values.B.Value }}: the guard flips OpenClaw to
+            the subscription at 95% (credit.json fallback_percent) and says so in a separate alert. To keep the
+            API key, top up the Console credit and add the amount to credit_usd in scripts/openclaw-
+            auth/credit.json before then (docs/runbook.md, "OpenClaw auth mode").
+
+      - uid: openclaw-api-fallback-engaged
+        title: OpenClaw fell back to the subscription
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 1 per fallback the spend guard performed itself, labelled with
+              # why (spend, billing, key-refused). The guard clears the series
+              # when it next sees api mode, so the alert resolves once the
+              # operator switches back.
+              expr: openclaw_api_fallback_active
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # No fallback is no series; a guard that stopped writing is
+        # textfile-collector-stale's job, a failed run host-unit-down-or-failed's.
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          service: openclaw
+          severity: critical
+        annotations:
+          summary: "OpenClaw switched itself to the Claude subscription ({{ $labels.reason }})"
+          description: >-
+            The OpenClaw spend guard flipped the anthropic models from the API key to
+            the claude-cli runtime (subscription): reason {{ $labels.reason }}
+            (spend: the estimated credit use reached the fallback threshold; billing:
+            OpenClaw disabled the anthropic:api-key profile for billing; key-refused:
+            the live probe says the key is invalid or out of credit). OpenClaw keeps
+            answering, now on the shared Claude account quota. To return to the key:
+            fix the cause (top up and edit credit_usd in
+            scripts/openclaw-auth/credit.json, or place a new key with
+            scripts/secrets/edit.sh gateway), then
+            `scripts/openclaw-auth/auth-mode.sh api` (docs/runbook.md, "OpenClaw auth mode").
 
   # finance-sentry's backup and retention jobs export their own age gauges
   # (JobMetrics.cs); without these rules a silently stopped backup or purge

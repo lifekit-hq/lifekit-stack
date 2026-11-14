@@ -1,0 +1,10 @@
+[Unit]
+Description=Run lifekit-openclaw-spend-guard every 10 minutes
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

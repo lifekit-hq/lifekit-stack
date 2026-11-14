@@ -1,0 +1,6 @@
+{
+  "_comment": "The prepaid Anthropic Console credit the OpenClaw API key draws on. credit_usd is the credit available since 'since' (UTC): to top up later, add the new amount to credit_usd (one line) and leave 'since'; for a fresh credit period set both. The guard alerts at 50/75/90 percent (Grafana rules) and flips OpenClaw to subscription mode itself at fallback_percent.",
+  "credit_usd": 100,
+  "since": "2026-11-14T00:00:00Z",
+  "fallback_percent": 95
+}

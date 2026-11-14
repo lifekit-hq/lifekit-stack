@@ -4881,6 +4881,122 @@ until the timer is installed the rule sees no data and stays quiet.
 && sudo systemctl daemon-reload`, and drop it from `install-host-gauges.sh` in
 the same PR.
 
+## OpenClaw auth mode (API key or subscription)
+
+OpenClaw reaches Claude in one of two modes, and `scripts/openclaw-auth/auth-mode.sh`
+is the one switch between them:
+
+| Mode | The `anthropic/*` models run on | Billed to | Auth |
+| --- | --- | --- | --- |
+| `api` | the direct runtime (`agentRuntime.id: openclaw`) | the prepaid Console credit | profile `anthropic:api-key`, a SecretRef to `ANTHROPIC_API_KEY` (`auth.order.anthropic` is exactly that profile) |
+| `subscription` (the default) | the Claude Code runtime (`claude-cli`): OpenClaw launches the unmodified `claude` binary | the shared Claude account quota | the binary's own native login; `auth.order.anthropic` is empty |
+
+The Console credit is not valid for Claude Code, so credit is only spent on
+the direct runtime: `api` mode must change the runtime, not just the profile.
+The `anthropic:setup-token` profile is **never** the fallback: OpenClaw's own
+client presenting a subscription OAuth token is the use Anthropic's terms
+exclude (2026-10-31 analysis), so the fallback from the API key is the switch
+to the `claude-cli` runtime.
+
+```bash
+cd /srv/lifekit-stack/scripts/openclaw-auth
+bash auth-mode.sh status            # mode, runtimes, auth.order, key profile per agent, live key probe, spend
+bash auth-mode.sh api               # key -> credit (refuses an unusable key or spent credit)
+bash auth-mode.sh subscription      # back to the Claude Code runtime
+bash auth-mode.sh api --dry-run     # print and validate the config patch, change nothing
+```
+
+Run it as any account in the `docker` group; it drives the gateway through
+`docker exec` and the `openclaw` CLI, never reading `openclaw.json` or a secret
+file. Every OpenClaw CLI call takes ~20 s, so a status is under a minute and a
+switch a few minutes.
+
+**What a switch does.** One `openclaw config patch` that sets the runtime of
+every `anthropic/*` model the agents use (`agents.defaults.models` and each
+agent's own `models` map) and `auth.order.anthropic`; the gateway is restarted
+only when the apply hint says the changed keys need it, otherwise it
+hot-reloads. It then runs a real throwaway turn per agent in `AUTH_CHECK_AGENTS`
+(default `kit`; set `AUTH_CHECK_AGENTS=kit,finance,career` for the lot; fresh session
+`agent:<id>:auth-check-<time>` each run, nothing delivered) and requires it to be answered by
+the new mode's provider (`anthropic` for `api`, `claude-cli` for
+`subscription`). If the patch, the restart or a turn fails, the previous values
+are patched back and the command exits 1. Switching to the mode already active
+changes nothing and only verifies. `api` also adds the `anthropic:api-key`
+SecretRef profile (`secrets apply`, id `anthropic-api-key`, no value involved)
+to every agent that lacks it.
+
+**Putting a key in place (captain).** Create a Console key, then
+`scripts/secrets/edit.sh gateway` and replace `ANTHROPIC_API_KEY`, merge the
+change (the OpenClaw deploy runs `openclaw secrets reload`), and check it:
+
+```bash
+bash auth-mode.sh probe     # one JSON line: ok | rejected | exhausted | limited | unknown | no-key
+```
+
+`probe` resolves the SecretRef inside the gateway and sends a 1-token request
+to the Messages API (`openclaw models status --probe` refuses to run while the
+gateway is up); it prints the verdict only, never the key. `rejected` is an
+invalid or revoked key (the state on 2026-11-14, when the 2026-10 key still in
+the file answered 401, so the box stays in `subscription` mode until a new key
+is placed), `exhausted` a key with no credit left.
+
+### Spend guard
+
+OpenClaw's usage records carry tokens, not dollars, and only turns answered by
+the direct runtime (provider `anthropic`) are billed to the credit. The guard
+(`scripts/openclaw-auth/spend_guard.py`, run every 10 minutes by
+`lifekit-openclaw-spend-guard.timer`) lists those turns from every agent's
+transcript store inside the gateway, prices them, and keeps a host-side ledger
+in `/var/lib/lifekit-openclaw-spend/` so the total survives OpenClaw pruning
+old sessions.
+
+- **Prices** live in `scripts/openclaw-auth/prices.json`: list USD per million
+  tokens (Sonnet 3/15, Opus 5/25, Haiku 4.x 1/5; cache write 1.25x, cache read
+  0.1x of the input price). A model with no row is priced at the dearest tier
+  and shows in `openclaw_api_spend_unpriced_tokens`: add a row when that is
+  above 0. The figure is an estimate (list prices, 5-minute cache assumed),
+  not an invoice.
+- **The credit** lives in `scripts/openclaw-auth/credit.json`: `credit_usd`,
+  `since` (UTC) and `fallback_percent` (95). **A later top-up is a one-line
+  edit**: add the amount to `credit_usd` and leave `since`; for a fresh credit
+  period set both. Merge it like any change; the guard reads the deployed
+  checkout.
+- **Metrics** (`openclaw_api_spend.prom`): `openclaw_api_spend_usd{window}`
+  (`since_topup`, `month`), `openclaw_api_credit_usd`,
+  `openclaw_api_credit_used_percent`, `openclaw_api_auth_mode{mode}`,
+  `openclaw_api_key_billing_disabled`, `openclaw_api_key_probe_ok` (api mode
+  only), `openclaw_api_fallback_active{reason}`,
+  `openclaw_api_spend_unpriced_tokens`.
+- **Alerts** (Grafana group `openclaw`, existing Telegram contact point; only
+  `critical` pages the phone, the rest reach the fleet inbox):
+  `openclaw-api-credit-50` (warning), `openclaw-api-credit-75` and
+  `openclaw-api-credit-90` (critical), exclusive bands so each crossing speaks
+  once; and `openclaw-api-fallback-engaged` (critical), which names the reason.
+- **Automatic fallback.** In `api` mode each pass runs the key probe and checks
+  the per-agent profile state, then runs `auth-mode.sh subscription` itself
+  when spend reached `fallback_percent`, when OpenClaw disabled
+  `anthropic:api-key` for billing, or when the probe says the key is rejected
+  or out of credit. It records why in `fallback.json` (the alert's `reason`:
+  `spend`, `billing`, `key-refused`) until it next sees `api` mode, so the
+  alert clears once the operator switches back. If the flip fails (rolled
+  back), the pass exits 1 and `host-unit-down-or-failed` reports the timer.
+  `auth-mode.sh api` refuses while the estimate is past the threshold unless
+  `--force`.
+- **Installing the timer** is a host step, like the other gauges (the deploy
+  does not install units): `sudo bash /srv/lifekit-stack/scripts/host-gauge/install-host-gauges.sh`.
+  Check it with `systemctl list-timers 'lifekit-openclaw-spend-guard*'` and
+  `grep -v '^#' /var/lib/node_exporter/textfile/openclaw_api_spend.prom`.
+  `bash auth-mode.sh status` prints the same estimate on demand.
+- **Undo:** `sudo systemctl disable --now lifekit-openclaw-spend-guard.timer && sudo rm
+  /etc/systemd/system/lifekit-openclaw-spend-guard.{service,timer}
+  /usr/local/bin/lifekit-openclaw-spend-guard.sh
+  /var/lib/node_exporter/textfile/openclaw_api_spend.prom`. Without the guard
+  `api` mode has no automatic fallback; run `auth-mode.sh subscription` by hand.
+
+Spend before the guard's first pass is only what OpenClaw still holds in its
+transcript stores (the first pass backfills from `since`); install the timer
+before the first `api` switch.
+
 ## YouTube transcripts through the PC
 
 YouTube answers "Sign in to confirm you're not a bot" to this host's datacenter IP,
@@ -5484,6 +5600,10 @@ the rule, labels, what was done and the verification result:
 | `openclaw-run-failed` (critical) | `docker exec openclaw-openclaw-gateway-1 openclaw cron list --all`, `cron runs <id> --limit 5`, `tasks list --status failed`. Timeouts and "receipt authority unavailable" are transient: log-only (the next scheduled run is the retry). A config or code cause: ISSUE | A gateway restart; a manual re-run of a job that announces to the owner | The same job fails 3 in a row, or one error class 3 or more times in 7 days: ISSUE and report. An auth-class error: report |
 | `claude-oauth-token-expiring` (warning) | Prepare the branch with the date edits (`docs/secrets-runbook.md`, token rotation) | Renewing the token | First firing |
 | `ledger-finance-drift` (warning) | Read the drifting file; with no finance facts in it, a PR adding it to `WORKSPACE_ALLOW` | Carrying the facts to finance-sentry and retiring the file | Finance facts present: one request for a decision |
+| `openclaw-api-credit-50` (warning) | `bash /srv/lifekit-stack/scripts/openclaw-auth/auth-mode.sh status` for the estimate and key state ("OpenClaw auth mode") | Top-ups, key changes, switching modes | Log-only; the 75% rule is the page |
+| `openclaw-api-credit-75` (critical) | As `openclaw-api-credit-50`; report the estimate and the days left at the current burn | Top-ups (captain: Console credit, then `credit_usd` in `scripts/openclaw-auth/credit.json` by PR) | One request for the captain: top up or let the guard fall back at 95% |
+| `openclaw-api-credit-90` (critical) | As `openclaw-api-credit-50` | Top-ups and `auth-mode.sh` switches | One request for the captain: top up now, or accept the automatic fallback to the subscription |
+| `openclaw-api-fallback-engaged` (critical) | Read the `reason` label; `auth-mode.sh status` confirms mode `subscription` and a verified turn; report which cause fired | `auth-mode.sh api` and key or credit changes | One request for the captain: new key or top-up, then `auth-mode.sh api` |
 | `finance-backup-verify-stale` (warning) | `docker logs finance-sentry-api --since 2h \| grep -i restore`; ISSUE in finance-sentry | | Unverified over 14 days (data at risk) |
 | `finance-retention-stale` (warning) | As `finance-backup-verify-stale` for the retention jobs; ISSUE | | 3 days |
 | `finance-job-consecutive-failures` (warning) | Grep the job in the API logs; a provider outage or rate limit is log-only; a code cause: ISSUE | An expired bank consent or API key | A credential cause: report. Failing over 24 h |
@@ -5537,7 +5657,7 @@ Common causes:
 1. **Telegram token rotated** — compare the account's bot token (a SOPS secret, see `docs/secrets.md`) against your BotFather token. Rotate it there, then `openclaw secrets reload`.
 2. **Polling stalled** — `docker compose -p openclaw restart openclaw-gateway`.
 3. **OpenClaw OOM** — `dmesg | grep -i oom`. If yes, scale up the VPS.
-4. **Anthropic auth failing** — every agent authenticates with the `anthropic:api-key` profile (a ref to `ANTHROPIC_API_KEY`, prepaid credits that expire 2026-11-09), first in `auth.order`, falling back to the `anthropic:setup-token` profile (a `tokenRef` to `CLAUDE_OAUTH_TOKEN`) when the credits lapse. Run `docker exec openclaw-openclaw-gateway-1 openclaw models status --agent <id>`: the `anthropic` line must list both profiles as exec refs (`exec:anthropic-api-key`, `exec:claude-oauth-token`) with `effective=` the agent's own store. Then run `openclaw secrets audit --allow-exec`, which must show no unresolved ref. The live check, and the yearly rotation if the token has expired, are in `docs/secrets-runbook.md`, "Claude service token".
+4. **Anthropic auth failing** — `bash /srv/lifekit-stack/scripts/openclaw-auth/auth-mode.sh status` says which mode the box is in and whether the key probe is accepted ("OpenClaw auth mode" above). In `api` mode a `rejected`/`exhausted` probe or a profile disabled for billing means the spend guard flips to `subscription` on its next pass (or run `auth-mode.sh subscription` now); in `subscription` mode the Claude Code login inside the gateway's Claude home may have expired (`docker exec openclaw-openclaw-gateway-1 claude auth status`; re-login is the captain's interactive `claude auth login`, see the 2026-10-31 usage report). The key's rotation and the SecretRef refs are in `docs/secrets-runbook.md`, "Claude service token"; `openclaw secrets audit --allow-exec` must show no unresolved ref.
 
 ## When a skill says "command not found" or "sharp: missing native binary"
 

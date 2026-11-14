@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # install-host-gauges.sh — install the host-group memory gauge, the /tmp
 # usage gauge, the host unit-state gauge, the weekly release gauge
-# (scripts/release-gauge) and the Ledger finance drift check
-# (scripts/ledger-drift) as systemd timers (root). Same
-# shape as the quota gauge: every 5 minutes into node-exporter's textfile
-# directory, run as ADMIN_USER.
+# (scripts/release-gauge), the Ledger finance drift check
+# (scripts/ledger-drift) and the OpenClaw API spend guard
+# (scripts/openclaw-auth, every 10 minutes, with its state directory) as
+# systemd timers (root). Same shape as the quota gauge: every 5 minutes into
+# node-exporter's textfile directory, run as ADMIN_USER.
 # bootstrap-vps.sh calls it; on a live box run it alone to install or update
 # just these timers without the rest of the bootstrap:
 #
@@ -21,8 +22,11 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 install -d -o "$ADMIN_USER" -g "$ADMIN_USER" -m 755 /var/lib/node_exporter/textfile
+# The spend guard's ledger and fallback marker (docs/runbook.md "OpenClaw auth mode").
+install -d -o "$ADMIN_USER" -g "$ADMIN_USER" -m 755 /var/lib/lifekit-openclaw-spend
 for gauge in host-gauge/host-group-gauge tmp-gauge/tmp-usage-gauge unit-gauge/unit-gauge \
-  release-gauge/lifekit-release-gauge ledger-drift/lifekit-ledger-drift; do
+  release-gauge/lifekit-release-gauge ledger-drift/lifekit-ledger-drift \
+  openclaw-auth/lifekit-openclaw-spend-guard; do
   name="$(basename "$gauge")"
   install -m 755 "$SCRIPTS_DIR/$gauge.sh" "/usr/local/bin/$name.sh"
   sed "s/__ADMIN_USER__/${ADMIN_USER}/" "$SCRIPTS_DIR/$gauge.service" \
@@ -31,4 +35,4 @@ for gauge in host-gauge/host-group-gauge tmp-gauge/tmp-usage-gauge unit-gauge/un
 done
 systemctl daemon-reload
 systemctl enable --now host-group-gauge.timer tmp-usage-gauge.timer unit-gauge.timer \
-  lifekit-release-gauge.timer lifekit-ledger-drift.timer
+  lifekit-release-gauge.timer lifekit-ledger-drift.timer lifekit-openclaw-spend-guard.timer
