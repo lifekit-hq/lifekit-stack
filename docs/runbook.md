@@ -5093,8 +5093,8 @@ journalctl -u memory-sync.service -n 50
   never race for git's index lock. The next tick retries.
 - `step=lint`: `bin/lint.sh` itself failed without naming a file; run
   `sh bin/lint.sh --changed` in the vault to see why.
-- `step=fetch` / `step=push`: network or credentials; the journal has git's
-  error.
+- `step=fetch` / `step=push`: network or credentials; git's error is in the
+  last lines of `.sync-failed` (credentials redacted) and in the journal.
 
 The next successful tick removes `.sync-failed`; `sudo systemctl reset-failed
 memory-sync.service` clears the unit state once the cause is gone. A red file
