@@ -1425,8 +1425,10 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              # Days until CLAUDE_OAUTH_TOKEN (the gateway's one-year
-              # `claude setup-token`, SecretRef claude-oauth-token) expires.
+              # Days until CLAUDE_OAUTH_TOKEN (the gateway file's one-year
+              # `claude setup-token`, SecretRef claude-oauth-token; read by
+              # devclaw and the other setup-token holders, not used by
+              # OpenClaw's own client) expires.
               # Nothing exports the expiry, so the date is written here: the
               # epoch is the expiry date in the token's docs/secrets.md
               # inventory row (a test keeps them equal). The yearly rotation
@@ -1463,9 +1465,11 @@ groups:
         annotations:
           summary: 'Claude service token expires in {{ printf "%.0f" $values.B.Value }} days'
           description: >-
-            CLAUDE_OAUTH_TOKEN (every OpenClaw agent's anthropic:setup-token
-            profile) expires in {{ printf "%.0f" $values.B.Value }} days; after
-            that every agent turn fails. Rotate it: `claude setup-token`, then
+            CLAUDE_OAUTH_TOKEN (the one-year `claude setup-token` read by
+            devclaw and the other setup-token holders; OpenClaw's own client
+            does not use it, its fallback is the claude-cli runtime) expires
+            in {{ printf "%.0f" $values.B.Value }} days; after that those
+            consumers fail. Rotate it: `claude setup-token`, then
             `scripts/secrets/edit.sh gateway` (replace CLAUDE_OAUTH_TOKEN),
             and move the expiry date in this rule and in docs/secrets.md in
             the same PR (docs/secrets-runbook.md, "Claude service token").
