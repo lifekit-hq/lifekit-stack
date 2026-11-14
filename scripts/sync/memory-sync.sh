@@ -4,7 +4,10 @@
 # runs it as lifekit every 15 minutes. Vault decision D6, same shape as the PC:
 #   commit -> fetch -> rebase origin/main (abort on conflict) -> push HEAD:main.
 # No -X theirs/ours and no stash: a real conflict stops the tick with both sides intact.
-# Any failure leaves .sync-failed (time, step, exit code); the next clean run removes it.
+# Any failure leaves .sync-failed: line 1 is time, step, exit code (the vault doctor reads only
+# that line); the next lines are the last 5 lines of stderr, credentials in URLs redacted.
+# The tick holds the vault's own flock (git-path vault.lock, the one bin/log.sh takes) for the
+# whole body, so the two never race for git's index lock; busy past 120s fails with step=lock.
 # log.md and projects/*/log.md merge by union via .gitattributes, which rebase honours.
 #
 # Commit gate (vault W1), only once the vault ships bin/hooks/pre-commit; without that file
@@ -40,16 +43,32 @@ fi
 
 STEP=start
 SIDE=""
+ERRLOG="$(mktemp "${TMPDIR:-/tmp}/memory-sync-err.XXXXXX")"
+exec 3>&2 2> "$ERRLOG"
 on_exit() {
   local rc=$?
+  exec 2>&3
+  cat "$ERRLOG" >&2
   if [ -n "$SIDE" ]; then
     git worktree remove --force "$SIDE/wt" 2>/dev/null || true
     rm -rf "$SIDE"
     git worktree prune || true
   fi
-  [ "$rc" -eq 0 ] || printf "%s step=%s exit=%s\n" "$(date -u +%FT%TZ)" "$STEP" "$rc" > "$MARKER"
+  if [ "$rc" -ne 0 ]; then
+    {
+      printf "%s step=%s exit=%s\n" "$(date -u +%FT%TZ)" "$STEP" "$rc"
+      tail -n 5 "$ERRLOG" | cut -c1-300 | sed -E 's#://[^/@[:space:]]*@#://***@#g'
+    } > "$MARKER"
+  fi
+  rm -f "$ERRLOG"
 }
 trap on_exit EXIT
+
+STEP=lock
+LOCK="$(git rev-parse --git-path vault.lock)"
+exec 9>>"$LOCK"
+chmod a+rw "$LOCK" 2>/dev/null || true
+flock -w "${MEMORY_SYNC_LOCK_WAIT:-120}" 9 || { echo "memory-sync: vault lock $LOCK busy for ${MEMORY_SYNC_LOCK_WAIT:-120}s" >&2; exit 1; }
 
 # The markers and the lock are this host's, never vault content.
 exclude="$(git rev-parse --git-path info/exclude)"

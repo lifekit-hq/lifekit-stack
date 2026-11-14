@@ -5076,7 +5076,7 @@ hour old, the tick does nothing.
 `memory-sync`, or the deploy's report-only line is red):
 
 ```bash
-cat /srv/memory/.sync-failed       # time, step=<commit|lint|fetch|rebase|checkout|push>, exit code
+cat /srv/memory/.sync-failed       # line 1: time, step=<lock|commit|lint|fetch|rebase|checkout|push>, exit code; then git's last 5 stderr lines
 cat /srv/memory/.lint-failed       # red files left uncommitted, if any
 journalctl -u memory-sync.service -n 50
 ```
@@ -5088,10 +5088,13 @@ journalctl -u memory-sync.service -n 50
 - `step=checkout`: the remote changed a file that has an uncommitted red edit
   here. Fix the lint finding (or move the edit aside), and the next tick goes
   through.
+- `step=lock`: `bin/log.sh` (or another holder of `.git/vault.lock`) kept the vault
+  lock for over 120 s; the tick takes the same flock for its whole body so the two
+  never race for git's index lock. The next tick retries.
 - `step=lint`: `bin/lint.sh` itself failed without naming a file; run
   `sh bin/lint.sh --changed` in the vault to see why.
-- `step=fetch` / `step=push`: network or credentials; the journal has git's
-  error.
+- `step=fetch` / `step=push`: network or credentials; git's error is in the
+  last lines of `.sync-failed` (credentials redacted) and in the journal.
 
 The next successful tick removes `.sync-failed`; `sudo systemctl reset-failed
 memory-sync.service` clears the unit state once the cause is gone. A red file
