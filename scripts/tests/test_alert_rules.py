@@ -559,6 +559,13 @@ def test_container_stopped_or_vanished_rule_shape():
     assert rule["labels"]["severity"] == "critical"
 
 
+def test_container_unhealthy_excludes_the_bump_rehearsal_image():
+    (expr,) = queries(RULES["container-unhealthy"])
+    assert 'image!="lifekit-openclaw:rehearse"' in expr
+    rehearsal = (REPO / "scripts/rehearse-openclaw-bump.sh").read_text()
+    assert "lifekit-openclaw:rehearse" in rehearsal
+
+
 STOPPED = "container-stopped-or-vanished"
 
 

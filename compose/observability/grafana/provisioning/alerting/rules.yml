@@ -283,8 +283,11 @@ groups:
             model:
               refId: A
               # Only containers that declare a healthcheck have this series;
-              # 0 covers both unhealthy and stuck in starting.
-              expr: docker_container_healthy
+              # 0 covers both unhealthy and stuck in starting. The bump
+              # rehearsal's one-shot `openclaw doctor` containers
+              # (lifekit-openclaw:rehearse) never serve a gateway, so they
+              # cannot become healthy by design and must not page.
+              expr: docker_container_healthy{image!="lifekit-openclaw:rehearse"}
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
