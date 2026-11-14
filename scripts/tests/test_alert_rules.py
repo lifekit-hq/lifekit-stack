@@ -656,6 +656,42 @@ def test_container_stopped_or_vanished_fires_on_stop_or_removal(
         assert code == 0, output
 
 
+def _unhealthy_selector(image: str, name: str) -> str:
+    inspect = {
+        "Name": f"/{name}",
+        "Config": {"Image": image, "Labels": {}},
+        "State": {"Status": "running", "Health": {"Status": "unhealthy"}},
+    }
+    (labels,) = [
+        lab
+        for metric, lab, _ in exporter.container_samples(inspect)
+        if metric == "docker_container_healthy"
+    ]
+    return (
+        "docker_container_healthy{"
+        + ",".join(f'{k}="{v}"' for k, v in labels.items())
+        + "}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("image", "fires"),
+    [
+        ("lifekit-openclaw:rehearse", False),
+        ("lifekit-openclaw:2026.11.9", True),
+    ],
+)
+def test_container_unhealthy_skips_the_bump_rehearsal_image(image, fires):
+    (expr,) = queries(RULES["container-unhealthy"])
+    code, output = promtool_expr_alerts(
+        f"({expr}) < 1", [(_unhealthy_selector(image, "doctor-1"), "0x10")], "5m"
+    )
+    if fires:
+        assert code != 0 and "got:" in output, output
+    else:
+        assert code == 0, output
+
+
 @pytest.mark.parametrize("project", ["finance-sentry", "openclaw"])
 @pytest.mark.parametrize("running", ["0x60", "1x20 _x40"])
 def test_container_stopped_or_vanished_ignores_other_projects_and_openclaw_cli(
