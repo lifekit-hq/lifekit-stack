@@ -228,13 +228,13 @@ services:
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/kit/memory:/home/node/.openclaw/agents/kit/workspace/memory
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/agents/finance/memory:/home/node/.openclaw/agents/finance/workspace/memory
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
-      # Claude CLI home, used by the claude-cli runtime (the live agents run
-      # agentRuntime.id "claude-cli"; only the openai/gpt-5.5 model entry keeps
-      # "openclaw"): session files land in
-      # .claude/projects (scripts/quota-share reads them). Anthropic auth does
-      # not come from a login stored here: every agent's anthropic:setup-token
-      # profile resolves CLAUDE_OAUTH_TOKEN through the sops SecretRef
-      # (docs/secrets-runbook.md, "Claude service token").
+      # Claude CLI home, used by the claude-cli runtime (the agents run
+      # agentRuntime.id "claude-cli" in subscription mode; api mode moves the
+      # anthropic/* models to "openclaw", scripts/openclaw-auth/auth-mode.sh,
+      # docs/runbook.md "OpenClaw auth mode"): session files land in
+      # .claude/projects (scripts/quota-share reads them). In subscription mode
+      # the claude binary authenticates with the native login kept in this
+      # home, not through an OpenClaw auth profile.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
       # gh CLI auth for the Phase 5.5 code-task skill — set up once on the
