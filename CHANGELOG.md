@@ -18,6 +18,32 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.12](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.11...v0.1.12) (2026-11-14)
+
+
+### Features
+
+* **ledger-persona:** pin finance-sentry 320a49a6 and wake Ledger's review loop from the pulse ([#514](https://github.com/lifekit-hq/lifekit-stack/issues/514)) ([b9d3288](https://github.com/lifekit-hq/lifekit-stack/commit/b9d3288ac7de36a10bedc5daffa46dae6f5b6db2))
+* **ledger-persona:** re-pin to finance-sentry 5ba0d626 and trim finance skill allowlist ([#513](https://github.com/lifekit-hq/lifekit-stack/issues/513)) ([9e0b8a3](https://github.com/lifekit-hq/lifekit-stack/commit/9e0b8a3691638faaf1c9bb0e57c129f90875195b))
+* **openclaw:** learnclaw reads the owner's LearnHarness record ([#507](https://github.com/lifekit-hq/lifekit-stack/issues/507)) ([7f0efd4](https://github.com/lifekit-hq/lifekit-stack/commit/7f0efd4444c43b382448a6c1c3222d157aafc3de))
+* **people:** add basket access right and Logto sign-in branding ([#511](https://github.com/lifekit-hq/lifekit-stack/issues/511)) ([3530a98](https://github.com/lifekit-hq/lifekit-stack/commit/3530a9887e1222410ad403e767cce5ac1eeb834f))
+* **prometheus:** scrape basket-app /metrics ([#512](https://github.com/lifekit-hq/lifekit-stack/issues/512)) ([4ee7560](https://github.com/lifekit-hq/lifekit-stack/commit/4ee7560bba46ac4ea531c6c5d7e9c2d9c2ded20c))
+* **skills:** a video-eval verdict holds only for its rubric version ([#506](https://github.com/lifekit-hq/lifekit-stack/issues/506)) ([751abe7](https://github.com/lifekit-hq/lifekit-stack/commit/751abe7e3ddfc27af5ca20224e01071b1c73f1c2))
+* **skills:** copy accepted doc-door reports into Drive via an rclone drive.file uploader ([#502](https://github.com/lifekit-hq/lifekit-stack/issues/502)) ([c9c8f5f](https://github.com/lifekit-hq/lifekit-stack/commit/c9c8f5f387a1fb8366c022ae1ddc86c44ac1a828))
+* **skills:** intake judge reads live vault goals and can say adopt (rubric v6) ([#505](https://github.com/lifekit-hq/lifekit-stack/issues/505)) ([daaac68](https://github.com/lifekit-hq/lifekit-stack/commit/daaac685f019d8ad86a1eb22a8ffdf4b46dd9842))
+* **skills:** video-eval judges adoption first, not what is worth building (rubric v7) ([#510](https://github.com/lifekit-hq/lifekit-stack/issues/510)) ([4eedf80](https://github.com/lifekit-hq/lifekit-stack/commit/4eedf80715b23128582ed143e2bcbcea10a95f8a))
+
+
+### Bug Fixes
+
+* **alerting:** exclude bump rehearsal image from container-unhealthy ([#515](https://github.com/lifekit-hq/lifekit-stack/issues/515)) ([4ca296b](https://github.com/lifekit-hq/lifekit-stack/commit/4ca296bebdb262da6848d150f5c1e9015952915f))
+* **skills:** make doc-door Drive uploader install and verify pass on the live fleet ([#504](https://github.com/lifekit-hq/lifekit-stack/issues/504)) ([aa75fff](https://github.com/lifekit-hq/lifekit-stack/commit/aa75fff66520dc59f99a7230e2464b3aab9d8f70))
+
+
+### Documentation
+
+* **google:** record fleet Gmail recovery and sign-in arrangement ([#508](https://github.com/lifekit-hq/lifekit-stack/issues/508)) ([7d6fa28](https://github.com/lifekit-hq/lifekit-stack/commit/7d6fa28d5ec10040794fb337d15e614c20c76685))
+
 ## [0.1.11](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.10...v0.1.11) (2026-11-08)
 
 
