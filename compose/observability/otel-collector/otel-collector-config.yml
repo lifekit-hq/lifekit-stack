@@ -75,7 +75,7 @@ exporters:
     endpoint: 0.0.0.0:8889
     resource_to_telemetry_conversion:
       enabled: true
-    metric_expiration: 8d
+    metric_expiration: 192h  # 8d (Go durations have no "d" unit)
 
 service:
   extensions: [file_storage]
