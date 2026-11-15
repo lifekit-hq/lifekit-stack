@@ -237,6 +237,10 @@ services:
       - "4317"
       - "4318"
       - "8888"
+      - "8889"  # prometheus exporter: OTLP metrics (Claude Code), scraped by prometheus
+    # Loopback only: host-side Claude Code sessions export OTLP/HTTP here.
+    ports:
+      - "127.0.0.1:4318:4318"
     depends_on:
       - tempo
       - loki
