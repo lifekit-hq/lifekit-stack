@@ -2397,11 +2397,12 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
   - The owner's own chat with learnclaw in the OpenClaw Control UI. This is the only route that
     records a row, since a row holds the owner's own words.
   - kit, as a subagent run, once `learnclaw` is in kit's `subagents.allowAgents`. kit relays the
-    answer, and a subagent run never records.
-  - No Telegram account and no cron in v0: nothing runs unless asked.
+    answer, and a subagent run never records. The 21:00 `evening-plan-note` run does this daily
+    for the plan's learning line (see "Learning objective line from learnclaw").
+  - learnclaw has no cron of its own in v0: apart from that daily kit run, nothing runs unless asked.
 - **Cost:** a run is one Sonnet 4.6 conversation turn on the gateway's subscription. Measured on
   comparable career runs, that is about 50k tokens, mostly cache reads: roughly $0.10-0.20 at list
-  prices. Nothing is scheduled, so the idle cost is zero.
+  prices. Only the daily plan run schedules one, so the idle cost is that one run a day.
 
 **Operator steps (once, after the merge deploys).** The agent entry is host state.
 
@@ -2445,12 +2446,56 @@ shows `learning-record` ready. The rehearsal printed `recorded: | <date> | ...`,
 **Pause** (the agent and its record stay): take `learnclaw` out of kit's
 `subagents.allowAgents`, and patch `{"agents":{"entries":{"learnclaw":{"skills":[]}}}}`. The
 agent can still talk, but it can no longer read or write the record, and kit no longer reaches it.
-Nothing is scheduled, so there is nothing else to stop. Resume by re-applying steps 3 and 4.
+The 21:00 plan run then writes "Learning objective unavailable (learnclaw)". Resume by re-applying steps 3 and 4.
 
 **Retire / roll back:** `openclaw agents delete learnclaw` (it removes the entry and its
 bindings). Then revert kit's `allowAgents` and the live kit "Learning" section,
 and revert the PR so the deploy stops installing the contract. Rows already on the learning page
 stay; they are the owner's record.
+
+### Learning objective line from learnclaw (`evening-plan-note`, `today-brief`)
+
+The plan's one learning objective line comes from learnclaw (decision 2026-11-13, issue 525), not
+from kit reading the learning page and the LearnHarness mirror itself. The 21:00 `evening-plan-note`
+run starts one learnclaw subagent run (kit's `subagents.allowAgents` already holds `learnclaw`, see
+"learnclaw (the learning loop)") and writes its single line under "## Learning objective" in
+tomorrow's daily note; the 08:30 `today-brief` copies that line into "Learn:". The line names the
+LearnHarness session to open, or the gap it addresses, and ends `mirror newest session <date>`, so a
+stale mirror shows in the plan. A subagent run never records a row, the task text forbids any
+write, and learnclaw's only write path is the `learning-record` skill; if learnclaw is unreachable
+the note says "Learning objective unavailable (learnclaw)" and nothing else fills the gap. Budget
+(architecture report, section 7 step 3): `today-brief` at most $1.50 a run and `evening-plan-note`
+at most $1.00, list prices; the learnclaw run adds about $0.10-0.20.
+
+Both rows are host state and their prompts hold the owner's personal plan, so git carries only the
+changed text: `scripts/ensure-learning-line.sh` (the same anchored pattern as
+`ensure-today-brief-fleet.sh`) holds the new step 4 and step 7 text, edits each row with one
+`openclaw cron edit`, refuses a row whose anchors moved, and leaves a row that already has the text
+alone. The `evening-plan-note` edit also adds `sessions_spawn` and `sessions_yield` to that row's
+tool allow-list (it has no subagent tool); `today-brief` already allows both. The fleet step
+`ensure-today-brief-fleet.sh` owns is untouched, so either script can run in any order.
+
+**Operator step after the PR merges** (as `lifekit`, from `/srv/lifekit-stack`):
+
+```bash
+GW=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)
+# Save both old rows first: they are the undo.
+docker exec "$GW" openclaw cron list --all --json > /tmp/cron-before-learning-line.json
+DRY_RUN=1 scripts/ensure-learning-line.sh   # prints both new messages, edits nothing
+scripts/ensure-learning-line.sh
+docker exec "$GW" openclaw cron run <evening-plan-note id> --expect-final --json   # writes the note, sends nothing
+```
+
+**Verify:** tomorrow's note has a "## Learning objective" line that names a session or a gap and ends
+`mirror newest session <date>`; the run log shows a learnclaw subagent run and
+`domains/learning.md` in `/srv/memory` is unchanged by it. After a scheduled day,
+`python3 -I scripts/ops-report/jobs.py --days 2` keeps `cron:today-brief` at or below $1.50 and
+`cron:evening-plan-note` at or below $1.00 a run.
+
+**Undo:** for each row, `openclaw cron edit <id> --message "<its message from the saved JSON>"`, and
+for `evening-plan-note` also `--tools` with the saved `toolsAllow` list (drops the two subagent
+tools).
 
 ### Light context on `today-brief` and `ledger-opportunity`
 
