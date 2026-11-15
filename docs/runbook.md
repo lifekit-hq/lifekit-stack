@@ -394,6 +394,8 @@ a sent message with the matching app page as a plain URL (`/events`,
 or a `NO_REPLY`); the app origin is not in git, so the paragraph tells the
 agent to take it from a returned `appUrl`.
 
+**Lanes for market signals.** finance-sentry delivers a severe intraday move (a held name moving 2x its alert bar) immediately by wake; routine `MarketStructure` and `NewsCluster` signals are held and batched into the three-times-a-day `ledger-pulse`, step 1 of `scripts/finance-pulse.md`.
+
 **The payload is stateless (the rule).** Every `agentTurn` cron run is a fresh
 session that receives only its `payload.message`, so a rule that needs to know
 what an earlier run sent ("no message in the last 7 days", "not yet delivered",
