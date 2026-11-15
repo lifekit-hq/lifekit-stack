@@ -73,7 +73,11 @@ def run(tmp_path: Path, evening: str = EVENING, brief: str = BRIEF, env_extra=No
             json.dumps(
                 {
                     "jobs": [
-                        {"id": "other", "name": "needs-you-digest", "payload": {"message": "x"}},
+                        {
+                            "id": "other",
+                            "name": "needs-you-digest",
+                            "payload": {"message": "x"},
+                        },
                         {
                             "id": "ev1",
                             "name": "evening-plan-note",
