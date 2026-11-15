@@ -387,9 +387,7 @@ def test_installer_installs_feed2exec_and_units_but_does_not_enable(tmp_path):
         )
         # verify also lints the host's own units; only our units are ours to fix
         ours = [
-            ln
-            for ln in (v.stdout + v.stderr).splitlines()
-            if "lifekit-scout" in ln
+            ln for ln in (v.stdout + v.stderr).splitlines() if "lifekit-scout" in ln
         ]
         assert v.returncode == 0 and ours == [], v.stdout + v.stderr
     env = (root / "etc/lifekit/scout.env").read_text()
