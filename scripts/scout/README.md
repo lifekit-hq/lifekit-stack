@@ -58,7 +58,7 @@ scripts/scout/scout-fetch.sh --catchup   # record current feed contents as seen;
 added source): without it the first run would hand the judge a whole backlog.
 
 Note text: `scout: N new items from M lens(es); candidates: <path>`, request id
-`scout-<date>` (a repeat the same day is a no-op for the inbox).
+`scout-<date>-<N>`, N being the candidates file's line count (a retry of the same content is a no-op for the inbox; a later same-day run with new items sends its own note).
 
 ## Install (operator, not enabled)
 

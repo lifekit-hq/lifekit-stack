@@ -132,13 +132,15 @@ if [[ -s "$OUT" ]]; then
 fi
 
 # Send one note per candidates file not yet announced: today's, plus any whose
-# note failed on an earlier day. The request id makes a repeat a no-op.
+# note failed on an earlier day. The request id carries the file's line count, so
+# a retry of the same content is a no-op but a later same-day run is announced.
 for f in "$CAND"/*.txt; do
   [[ -f "$f" ]] || continue
   day="$(basename "$f" .txt)"
   [[ -e "$CAND/$day.sent" ]] && continue
   lenses="$(cut -f1 "$f" | sort -u | wc -l)"
-  if note "scout-$day" "scout: $(wc -l <"$f") new items from $lenses lens(es); candidates: $f"; then
+  count="$(wc -l <"$f")"
+  if note "scout-$day-$count" "scout: $count new items from $lenses lens(es); candidates: $f"; then
     : >"$CAND/$day.sent"
   else
     echo "scout-fetch: note for $day failed; will retry on the next run" >&2

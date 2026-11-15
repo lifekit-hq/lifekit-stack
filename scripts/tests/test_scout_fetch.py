@@ -125,13 +125,27 @@ def test_first_run_sends_one_note_with_count_and_path_second_run_none(tmp_path):
     ]
     notes = e.notes()
     assert len(notes) == 1
-    assert notes[0].startswith("/fm/home|note --request-id scout-2026-11-16 -- ")
+    assert notes[0].startswith("/fm/home|note --request-id scout-2026-11-16-2 -- ")
     assert "2 new items from 1 lens(es)" in notes[0] and str(cand) in notes[0]
 
     r = e.run()
     assert r.returncode == 0, r.stderr
     assert len(e.notes()) == 1  # quiet: nothing new, nothing sent
     assert cand.read_text().splitlines() == lines
+
+
+def test_a_second_same_day_run_with_new_items_sends_its_own_note(tmp_path):
+    e = Env(tmp_path)
+    e.lens("harness")
+    e.run()
+    e.lens("later")
+    r = e.run()
+    assert r.returncode == 0, r.stderr
+    notes = e.notes()
+    assert len(notes) == 2
+    assert "--request-id scout-2026-11-16-2 " in notes[0]
+    assert "--request-id scout-2026-11-16-4 " in notes[1]
+    assert "4 new items from 2 lens(es)" in notes[1]
 
 
 def test_a_quiet_first_day_writes_nothing(tmp_path):
@@ -217,7 +231,7 @@ def test_a_failed_note_is_retried_not_lost(tmp_path):
     r = e.run(date="2026-11-17")  # feeds are quiet now; the old file is announced
     assert r.returncode == 0, r.stderr
     notes = e.notes()
-    assert len(notes) == 1 and "--request-id scout-2026-11-16" in notes[0]
+    assert len(notes) == 1 and "--request-id scout-2026-11-16-2 " in notes[0]
     e.run(date="2026-11-18")
     assert len(e.notes()) == 1
 
