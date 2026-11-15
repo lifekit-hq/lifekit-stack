@@ -5809,3 +5809,61 @@ Open a [GitHub Issue](https://github.com/lifekit-hq/lifekit-stack/issues) with:
 - What you tried before opening the issue
 
 Other providers are accepted, but no official SLA in v0.x.
+
+## Claude Code OpenTelemetry
+
+Claude Code's built-in OTLP metrics export replaces, once the numbers agree,
+the hand-made `claude_quota_share_percent` path (`scripts/quota-share` +
+`scripts/quota-gauge/claude-quota-share-gauge.sh`). **That script is not
+retired yet**: keep it running until the "Claude Code usage" dashboard
+(`compose/observability/grafana/provisioning/dashboards/lifekit/claude-code.json`)
+shows the same weekly numbers as the quota-share panel on the Box dashboard.
+
+Path: Claude Code (host) -> `127.0.0.1:4318` (otel-collector, loopback bind)
+-> `metrics` pipeline (`deltatocumulative`) -> `prometheus` exporter `:8889`
+-> Prometheus job `otel-collector-metrics` -> Grafana. The dashboard applies
+quota-share's weights in PromQL (input + 5*output + 1.25*cacheCreation +
+0.1*cacheRead, x5/3 Opus/Fable, x1/3 Haiku), so the first panel is the
+measured share and the second is that share times the account's used percent.
+The captain's PC is not measured, as in the script.
+
+### Operator steps
+
+1. Merge the PR; the `deploy` job recreates the collector (config is a
+   directory mount, no hot reload), publishes `127.0.0.1:4318` and reloads
+   Prometheus and Grafana provisioning. Check: `curl -s http://127.0.0.1:4318/`
+   answers (404 is fine), and Prometheus target `otel-collector-metrics` is up.
+2. Set the environment for each Claude Code consumer, in that consumer's own
+   settings `env` block or launcher (not in the harness env files from git).
+   Give each consumer its own `consumer` value, matching the quota-share names:
+
+   ```bash
+   CLAUDE_CODE_ENABLE_TELEMETRY=1
+   OTEL_METRICS_EXPORTER=otlp
+   OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+   OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
+   OTEL_METRICS_INCLUDE_SESSION_ID=false
+   OTEL_RESOURCE_ATTRIBUTES=consumer=firstmate   # firstmate | devclaw | openclaw
+   ```
+
+   Containers (OpenClaw's Claude sessions, devclaw) reach the collector as
+   `http://otel-collector:4318` instead. Sessions started before the change
+   keep running without telemetry.
+3. After a day, confirm series exist (the exporter name derives from
+   `claude_code.token.usage`, unit `tokens`; if the name differs, fix the
+   expressions in `claude-code.json`):
+   `curl -s 'http://127.0.0.1:9090/api/v1/label/__name__/values' | grep claude_code`.
+4. Compare the dashboard with the Box dashboard's quota share panel over a
+   full week. Only when they agree: retire the gauge timer and
+   `scripts/quota-share` in a separate change.
+
+Notes: `devclaw` also has its own `devclaw_tokens_total` input in the script,
+which this export does not replace until devclaw's sessions carry the tag.
+`metric_expiration` is 8d, so a consumer that stops reporting disappears from
+the dashboard after a week.
+
+OpenClaw vault search (`memory.search.extraPaths` over the vault mount) is
+already in `compose/openclaw-gateway/platform.patch.json` (#192, see "Vault
+search for every agent"); nothing further was needed for vault decision 0013
+step 1.

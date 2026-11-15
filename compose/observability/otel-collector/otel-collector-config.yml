@@ -51,6 +51,10 @@ receivers:
         value: docker
 
 processors:
+  # Claude Code exports delta counters by default; the prometheus exporter
+  # needs cumulative ones.
+  deltatocumulative:
+    max_stale: 24h
   memory_limiter:
     check_interval: 1s
     limit_mib: 192
@@ -64,6 +68,14 @@ exporters:
       insecure: true
   otlphttp/loki:
     endpoint: http://loki:3100/otlp  # Loki 3.x native OTLP ingest
+  # OTLP metrics (Claude Code's built-in export, docs/runbook.md "Claude Code
+  # OpenTelemetry"), re-exposed for the box Prometheus to scrape. Resource
+  # attributes (the per-consumer `consumer` tag) become metric labels.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+    metric_expiration: 8d
 
 service:
   extensions: [file_storage]
@@ -75,6 +87,10 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlp]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, deltatocumulative, batch]
+      exporters: [prometheus]
     logs:
       receivers: [filelog/docker]
       processors: [memory_limiter, batch]
