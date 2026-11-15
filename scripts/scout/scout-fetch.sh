@@ -37,7 +37,7 @@ CAND="$STATE/candidates"
 command -v "$FEED2EXEC" >/dev/null 2>&1 || { echo "scout-fetch: $FEED2EXEC not found (run scripts/scout/install-scout.sh)" >&2; exit 2; }
 [[ -d "$LENS_DIR" ]] || { echo "scout-fetch: no lens directory $LENS_DIR; nothing to do" >&2; exit 0; }
 
-mkdir -p "$STATE/db" "$STATE/broken" "$STATE/health" "$CAND"
+mkdir -p "$STATE/db" "$STATE/broken" "$CAND"
 exec 9>"$STATE/lock"
 flock -n 9 || { echo "scout-fetch: another run holds the lock" >&2; exit 0; }
 WORK="$(mktemp -d)"
@@ -94,20 +94,6 @@ report_broken() {  # <lens> <reason> - once per breakage, on the transition
   fi
 }
 
-# Count each feed's failed days in a row (timeout, or an empty body) from -v
-# output; a feed that did not fail today starts over.
-record_health() {  # <lens> <stderr file>
-  local lens="$1" log="$2" feed name
-  mkdir -p "$WORK/health.$lens"
-  while IFS= read -r feed; do
-    name="$lens.$(printf '%s' "$feed" | tr -c 'A-Za-z0-9._-' '_')"
-    echo $(( $(cat "$STATE/health/$name" 2>/dev/null || echo 0) + 1 )) >"$WORK/health.$lens/$name"
-  done < <(grep -E 'timeout while fetching|\(0 bytes\)' "$log" 2>/dev/null \
-    | sed -E 's/.*(feed|parsing) ([^ ]+).*/\2/' | sort -u)
-  rm -f "$STATE/health/$lens".*
-  cp -f "$WORK/health.$lens"/* "$STATE/health/" 2>/dev/null || true
-}
-
 OUT="$WORK/new.txt"
 : >"$OUT"
 for page in "$LENS_DIR"/*.md; do
@@ -131,7 +117,6 @@ for page in "$LENS_DIR"/*.md; do
   fi
   rm -f "$STATE/broken/$lens"
   ((CATCHUP)) && continue
-  record_health "$lens" "$WORK/$lens.err"
   # echo-plugin lines are `<tag>:<name> <link> <title>`; a title with a newline
   # would add continuation lines, which are dropped here.
   grep -E '^[A-Za-z0-9_.-]+:[^ ]* ' "$WORK/$lens.out" | sed "s/^/$lens\t/" >>"$OUT"

@@ -22,8 +22,7 @@ SERVICE = DIR / "lifekit-scout.service"
 TIMER = DIR / "lifekit-scout.timer"
 
 # Prints one line per `args =` in the config, placeholders filled, the way the
-# echo plugin would; a database file marks "seen". FAILME exits 1, TIMEOUTME
-# logs the -v line feed2exec writes for a dead feed.
+# echo plugin would; a database file marks "seen". FAILME exits 1.
 FAKE_FEED2EXEC = r"""#!/usr/bin/env bash
 echo "$*" >> "$STATE_DIR/f2e-calls"
 cfg="" db="" catchup=0
@@ -36,7 +35,6 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 grep -q FAILME "$cfg" && { echo "KeyError: 'published'" >&2; exit 1; }
-grep -q TIMEOUTME "$cfg" && echo "timeout while fetching feed gh:dead https://x.test/dead.atom" >&2
 seen=0; [[ -e "$db" ]] && seen=1
 : > "$db"
 ((seen || catchup)) && exit 0
@@ -222,20 +220,6 @@ def test_a_failed_note_is_retried_not_lost(tmp_path):
     assert len(notes) == 1 and "--request-id scout-2026-11-16" in notes[0]
     e.run(date="2026-11-18")
     assert len(e.notes()) == 1
-
-
-def test_dead_feeds_are_counted_per_day_and_reset(tmp_path):
-    e = Env(tmp_path)
-    e.lens("harness", LENS + "\n")
-    dead = LENS.replace("[web:b]", "[gh:dead]\nurl = TIMEOUTME\nargs = gh:dead {item.link}\n\n[web:b]")
-    e.lens("harness", dead)
-    e.run()
-    e.run(date="2026-11-17")
-    f = e.state / "health/harness.gh_dead"
-    assert f.read_text().strip() == "2"
-    e.lens("harness")
-    e.run(date="2026-11-18")
-    assert not f.exists()
 
 
 def test_needs_the_inbox_binary_and_feed2exec(tmp_path):

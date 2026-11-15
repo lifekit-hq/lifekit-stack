@@ -45,8 +45,6 @@ runs clean, so a later breakage is reported again). Other lenses still run.
   (echo-plugin output, shell-quoted: split with a quoting-aware parser, never
   `eval`); `<date>.sent` marks the note as delivered. A failed note leaves the
   file unmarked and the next run announces it (exit 1 meanwhile);
-- `health/<lens>.<feed>` - consecutive days a feed timed out or came back empty
-  (read from `feed2exec -v`); a dead source must not look like a quiet one;
 - `broken/<lens>` - the reason a lens is currently skipped.
 
 ## Use
