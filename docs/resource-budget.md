@@ -7,8 +7,8 @@ keys on them, and shorter bursts can exceed them. A budget is set against the me
 7-day maximum 30-minute average where that range exists; where it does not, the row's
 own last column says what the number rests on instead - a sized estimate, a local
 test, a single snapshot, a sum of per-container peaks - and more than one row does.
-Read that column before treating a budget as measured. They sum to **17.10 GiB**; a **1.75 GiB burst pool** for
-short-lived work brings the total to **18.85 GiB** against the 15.6 GiB of RAM. That
+Read that column before treating a budget as measured. They sum to **17.00 GiB**; a **1.75 GiB burst pool** for
+short-lived work brings the total to **18.75 GiB** against the 15.6 GiB of RAM. That
 overcommit is intended: the groups do not peak together, and swap is the margin.
 
 The weekly ops report on 2026-10-02 shows 15-minute-plus breaches for openclaw (124%),
@@ -52,15 +52,15 @@ history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 | devclaw-mcp | 0.25 | `devclaw-mcp` (compose project `devclaw`; its sandboxes count in the burst pool) | 130 MiB |
 | dashboard | 0.25 | the dashboard service (compose project `dashboard`) | 114 MiB |
 | xui | 0.25 | web, db (compose project `xui`) | 188 MiB |
-| backstage | 0.15 | the Backstage service (compose project `backstage`, on `lifekit-shared`) | new 2026-10-12; sustained estimate, not yet measured - replace with the measurement (owner: maintainer, #484); its series already holds the seven days, so this waits on box access, not on a window |
-| basket | 0.25 | the app and its Postgres (compose project `basket`; containers `basket-app`, `basket-db`) | new 2026-11-06; sized estimate, not yet measured (owner: maintainer, #484; see below) |
+| backstage | 0.09 | the Backstage service (compose project `backstage`, on `lifekit-shared`) | new 2026-10-12; measured 2026-11-15: 0.069 + 0.017 = about 0.09 GiB, the 7-day `max_over_time(docker_container_memory_usage_bytes{project="backstage"}[7d])` peaks of backstage (0.069) and backstage-db (0.017); the series is usage minus `inactive_file` (the working set, `compose/container-exporter/exporter.py`) and the figure is its 7-day peak |
+| basket | 0.21 | the app and its Postgres (compose project `basket`; containers `basket-app`, `basket-db`) | new 2026-11-06; measured 2026-11-15: 0.163 + 0.044 = about 0.21 GiB, the 7-day `max_over_time(docker_container_memory_usage_bytes{project="basket"}[7d])` peaks of basket-app (highest single series 0.163; its series run 0.079 to 0.163 across instance ids) and basket-db (0.044); the series is usage minus `inactive_file` (the working set, `compose/container-exporter/exporter.py`) and the figure is its 7-day peak (see below) |
 | identity | 0.5 | logto, postgres (compose project `identity`); capped at 512 + 256 MiB. Also the tailnet sign-in gate, traefik and oauth2-proxy (compose project `edge`), capped at 128 + 64 MiB | new 2026-10-02: logto 218-266 MiB, postgres 38-71 MiB just after first boot in local tests; traefik about 21 MiB, oauth2-proxy about 5 MiB in local tests |
 | operator sessions | 6.8 | the operator's login slice (`user-1001.slice`): agent sessions, their browser helpers, tools | 4.3 GiB resident at the 5-worker cap (2026-10-01); 30-minute average 3.5 p50, 5.1 p95, 6.8 max over 7 days |
 | runners | 1.4 | the CI runner services and their jobs | 0.2-0.45 GiB idle; 1.6 GiB raw and 1.0 GiB 30-minute average during the 2026-10-01 image-rebuild deploy; 1.37 GiB 30-minute average max over 7 days |
 | OS | 1.0 | dockerd, containerd, shims, tailscaled, journald (the `os` gauge counts only these four units; cron and the other system services, about 80 MiB in the same snapshot, are not in any gauge and sit in this row's headroom) | about 0.75 GiB (snapshot) |
-| **Sum** | **17.10** | | |
+| **Sum** | **17.00** | | |
 | burst pool | 1.75 | everything else that runs as a container: devclaw sandboxes, `openclaw-cli` runs, rehearsals, CI and worker validation containers, test compose projects, any orphan | 30-minute average 0.14 GiB p50, 0.78 p95, 1.66 max over 7 days; one worker container reached 3164 MiB (a spike, not sustained) |
-| **Total** | **18.85** | of 15.6 GiB RAM | |
+| **Total** | **18.75** | of 15.6 GiB RAM | |
 
 **Operator sessions, runners and burst pool, recalibrated 2026-10-01** (was 3.5, 0.75 and 3.0 GiB; the
 per-group alerts that read them fired at 113-116% on the first day, with 4-5 worker
@@ -88,17 +88,12 @@ the member names do not matter to any query here; where they appear they are the
 names [`runbook.md`](./runbook.md) "Off-box backup (R2)" drives (`docker stop basket-app`,
 `docker exec basket-db`), not the compose service labels the rows above use - the db service's
 label is `db` (`scripts/offbox-backup/offbox_backup.py`), and nothing in this repo names the
-app's. The 0.25 GiB is a **sized estimate, not a measurement** - xui is the same
-app-plus-Postgres shape at a 188 MiB peak, identity's Postgres sits at 38-71 MiB - because no
-reading of the box was reachable when the row was written. Replace it (owner: maintainer,
-tracked in #484) with the real 7-day peak once
-`docker_container_memory_usage_bytes{project="basket"}` holds seven full days - check that
-range, do not take the report's first basket row for the measurement: a container group's query
-ends `or vector(0)`, so a row prints from the first scrape onwards however little history
-stands behind it. The container exporter reads every container on the box, so that history may
-already be there. The same issue carries backstage's older estimate, which needs no waiting
-window at all: its series has been recorded since 2026-10-12, so the seven days are already
-behind it and the measurement waits on box access alone.
+app's. The 0.21 GiB is a **measurement** (2026-11-15, closing #484): the sum of the 7-day
+`max_over_time(docker_container_memory_usage_bytes{project="basket"}[7d])` peaks of
+`basket-app` (0.163 GiB, the highest of its series; older instance ids peaked as low as
+0.079) and `basket-db` (0.044 GiB). The series is usage minus `inactive_file`, i.e. the
+working set (`compose/container-exporter/exporter.py`), and the figure is its 7-day peak. Backstage was measured the same way on the same date: 0.069
+GiB for `backstage` plus 0.017 GiB for `backstage-db`, about 0.09 GiB.
 
 **Basket is scraped but has no alert rule (2026-11-12).** Its `basket-app` serves `/metrics` on
 `:3310` over `lifekit-shared`, scraped as job `basket` in
