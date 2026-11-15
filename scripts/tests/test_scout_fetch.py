@@ -326,8 +326,11 @@ def test_timer_fires_daily_at_0530_london_time():
             capture_output=True,
             text=True,
             check=True,
+            # TZ=UTC pins the output shape: with a non-UTC host zone systemd adds an
+            # "(in UTC)" line, with a UTC host it does not.
+            env={**os.environ, "TZ": "UTC"},
         ).stdout
-        return re.findall(r"\(in UTC\): \w+ (\S+ \S+) UTC", out)
+        return re.findall(r"(?:Next elapse|Iteration #\d+): \w+ (\S+ \S+) UTC", out)
 
     # 05:30 in London is 05:30 UTC in winter and 04:30 UTC under BST, every day
     assert elapses("2026-11-16 00:00:00 UTC") == [
@@ -382,7 +385,13 @@ def test_installer_installs_feed2exec_and_units_but_does_not_enable(tmp_path):
             capture_output=True,
             text=True,
         )
-        assert v.returncode == 0 and v.stdout + v.stderr == "", v.stdout + v.stderr
+        # verify also lints the host's own units; only our units are ours to fix
+        ours = [
+            ln
+            for ln in (v.stdout + v.stderr).splitlines()
+            if "lifekit-scout" in ln
+        ]
+        assert v.returncode == 0 and ours == [], v.stdout + v.stderr
     env = (root / "etc/lifekit/scout.env").read_text()
     assert (
         "FM_INBOX_BIN=/opt/fm/fm-inbox.sh" in env and "FM_INBOX_HOME=/home/x/fm" in env
