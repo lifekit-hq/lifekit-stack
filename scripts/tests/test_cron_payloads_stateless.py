@@ -87,6 +87,7 @@ def test_the_declared_payloads_are_all_found():
         "scripts/ensure-needs-you-digest.sh",
         "scripts/ensure-memory-vault-cleanup.sh",
         "scripts/ensure-today-brief-fleet.sh",
+        "scripts/ensure-learning-line.sh",
     ):
         assert (
             expected in found
