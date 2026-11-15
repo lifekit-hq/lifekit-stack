@@ -548,10 +548,16 @@ positioning digest. `ledger-lit-digest` (Sunday 20:00 Dublin, two rows) is also 
 is neither retired nor revived by this change. Neither the cron store nor the
 finance agent's workspace is in git, so this change is three operator steps on
 the host. Step 1 ran on 2026-09-19 against the live gateway: the two parked
-`ledger-scan` rows are gone from the cron store. Steps 2 and 3 are not
-applied - the live agent still carries its fifteen skills and the untrimmed
-persona - and stay listed here as operator steps, for this host and for a
-rebuilt one.
+`ledger-scan` rows are gone from the cron store. Step 3 (the persona) is
+done: the Ledger persona is composed from finance-sentry by
+`scripts/ledger-persona/` (pinned in `PIN`), so the hand edits below no
+longer apply and stay as the record. Step 2 (the skill allowlist) is pending
+the finance agent skill cleanup, which runs once the new persona is live: it
+removes the retired-scan leftovers (`thesis-tracker`, `catalyst-calendar`,
+`idea-generation`) from the allowlist and the workspace, and the stale
+`event-log.jsonl` / `learning-journal.jsonl` files from the workspace
+`state/`. Once that cleanup has run, steps 2 and 3 are done; the steps stay
+listed for a rebuilt host.
 
 1. **Cron store.** Remove the parked `ledger-scan` rows through the gateway's
    own cron command (the ids come from `openclaw cron list --all --json`,
