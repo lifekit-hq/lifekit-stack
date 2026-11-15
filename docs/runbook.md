@@ -429,9 +429,9 @@ a payload rule cannot cover it without reading run history, which the stateless 
 forbids. With the repeating steps gone a retry finds less to send, but it can still
 resend: after a timed-out run that already sent, events still pending because the
 run was cut off between the send and the acknowledgement (the verdict is recorded
-before the acknowledge on purpose), and the Sunday digest when the first run fails
+before the acknowledge on purpose), and the Sunday digest or the step 7 coverage read when the first run fails
 fast near 09:20, since the first retry starts 30 s after a failure, before the
-09:22 cutoff of step 6. No guarantee covers these until the OpenClaw change below.
+09:22 cutoff of steps 6 and 7. No guarantee covers these until the OpenClaw change below.
 Closing the gap properly takes an OpenClaw change: retry only when no outbound
 message settled in the failed run.
 
@@ -4721,8 +4721,12 @@ agent's workspace `AGENTS.md`. Bump the pin by a PR that edits `PIN`.
 Ledger runs the thesis loop itself: finance-sentry emits `ThesisReviewDue` and
 `CandidateReviewDue` companion events, the pulse (`scripts/finance-pulse.md`, step 1)
 hands them to the persona's review loop, and Ledger's service token writes theses
-(audited) and promotes candidates through the server's risk gate. The owner's call is
-only to buy or not; Ledger does not ask the owner to confirm a thesis or a promotion.
+(audited) for those review-loop revisions. Ledger never promotes a candidate itself:
+promotion is the owner's, filed as a proposal through P2. A thesis revision that
+comes from a coverage memo or news (step 7) is proposed through P2 the same way; Ledger
+does not ask the owner in a chat message to confirm either. Step 7 reads
+`list_coverage` and new memos once a day, on the first run (the 09:20 slot, same
+gate as the Sunday digest), and stays silent when nothing changed.
 
 Every deploy runs `install` and then `check` as `lifekit` (no sudo; a step near
 the end of `scripts/deploy.sh`), so a merged `PIN` bump reaches the live persona
