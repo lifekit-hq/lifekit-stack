@@ -5842,7 +5842,6 @@ The captain's PC is not measured, as in the script.
    OTEL_METRICS_EXPORTER=otlp
    OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
    OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-   OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
    OTEL_METRICS_INCLUDE_SESSION_ID=false
    OTEL_RESOURCE_ATTRIBUTES=consumer=firstmate   # firstmate | devclaw | openclaw
    ```
