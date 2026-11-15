@@ -2065,9 +2065,25 @@ prose included, reaches Kit's model unchanged.
 Part of the P16 permission engine: an OpenClaw agent that reaches an action the owner has
 ruled stop-and-file is stopped and the request is filed for him, instead of the agent
 asking in chat. The agents run on the `claude-cli` runtime, and a tool call there still
-passes OpenClaw's `before_tool_call` hook (checked inside the running gateway, 2026.10.7;
-not re-verified under the pinned 2026.10.9, which needs `openclaw plugins inspect fleet-gate`
-and a live call), so a plugin can see and veto it.
+passes OpenClaw's `before_tool_call` hook (checked inside the running gateway, 2026.10.7),
+so a plugin can see and veto it.
+
+Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
+
+- `openclaw plugins inspect fleet-gate` shows it enabled, version 0.1.0, origin global,
+  source `~/.openclaw/extensions/fleet-gate/index.js`, shape non-capability. A diagnostics
+  WARN says OpenClaw cannot verify the plugin's origin (record missing, `installSource`
+  null): it loads because `plugins.allow` lists it, and it is not a trusted plugin.
+- The hook fires: the plugin's own log (`~/.openclaw/logs/fleet-gate.jsonl`) holds 4674
+  events from 2026-11-08T22:15Z to 2026-11-15T09:09Z, every one `table-missing` with effect
+  `allowed`. The plugin runs on tool calls, so `before_tool_call` is invoked; this confirms
+  the hook fires, not that it vetoes.
+- **Current condition: the gate allows and logs everything.** The P16 table
+  (`p16-openclaw.json`) was never installed: the extension directory holds `index.js`,
+  `openclaw.plugin.json` and `package.json` only, the source `ensure-fleet-gate.sh` reads
+  (`/var/lib/lifekit/fleet-policy/p16-openclaw.json`) does not exist, and fleet-policy has
+  no renderer for it. A live veto has not been observed and cannot be until a table is
+  rendered and installed (follow-up for fleet-policy).
 
 - **Seam:** the `fleet-gate` gateway plugin (`compose/openclaw-gateway/plugins/fleet-gate`),
   `before_tool_call` for every tool and `after_tool_call` for the outcome of the logged
@@ -2138,9 +2154,10 @@ and a live call), so a plugin can see and veto it.
   ```
 
   Per-agent allow and deny lists were not enforced under `claude-cli` when last tried
-  (2026-05-25, `docs/openclaw-agent-design.md`); it is not re-verified under 2026.10.7 or
-  2026.10.9, so treat the patch as intent until a `devclaw__*` call from a non-main agent is
-  seen refused, and give the table a `devclaw__*` stop row if it is not.
+  (2026-05-25, `docs/openclaw-agent-design.md`). Still unverified under 2026.10.9 (checked
+  2026-11-15): no table is installed, so the fleet gate vetoes nothing, and no `devclaw__*`
+  call from a non-main agent has been driven live. Treat the patch as intent until such a
+  call is seen refused, and give the table a `devclaw__*` stop row if it is not.
 - **Rehearse:** `scripts/rehearse-fleet-gate.sh` loads the repo's plugin in node with a
   scratch table and state dir and a recording `ssh`, plays one `A`, one `L` and one `S`
   call, and prints what each returned and what was filed. It touches no container and no
