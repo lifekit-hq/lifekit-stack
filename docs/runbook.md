@@ -548,10 +548,16 @@ positioning digest. `ledger-lit-digest` (Sunday 20:00 Dublin, two rows) is also 
 is neither retired nor revived by this change. Neither the cron store nor the
 finance agent's workspace is in git, so this change is three operator steps on
 the host. Step 1 ran on 2026-09-19 against the live gateway: the two parked
-`ledger-scan` rows are gone from the cron store. Steps 2 and 3 are not
-applied - the live agent still carries its fifteen skills and the untrimmed
-persona - and stay listed here as operator steps, for this host and for a
-rebuilt one.
+`ledger-scan` rows are gone from the cron store. Step 3 (the persona) is
+done: the Ledger persona is composed from finance-sentry by
+`scripts/ledger-persona/` (pinned in `PIN`), so the hand edits below no
+longer apply and stay as the record. Step 2 (the skill allowlist) is pending
+the finance agent skill cleanup, which runs once the new persona is live: it
+removes the retired-scan leftovers (`thesis-tracker`, `catalyst-calendar`,
+`idea-generation`) from the allowlist and the workspace, and the stale
+`event-log.jsonl` / `learning-journal.jsonl` files from the workspace
+`state/`. Once that cleanup has run, steps 2 and 3 are done; the steps stay
+listed for a rebuilt host.
 
 1. **Cron store.** Remove the parked `ledger-scan` rows through the gateway's
    own cron command (the ids come from `openclaw cron list --all --json`,
@@ -4742,7 +4748,7 @@ override with `--workspace DIR` or `LEDGER_WORKSPACE`. `install` refuses a
 persona over OpenClaw's `bootstrapMaxChars` (20,000 characters), because the
 agent would load it truncated; `--allow-oversize` overrides. The pin must be
 at or past finance-sentry's trim under that limit (#968; the composition is about
-19,800 characters at the 2026-10-15 pin, it was about 23,300 before the trim). Only `AGENTS.md` is
+19,950 characters at the 2026-11-15 pin, it was about 23,300 before the trim). Only `AGENTS.md` is
 written: `MEMORY.md` and `USER.md` are vault pointers set by their own deploy
 step (see [Workspace memory files are pointers](#workspace-memory-files-are-pointers)),
 and the other workspace files stay host state. `install`
