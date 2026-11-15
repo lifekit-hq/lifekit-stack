@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the scout fetch daily
+
+[Timer]
+OnCalendar=*-*-* 05:30:00 Europe/London
+# A day the box was off is fetched at the next boot.
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
