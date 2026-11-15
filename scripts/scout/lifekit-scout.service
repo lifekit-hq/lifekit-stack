@@ -1,0 +1,21 @@
+[Unit]
+Description=Fetch new items from the vault scout lenses and note firstmate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The operator account that owns the vault clone and firstmate's inbox; HOME (and
+# so the state under ~/.local/state/lifekit-scout) follows it. install-scout.sh
+# substitutes both placeholders and writes FM_INBOX_BIN / FM_INBOX_HOME (and an
+# optional SCOUT_LENS_DIR) to the environment file below.
+User=__SCOUT_USER__
+EnvironmentFile=-/etc/lifekit/scout.env
+ExecStart=/usr/bin/env bash __REPO_DIR__/scripts/scout/scout-fetch.sh
+TimeoutStartSec=600
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
