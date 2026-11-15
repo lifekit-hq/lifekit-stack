@@ -41,9 +41,10 @@ runs clean, so a later breakage is reported again). Other lenses still run.
 `SCOUT_STATE_DIR` (default `~/.local/state/lifekit-scout`):
 
 - `db/<lens>.sqlite` - feed2exec's seen-items database, one per lens;
-- `candidates/<date>.txt` - new items of that UTC day, `lens<TAB>tag link title`
-  (echo-plugin output, shell-quoted: split with a quoting-aware parser, never
-  `eval`); `<date>.sent` marks the note as delivered. A failed note leaves the
+- `candidates/<date>.txt` - new items of that UTC day, `lens<TAB>` plus the
+  echo-plugin line as printed (shell-quoted: split with a quoting-aware parser,
+  never `eval`). Each lens's lines are appended as soon as its feed2exec call
+  returns, failed call included, because feed2exec has already marked them seen; `<date>.sent` marks the note as delivered. A failed note leaves the
   file unmarked and the next run announces it (exit 1 meanwhile);
 - `broken/<lens>` - the reason a lens is currently skipped.
 
@@ -74,4 +75,6 @@ and `/etc/lifekit/scout.env`, delete the state directory.
 ## Tests
 
 `scripts/tests/test_scout_fetch.py` runs the script against a stub `feed2exec`
-and a stub `fm-inbox.sh`.
+and a stub `fm-inbox.sh` (the real `fm-inbox.sh note [--request-id <id>] [--] <text>`
+usage is documented in its header), and checks the timer with `systemd-analyze
+calendar` and the installed units with `systemd-analyze verify`.

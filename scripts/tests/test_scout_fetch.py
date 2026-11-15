@@ -10,15 +10,19 @@ down the units without enabling the timer. feed2exec and fm-inbox.sh are stubs.
 
 from __future__ import annotations
 
+import configparser
 import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 DIR = REPO / "scripts/scout"
 FETCH = DIR / "scout-fetch.sh"
 INSTALLER = DIR / "install-scout.sh"
-SERVICE = DIR / "lifekit-scout.service"
 TIMER = DIR / "lifekit-scout.timer"
 
 # Prints one line per `args =` in the config, placeholders filled, the way the
@@ -39,6 +43,9 @@ seen=0; [[ -e "$db" ]] && seen=1
 : > "$db"
 ((seen || catchup)) && exit 0
 grep -E '^args' "$cfg" | sed -E "s/^args *= *//; s|\{item.link\}|https://x.test/item|; s|\{item.title\}|'Title one'|"
+grep -q PARTIAL "$cfg" && { echo "KeyError: 'published'" >&2; exit 1; }
+grep -q KILLME "$cfg" && kill -KILL "$PPID"
+exit 0
 """
 
 # Records each call; fails when NOTE_FAIL is set.
@@ -83,7 +90,10 @@ class Env:
             d.mkdir()
         self.stub_state = tmp / "stubstate"
         self.stub_state.mkdir()
-        for name, body in (("feed2exec", FAKE_FEED2EXEC), ("fm-inbox.sh", FAKE_FM_INBOX)):
+        for name, body in (
+            ("feed2exec", FAKE_FEED2EXEC),
+            ("fm-inbox.sh", FAKE_FM_INBOX),
+        ):
             p = self.stub / name
             p.write_text(body)
             p.chmod(0o755)
@@ -188,6 +198,52 @@ def test_broken_lens_is_skipped_and_reported_once(tmp_path):
     assert len([n for n in e.notes() if "lens 'bad'" in n]) == 2
 
 
+def test_items_are_kept_even_when_the_args_carry_no_source_tag(tmp_path):
+    e = Env(tmp_path)
+    e.lens(
+        "plain",
+        LENS.replace("args = gh:a ", "args = gh ").replace(
+            "args = web:b ", "args = web "
+        ),
+    )
+    r = e.run()
+    assert r.returncode == 0, r.stderr
+    lines = (e.state / "candidates/2026-11-16.txt").read_text().splitlines()
+    assert lines == [
+        "plain\tgh https://x.test/item 'Title one'",
+        "plain\tweb https://x.test/item 'Title one'",
+    ]
+    assert "2 new items" in e.notes()[0]
+
+
+def test_items_printed_before_a_feed2exec_failure_are_kept(tmp_path):
+    e = Env(tmp_path)
+    e.lens("partial", LENS.replace("url = https://x.test/b.atom", "url = PARTIAL"))
+    r = e.run()
+    assert r.returncode == 0, r.stderr
+    lines = (e.state / "candidates/2026-11-16.txt").read_text().splitlines()
+    assert len(lines) == 2 and all(line.startswith("partial\t") for line in lines)
+    notes = e.notes()
+    assert any("lens 'partial' skipped, feed2exec failed" in n for n in notes)
+    assert any("2 new items from 1 lens(es)" in n for n in notes)
+
+
+def test_items_of_earlier_lenses_survive_a_killed_run(tmp_path):
+    e = Env(tmp_path)
+    e.lens("a-first")
+    e.lens("z-last", LENS.replace("url = https://x.test/b.atom", "url = KILLME"))
+    r = e.run()
+    assert r.returncode != 0  # the run was killed mid-way: no note went out
+    assert e.notes() == []
+    lines = (e.state / "candidates/2026-11-16.txt").read_text().splitlines()
+    assert [line.split("\t")[0] for line in lines] == ["a-first", "a-first"]
+    # the next run announces what the killed one had already recorded
+    r = e.run()
+    assert r.returncode == 0, r.stderr
+    notes = e.notes()
+    assert len(notes) == 1 and "2 new items from 1 lens(es)" in notes[0]
+
+
 def test_off_and_non_lens_pages_are_ignored(tmp_path):
     e = Env(tmp_path)
     e.lens("off", LENS.replace("scout: on", "scout: off"))
@@ -248,13 +304,42 @@ def test_unknown_argument_is_a_usage_error(tmp_path):
     assert Env(tmp_path).run("--bogus").returncode == 2
 
 
-def test_timer_is_daily_and_the_service_runs_the_script():
-    t = TIMER.read_text()
-    assert "OnCalendar=*-*-* 05:30:00 Europe/London" in t and "Persistent=true" in t
-    s = SERVICE.read_text()
-    assert "Type=oneshot" in s
-    assert "scripts/scout/scout-fetch.sh" in s
-    assert "EnvironmentFile=-/etc/lifekit/scout.env" in s
+@pytest.mark.skipif(
+    shutil.which("systemd-analyze") is None, reason="needs systemd-analyze"
+)
+def test_timer_fires_daily_at_0530_london_time():
+    timer = configparser.ConfigParser(strict=False, interpolation=None)
+    timer.optionxform = str
+    timer.read(TIMER)
+    spec = timer["Timer"]["OnCalendar"]
+    assert timer["Timer"]["Persistent"] == "true"
+
+    def elapses(base: str) -> list[str]:
+        out = subprocess.run(
+            [
+                "systemd-analyze",
+                "calendar",
+                "--iterations=3",
+                f"--base-time={base}",
+                spec,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        return re.findall(r"\(in UTC\): \w+ (\S+ \S+) UTC", out)
+
+    # 05:30 in London is 05:30 UTC in winter and 04:30 UTC under BST, every day
+    assert elapses("2026-11-16 00:00:00 UTC") == [
+        "2026-11-16 05:30:00",
+        "2026-11-17 05:30:00",
+        "2026-11-18 05:30:00",
+    ]
+    assert elapses("2026-07-01 00:00:00 UTC") == [
+        "2026-07-01 04:30:00",
+        "2026-07-02 04:30:00",
+        "2026-07-03 04:30:00",
+    ]
 
 
 def test_installer_installs_feed2exec_and_units_but_does_not_enable(tmp_path):
@@ -286,8 +371,22 @@ def test_installer_installs_feed2exec_and_units_but_does_not_enable(tmp_path):
     unit = (root / "etc/systemd/system/lifekit-scout.service").read_text()
     assert "User=scoutuser" in unit and "__" not in unit
     assert (root / "etc/systemd/system/lifekit-scout.timer").is_file()
+    if shutil.which("systemd-analyze"):
+        v = subprocess.run(
+            [
+                "systemd-analyze",
+                "verify",
+                str(root / "etc/systemd/system/lifekit-scout.service"),
+                str(root / "etc/systemd/system/lifekit-scout.timer"),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert v.returncode == 0 and v.stdout + v.stderr == "", v.stdout + v.stderr
     env = (root / "etc/lifekit/scout.env").read_text()
-    assert "FM_INBOX_BIN=/opt/fm/fm-inbox.sh" in env and "FM_INBOX_HOME=/home/x/fm" in env
+    assert (
+        "FM_INBOX_BIN=/opt/fm/fm-inbox.sh" in env and "FM_INBOX_HOME=/home/x/fm" in env
+    )
 
 
 def test_installer_needs_root_outside_a_test_root():

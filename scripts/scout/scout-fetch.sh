@@ -94,8 +94,6 @@ report_broken() {  # <lens> <reason> - once per breakage, on the transition
   fi
 }
 
-OUT="$WORK/new.txt"
-: >"$OUT"
 for page in "$LENS_DIR"/*.md; do
   [[ -f "$page" ]] || continue
   lens="$(basename "$page" .md)"
@@ -111,25 +109,21 @@ for page in "$LENS_DIR"/*.md; do
 
   args=(-v --config "$WORK/$lens.ini" --database "$STATE/db/$lens.sqlite" fetch)
   ((CATCHUP)) && args+=(--catchup)
-  if ! "$FEED2EXEC" "${args[@]}" >"$WORK/$lens.out" 2>"$WORK/$lens.err"; then
+  "$FEED2EXEC" "${args[@]}" >"$WORK/$lens.out" 2>"$WORK/$lens.err"; rc=$?
+  # feed2exec has already marked whatever it printed as seen, so the printed
+  # lines are the only copy: keep every one, even when the run then failed.
+  if ((!CATCHUP)) && grep -q '[^[:space:]]' "$WORK/$lens.out"; then
+    grep '[^[:space:]]' "$WORK/$lens.out" | sed "s/^/$lens\t/" >>"$CAND/$TODAY.txt"
+    rm -f "$CAND/$TODAY.sent"
+  fi
+  if ((rc != 0)); then
     report_broken "$lens" "feed2exec failed ($(tail -n1 "$WORK/$lens.err" | cut -c1-160))"
     continue
   fi
   rm -f "$STATE/broken/$lens"
-  ((CATCHUP)) && continue
-  # echo-plugin lines are `<tag>:<name> <link> <title>`; a title with a newline
-  # would add continuation lines, which are dropped here.
-  grep -E '^[A-Za-z0-9_.-]+:[^ ]* ' "$WORK/$lens.out" | sed "s/^/$lens\t/" >>"$OUT"
 done
 
 ((CATCHUP)) && { echo "scout-fetch: catch-up done, nothing sent"; exit 0; }
-
-# New items: append to today's candidates file (feed2exec has already marked
-# them seen, so the file is the only copy) and mark it unsent.
-if [[ -s "$OUT" ]]; then
-  cat "$OUT" >>"$CAND/$TODAY.txt"
-  rm -f "$CAND/$TODAY.sent"
-fi
 
 # Send one note per candidates file not yet announced: today's, plus any whose
 # note failed on an earlier day. The request id carries the file's line count, so
