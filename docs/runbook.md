@@ -2397,11 +2397,12 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
   - The owner's own chat with learnclaw in the OpenClaw Control UI. This is the only route that
     records a row, since a row holds the owner's own words.
   - kit, as a subagent run, once `learnclaw` is in kit's `subagents.allowAgents`. kit relays the
-    answer, and a subagent run never records.
-  - No Telegram account and no cron in v0: nothing runs unless asked.
+    answer, and a subagent run never records. The 21:00 `evening-plan-note` run does this daily
+    for the plan's learning line (see "Learning objective line from learnclaw").
+  - learnclaw has no cron of its own in v0: apart from that daily kit run, nothing runs unless asked.
 - **Cost:** a run is one Sonnet 4.6 conversation turn on the gateway's subscription. Measured on
   comparable career runs, that is about 50k tokens, mostly cache reads: roughly $0.10-0.20 at list
-  prices. Nothing is scheduled, so the idle cost is zero.
+  prices. Only the daily plan run schedules one, so the idle cost is that one run a day.
 
 **Operator steps (once, after the merge deploys).** The agent entry is host state.
 
@@ -2445,7 +2446,7 @@ shows `learning-record` ready. The rehearsal printed `recorded: | <date> | ...`,
 **Pause** (the agent and its record stay): take `learnclaw` out of kit's
 `subagents.allowAgents`, and patch `{"agents":{"entries":{"learnclaw":{"skills":[]}}}}`. The
 agent can still talk, but it can no longer read or write the record, and kit no longer reaches it.
-Nothing is scheduled, so there is nothing else to stop. Resume by re-applying steps 3 and 4.
+The 21:00 plan run then writes "Learning objective unavailable (learnclaw)". Resume by re-applying steps 3 and 4.
 
 **Retire / roll back:** `openclaw agents delete learnclaw` (it removes the entry and its
 bindings). Then revert kit's `allowAgents` and the live kit "Learning" section,
