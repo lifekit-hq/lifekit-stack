@@ -1590,6 +1590,57 @@ and the status read is an HTTP GET Kit could always make.
 - **Rollback:** revert the skill and re-run the ensure script. Notes already sent stay
   in the inbox they were sent to.
 
+#### Dev problems go to firstmate, not the owner
+
+The owner is never the messenger. When Kit or Ledger finds a dev-class problem (a defect in
+a fleet app, a failing data source, a broken tool), it files one note to the main
+firstmate's inbox and tells the owner nothing; firstmate places it in the owning repo's queue.
+It is the Kit relay above, not a new channel: same key, forced command, `kit-` request ids
+and 30-notes-an-hour bucket, home `firstmate`.
+
+- **Skill:** `skills/firstmate-handoff`, installed into the `kit` and `finance` (Ledger)
+  workspaces by `scripts/ensure-firstmate-handoff.sh`. The command is
+  `sh {baseDir}/handoff.sh send <kit|ledger> <body-file>`; `handoff.sh replies [<cursor>]`
+  reads answers. The body needs a `what:` and an `evidence:` line (`impact:`, `repo:` and
+  `blocked-on:` are optional; the skill has a sample). The script adds the header
+  `task: dev problem from <agent>`, so firstmate reads it as a task, and derives
+  `kit-<UTC day>-<agent>-<sha256[:16]>` as the request id: the same note the same day is a
+  replay. It sends on any turn, because the finding is the agent's own, not the owner's words.
+- **Externally blocked:** a note with `blocked-on: external (<who>)` is held by firstmate as
+  an `external` wait, which the fleet page shows as a held item (`records[].hold.owner:
+  "external"`, counted in `projects[].held_external` and `queue.held_external`, see
+  `scripts/fleet-publisher/README.md`), not a message to the owner.
+- **Instructions:** Kit's line is in `defaults/agents/kit/workspace/AGENTS.md` ("Dev work");
+  Ledger's route is the skill's description, because its persona is composed from
+  finance-sentry (`scripts/ledger-persona/PIN`) and changes only there.
+- **Check:** `scripts/tests/test_firstmate_handoff.py` runs `handoff.sh` as each agent through
+  the rendered `kit-relay` into a scratch firstmate inbox. On the host, after the steps below:
+  `docker exec "$G" sh /home/node/.openclaw/agents/finance/workspace/skills/firstmate-handoff/handoff.sh replies`
+  returns `kit-relay-receipts.v1`.
+
+Operator steps, once per host after the PR deploys (as `lifekit`; the live config and the
+live `AGENTS.md` are host state):
+
+```bash
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-firstmate-handoff.sh   # reports each allowlist
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+# For each agent the report says is NOT listed (kit, finance); skip an unfiltered one.
+for A in kit finance; do
+  docker exec -e A=$A "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const a=process.env.A;const s=c.agents.entries[a].skills;if(!Array.isArray(s))process.exit(0);if(!s.includes("firstmate-handoff"))s.push("firstmate-handoff");process.stdout.write(JSON.stringify({agents:{entries:{[a]:{skills:s}}}}))' > /tmp/$A-skills.patch.json
+  [ -s /tmp/$A-skills.patch.json ] || continue
+  docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/$A-skills.patch.json
+  docker exec -i "$G" openclaw config patch --stdin < /tmp/$A-skills.patch.json
+done
+```
+
+Then paste the new "A dev-class problem you find yourself" bullet of the "Dev work" section of
+`defaults/agents/kit/workspace/AGENTS.md` into the live kit `AGENTS.md` (the section, not the
+whole file). Ledger's own persona still tells it to hand build work to Kit with
+`sessions_send`; that line moves to this route by a finance-sentry `agent/ledger` change and
+a `PIN` bump. **Rollback:** remove the skill folder from both workspaces and the allowlist
+entries; notes already sent stay in firstmate's inbox.
+
 ### Kit's workout log and gym-day nudge
 
 Kit logs a gym session from one typed or spoken line and confirms it in one line, answers

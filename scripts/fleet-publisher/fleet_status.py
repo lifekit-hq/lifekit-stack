@@ -420,6 +420,7 @@ def projects(
                 "in_flight": sum(r["state"] == "in_flight" for r in items),
                 "queued": sum(r["state"] == "queued" for r in items),
                 "held": sum(r["state"] == "held" for r in items),
+                "held_external": held_external(items),
                 "last_landed": None
                 if last is None
                 else {
@@ -590,6 +591,15 @@ def throughput(paths: list[str], now: int) -> dict[str, Any]:
     }
 
 
+def held_external(records: list[dict[str, Any]]) -> int:
+    """The held records waiting on the outside world: an externally blocked item
+    is a state on the page, never a message to the owner."""
+    return sum(
+        r["state"] == "held" and (r["hold"] or {}).get("owner") == "external"
+        for r in records
+    )
+
+
 def queue(records: list[dict[str, Any]], paths: list[str], now: int) -> dict[str, Any]:
     open_ = [r for r in records if r["state"] == "queued"]
     # The backlog's own order within a priority; unprioritised work last.
@@ -600,6 +610,7 @@ def queue(records: list[dict[str, Any]], paths: list[str], now: int) -> dict[str
     return {
         "count": len(open_),
         "held": sum(r["state"] == "held" for r in records),
+        "held_external": held_external(records),
         "top": [
             {k: r[k] for k in ("id", "home_id", "title", "repo", "priority", "blocked")}
             for _, r in ranked[:TOP_QUEUE]

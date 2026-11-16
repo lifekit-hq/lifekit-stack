@@ -2269,6 +2269,7 @@ def test_projects_roll_up_by_repo_with_no_project_last(homes):
         "in_flight": 1,
         "queued": 1,
         "held": 1,
+        "held_external": 1,
         "last_landed": None,
         "open_prs": 3,
         "open_prs_as_of": NOW,
@@ -2289,6 +2290,7 @@ def test_projects_roll_up_by_repo_with_no_project_last(homes):
         "in_flight": 0,
         "queued": 0,
         "held": 0,
+        "held_external": 0,
         "last_landed": None,
         "open_prs": None,
         "open_prs_as_of": None,
@@ -2342,7 +2344,35 @@ def test_spellings_of_one_repo_are_one_row_with_summed_counts(homes):
     row = rows["o/sentry"]
     assert (row["repo"], row["github"], row["open_prs"]) == ("o/sentry", "o/sentry", 4)
     assert (row["in_flight"], row["queued"], row["held"]) == (1, 1, 1)
+    assert row["held_external"] == 1
     assert rows["p/sentry"]["queued"] == 1
+
+
+def test_an_externally_blocked_item_is_a_counted_state_not_a_message(homes):
+    """A dev problem an agent filed with `blocked-on: external` is held by
+    firstmate as an external wait; the page counts it apart from the captain's
+    and firstmate's own holds (docs/runbook.md, "Dev problems go to firstmate")."""
+    vps = status_home(
+        homes.tmp,
+        "fm-vps",
+        [
+            task("e1", repo="sentry", held="yes", hold_kind="external"),
+            task("e2", repo="sentry", held="yes", hold_kind="external"),
+            task("c1", repo="sentry", held="yes", hold_kind="captain"),
+            task("p1", repo="sentry", held="yes", hold_kind="parked"),
+            task("q1", repo="sentry"),
+        ],
+    )
+    assert homes.run(vps).returncode == 0
+    page = status(homes)
+    by_id = {r["id"]: r for r in page["records"]}
+    assert by_id["e1"]["state"] == "held"
+    assert by_id["e1"]["hold"]["owner"] == "external"
+    assert by_id["c1"]["hold"]["owner"] == "captain"
+    assert by_id["p1"]["hold"]["owner"] == "firstmate"
+    (row,) = [p for p in page["projects"] if p["name"] == "sentry"]
+    assert (row["held"], row["held_external"], row["queued"]) == (4, 2, 1)
+    assert (page["queue"]["held"], page["queue"]["held_external"]) == (4, 2)
 
 
 def test_a_short_name_without_a_clone_joins_the_only_owner_spelling(homes):
@@ -2580,7 +2610,7 @@ def test_queue_has_its_count_top_ten_and_seven_day_throughput(homes):
     result = homes.run(vps)
     assert result.returncode == 0, result.stderr
     q = status(homes)["queue"]
-    assert (q["count"], q["held"]) == (14, 1)
+    assert (q["count"], q["held"], q["held_external"]) == (14, 1, 0)
     # Priority first, the backlog's order within it, unprioritised last.
     assert [t["id"] for t in q["top"]] == [
         "q00",
