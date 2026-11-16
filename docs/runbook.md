@@ -781,7 +781,8 @@ image tag and compose env changed, recreates the gateway once.
   plugins as usual.
 
 **Host steps (operator, gateway container `openclaw-openclaw-gateway-1`).** Steps 1 and 2 (per-agent
-models, then `scripts/ensure-kit-cron-models.sh`) must run BEFORE the gateway recreate; the new
+models, then the cron model scripts) must run BEFORE the gateway recreate. The recreate is the
+deploy, which runs on merge to `main`, so do steps 1 and 2 before merging; the new
 `modelPolicy.allow` lists only the 5.5 models, so do not recreate the gateway before they are done.
 Steps 3 onward run after the deploy.
 
@@ -790,7 +791,9 @@ Steps 3 onward run after the deploy.
    `anthropic/claude-opus-5-5`. Check the agent ids with `openclaw agents list`.
 2. `scripts/ensure-kit-cron-models.sh --check`, then without `--check`: every Kit cron job without
    its own `payload.model` is pinned to Sonnet (`openclaw cron list` must then show a model on
-   each). A job that already names one is left alone.
+   each). A job that already names one is left alone, so also run
+   `scripts/ensure-needs-you-digest.sh`: its digest row already carries a pinned model
+   (`anthropic/claude-sonnet-4-6`), and re-running the script moves it to the 5.5 Sonnet.
 3. Pin the plugin installs: `openclaw plugins install "@openclaw/diagnostics-prometheus@<core>" --force`
    and the same for `@openclaw/duckduckgo` (the core version is `openclaw --version`); then
    `openclaw plugins inspect <id>` shows the exact version and `openclaw security audit` drops
