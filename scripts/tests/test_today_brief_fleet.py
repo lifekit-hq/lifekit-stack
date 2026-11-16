@@ -43,10 +43,12 @@ if cmd[:2] == ["cron", "list"]:
 elif cmd[:2] == ["cron", "edit"]:
     with (state.parent / "edits.jsonl").open("a") as f:
         f.write(json.dumps(cmd) + "\n")
-    msg = cmd[cmd.index("--message") + 1]
     for job in data["jobs"]:
         if job["id"] == cmd[2]:
-            job["payload"]["message"] = msg
+            if "--message" in cmd:
+                job["payload"]["message"] = cmd[cmd.index("--message") + 1]
+            if "--light-context" in cmd:
+                job["payload"]["lightContext"] = True
     state.write_text(json.dumps(data))
 else:
     sys.exit("unexpected: " + " ".join(cmd))
@@ -102,7 +104,7 @@ def test_the_fleet_step_is_added_and_the_rest_of_the_prompt_is_kept(tmp_path):
     assert res.returncode == 0, res.stderr
     (cmd,) = edits(tmp_path)
     assert cmd[:3] == ["cron", "edit", "job1"]  # today-brief, not the digest
-    assert cmd[3] == "--message" and len(cmd) == 5  # nothing but the message
+    assert cmd[3] == "--message" and cmd[5:] == ["--light-context"]  # nothing else
     message = json.loads(state.read_text())["jobs"][1]["payload"]["message"]
     assert message == cmd[4]
     assert (
@@ -305,3 +307,23 @@ def test_a_row_with_the_step_before_the_argument_names_is_upgraded(tmp_path):
     res, _ = run(tmp_path)
     assert res.returncode == 0 and "nothing to do" in res.stdout
     assert len(edits(tmp_path)) == 1
+
+
+def test_light_context_is_set_with_the_message_edit(tmp_path):
+    res, state = run(tmp_path)
+    assert res.returncode == 0, res.stderr
+    (cmd,) = edits(tmp_path)
+    assert "--light-context" in cmd
+    assert json.loads(state.read_text())["jobs"][1]["payload"]["lightContext"] is True
+
+
+def test_a_row_with_the_step_but_no_flag_gets_only_the_flag(tmp_path):
+    res, state = run(tmp_path)
+    data = json.loads(state.read_text())
+    del data["jobs"][1]["payload"]["lightContext"]
+    state.write_text(json.dumps(data))
+    (tmp_path / "edits.jsonl").unlink()
+    res, state = run(tmp_path)
+    assert res.returncode == 0, res.stderr
+    (cmd,) = edits(tmp_path)
+    assert cmd == ["cron", "edit", "job1", "--light-context"]

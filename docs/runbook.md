@@ -2551,8 +2551,12 @@ message that stops following its prompt means the prompt leaned on the bootstrap
 
 **Rollback:** `openclaw cron edit <id> --no-light-context`. Same hot reload.
 
-`scripts/ensure-today-brief-fleet.sh` edits only the message, so re-running it after a
-deploy leaves the flag as set.
+`scripts/ensure-today-brief-fleet.sh` carries the flag for `today-brief`: it sets
+`--light-context` with its message edit, and on a row that already has the fleet step
+but not the flag it sets just the flag. So on the VPS host, as `lifekit`,
+`/srv/lifekit-stack/scripts/ensure-today-brief-fleet.sh` applies the `today-brief` half
+of the operator step above; `ledger-opportunity` has no ensure script, so it still
+takes the `openclaw cron edit <id> --light-context` line.
 
 ## Rolling back OpenClaw
 
