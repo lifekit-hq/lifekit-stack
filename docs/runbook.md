@@ -406,7 +406,10 @@ row fires nothing and leaves no run history, like `job-queue-drain`. A fault (fi
 refused) throws, so the row shows the error and its failure alert fires. What the agent does on a run is
 unchanged: the checklist is still its whole task list. `scripts/ensure-finance-pulse.sh` installs the two
 gate files to `/srv/openclaw/config/gates/ledger-pulse/` and sets the row's `--trigger-script`, only when
-the stored script differs; after merge run it on the host as `lifekit`, then check one gated run:
+the stored script differs; the same script converges the row's failure alert (`--failure-alert
+--failure-alert-after 1 --failure-alert-mode announce --failure-alert-channel telegram
+--failure-alert-account-id default --failure-alert-to <chat>`, the chat from `FINANCE_PULSE_ALERT_CHAT` or
+`LIFEKIT_TELEGRAM_CHAT` in the host env file), so a gate fault always reaches Telegram; after merge run it on the host as `lifekit`, then check one gated run:
 `openclaw cron run <id> --expect-final --json` (afternoon runs with nothing pending report no run). **Undo:**
 `openclaw cron edit <id> --clear-trigger`, and keep the script from re-adding it (revert this change).
 
@@ -529,8 +532,9 @@ JSON
 ```
 
 Right after creating the row, run `/srv/lifekit-stack/scripts/ensure-finance-pulse.sh`
-so the message carries the checklist (the placeholder above does not) and the
-timeout matches the script's declared value.
+so the message carries the checklist (the placeholder above does not), the
+timeout matches the script's declared value, and the row gets its gate and its
+failure alert (the creation payload above sets neither).
 
 **Verify** after creating or after any change to the row: trigger one run
 (`openclaw cron run <id> --expect-final --json`) and confirm the result's
