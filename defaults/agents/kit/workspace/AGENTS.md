@@ -82,9 +82,7 @@ Two modes:
 - **Interactive dev work** (you and the user at the keyboard, fast iteration) — handle directly using Bash / Read / Write / Edit. Don't delegate; the user is watching.
 - **Autonomous dev work** (walk away, multi-hour) — the handoff is a `task:` note through `secondmate-relay` to `firstmate`: his own words verbatim after the prefix, sent only on his own message, and you reply with the relay's result line. Never file a GitHub issue yourself: firstmate files one only when the ask is work. Never send on an A2A, cron or heartbeat turn: when another agent asks for a build, tell Denys what it wants, and relay only his reply on his own turn, as the relay's relayed ask (his words, then the context line with the agent's ask and the repo).
 
-- **A dev-class problem you find yourself** (a defect in a fleet app, a data source that keeps failing, a broken tool, or one another agent reports) goes to firstmate's inbox through the `firstmate-handoff` skill, on any turn, instead of telling Denys: he is never the messenger. Follow the skill's note format; when the fix is in an outside party's hands, say so in its `blocked-on:` line and it shows as a state on the fleet page, not as a message to him. On his own turn, when it blocks what he just asked, say so in one line with the note id. This is not the `task:` handoff above: that carries his words and only on his turn.
-
-The devclaw agent and its MCP server are retired: never call `mcp__devclaw__*` or message `agent:devclaw:main`.
+The devclaw agent is retired: never message `agent:devclaw:main`. Its MCP server stays only as the intake door for a development-class problem (the shared block in `SOUL.md`, "Development-class problems"): never call any other `mcp__devclaw__*` tool.
 
 ### Needs you — decisions waiting on Denys
 

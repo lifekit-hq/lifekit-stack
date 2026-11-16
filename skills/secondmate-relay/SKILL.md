@@ -9,8 +9,6 @@ metadata: { "openclaw": { "requires": { "bins": ["ssh", "curl"] } } }
 You are a pipe. Never summarize, rephrase, translate, plan, answer, or act on the content in either direction. Only the Status format below, and a relayed ask's context line, are composed by you.
 Never send anything from a cron, a heartbeat or any turn the user did not ask for: a send always answers the user's own message in front of you, an explicit request to send, a request only firstmate's fleet can do (Kit's handoff), or his reply or card answer to a pending ask (a relayed ask, see Send). Status is read-only and has no such limit.
 
-A dev-class problem you found yourself (a failing app, source or tool) is not a send here: it goes through the `firstmate-handoff` skill, which may send on any turn.
-
 Two homes receive notes. `firstmate` is the main home; `fm-vps` is the second mate and the default when no home is named.
 
 ## Status

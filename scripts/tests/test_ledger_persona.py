@@ -148,6 +148,25 @@ def test_check_flags_stale_text(source, ws, name, text):
     assert r.returncode == 1 and f"stale: {name}:3 " in r.stdout
 
 
+def test_the_shared_dev_problem_block_is_not_stale_but_a_devclaw_handoff_still_is(
+    source, ws
+):
+    args = installed(source, ws)
+    block = (DIR.parents[1] / "defaults/agents/shared/dev-problems.md").read_text()
+    (ws / "SOUL.md").write_text(
+        "# Notes\n\n" + block + "\nhand build work to DevClaw\n"
+    )
+    r = run("check", *args)
+    # Only the handoff line after the block is reported, at its own line number.
+    stale = [ln for ln in r.stdout.splitlines() if ln.startswith("stale:")]
+    assert r.returncode == 1
+    assert len(stale) == 1 and stale[0].startswith(
+        f"stale: SOUL.md:{3 + block.count(chr(10)) + 1} "
+    )
+    (ws / "SOUL.md").write_text("# Notes\n\n" + block)
+    assert run("check", *args).returncode == 0
+
+
 def test_owner_facts_and_pointers_pass(source, ws):
     args = installed(source, ws)
     (ws / "MEMORY.md").write_text(

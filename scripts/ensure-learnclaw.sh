@@ -45,6 +45,10 @@ for f in AGENTS.md SOUL.md IDENTITY.md skills/README.md; do
 done
 echo "contract installed -> $workspace"
 
+# The shared "Development-class problems" block rides in SOUL.md between its
+# markers; the copy above just replaced that file, so put the block back.
+"${repo_root}/scripts/ensure-dev-problem-block.sh" "$AGENT"
+
 install -D -m 0644 "$skill_src/SKILL.md" "$skill_dest/SKILL.md"
 install -D -m 0755 "$skill_src/record.py" "$skill_dest/record.py"
 echo "skill installed -> $skill_dest"
