@@ -190,7 +190,8 @@ gateway stopped and stay `run --rm`.
 
 #### DevClaw MCP server (per-agent half)
 
-Kit calls DevClaw's MCP tools through `mcp.servers.devclaw`, which lives in the
+Kit calls DevClaw's MCP tools (and every agent its intake tool, see "Development-class
+problems: file and carry on") through `mcp.servers.devclaw`, which lives in the
 per-agent half of `openclaw.json` (host state), not in `platform.patch.json`.
 Its `url` is `http://devclaw-mcp:8000/mcp`, reached over the external
 `lifekit-shared` network that the gateway and `devclaw-mcp` already share, and
