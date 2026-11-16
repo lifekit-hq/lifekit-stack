@@ -561,7 +561,7 @@ def install(tmp_path):
         proc = subprocess.run(
             ["bash", str(INSTALLER)],
             env={
-                **os.environ,
+                **{k: v for k, v in os.environ.items() if k != "FM_HOME"},
                 "INSTALL_ROOT": str(root),
                 "SYSTEMCTL": str(systemctl),
                 "SU": str(su),
