@@ -3803,11 +3803,10 @@ with `FLEET_AGENT_CLIENT_ID`, `FLEET_AGENT_CLIENT_SECRET`,
 `logto-m2m.env.sops`, [docs/secrets.md](./secrets.md) "Not in these files").
 It never reaches argv, a log, the ledger, the repo or a PR. The only
 consumer is the fleet on this host: no app holds the secret, so no app file
-gets a new secret. Use it the way the `firstmate-ops` file is used:
-
-sops 3.9.1 reads a store without a `.env` extension as JSON, and `exec-env`
-has no `--input-type`, so decrypt with explicit dotenv types and source the
-values in a subshell (what `scripts/identity/fleet-agent.sh` does):
+gets a new secret. Unlike the `firstmate-ops` file, do not read it with
+`sops exec-env`: sops 3.9.1 reads a store without a `.env` extension as JSON,
+and `exec-env` has no `--input-type`. Decrypt with explicit dotenv types, as
+`scripts/identity/fleet-agent.sh` does, and source the values in a subshell:
 
 ```bash
 ( set -a; . <(sops decrypt --input-type dotenv --output-type dotenv ~/.config/firstmate/fleet-agent.env.sops)
