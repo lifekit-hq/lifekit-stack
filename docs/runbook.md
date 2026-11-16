@@ -151,7 +151,8 @@ file); rotating that token means recreating `prometheus` too. Check it with
 `logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
 `diagnostics-otel` plugin enables, memory-core dreaming off, `gateway.auth.rateLimit`, `memory.search`
 (`enabled` + `extraPaths`), `tools.codeMode`, `agents.defaults.heartbeat.every`, the inbound
-`hooks` block and the finance agent's heartbeat - live in
+`hooks` block (with `defaultSessionKey`), the bootstrap limit, the 5.5 default models and the
+reading Telegram door off, and the finance agent's heartbeat - live in
 `compose/openclaw-gateway/platform.patch.json`. On every OpenClaw deploy (see
 [Path-gated OpenClaw deploys](#path-gated-openclaw-deploys)) `deploy.sh`
 compares that file with the live config, applies it with
@@ -750,6 +751,65 @@ Not on any list:
 The [openclaw-config mirror](#openclaw-config-mirror) picks up the live lists
 on its next run.
 
+### OpenClaw audit bundle A (2026-11, lifekit-stack#530)
+
+One change set from the 2026-11-15 setup audit. The repo carries the platform half; the rest is
+host state and runs once, in the order below. The deploy applies the patch and, because the
+image tag and compose env changed, recreates the gateway once.
+
+**In git (`platform.patch.json`, compose, Dockerfile):**
+
+- `agents.defaults.bootstrapMaxChars: 24000` - Kit's and finance's `AGENTS.md` are over the 20,000
+  default and were truncated in the system prompt.
+- `duckduckgo` in `plugins.allow` (`tools.web.search.provider` already names it; without the
+  allowlist entry it was disabled). `lossless-claw`, `codex` and `browser-automation` entries
+  are dropped (`null`): the last two were enabled but never in `plugins.allow`, so they never
+  loaded, and dropping keeps today's behaviour (`codex` stays out on purpose, see
+  `test_platform_patch.py`; `browser` is the allowed one). `plugins.slots.contextEngine` is
+  dropped too: lossless-claw degraded to "legacy" on every turn because the `claude-cli` runtime
+  host cannot assemble-before-prompt, compact or call the runtime LLM. The `claude-cli` boundary
+  stays.
+- `hooks.defaultSessionKey: "hook:lifekit"` (security audit warn; mappings are all `isolated`).
+- `agents.defaults.model`, `heartbeat.model`, `subagents.model` and `modelPolicy.allow` on
+  `anthropic/claude-sonnet-5-5` (plus `anthropic/claude-opus-5-5` allowed for Kit's own chat).
+  `ensure-needs-you-digest.sh` defaults to the same Sonnet.
+- `channels.telegram.accounts.reading.enabled: false`; learnclaw answers through Kit only.
+- Gateway env `NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache` (dir made in the image) and
+  `OPENCLAW_NO_RESPAWN=1`.
+- OpenClaw 2026.10.9 -> 2026.11.3 (Dockerfile tag). The 2026.10.10 changelog has no breaking
+  change for these keys; the deploy's upgrade path backs up the config and re-pins official
+  plugins as usual.
+
+**Host steps (operator, after the deploy, gateway container `openclaw-openclaw-gateway-1`):**
+
+1. Per-agent models (host-state half; `openclaw config patch` merges, so unlisted keys stay):
+   career, finance and learnclaw `model` -> `anthropic/claude-sonnet-5-5`; Kit's `model` ->
+   `anthropic/claude-opus-5-5`. Check the agent ids with `openclaw agents list`.
+2. `scripts/ensure-kit-cron-models.sh --check`, then without `--check`: every Kit cron job without
+   its own `payload.model` is pinned to Sonnet (`openclaw cron list` must then show a model on
+   each). A job that already names one is left alone.
+3. Pin the plugin installs: `openclaw plugins install "@openclaw/diagnostics-prometheus@<core>" --force`
+   and the same for `@openclaw/duckduckgo` (the core version is `openclaw --version`); then
+   `openclaw plugins inspect <id>` shows the exact version and `openclaw security audit` drops
+   the unpinned-spec warning.
+4. Tool allow-list: run one verification turn first (`openclaw agent --agent kit -m "list your
+   tools" --json`) and confirm the Workspace and finance-sentry MCP tools reach Kit under their
+   real names. Only then remove the unknown `tools.allow` names startup warns about (`edit`,
+   `process`, `video_generate`, `show_widget`, `progress_card`, `ask_user`, `mcp__*`, `memory_*`,
+   `openclaw__*`) and add `intent` to Kit's and finance's allow. `tools.allow` is a replacing
+   array, so send the whole list.
+5. After Kit's `AGENTS.md` is under the new limit, add one line to it naming what Kit
+   backgrounds to a sub-agent (research, long tool work).
+6. Firewall on 18789: `gateway.bind` `lan`, `gateway.auth.mode` `trusted-proxy`,
+   `gateway.trustedProxies` exactly `10.231.78.2`, and direct access blocked
+   (`curl -m 3 http://<host tailnet ip>:18789/healthz` fails; `127.0.0.1:18789` is unpublished in
+   trusted-proxy mode). `openclaw security audit` must show no critical finding.
+
+**Acceptance (48 h after):** no "truncating in injected context", no "[context-engine] ...
+degraded" and no duckduckgo config warning in the gateway log; one real Kit turn where
+`web_search` returns results; `openclaw models status` shows the 5.5 models; `openclaw channels
+status` shows `reading` disabled.
+
 ### The career weekly cron
 
 Since the 2026-09 fleet reshape (see `docs/openclaw-agent-design.md`), career
@@ -1073,7 +1133,7 @@ whatever the mail says. It delivers nothing; its run stays in its run history, w
 `summary` is all of the run's text, kept from the head and cut at 2000 characters. The
 reader writes no text but its final reply, a mail section of under 1500 characters
 between a `<<<MAIL-SECTION` line and a `MAIL-SECTION>>>` line.
-The digest runs on `anthropic/claude-sonnet-4-6` (`NEEDS_YOU_DIGEST_MODEL` overrides; `ensure-needs-you-digest.sh` exits non-zero when the live row's `payload.model` differs) and does not read the ledger or the relay itself: its first step runs `skills/secondmate-relay/needs-you-digest.mjs`
+The digest runs on `anthropic/claude-sonnet-5-5` (`NEEDS_YOU_DIGEST_MODEL` overrides; `ensure-needs-you-digest.sh` exits non-zero when the live row's `payload.model` differs) and does not read the ledger or the relay itself: its first step runs `skills/secondmate-relay/needs-you-digest.mjs`
 (installed by `ensure-secondmate-relay.sh`), which prints the open ledger entries oldest first with lettered options, the live fleet decisions, and the already-counted Later, Fleet, partial-view and not-shown figures, or a `needs-you digest failed:` / `fleet status unavailable:` line. The model keeps the call-versus-to-do judgment, the mail section and the final message.
 The digest, allowed only `read`, `exec` and `process` (no Gmail tool, but `exec`
 is a shell, so `relay.sh` and its send verbs stay reachable; the prompt forbids

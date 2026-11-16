@@ -1319,7 +1319,7 @@ def test_digest_runs_on_sonnet_and_refuses_a_row_on_another_model(tmp_path):
         digest_edit = [c for c in calls if c[:3] == ["cron", verb, "job1"]][0]
         assert (
             digest_edit[digest_edit.index("--model") + 1]
-            == "anthropic/claude-sonnet-4-6"
+            == "anthropic/claude-sonnet-5-5"
         )
     sub = tmp_path / "other"
     sub.mkdir()

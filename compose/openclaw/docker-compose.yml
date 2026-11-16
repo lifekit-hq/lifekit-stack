@@ -163,6 +163,11 @@ services:
       # environment (docs/secrets.md).
       DEVCLAW_MCP_TOKEN: ${DEVCLAW_MCP_TOKEN:-}
       OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
+      # Doctor hints (2026.10.9): a Node compile cache (the dir is made in the
+      # image) cuts startup compile work, and no respawn keeps the gateway one
+      # process under compose's own restart policy.
+      NODE_COMPILE_CACHE: /var/tmp/openclaw-compile-cache
+      OPENCLAW_NO_RESPAWN: "1"
       # The shared job queue's egress (skills/job-queue/jobq.py, docs/runbook.md
       # "Shared job queue"): the proxy queued downloads go out through, a
       # socks5h:// or http:// URL or "direct". Empty means the default, the PC

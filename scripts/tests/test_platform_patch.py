@@ -211,9 +211,43 @@ def test_plugin_allowlist_keeps_what_the_stack_runs():
     required = ROUTED_PROVIDERS | {"telegram", "memory-core"}
     assert required <= set(allow), required - set(allow)
     # An enabled entry left off the allowlist would silently never load.
-    enabled = {k for k, v in PATCH["plugins"]["entries"].items() if v.get("enabled")}
+    enabled = {
+        k for k, v in PATCH["plugins"]["entries"].items() if v and v.get("enabled")
+    }
     assert enabled <= set(allow), enabled - set(allow)
     assert not UNROUTED_PROVIDERS & set(allow)
+
+
+def test_bundle_a_audit_keys():
+    # lifekit-stack#530: the bootstrap limit that stops AGENTS.md truncation,
+    # the web-search plugin allowed, the broken lossless-claw slot removed,
+    # a stable hook session key, the reading door off, and every default model
+    # on 5.5 (Kit's Opus is a per-agent host-state setting, never a default).
+    defaults = PATCH["agents"]["defaults"]
+    assert defaults["bootstrapMaxChars"] == 24000
+    assert "duckduckgo" in PATCH["plugins"]["allow"]
+    assert PATCH["plugins"]["slots"] == {"contextEngine": None}
+    for dropped in ("lossless-claw", "codex", "browser-automation"):
+        assert PATCH["plugins"]["entries"][dropped] is None
+    assert HOOKS["defaultSessionKey"]
+    reading = PATCH["channels"]["telegram"]["accounts"]["reading"]
+    assert reading["enabled"] is False
+    sonnet = "anthropic/claude-sonnet-5-5"
+    assert defaults["model"]["primary"] == sonnet
+    assert defaults["subagents"]["model"] == sonnet
+    assert defaults["heartbeat"]["model"] == sonnet
+    assert set(defaults["modelPolicy"]["allow"]) == {
+        sonnet,
+        "anthropic/claude-opus-5-5",
+    }
+
+
+def test_gateway_runtime_hints_are_set():
+    block = service_block("openclaw-gateway")
+    assert "NODE_COMPILE_CACHE: /var/tmp/openclaw-compile-cache" in block
+    assert 'OPENCLAW_NO_RESPAWN: "1"' in block
+    dockerfile = (REPO / "compose/openclaw-gateway/Dockerfile").read_text()
+    assert "mkdir -p /var/tmp/openclaw-compile-cache" in dockerfile
 
 
 def test_dreaming_stays_off():

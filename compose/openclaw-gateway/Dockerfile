@@ -12,7 +12,7 @@
 # In-container `openclaw update` (and the dashboard's "Update now") is the
 # wrong surface here on purpose: the image is the unit of deployment, and
 # anything installed inside a running container is gone on the next recreate.
-FROM ghcr.io/openclaw/openclaw:2026.10.9
+FROM ghcr.io/openclaw/openclaw:2026.11.3
 
 USER root
 
@@ -135,6 +135,10 @@ RUN test -r /etc/claude-code/managed-settings.json
 ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
 ENV PATH="/home/node/.npm-global/bin:${PATH}"
 COPY --chown=node:node package.json /home/node/.npm-global-src/
+# V8 compile cache for the gateway's Node (NODE_COMPILE_CACHE in the compose
+# env): the node user creates it here so startup does not recompile.
+RUN mkdir -p /var/tmp/openclaw-compile-cache
+
 RUN mkdir -p /home/node/.npm-global \
     && cd /home/node/.npm-global-src \
     && CLAUDE_CODE_VERSION="$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-code']")" \

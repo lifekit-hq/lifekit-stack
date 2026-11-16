@@ -247,7 +247,7 @@ def test_digest_reports_a_missing_ledger_a_bad_ledger_and_a_failed_status(tmp_pa
 def test_the_digest_job_is_pinned_to_sonnet_and_verified_live():
     text = ENSURE_DIGEST.read_text()
     assert (
-        'DIGEST_MODEL="${NEEDS_YOU_DIGEST_MODEL:-anthropic/claude-sonnet-4-6}"' in text
+        'DIGEST_MODEL="${NEEDS_YOU_DIGEST_MODEL:-anthropic/claude-sonnet-5-5}"' in text
     )
     assert text.count('--model "$DIGEST_MODEL"') == 2  # cron add and cron edit
     assert "payload.model=" in text  # fail-closed check of the live row
