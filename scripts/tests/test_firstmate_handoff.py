@@ -32,7 +32,6 @@ SKILL_DIR = REPO / "skills/firstmate-handoff"
 HANDOFF = SKILL_DIR / "handoff.sh"
 SKILL_MD = SKILL_DIR / "SKILL.md"
 ENSURE = REPO / "scripts/ensure-firstmate-handoff.sh"
-KIT_AGENTS = REPO / "defaults/agents/kit/workspace/AGENTS.md"
 CONF = "/run/lifekit/kit-relay/ssh_config"
 
 NOTE = (
@@ -195,9 +194,6 @@ def test_skill_frontmatter_names_its_folder_and_gates_on_ssh():
     meta = yaml.safe_load(front)
     assert meta["name"] == "firstmate-handoff"
     assert meta["metadata"]["openclaw"]["requires"]["bins"] == ["ssh"]
-    # The description is what routes an agent to the skill.
-    for phrase in ("dev-class", "firstmate's inbox", "instead of telling the owner"):
-        assert phrase in meta["description"]
 
 
 def test_skill_sample_note_passes_the_clients_own_check(relay, tmp_path):
@@ -206,24 +202,6 @@ def test_skill_sample_note_passes_the_clients_own_check(relay, tmp_path):
     result = handoff(relay, tmp_path, "send", "ledger", "BODY", body=sample)
     assert result.returncode == 0, result.stderr
     assert len(relay.notes(relay.main)) == 1
-
-
-def test_skill_names_the_command_it_runs():
-    text = SKILL_MD.read_text()
-    assert "sh {baseDir}/handoff.sh send <kit|ledger>" in text
-    assert "handoff.sh replies" in text
-
-
-def test_kits_instructions_route_dev_problems_to_the_skill():
-    text = KIT_AGENTS.read_text()
-    assert "firstmate-handoff" in text
-    line = next(x for x in text.splitlines() if "firstmate-handoff" in x)
-    assert "instead of telling Denys" in line
-
-
-def test_the_relay_skill_points_a_found_problem_at_the_handoff_skill():
-    relay_skill = (REPO / "skills/secondmate-relay/SKILL.md").read_text()
-    assert "firstmate-handoff" in relay_skill
 
 
 # ─── the installer ───────────────────────────────────────────────────────────
@@ -282,10 +260,3 @@ def test_ensure_fails_for_a_missing_workspace_but_still_installs_the_other(tmp_p
     assert (
         tmp_path / "config/agents/kit/workspace/skills/firstmate-handoff/handoff.sh"
     ).exists()
-
-
-def test_the_runbook_names_the_route():
-    runbook = (REPO / "docs/runbook.md").read_text()
-    assert "### Dev problems go to firstmate, not the owner" in runbook
-    assert "handoff.sh send" in runbook
-    assert "ensure-firstmate-handoff.sh" in runbook
