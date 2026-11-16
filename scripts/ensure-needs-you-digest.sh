@@ -94,7 +94,7 @@
 #   NEEDS_YOU_DIGEST_CRON  cron expression (default: "0 9,17 * * *": two runs a day)
 #   NEEDS_YOU_DIGEST_TZ    IANA tz (default: Europe/Dublin — house tz of the
 #                          existing jobs), for both jobs
-#   NEEDS_YOU_DIGEST_MODEL the digest's model (default: anthropic/claude-sonnet-4-6;
+#   NEEDS_YOU_DIGEST_MODEL the digest's model (default: anthropic/claude-sonnet-5-5;
 #                          the reads are precomputed by skills/secondmate-relay/
 #                          needs-you-digest.mjs, so no stronger model is needed)
 #   NEEDS_YOU_MAIL_CRON    the mail reader's cron expression (default:
@@ -121,7 +121,7 @@ CRON_TZ="${NEEDS_YOU_DIGEST_TZ:-Europe/Dublin}"
 DIGEST_TOOLS="read,exec,process"
 # The digest only composes a fixed-format message from precomputed reads
 # (needs-you-digest.mjs), so it runs on Sonnet, not the agent default (Opus).
-DIGEST_MODEL="${NEEDS_YOU_DIGEST_MODEL:-anthropic/claude-sonnet-4-6}"
+DIGEST_MODEL="${NEEDS_YOU_DIGEST_MODEL:-anthropic/claude-sonnet-5-5}"
 READER_NAME=needs-you-mail-reader
 READER_CRON="${NEEDS_YOU_MAIL_CRON:-45 8,16 * * *}"
 # The only tools the mail reader's run has. MCP tools are named

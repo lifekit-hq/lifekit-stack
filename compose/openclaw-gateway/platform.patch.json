@@ -24,6 +24,7 @@
       "device-pair",
       "diagnostics-otel",
       "diagnostics-prometheus",
+      "duckduckgo",
       "document-extract",
       "file-transfer",
       "geolocation",
@@ -36,7 +37,13 @@
       "video-drop-door",
       "fleet-gate"
     ],
+    "slots": {
+      "contextEngine": null
+    },
     "entries": {
+      "lossless-claw": null,
+      "codex": null,
+      "browser-automation": null,
       "video-drop-door": {
         "enabled": true
       },
@@ -107,8 +114,22 @@
   },
   "agents": {
     "defaults": {
+      "bootstrapMaxChars": 24000,
+      "model": {
+        "primary": "anthropic/claude-sonnet-5-5"
+      },
+      "modelPolicy": {
+        "allow": [
+          "anthropic/claude-sonnet-5-5",
+          "anthropic/claude-opus-5-5"
+        ]
+      },
+      "subagents": {
+        "model": "anthropic/claude-sonnet-5-5"
+      },
       "heartbeat": {
-        "every": "0m"
+        "every": "0m",
+        "model": "anthropic/claude-sonnet-5-5"
       },
       "utilityModel": ""
     },
@@ -125,6 +146,7 @@
     "path": "${OPENCLAW_HOOK_PATH}",
     "token": "${OPENCLAW_HOOK_TOKEN}",
     "allowRequestSessionKey": false,
+    "defaultSessionKey": "hook:lifekit",
     "allowedAgentIds": [
       "finance",
       "kit"
@@ -203,6 +225,7 @@
           }
         },
         "reading": {
+          "enabled": false,
           "botToken": null
         },
         "social": {
