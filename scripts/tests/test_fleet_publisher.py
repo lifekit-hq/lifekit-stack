@@ -21,6 +21,7 @@ NOW = 1_800_000_000
 # docker exec into a gateway, no host vault.
 NO_LIVE_SOURCES = {
     "FLEET_GH": "",
+    "FLEET_SCREEN_REPOS": "",
     "FLEET_INTAKE_CMD": "",
     "FLEET_VAULT": "/nonexistent",
     "FLEET_POLICY_DIR": "/nonexistent",
@@ -1401,6 +1402,9 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     taken = root / "usr/local/bin/lifekit-fleet-taken.py"
     assert os.access(taken, os.X_OK)
     assert taken.read_text() == (DIR / "taken_feed.py").read_text()
+    screens = root / "usr/local/bin/lifekit-fleet-screens.py"
+    assert os.access(screens, os.X_OK)
+    assert screens.read_text() == (DIR / "screen_changes.py").read_text()
     assert service["Service"]["ExecStart"].startswith(
         "/usr/local/bin/lifekit-fleet-publisher.sh "
     )
@@ -2963,3 +2967,285 @@ def test_an_installed_publisher_finds_the_taken_helper_beside_itself(fleet, tmp_
     )
     assert result.returncode == 0, result.stderr
     assert [i["subject"] for i in taken(fleet)["items"]] == ["lifekit-dashboard#212"]
+
+
+# --- the screen changes feed ---------------------------------------------------
+
+SCREEN_REPO = "lifekit-hq/lifekit-dashboard"
+PNG = b"\x89PNG\r\n\x1a\n".decode("latin-1")
+HEAD, BASE, MERGE_BASE = "a" * 40, "b" * 40, "c" * 40
+COMMIT_TIME, ACTIVITY_TIME = 1_800_003_600, 1_800_007_200
+BASELINE = "frontend/e2e/pixel.spec.ts-snapshots/fleet-phone-light-chromium-linux.png"
+ADDED = "frontend/e2e/pixel.spec.ts-snapshots/pace-desktop-dark-chromium-linux.png"
+
+FAKE_GH = r"""#!/usr/bin/env python3
+import json, sys
+root = __ROOT__
+args = sys.argv[1:]
+open(root + "/gh.log", "a").write(" ".join(args) + "\n")
+world = json.load(open(root + "/gh-world.json"))
+if world.get("fail"):
+    sys.exit(1)
+if args[:2] == ["pr", "list"]:
+    print(json.dumps(world["pulls"].get(args[args.index("-R") + 1], [])))
+elif args[0] == "api" and "/compare/" in args[-1]:
+    repo = args[-1].split("repos/")[1].split("/compare/")[0]
+    head = args[-1].split("...")[1]
+    print(json.dumps(world["compares"][repo][head]))
+elif args[0] == "api":
+    path, ref = args[-1].split("?ref=")
+    key = path.split("/contents/", 1)[1] + "@" + ref
+    sys.stdout.buffer.write(world["files"][key].encode("latin-1"))
+else:
+    sys.exit(2)
+"""
+
+
+def screens_world(fleet, pulls=None, compares=None, files=None, fail=False):
+    (fleet.tmp / "gh-world.json").write_text(
+        json.dumps(
+            {
+                "pulls": pulls or {},
+                "compares": compares or {},
+                "files": files or {},
+                "fail": fail,
+            }
+        )
+    )
+    gh = fleet.tmp / "gh"
+    gh.write_text(FAKE_GH.replace("__ROOT__", repr(str(fleet.tmp))))
+    gh.chmod(0o755)
+    return str(gh)
+
+
+def screen_pull(number, head=HEAD, title="Root every page on cmn-page"):
+    return {
+        "number": number,
+        "title": title,
+        "headRefOid": head,
+        "baseRefOid": BASE,
+        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ACTIVITY_TIME)),
+    }
+
+
+def screen_compare(*files, when=COMMIT_TIME):
+    return {
+        "merge_base_commit": {"sha": MERGE_BASE},
+        "commits": [
+            {
+                "commit": {
+                    "committer": {
+                        "date": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(when))
+                    }
+                }
+            }
+        ],
+        "files": [{"filename": path, "status": status} for path, status in files],
+    }
+
+
+def screen_feed(fleet):
+    return json.loads((fleet.out / "screen-changes.json").read_text())
+
+
+def run_screens(fleet, gh, **env):
+    fleet.write(summary())
+    env = {"FLEET_SCREEN_REPOS": SCREEN_REPO, **env}
+    return fleet.run(FLEET_GH=gh, FLEET_SCREEN_HOME="fm-vps", **env)
+
+
+def one_screen_world(fleet, **kwargs):
+    return screens_world(
+        fleet,
+        pulls={SCREEN_REPO: [screen_pull(212)]},
+        compares={
+            SCREEN_REPO: {
+                HEAD: screen_compare(
+                    (BASELINE, "modified"),
+                    (ADDED, "added"),
+                    ("frontend/src/app/app.ts", "modified"),
+                )
+            }
+        },
+        files={
+            f"{BASELINE}@{MERGE_BASE}": PNG + "before",
+            f"{BASELINE}@{HEAD}": PNG + "after",
+            f"{ADDED}@{HEAD}": PNG + "added",
+        },
+        **kwargs,
+    )
+
+
+def test_screen_changes_feed_has_the_contract_shape_and_copies_the_images(fleet):
+    result = run_screens(fleet, one_screen_world(fleet))
+    assert result.returncode == 0, result.stderr
+    assert (fleet.out / "screen-changes.json").stat().st_mode & 0o777 == 0o644
+    assert screen_feed(fleet) == {
+        "schema": "fleet-screen-changes.v1",
+        "generated_epoch": NOW,
+        "items": [
+            {
+                "id": "lifekit-dashboard-212",
+                "home_id": "fm-vps",
+                "repo": "lifekit-dashboard",
+                "pr": 212,
+                "title": "Root every page on cmn-page",
+                "url": f"https://github.com/{SCREEN_REPO}/pull/212",
+                # The head commit's time, not the PR's last activity.
+                "ts": COMMIT_TIME,
+                "screens": [
+                    {
+                        "name": "fleet-phone-light",
+                        "status": "changed",
+                        "before": "before-fleet-phone-light.png",
+                        "after": "after-fleet-phone-light.png",
+                    },
+                    {
+                        "name": "pace-desktop-dark",
+                        "status": "added",
+                        "before": None,
+                        "after": "after-pace-desktop-dark.png",
+                    },
+                ],
+            }
+        ],
+    }
+    images = fleet.out / "screen-changes/lifekit-dashboard-212"
+    assert sorted(p.name for p in images.iterdir()) == [
+        "after-fleet-phone-light.png",
+        "after-pace-desktop-dark.png",
+        "before-fleet-phone-light.png",
+    ]
+    assert (images / "before-fleet-phone-light.png").read_bytes() == (
+        PNG + "before"
+    ).encode("latin-1")
+    assert (images / "after-fleet-phone-light.png").stat().st_mode & 0o777 == 0o644
+
+
+def test_screen_changes_reads_only_allowlisted_repos_and_baseline_paths(fleet):
+    gh = one_screen_world(fleet)
+    other = "someone/else"
+    world = json.loads((fleet.tmp / "gh-world.json").read_text())
+    world["pulls"][other] = [screen_pull(7)]
+    (fleet.tmp / "gh-world.json").write_text(json.dumps(world))
+    assert run_screens(fleet, gh).returncode == 0
+    log = (fleet.tmp / "gh.log").read_text()
+    assert other not in log
+    # The one non-baseline file in the diff is never fetched.
+    assert "app.ts" not in log
+    assert len(screen_feed(fleet)["items"]) == 1
+    # An explicit allowlist replaces the default.
+    (fleet.tmp / "gh.log").write_text("")
+    assert run_screens(fleet, gh, FLEET_SCREEN_REPOS=other).returncode == 0
+    assert SCREEN_REPO not in (fleet.tmp / "gh.log").read_text()
+
+
+def test_screen_changes_leaves_out_a_pull_request_with_no_baseline_change(fleet):
+    gh = screens_world(
+        fleet,
+        pulls={SCREEN_REPO: [screen_pull(5)]},
+        compares={SCREEN_REPO: {HEAD: screen_compare(("README.md", "modified"))}},
+    )
+    assert run_screens(fleet, gh).returncode == 0
+    assert screen_feed(fleet)["items"] == []
+    assert not (fleet.out / "screen-changes/lifekit-dashboard-5").exists()
+
+
+def test_screen_changes_skips_a_screen_missing_the_image_its_status_needs(fleet):
+    gh = screens_world(
+        fleet,
+        pulls={SCREEN_REPO: [screen_pull(9)]},
+        compares={
+            SCREEN_REPO: {HEAD: screen_compare((BASELINE, "removed"), (ADDED, "added"))}
+        },
+        # Not a PNG: the removed screen has no usable before; the added one is fine.
+        files={f"{BASELINE}@{MERGE_BASE}": "<html>", f"{ADDED}@{HEAD}": PNG + "x"},
+    )
+    assert run_screens(fleet, gh).returncode == 0
+    (item,) = screen_feed(fleet)["items"]
+    assert [s["name"] for s in item["screens"]] == ["pace-desktop-dark"]
+
+
+def test_screen_changes_is_capped_at_20_items_newest_first(fleet):
+    pulls, compares = [], {}
+    for n in range(1, 26):
+        head = f"{n:040x}"
+        pulls.append(screen_pull(n, head=head))
+        compares[head] = screen_compare((ADDED, "added"), when=COMMIT_TIME + n)
+    gh = screens_world(
+        fleet,
+        pulls={SCREEN_REPO: pulls},
+        compares={SCREEN_REPO: compares},
+        files={f"{ADDED}@{n:040x}": PNG + "x" for n in range(1, 26)},
+    )
+    assert run_screens(fleet, gh).returncode == 0
+    items = screen_feed(fleet)["items"]
+    assert [i["pr"] for i in items] == list(range(25, 5, -1))
+    # Only the listed items keep images.
+    dirs = {p.name for p in (fleet.out / "screen-changes").iterdir()}
+    assert dirs == {f"lifekit-dashboard-{n}" for n in range(6, 26)}
+
+
+def test_screen_changes_caps_a_pull_requests_screens_at_40(fleet):
+    paths = [f"snaps/screen{n}-chromium-linux.png" for n in range(45)]
+    gh = screens_world(
+        fleet,
+        pulls={SCREEN_REPO: [screen_pull(3)]},
+        compares={SCREEN_REPO: {HEAD: screen_compare(*[(p, "added") for p in paths])}},
+        files={f"{p}@{HEAD}": PNG + "x" for p in paths},
+    )
+    assert run_screens(fleet, gh).returncode == 0
+    (item,) = screen_feed(fleet)["items"]
+    assert len(item["screens"]) == 40
+
+
+def test_screen_changes_reuses_what_it_fetched_and_drops_a_closed_pull_request(fleet):
+    gh = one_screen_world(fleet)
+    assert run_screens(fleet, gh).returncode == 0
+    fetched = (fleet.tmp / "gh.log").read_text().count("compare")
+    assert fetched == 1
+    assert run_screens(fleet, gh).returncode == 0
+    assert (fleet.tmp / "gh.log").read_text().count("compare") == 1
+    # A new head commit is read again.
+    world = json.loads((fleet.tmp / "gh-world.json").read_text())
+    new = "d" * 40
+    world["pulls"][SCREEN_REPO] = [screen_pull(212, head=new)]
+    world["compares"][SCREEN_REPO][new] = world["compares"][SCREEN_REPO][HEAD]
+    world["files"][f"{BASELINE}@{new}"] = PNG + "newer"
+    world["files"][f"{ADDED}@{new}"] = PNG + "added"
+    (fleet.tmp / "gh-world.json").write_text(json.dumps(world))
+    assert run_screens(fleet, gh).returncode == 0
+    images = fleet.out / "screen-changes/lifekit-dashboard-212"
+    assert (images / "after-fleet-phone-light.png").read_bytes().endswith(b"newer")
+    # Merged or closed: no longer open, so item and images go.
+    world["pulls"][SCREEN_REPO] = []
+    (fleet.tmp / "gh-world.json").write_text(json.dumps(world))
+    assert run_screens(fleet, gh).returncode == 0
+    assert screen_feed(fleet)["items"] == []
+    assert not (fleet.out / "screen-changes/lifekit-dashboard-212").exists()
+
+
+def test_screen_changes_keeps_the_previous_feed_when_gh_fails(fleet):
+    assert run_screens(fleet, one_screen_world(fleet)).returncode == 0
+    before = (fleet.out / "screen-changes.json").read_text()
+    result = run_screens(fleet, one_screen_world(fleet, fail=True))
+    assert result.returncode != 0
+    assert "screen changes feed was not published" in result.stderr
+    assert (fleet.out / "screen-changes.json").read_text() == before
+    assert (fleet.out / "screen-changes/lifekit-dashboard-212").is_dir()
+
+
+def test_screen_changes_is_off_without_gh(fleet):
+    fleet.write(summary())
+    assert fleet.run().returncode == 0
+    assert not (fleet.out / "screen-changes.json").exists()
+
+
+def test_screen_changes_withholds_an_item_that_looks_like_a_credential(fleet):
+    gh = one_screen_world(fleet)
+    world = json.loads((fleet.tmp / "gh-world.json").read_text())
+    world["pulls"][SCREEN_REPO][0]["title"] = "key " + "ghp_" + "A" * 24
+    (fleet.tmp / "gh-world.json").write_text(json.dumps(world))
+    assert run_screens(fleet, gh).returncode == 0
+    assert screen_feed(fleet)["items"] == []
+    assert "ghp_" not in (fleet.out / "screen-changes.json").read_text()

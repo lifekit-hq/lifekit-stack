@@ -3001,6 +3001,17 @@ previous file stays. The new file and `lifekit-fleet-taken.py` appear only
 after the install command below is re-run (no sudo is needed beyond that, and
 no container is touched).
 
+The same run writes `/var/lib/lifekit-fleet/screen-changes.json` and the images
+under `screen-changes/`, the dashboard's "Screen changes" feed: each open pull
+request in `FLEET_SCREEN_REPOS` (default `lifekit-hq/lifekit-dashboard`) that
+changes a `*-linux.png` baseline, with its before and after images (contract in
+the README "Screen changes feed"). It reads GitHub through the admin account's
+`gh`, read-only, so that account's `gh auth` must reach the repo. The helper
+`lifekit-fleet-screens.py` appears only after the install command below is
+re-run. To add an app, set `FLEET_SCREEN_REPOS` in a systemd drop-in for the unit
+(space-separated `owner/name`); an empty value turns the feed off. A failed run
+keeps the previous feed and turns *host systemd unit is down or failed* red.
+
 **Alerts:** *fleet summary is stale* fires when the oldest home summary's
 `generated_epoch` is over 15 minutes old (that home's watch loop died; the
 per-home series names it); *textfile metrics are stale* covers a dead publisher
