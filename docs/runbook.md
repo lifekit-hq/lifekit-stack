@@ -2466,9 +2466,10 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
     account: `LH_SYNC_HOST=<PC tailnet name> LH_SYNC_USER=<PC account>
     scripts/learnharness-sync/install-learnharness-sync.sh`; check with
     `systemctl status learnharness-sync.service`.
-  - learnclaw's Telegram door is the `reading` account (token: the sops ref `learning-bot-token`),
-    bound with `openclaw agents bind --agent learnclaw --bind telegram:reading`; its allowlist
-    `agents.entries.learnclaw.skills` is `["learning-record", "learnharness"]` (host state).
+  - learnclaw has no Telegram door: the `reading` account is disabled (`platform.patch.json`, see
+    [OpenClaw audit bundle A](#openclaw-audit-bundle-a-2026-11-lifekit-stack530)), so it answers
+    through Kit and the Control UI chat. Its allowlist `agents.entries.learnclaw.skills` is
+    `["learning-record", "learnharness"]` (host state).
 - **Skill:** `skills/learning-record` (`record.py`, stdlib only).
   - `record.py status` prints the projections. A row whose date is not a real calendar date is
     reported on its own line, not counted, and does not stop the report.
