@@ -860,3 +860,154 @@ def test_the_skill_frontmatter_parses():
     meta = yaml.safe_load((SKILL / "SKILL.md").read_text().split("---")[1])
     assert meta["name"] == "job-queue"
     assert meta["metadata"]["openclaw"]["requires"]["bins"] == ["python3"]
+
+
+# --- the envelope and the receipt ---------------------------------------------------------
+
+ENVELOPE = {
+    "origin": "firstmate",
+    "owner": "kit",
+    "class": "ops",
+    "fingerprint": "https://example/AAA111",
+    "acceptance": "the report is filed in the intake index",
+    "thread": "intake-AAA111",
+}
+
+
+def _enqueue(*args, env=None, **flags):
+    cmd = [
+        "enqueue",
+        "reel",
+        "AAA111",
+        "--skill",
+        "video-eval",
+        "--handler",
+        json.dumps(HANDLER),
+        "--probe",
+        "",
+        "--label",
+        "https://example/AAA111",
+        *args,
+    ]
+    for k, v in flags.items():
+        cmd += [f"--{k.rstrip('_')}", v]
+    return _cli(*cmd, env=env or {**os.environ})
+
+
+def _envelope_flags(**over):
+    return {k: v for k, v in {**ENVELOPE, **over}.items() if v is not None}
+
+
+def test_enqueue_without_the_envelope_still_queues_and_prints_a_receipt(q):
+    """The drop door's shape: no envelope given, the job still queues."""
+    r = _enqueue()
+    assert r.returncode == 0, r.stderr
+    receipt = json.loads(r.stdout)
+    assert set(receipt) == {"id", "url", "state"}
+    assert receipt["id"] == "reel-AAA111" and receipt["state"] == "submitted"
+    assert receipt["url"].endswith("jobq.py status reel-AAA111")
+    job = jobq.get("reel-AAA111")
+    assert job["status"] == "queued" and "envelope" not in job
+
+
+def test_enqueue_with_the_envelope_stores_every_field_and_prints_the_receipt(q):
+    r = _enqueue(**_envelope_flags(class_="ops"))
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == {
+        "id": "reel-AAA111",
+        "url": f"{sys.executable} {SKILL / 'jobq.py'} status reel-AAA111",
+        "state": "submitted",
+    }
+    assert jobq.get("reel-AAA111")["envelope"] == ENVELOPE
+    assert stat.S_IMODE((q / "reel-AAA111.json").stat().st_mode) == 0o600
+
+
+def test_enqueue_takes_the_receipt_url_from_the_door(q):
+    r = _enqueue("--url", "video-eval.sh status reel-AAA111")
+    assert json.loads(r.stdout)["url"] == "video-eval.sh status reel-AAA111"
+
+
+def test_the_fingerprint_and_thread_default_to_the_jobs_own(q):
+    flags = _envelope_flags(fingerprint=None, thread=None)
+    assert _enqueue(**flags).returncode == 0
+    env = jobq.get("reel-AAA111")["envelope"]
+    assert env["fingerprint"] == "https://example/AAA111"
+    assert env["thread"] == "reel-AAA111"
+
+
+@pytest.mark.parametrize("field", ["origin", "owner", "class", "acceptance"])
+def test_enqueue_refuses_an_envelope_missing_a_field_and_queues_nothing(q, field):
+    r = _enqueue(**_envelope_flags(**{field: None}))
+    assert r.returncode == 1
+    assert f"envelope missing: {field}" in r.stderr
+    assert jobq.get("reel-AAA111") is None
+
+
+def test_enqueue_refuses_an_unknown_class(q):
+    r = _enqueue(**_envelope_flags(class_="weather"))
+    assert r.returncode == 1 and "envelope class must be one of" in r.stderr
+    assert jobq.get("reel-AAA111") is None
+
+
+def test_enqueue_refuses_a_handler_that_is_not_a_json_list(q):
+    cmd = ["enqueue", "reel", "AAA111", "--skill", "s", "--handler", '"run"']
+    r = _cli(*cmd, env={**os.environ})
+    assert r.returncode == 1 and "JSON list" in r.stderr
+
+
+def test_a_repeat_while_it_waits_adds_a_count_and_the_latest_occurrence(q):
+    first = json.loads(_enqueue(**_envelope_flags()).stdout)
+    again = json.loads(
+        _enqueue(**_envelope_flags(origin="kit", thread="intake-again")).stdout
+    )
+    assert again == first  # the same receipt: the filer never asks again
+    job = jobq.get("reel-AAA111")
+    assert job["repeats"] == 1
+    assert (
+        job["latest"]["origin"] == "kit" and job["latest"]["thread"] == "intake-again"
+    )
+    assert job["envelope"] == ENVELOPE  # the first occurrence's envelope stays
+    assert len(list(q.glob("*.json"))) == 1
+
+
+def test_a_repeat_of_a_running_job_reports_it_working(q):
+    _add_file()
+    jobq.next_job(now=1001.0)
+    assert jobq.get("video-file-AAA111")["status"] == "running"
+    _add_file()
+    assert jobq.get("video-file-AAA111")["repeats"] == 1
+    assert jobq.job_receipt("video-file-AAA111")["state"] == "working"
+
+
+def test_a_finished_job_queued_again_is_a_new_one_naming_the_old(q):
+    _enqueue(**_envelope_flags())
+    finished = time.time()
+    jobq.finish("reel-AAA111", "judged", now=finished)
+    receipt = json.loads(_enqueue(**_envelope_flags()).stdout)
+    assert receipt["state"] == "submitted"
+    job = jobq.get("reel-AAA111")
+    assert job["status"] == "queued" and "repeats" not in job
+    assert job["reopens"] == {
+        "id": "reel-AAA111",
+        "status": "done",
+        "finished_at": finished,
+    }
+
+
+def test_the_receipt_states_are_the_a2a_names(q):
+    names = {
+        jobq.QUEUED: "submitted",
+        jobq.RUNNING: "working",
+        jobq.DONE: "completed",
+        jobq.FAILED: "failed",
+    }
+    for status, name in names.items():
+        assert jobq.receipt("x", "y", status) == {"id": "x", "url": "y", "state": name}
+
+
+def test_status_prints_the_receipt_as_it_stands_and_fails_for_no_job(q):
+    _enqueue()
+    jobq.finish("reel-AAA111", "judged")
+    r = _cli("status", "reel-AAA111", env={**os.environ})
+    assert json.loads(r.stdout)["state"] == "completed"
+    assert _cli("status", "reel-NOPE", env={**os.environ}).returncode == 1

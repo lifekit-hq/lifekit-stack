@@ -41,6 +41,8 @@ Two homes receive notes. `firstmate` is the main home; `fm-vps` is the second ma
    - exit 3 → "Saved as note <id>, not yet announced." The note is durable. Do not retry it yourself; send the same body again (a same-day replay re-announces it, never a duplicate) only when he asks.
    - any other failure → "Not sent: <stderr line>." See failure rules below.
 
+A script (never his chat turn) may send a note with the envelope as flags after the home: `relay.sh note <body-file> [home] --origin O --owner W --class C --acceptance A [--thread T]`. The body is still piped unaltered; the script puts the envelope block ahead of it and prints a receipt line `{"id","url","state"}` after the host's two lines. A second note on the same thread is a replay: the first note's id, state `working`, no second note.
+
 ## Answers and confirms
 Only on his explicit words naming the decision (an id, the number of a call in the list you last showed him, optionally with an option's letter, or words that unambiguously name one item of `decisions_open`).
 A number, with or without a letter, that names a ledger entry (a call from `needs-you/open.json`, which has no `home_id`) is not handled here: send no note and do not re-read the status for it. It is closed by the ledger rule in your AGENTS.md ("One answer closes its decision").

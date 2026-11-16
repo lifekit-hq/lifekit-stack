@@ -2206,6 +2206,44 @@ prose included, reaches Kit's model unchanged.
   `{"plugins":{"entries":{"video-drop-door":{"enabled":false}}}}`; Kit then takes every message
   again.
 
+### Envelope and receipt
+
+Every door that takes work carries one envelope and returns one receipt at once. The text
+is a single build-standards entry in the vault, **"Envelope and receipt at every door"**
+(`memory/system/build-standards.md`, 2026-11-16, decision 0016): the fields, the class
+and state names, the fingerprint per door and the repeat rule are defined there and are not
+restated here. This section is only where this repo enforces it.
+
+| Door | Where | Envelope in | Receipt out | Fingerprint |
+| --- | --- | --- | --- | --- |
+| Job queue | `skills/job-queue/jobq.py enqueue` | flags `--origin --owner --class --acceptance [--fingerprint] [--thread]`, kept as `envelope` in the job file; the queue's own job owner is `--skill` | one JSON line `{"id","url","state"}`; `url` is `--url` or `jobq.py status <id>` | the job id (kind and key); a repeat of a waiting or running job adds `repeats` and `latest`, a finished one queued again carries `reopens` |
+| Video intake, jobs | `scripts/video-eval.sh enqueue` (also `backfill`'s `ingest` and `voice` through `video.py`) | the same flags after the link; origin is `VIDEO_EVAL_ORIGIN` | the usual line, then the receipt line; `url` is `video-eval.sh status <id>`, or the report when the item was judged before | the item's normalized link |
+| Video intake, direct | `video-eval.sh idea\|link\|note\|repo` | the same flags; an idea's origin is always `scout` | the usual three lines, then the receipt line; state `completed`, `url` the report | the item's recorded source; the envelope is kept in `<report>.envelope.json` with a count and the latest occurrence |
+| Kit to firstmate | `skills/secondmate-relay/relay.sh note` | flags after the body file and optional home: `--origin --owner --class --acceptance [--thread]`; the note body starts with the envelope as a `---` block | the host's two JSON lines, then the receipt line; `url` is `relay.sh replies <home>` | the `thread`; the request id derives from it, so a note on the same thread is a replay of the first (receipt `working`, no second note) |
+
+Rules this repo adds on top of the entry:
+
+- **Optional as a whole, strict once started.** A door with no envelope flag behaves as it
+  always did, and prints no receipt, so existing callers keep their output. With any envelope
+  flag it refuses (exit 2 for video intake, 64 for the relay, 1 for `jobq.py`) an item missing
+  `origin`, `owner`, `class` or `acceptance`, or one with a class outside `dev ops finance
+  life unclear`, before anything is filed. The fingerprint and the thread default to the
+  item's own (its link or id; for the relay the thread defaults to the body's digest and the
+  fingerprint is always the thread).
+- **The Telegram drop door fills its own.** `door` and `door-file` store `origin: kit` and
+  `class: life` on the job and print the same one-line receipt as before.
+- **State names** map from the queue's own: queued is `submitted`, running `working`, done
+  `completed`, failed `failed`. The other four A2A names are not produced by these doors.
+- **Reopening a relay thread.** The note body of a repeat is not stored: the host's
+  request-id replay returns the first note's id. What the second mate does with a thread that
+  was already answered is its own store's rule, not this repo's.
+
+Verify: `jobq.py enqueue` with no envelope flag still queues (the drop door's shape), and with
+all of them prints the receipt and `jobq.py list` shows the job; the same call again prints the
+same receipt. `relay.sh note <file> --origin kit --owner firstmate --class dev --acceptance
+"<done when>" --thread <id>` twice prints the same note id, the second time with
+`"state":"working"`, and `relay.sh replies` shows one note.
+
 ### Fleet gate
 
 Part of the P16 permission engine: an OpenClaw agent that reaches an action the owner has
