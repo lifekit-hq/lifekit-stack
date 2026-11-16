@@ -1544,8 +1544,10 @@ and the status read is an HTTP GET Kit could always make.
 - **Morning brief:** the 08:30 `today-brief` row is host state made by hand with kit,
   not declared in git. `scripts/ensure-today-brief-fleet.sh` (as `lifekit`) inserts the
   fleet step into its prompt at two fixed anchors and refuses, row untouched, when the
-  prompt no longer has them; a prompt already carrying the step is left alone, and a row
-  carrying the previous version of the step is upgraded in place. The step's Google rule
+  prompt no longer has them; a prompt already carrying the step keeps its text (the script
+  only ensures `--light-context`, see "Light context on `today-brief` and
+  `ledger-opportunity`"), and a row carrying the previous version of the step is upgraded
+  in place. The step's Google rule
   is evidence-based: the brief makes the real calendar and mail calls on every run, with the
   tool server's own argument names (`page_size`, `calendar_id`), and
   prints "Google sign-in expired - mail and calendar skipped" (with the re-sign-in to-do)
@@ -2551,8 +2553,12 @@ message that stops following its prompt means the prompt leaned on the bootstrap
 
 **Rollback:** `openclaw cron edit <id> --no-light-context`. Same hot reload.
 
-`scripts/ensure-today-brief-fleet.sh` edits only the message, so re-running it after a
-deploy leaves the flag as set.
+`scripts/ensure-today-brief-fleet.sh` carries the flag for `today-brief`: it sets
+`--light-context` with its message edit, and on a row that already has the fleet step
+but not the flag it sets just the flag. So on the VPS host, as `lifekit`,
+`/srv/lifekit-stack/scripts/ensure-today-brief-fleet.sh` applies the `today-brief` half
+of the operator step above; `ledger-opportunity` has no ensure script, so it still
+takes the `openclaw cron edit <id> --light-context` line.
 
 ## Rolling back OpenClaw
 

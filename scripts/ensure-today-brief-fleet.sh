@@ -24,6 +24,11 @@
 # ensure-secondmate-relay.sh has installed the skill:
 #   /srv/lifekit-stack/scripts/ensure-today-brief-fleet.sh
 #
+# The same edit also sets `--light-context` (payload lightContext: true): the
+# prompt is self-contained, so the run drops the workspace bootstrap (issue
+# #481, runbook "Light context on `today-brief` and `ledger-opportunity`").
+# A row that already has the step but not the flag gets just the flag.
+#
 # `openclaw cron edit --message` hot-reloads; nothing is restarted, and the
 # row's schedule, delivery and tools are not touched.
 set -euo pipefail
@@ -64,6 +69,12 @@ import json, sys
 for job in json.load(sys.stdin)["jobs"]:
     if job.get("name") == sys.argv[1]:
         print(job["id"])
+        break' "$JOB_NAME")"
+light="$(printf '%s' "$jobs" | python3 -c '
+import json, sys
+for job in json.load(sys.stdin)["jobs"]:
+    if job.get("name") == sys.argv[1]:
+        print("yes" if (job.get("payload") or {}).get("lightContext") is True else "no")
         break' "$JOB_NAME")"
 if [ -z "$job_id" ]; then
   echo "no '$JOB_NAME' automation row. It is host state, not applied by deploy." >&2
@@ -173,7 +184,16 @@ sys.stdout.write(msg.replace(BEFORE, "\n" + STEP + BEFORE, 1).replace(EMPTY, FLE
 ' "$JOB_NAME")" || status=$?
 case "$status" in
   0) ;;
-  10) echo "payload.message of '$JOB_NAME' ($job_id) already carries the fleet step; nothing to do"; exit 0 ;;
+  10)
+    echo "payload.message of '$JOB_NAME' ($job_id) already carries the fleet step"
+    if [ "$light" != yes ]; then
+      docker exec "$GATEWAY" openclaw cron edit "$job_id" --light-context >/dev/null
+      echo "'$JOB_NAME' ($job_id) now runs with --light-context"
+    else
+      echo "already runs with --light-context; nothing to do"
+    fi
+    exit 0
+    ;;
   11)
     echo "payload.message of '$JOB_NAME' ($job_id) no longer has the text this script anchors on; row left untouched." >&2
     echo "Add the step by hand (scripts/ensure-today-brief-fleet.sh holds its text)." >&2
@@ -183,7 +203,7 @@ case "$status" in
 esac
 
 # 3. Set it.
-docker exec "$GATEWAY" openclaw cron edit "$job_id" --message "$wanted" >/dev/null
-echo "payload.message of '$JOB_NAME' ($job_id) now carries the fleet step"
+docker exec "$GATEWAY" openclaw cron edit "$job_id" --message "$wanted" --light-context >/dev/null
+echo "payload.message of '$JOB_NAME' ($job_id) now carries the fleet step and runs with --light-context"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
 echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # sends the brief to Telegram"
