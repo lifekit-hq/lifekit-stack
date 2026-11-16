@@ -781,10 +781,12 @@ image tag and compose env changed, recreates the gateway once.
   plugins as usual.
 
 **Host steps (operator, gateway container `openclaw-openclaw-gateway-1`).** Steps 1 and 2 (per-agent
-models, then the cron model scripts) must run BEFORE the gateway recreate. The recreate is the
-deploy, which runs on merge to `main`, so do steps 1 and 2 before merging; the new
-`modelPolicy.allow` lists only the 5.5 models, so do not recreate the gateway before they are done.
-Steps 3 onward run after the deploy.
+models, then the cron model scripts) run BEFORE the merge, from a checkout of the PR branch:
+`/srv/lifekit-stack` only gets the new `scripts/ensure-kit-cron-models.sh` (and the 5.5 default in
+`scripts/ensure-needs-you-digest.sh`) when the merge deploys. Alternatively, run the digest script
+from `/srv/lifekit-stack` with `NEEDS_YOU_DIGEST_MODEL=anthropic/claude-sonnet-5-5` set. The single
+gateway recreate comes last, after the merge deploy; it must not run before steps 1 and 2, because
+the new `modelPolicy.allow` lists only the 5.5 models. Steps 3 onward run after the deploy.
 
 1. Per-agent models (host-state half; `openclaw config patch` merges, so unlisted keys stay):
    career, finance and learnclaw `model` -> `anthropic/claude-sonnet-5-5`; Kit's `model` ->
