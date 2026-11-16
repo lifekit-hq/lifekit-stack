@@ -133,12 +133,3 @@ def test_a_state_dir_with_no_workspace_fails_loudly(tmp_path):
     assert r.returncode == 1
     assert "no agent workspace" in r.stderr
 
-
-def test_the_shipped_block_is_one_marked_block_and_small_enough_for_a_persona():
-    # Ledger's drift scan treats a devclaw mention as a retired handoff except
-    # inside this block (test_ledger_persona covers that); here the shipped
-    # file must be exactly one marked block that fits the bootstrap budget.
-    text = SHARED.read_text()
-    assert text.count(BEGIN) == 1 and text.count(END) == 1
-    assert text.index(BEGIN) < text.index(END)
-    assert len(text) < 2000

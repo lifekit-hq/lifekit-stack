@@ -1279,6 +1279,7 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/ensure-learnclaw.sh", True),
         ("scripts/ensure-doc-door.sh", True),
         ("scripts/ensure-fleet-gate.sh", True),
+        ("scripts/ensure-dev-problem-block.sh", True),
         ("compose/openclaw-gateway/plugins/video-drop-door/index.js", True),
         ("compose/openclaw-gateway/plugins/fleet-gate/index.js", True),
         ("scripts/openclaw-smoke-verdict.py", True),
