@@ -56,10 +56,10 @@ JOBS = {
 }
 
 
-def run(tmp_path: Path, *args: str, fail_id: str = ""):
+def run(tmp_path: Path, *args: str, fail_id: str = "", jobs: dict = JOBS):
     state = tmp_path / "state.json"
     if not state.exists():
-        state.write_text(json.dumps(JOBS))
+        state.write_text(json.dumps(jobs))
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     docker = bindir / "docker"
@@ -111,3 +111,26 @@ def test_a_failed_edit_does_not_stop_the_rest_and_fails_the_run(tmp_path):
     assert proc.returncode == 1
     assert state["jobs"][3]["payload"]["model"] == SONNET
     assert "failed: could not pin 'today-brief'" in proc.stderr
+
+
+def test_a_row_naming_no_agent_is_kits(tmp_path):
+    jobs = {
+        "jobs": [
+            {"id": "n", "name": "chat-made", "payload": {}},
+            {"id": "c", "name": "ledger-pulse", "agentId": "finance", "payload": {}},
+        ]
+    }
+    proc, state, edits = run(tmp_path, jobs=jobs)
+    assert proc.returncode == 0, proc.stderr
+    assert [e[2] for e in edits] == ["n"]
+    assert state["jobs"][0]["payload"]["model"] == SONNET
+    assert "model" not in state["jobs"][1]["payload"]
+
+
+@pytest.mark.parametrize("args", [(), ("--check",)])
+def test_zero_matching_jobs_warns_and_fails(tmp_path, args):
+    jobs = {"jobs": [{"id": "c", "name": "x", "agentId": "finance", "payload": {}}]}
+    proc, _, edits = run(tmp_path, *args, jobs=jobs)
+    assert proc.returncode == 1
+    assert "no kit cron jobs matched" in proc.stderr
+    assert edits == []

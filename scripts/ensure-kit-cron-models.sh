@@ -15,7 +15,8 @@
 #
 # Only jobs whose payload.model is EMPTY are touched. A job that already names
 # a model (any model) is a deliberate choice and is reported, never rewritten.
-# Re-running converges. Acceptance: `openclaw cron list` shows a model on every
+# A row naming no agent counts as Kit's (the default agent). Finding no Kit job
+# at all is an error, not a pass. Re-running converges. Acceptance: `openclaw cron list` shows a model on every
 # Kit job.
 #
 # Env overrides:
@@ -45,15 +46,18 @@ jobs_json="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null)
 }
 
 # id<TAB>name<TAB>model for every job of this agent (model empty when unset).
+# A row naming no agent runs as the default agent, so it counts as this one's.
 rows="$(printf '%s' "$jobs_json" | jq -r --arg a "$AGENT" '
   (if type == "array" then . else (.jobs // []) end)
-  | map(select((.agentId // .agent // "") == $a))
+  | map(select((.agentId // .agent // $a) == $a))
   | .[] | [.id, (.name // .id), ((.payload.model // "") | tostring)] | @tsv')"
 
+matched=0
 unpinned=0
 failed=0
 while IFS=$'\t' read -r id name model; do
   [ -n "$id" ] || continue
+  matched=$((matched + 1))
   if [ -n "$model" ]; then
     echo "ok: '$name' ($id) runs on $model"
     continue
@@ -70,6 +74,11 @@ while IFS=$'\t' read -r id name model; do
     fi
   fi
 done <<< "$rows"
+
+if [ "$matched" -eq 0 ]; then
+  echo "warning: no ${AGENT} cron jobs matched; the cron list schema may have changed" >&2
+  exit 1
+fi
 
 if [ "$check_only" -eq 1 ] && [ "$unpinned" -gt 0 ]; then
   echo "$unpinned ${AGENT} job(s) unpinned; run without --check to pin them" >&2
