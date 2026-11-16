@@ -394,6 +394,22 @@ a sent message with the matching app page as a plain URL (`/events`,
 or a `NO_REPLY`); the app origin is not in git, so the paragraph tells the
 agent to take it from a returned `appUrl`.
 
+**The ledger-pulse gate.** The row is gated by a trigger script, so a run with nothing to do costs
+no model turn (the token-cost audit, `docs/token-cost-audit.md`: about 0.44 USD a run, most runs ending in
+`NO_REPLY`). `scripts/finance-pulse-gate/gate.js` is stored in the row and runs
+`pulse_gate.py check` in the gateway; that read-only check calls two finance-sentry MCP tools
+(`get_pending_companion_events` with held events included, `get_sync_health`) with the gateway's
+`FINANCE_SENTRY_MCP_TOKEN`, and acknowledges or records nothing. It wakes the agent when the run starts at
+or before 09:22 Europe/Dublin (the checklist's coverage-memo step, and the Sunday weekly digest), when any
+companion event is pending, or when an account provider's last good sync is over 24h old; otherwise the
+row fires nothing and leaves no run history, like `job-queue-drain`. A fault (finance-sentry down, token
+refused) throws, so the row shows the error and its failure alert fires. What the agent does on a run is
+unchanged: the checklist is still its whole task list. `scripts/ensure-finance-pulse.sh` installs the two
+gate files to `/srv/openclaw/config/gates/ledger-pulse/` and sets the row's `--trigger-script`, only when
+the stored script differs; after merge run it on the host as `lifekit`, then check one gated run:
+`openclaw cron run <id> --expect-final --json` (afternoon runs with nothing pending report no run). **Undo:**
+`openclaw cron edit <id> --clear-trigger`, and keep the script from re-adding it (revert this change).
+
 **Lanes for market signals.** finance-sentry delivers a severe intraday move (a held name moving 2x its alert bar) immediately by wake; routine `MarketStructure` and `NewsCluster` signals are held and batched into the three-times-a-day `ledger-pulse`, step 1 of `scripts/finance-pulse.md`.
 
 **The payload is stateless (the rule).** Every `agentTurn` cron run is a fresh
