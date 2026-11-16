@@ -409,8 +409,8 @@ gate files to `/srv/openclaw/config/gates/ledger-pulse/` and sets the row's `--t
 the stored script differs; the same script converges the row's failure alert (`--failure-alert
 --failure-alert-after 1 --failure-alert-mode announce --failure-alert-channel telegram
 --failure-alert-account-id default --failure-alert-to <chat>`, the chat from `FINANCE_PULSE_ALERT_CHAT` or
-`LIFEKIT_TELEGRAM_CHAT` in the host env file), so a gate fault always reaches Telegram; after merge run it on the host as `lifekit`, then check one gated run:
-`openclaw cron run <id> --expect-final --json` (afternoon runs with nothing pending report no run). **Undo:**
+`LIFEKIT_TELEGRAM_CHAT` in the host env file), so a gate fault always reaches Telegram; after merge run it on the host as `lifekit`, then check one
+gated run: `openclaw cron run <id> --expect-final --json` (afternoon runs with nothing pending report no run). **Undo:**
 `openclaw cron edit <id> --clear-trigger`, and keep the script from re-adding it (revert this change).
 
 **Lanes for market signals.** finance-sentry delivers a severe intraday move (a held name moving 2x its alert bar) immediately by wake; routine `MarketStructure` and `NewsCluster` signals are held and batched into the three-times-a-day `ledger-pulse`, step 1 of `scripts/finance-pulse.md`.
