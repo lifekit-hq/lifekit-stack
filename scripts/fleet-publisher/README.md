@@ -294,3 +294,40 @@ builds it and the publisher writes it world-readable, atomically, beside
   and fails the run; the summary is already published. A missing helper script
   is only logged, as for the status page. The dashboard backend's
   `backend/infra.json` needs an entry for the file before it can serve it.
+
+## Screen changes feed (`OUT_DIR/screen-changes.json`)
+
+The open pull requests that add, change or remove a screen-baseline image
+(`*-linux.png`), with the images, for the dashboard's "Screen changes" section.
+The shape is the dashboard's contract (`docs/SCREEN-CHANGES.md` in
+lifekit-dashboard): schema `fleet-screen-changes.v1`, `generated_epoch`, and
+`items[]` of `id`, `home_id`, `repo`, `pr`, `title`, `url`, `ts`, `screens[]`
+(`name`, `status` `changed|added|removed`, `before`, `after`). `screen_changes.py`
+(beside the script; installed as `/usr/local/bin/lifekit-fleet-screens.py`;
+`FLEET_SCREENS` overrides) writes the file and the images itself, world-readable
+and atomically, the images first, beside `home-summary.json`. Nothing is pushed.
+
+- **Source**: `gh` (`FLEET_GH`, read-only: `pr list`, and GET `compare` and
+  `contents`) for the repos in `FLEET_SCREEN_REPOS` (space-separated
+  `owner/name`; default `lifekit-hq/lifekit-dashboard`; empty turns the feed
+  off). A repo outside that list is never read. Only paths matching
+  `<name>-<project>-linux.png` are fetched, before at the PR's merge base and
+  after at its head; an image must be a PNG of at most 4 MiB, else the screen is
+  skipped (so is one missing the image its `status` needs).
+- **Items**: one per open PR with at least one such screen, at most 20, newest
+  `ts` first (the head commit's time, else the PR's last activity); a PR drops out
+  when it is merged or closed, and its images are deleted with it. At most 40
+  screens per item. `id` is `<repo name>-<pr number>`; `home_id` is
+  `FLEET_SCREEN_HOME`, else the first home's id. `title` is one line, cut at 160.
+  A veto is not read back: the item stays until its PR closes (the dashboard
+  remembers the veto per device).
+- **Images** are copied to `OUT_DIR/screen-changes/<id>/before-<name>.png` and
+  `after-<name>.png`, named exactly as the feed lists them. The dashboard serves
+  only what the feed lists.
+- **Cache**: what was fetched per PR head commit is kept in
+  `FLEET_STATE_DIR/screen-changes-cache.json`, so a minute with no new push costs
+  one `gh pr list` per repo. A run has a 40 s gh budget; a PR not reached is
+  picked up on the next run.
+- **Failure**: gh failing on the PR list, or a credential-looking item (withheld),
+  never publishes a half feed: a failed run leaves the previous file and images
+  and fails the unit. A missing helper script is only logged.

@@ -58,6 +58,10 @@
 # newest first, from the read-only fleet-policy logs in FLEET_POLICY_DIR
 # (default ~/.local/state/fleet-policy), built by taken_feed.py beside this
 # script (FLEET_TAKEN overrides; installed as lifekit-fleet-taken.py).
+# Also writes OUT_DIR/screen-changes.json and OUT_DIR/screen-changes/<id>/*.png,
+# the "Screen changes" feed (contract in README.md): the open PRs that change a
+# screen-baseline image, from screen_changes.py beside this script
+# (FLEET_SCREENS overrides; installed as lifekit-fleet-screens.py).
 # The dashboard never reads Lavish or fleet-home state. Writes TEXTFILE_DIR/fleet.prom:
 #   fleet_workers{state}                          active children by state, all homes
 #   fleet_decisions_open                          open captain decisions, all homes
@@ -784,6 +788,36 @@ publish_taken() {
 }
 if ! publish_taken; then
   echo "fleet-publisher: the taken feed was not published" >&2
+  ((rc != 0)) || rc=1
+fi
+# The "Screen changes" feed, beside home-summary.json: screen_changes.py beside
+# this script (FLEET_SCREENS overrides; installed as lifekit-fleet-screens.py)
+# lists the open PRs of the FLEET_SCREEN_REPOS repos through gh, copies the
+# baseline images they change to OUT_DIR/screen-changes/ and writes
+# screen-changes.json itself (atomically, images first). A helper that reads
+# nothing (exit 3, e.g. FLEET_GH empty) leaves the previous feed as it was; any
+# other failure is logged, leaves the previous feed, and fails the run; a
+# missing helper is only logged. Items belong to home FLEET_SCREEN_HOME
+# (default: the first home's id).
+publish_screens() {
+  local helper="${FLEET_SCREENS:-}" here status=0
+  here="$(dirname "$(realpath "$0")")"
+  if [[ -z "$helper" ]]; then
+    for helper in "$here/screen_changes.py" "$here/lifekit-fleet-screens.py" ""; do
+      [[ -z "$helper" || -r "$helper" ]] && break
+    done
+  fi
+  [[ -n "$helper" ]] || {
+    echo "fleet-publisher: no screen_changes.py; the screen changes feed is not published" >&2
+    return 0
+  }
+  CREDENTIAL_RE="$CREDENTIAL_RE" timeout 60 python3 -I "$helper" --now "$NOW" --out-dir "$OUT_DIR" \
+    --state-dir "${FLEET_STATE_DIR:-${STATE_DIRECTORY:-$HOME/.local/state/lifekit-fleet-publisher}}" \
+    --home-id "${FLEET_SCREEN_HOME:-${ids[0]}}" || status=$?
+  ((status == 0 || status == 3))
+}
+if ! publish_screens; then
+  echo "fleet-publisher: the screen changes feed was not published" >&2
   ((rc != 0)) || rc=1
 fi
 exit "$rc"
