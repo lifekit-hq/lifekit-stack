@@ -46,6 +46,7 @@ A domain that fails the test is a skill in kit, not an agent.
 | Platform keys (logging, diagnostics, plugins, memory search, heartbeat, hooks) | `compose/openclaw-gateway/platform.patch.json`, applied by `deploy.sh` |
 | Workspace `MEMORY.md` / `USER.md` | the vault pointers in `defaults/workspace-pointers/`, written by `deploy.sh` |
 | Workspace templates | `defaults/agents/<id>/workspace/`, copied into the agent's workspace by hand, except learnclaw's, which the deploy installs (`scripts/ensure-learnclaw.sh`) (resolve the path with `openclaw agents list --json`; container paths under `/home/node/.openclaw/` map to `/srv/openclaw/config/` on the host) |
+| Persona block shared by every agent ("Development-class problems") | `defaults/agents/shared/dev-problems.md`, put into each workspace `SOUL.md` by `scripts/ensure-dev-problem-block.sh` (`docs/runbook.md`, "Development-class problems: file and carry on") |
 | Skills | not vendored; see each workspace's `skills/README.md` |
 
 The platform half is in git and deployed on merge; the per-agent half (entries, bindings, channels, crons, auth) is host state and ships as operator steps in the PR that changes it. See `docs/runbook.md`, "Host-config patch".
@@ -105,7 +106,7 @@ The current shape does not repeat that design:
 
 ## DevClaw - retired
 
-The `devclaw` agent and its `devclaw` MCP server entry retired on 2026-10-09. Autonomous build work is a `kit-relay` note: kit (or a specialist such as Ledger) files no issue itself; the ask reaches firstmate through `secondmate-relay`, and firstmate files an issue only when the ask is work. The devclaw-mcp service and its compose project belong to the devclaw repo, not to this fleet. Since 2026-11-05 kit can call its MCP tools through a new `mcp.servers.devclaw` entry (there is still no `devclaw` agent), see `docs/runbook.md` "DevClaw MCP server (per-agent half)".
+The `devclaw` agent and its `devclaw` MCP server entry retired on 2026-10-09. Autonomous build work is a `kit-relay` note: kit (or a specialist such as Ledger) files no issue itself; the ask reaches firstmate through `secondmate-relay`, and firstmate files an issue only when the ask is work. The devclaw-mcp service and its compose project belong to the devclaw repo, not to this fleet. Since 2026-11-05 kit can call its MCP tools through a new `mcp.servers.devclaw` entry (there is still no `devclaw` agent), see `docs/runbook.md` "DevClaw MCP server (per-agent half)"; every agent files a development-class problem through its intake tool (`docs/runbook.md`, "Development-class problems: file and carry on").
 
 The agent entry and its system-owned `skill-collection-review-devclaw` cron are removed with `openclaw agents delete devclaw --force` once the deploy that drops the devclaw memory bind mount from the gateway has run (the delete moves the agent's directories to the trash, and the mount would be in that path). `config patch`/`config unset` refuse to drop a roster entry.
 

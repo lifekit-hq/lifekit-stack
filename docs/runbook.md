@@ -190,7 +190,8 @@ gateway stopped and stay `run --rm`.
 
 #### DevClaw MCP server (per-agent half)
 
-Kit calls DevClaw's MCP tools through `mcp.servers.devclaw`, which lives in the
+Kit calls DevClaw's MCP tools (and every agent its intake tool, see "Development-class
+problems: file and carry on") through `mcp.servers.devclaw`, which lives in the
 per-agent half of `openclaw.json` (host state), not in `platform.patch.json`.
 Its `url` is `http://devclaw-mcp:8000/mcp`, reached over the external
 `lifekit-shared` network that the gateway and `devclaw-mcp` already share, and
@@ -1590,6 +1591,55 @@ and the status read is an HTTP GET Kit could always make.
 - **Rollback:** revert the skill and re-run the ensure script. Notes already sent stay
   in the inbox they were sent to.
 
+#### Development-class problems: file and carry on
+
+The owner is never the messenger. Every OpenClaw agent carries the same persona block,
+"Development-class problems": on a defect in a fleet app or tool, a data source or tool that
+keeps failing, or a gap in a repo it does not own, the agent files the problem through the
+devclaw intake tool (`file_intake`, over the `devclaw` MCP server), says so once in one line of
+its own output, degrades and carries on, and never waits for the fix and never messages the
+owner about a failure. It names the repo when the owner is obvious and leaves it out when not,
+and firstmate routes it. A failed filing is stated in the same line, never relayed. This is
+not a notification channel and adds no rule.
+
+- **One source:** `defaults/agents/shared/dev-problems.md`, between its two marker lines.
+  `scripts/ensure-dev-problem-block.sh [agent-id ...]` puts it into each workspace's
+  `SOUL.md` (all of `agents/*/workspace` when no id is given): it replaces the text between
+  the markers, or appends the block when they are absent, and touches nothing else. Re-running
+  converges; `DRY_RUN=1` reports without writing; a missing `SOUL.md` or a lone, repeated or
+  reversed marker leaves that file alone and makes the exit code 1 after the others finish.
+  Ledger's `AGENTS.md` is composed from finance-sentry and byte-compared, so the block goes in
+  its host-state `SOUL.md`, like every other agent's. `ledger-persona.py check` exempts the
+  block's devclaw mention and still flags a devclaw handoff anywhere else.
+- **Learnclaw:** the deploy rewrites its `SOUL.md` from git (`ensure-learnclaw.sh`), which
+  then re-applies the block, so nothing is needed by hand there. The other agents' templates
+  in `defaults/agents/<id>/workspace/` stay hand-copied, as with the answer-shape section.
+- **Externally blocked:** an item that waits on someone outside the fleet is a held record
+  with owner `external` (firstmate sets the hold), which the fleet page shows as a held item
+  (`records[].hold.owner: "external"`, counted in `projects[].held_external` and
+  `queue.held_external`, see `scripts/fleet-publisher/README.md`), not a message.
+- **Dependency:** the intake tool lives in devclaw, not here. It must exist, be idempotent
+  by repo plus fingerprint (a repeat adds a count to the open issue), and be in the gateway's
+  `tools.allow`; until it is, an agent that follows the block states that filing failed and
+  carries on. Check by filing one test intake from the main agent and reading the
+  issue or queue reference it returns.
+- **Week sheet:** the line counting items routed and resolved without the owner against items
+  that reached the owner is drafted by firstmate in the vault, not produced by this repo.
+
+Operator steps, once per host after the PR deploys (as `lifekit`; the live workspaces and the
+live `AGENTS.md` are host state):
+
+```bash
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # one line per agent
+```
+
+Then paste the revised devclaw line of `defaults/agents/kit/workspace/AGENTS.md` into the live
+kit `AGENTS.md`. Ledger's own persona still tells it to hand build work to Kit with
+`sessions_send`; that line moves to this route by a finance-sentry `agent/ledger` change and a
+`PIN` bump. **Verify:** `grep -c 'lifekit:dev-problems:begin' /srv/openclaw/config/agents/*/workspace/SOUL.md`
+prints 1 for each. **Rollback:** delete the text between and including the two marker lines in
+each `SOUL.md`.
+
 ### Kit's workout log and gym-day nudge
 
 Kit logs a gym session from one typed or spoken line and confirms it in one line, answers
@@ -2164,28 +2214,14 @@ Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
   command-kind cron jobs (they run no agent tool call) are all outside it. Server-side
   scoping (the Google and finance-sentry MCP scopes, the repo and token permissions) stays
   the strongest boundary; the gate is the place a stop is filed, not the lock.
-- **Per-agent `devclaw__*` deny:** the devclaw MCP tools are for the main agent only, but
-  today every agent shares one global `tools.allow` and there is no per-agent deny. That is
-  the personal half of `openclaw.json` (host state), so it is an operator patch, for every
-  agent except `kit` (the roster is `openclaw agents list`):
-
-  ```bash
-  cat > deny-devclaw.json <<'JSON'
-  {"agents": {"entries": {
-    "finance":   {"tools": {"deny": ["devclaw__*", "mcp__devclaw__*"]}},
-    "career":    {"tools": {"deny": ["devclaw__*", "mcp__devclaw__*"]}},
-    "learnclaw": {"tools": {"deny": ["devclaw__*", "mcp__devclaw__*"]}}
-  }}}
-  JSON
-  docker exec -i openclaw-openclaw-gateway-1 openclaw config patch --stdin --dry-run < deny-devclaw.json
-  docker exec -i openclaw-openclaw-gateway-1 openclaw config patch --stdin < deny-devclaw.json
-  ```
-
-  Per-agent allow and deny lists were not enforced under `claude-cli` when last tried
-  (2026-05-25, `docs/openclaw-agent-design.md`). Still unverified under 2026.10.9 (checked
-  2026-11-15): no table is installed, so the fleet gate vetoes nothing, and no `devclaw__*`
-  call from a non-main agent has been driven live. Treat the patch as intent until such a
-  call is seen refused, and give the table a `devclaw__*` stop row if it is not.
+- **Per-agent `devclaw__*` deny: do not apply.** An earlier note here suggested denying the
+  devclaw MCP tools for every agent except `kit`. Every agent now files a development-class
+  problem through the devclaw intake tool ("Development-class problems: file and carry on"),
+  so a blanket deny would stop the route. If per-agent enforcement is ever verified under
+  `claude-cli` (not enforced when last tried, 2026-05-25, `docs/openclaw-agent-design.md`;
+  unverified under 2026.10.9, checked 2026-11-15, with no fleet-gate table installed), scope it
+  to the other devclaw tools: deny `devclaw__*` except the intake tool, and give a stop row to
+  the rest.
 - **Rehearse:** `scripts/rehearse-fleet-gate.sh` loads the repo's plugin in node with a
   scratch table and state dir and a recording `ssh`, plays one `A`, one `L` and one `S`
   call, and prints what each returned and what was filed. It touches no container and no
