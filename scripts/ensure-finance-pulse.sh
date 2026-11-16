@@ -18,12 +18,28 @@
 # `ledger-pulse` cron row has been created on the gateway (see docs/runbook.md):
 #   /srv/lifekit-stack/scripts/ensure-finance-pulse.sh
 #
-# Converges: the live payload.message and payload.timeoutSeconds are compared
-# with the declared ones and rewritten with `openclaw cron edit --message` /
-# `--timeout-seconds` only when they differ. The edit hot-reloads (cron rows
-# are a no-op-restart category); nothing is restarted. The row's schedule,
-# delivery, model and the old scratch are not touched.
+# It also installs the row's gate (scripts/finance-pulse-gate/) into the gateway
+# state dir and sets it as the row's trigger script, so a run with nothing
+# pending costs no model turn (docs/runbook.md, "The ledger-pulse gate").
+#
+# Converges: the live payload.message, payload.timeoutSeconds and trigger script
+# are compared with the declared ones and rewritten with `openclaw cron edit
+# --message` / `--timeout-seconds` / `--trigger-script` only when they differ.
+# The edit hot-reloads (cron rows are a no-op-restart category); nothing is
+# restarted. The row's schedule, delivery, model and the old scratch are not
+# touched.
+#
+# It also converges the row's failure alert (`--failure-alert ...` to the owner
+# chat), so a gate fault (which throws) reaches Telegram instead of going quiet.
+#
+# Env overrides:
+#   OPENCLAW_CONFIG_DIR  host path of the gateway state dir (default: /srv/openclaw/config, as in compose)
+#   FINANCE_PULSE_ALERT_CHAT  owner Telegram chat id for the failure alert
+#                        (default: LIFEKIT_TELEGRAM_CHAT from ENV_FILE)
+#   ENV_FILE             host env file (default: /srv/lifekit-secrets/stack.env)
 set -euo pipefail
+
+ENV_FILE="${ENV_FILE:-/srv/lifekit-secrets/stack.env}"
 
 # The run's wall-clock limit. Successful pulse runs take 100-170 s (the model
 # call dominates), and a 180 s limit left ordinary variance failing runs
@@ -39,9 +55,22 @@ GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
 [ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 JOB_NAME="ledger-pulse"
 
+ALERT_CHAT="${FINANCE_PULSE_ALERT_CHAT:-}"
+if [ -z "$ALERT_CHAT" ] && [ -r "$ENV_FILE" ]; then
+  ALERT_CHAT="$(sed -nE 's/^[[:space:]]*LIFEKIT_TELEGRAM_CHAT=["'"'"']?([0-9-]+)["'"'"']?[[:space:]]*$/\1/p' \
+    "$ENV_FILE" | head -1)"
+fi
+[ -n "$ALERT_CHAT" ] || { echo "no owner chat id for the failure alert: set FINANCE_PULSE_ALERT_CHAT or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE" >&2; exit 1; }
+
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 checklist="${repo_root}/scripts/finance-pulse.md"
 [ -s "$checklist" ] || { echo "missing or empty: $checklist" >&2; exit 1; }
+gate_src="${repo_root}/scripts/finance-pulse-gate"
+gate_dest="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}/gates/ledger-pulse"
+# The same path inside the gateway container (the state dir is bind-mounted).
+gate_script="/home/node/.openclaw/gates/ledger-pulse/gate.js"
+{ [ -s "$gate_src/gate.js" ] && [ -s "$gate_src/pulse_gate.py" ]; } \
+  || { echo "missing or empty: $gate_src/gate.js or pulse_gate.py" >&2; exit 1; }
 
 # The gateway image has no jq, and once logging.consoleStyle=json is live the
 # CLI may interleave JSON log lines with its JSON result. So: scan the output
@@ -87,7 +116,7 @@ enabled="${row##* }"
 preamble="Periodic check-in for the Ledger finance agent pulse. The checklist below is your whole task list for this run; do not infer or repeat tasks from prior chats. If nothing on it needs the operators attention, your entire final reply must be exactly NO_REPLY and nothing else. If something does, send exactly one Telegram message covering it, then stop -- no additional messages, working notes, or recaps."
 wanted="${preamble}"$'\n\n'"$(cat "$checklist")"
 
-# 3. Compare with the live payload.message and payload.timeoutSeconds.
+# 3. Compare with the live payload.message, payload.timeoutSeconds and trigger script.
 current="$(printf '%s' "$jobs" | python3 -c '
 import json, sys
 for job in json.load(sys.stdin)["jobs"]:
@@ -101,12 +130,33 @@ for job in json.load(sys.stdin)["jobs"]:
         print((job.get("payload") or {}).get("timeoutSeconds", ""), end="")
         break' "$JOB_NAME")"
 
+current_gate="$(printf '%s' "$jobs" | python3 -c '
+import json, sys
+for job in json.load(sys.stdin)["jobs"]:
+    if job.get("name") == sys.argv[1]:
+        print(((job.get("trigger") or {}).get("script") or "").strip(), end="")
+        break' "$JOB_NAME")"
+wanted_gate="$(cat "$gate_src/gate.js")"
+current_alert_to="$(printf '%s' "$jobs" | python3 -c '
+import json, sys
+for job in json.load(sys.stdin)["jobs"]:
+    if job.get("name") == sys.argv[1]:
+        print(str((job.get("failureAlert") or {}).get("to") or ""), end="")
+        break' "$JOB_NAME")"
+
+install -D -m 0644 "$gate_src/gate.js" "$gate_dest/gate.js"
+install -D -m 0755 "$gate_src/pulse_gate.py" "$gate_dest/pulse_gate.py"
+
 edit_args=()
+[ "$current_gate" = "$wanted_gate" ] || edit_args+=(--trigger-script "$gate_script")
 [ "$current" = "$wanted" ] || edit_args+=(--message "$wanted")
 [ "$current_timeout" = "$TIMEOUT_SECONDS" ] || edit_args+=(--timeout-seconds "$TIMEOUT_SECONDS")
+[ "$current_alert_to" = "$ALERT_CHAT" ] || edit_args+=(--failure-alert --failure-alert-after 1
+  --failure-alert-mode announce --failure-alert-channel telegram
+  --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT")
 
 if [ "${#edit_args[@]}" -eq 0 ]; then
-  echo "payload.message and timeoutSeconds ($TIMEOUT_SECONDS) of '$JOB_NAME' ($job_id) already declared (${checklist#"${repo_root}/"}); nothing to do"
+  echo "payload.message, timeoutSeconds ($TIMEOUT_SECONDS), gate and failure alert of '$JOB_NAME' ($job_id) already declared (${checklist#"${repo_root}/"}, ${gate_src#"${repo_root}/"}); nothing to do"
   exit 0
 fi
 
@@ -114,5 +164,7 @@ fi
 docker exec "$GATEWAY" openclaw cron edit "$job_id" "${edit_args[@]}" >/dev/null
 [ "$current" = "$wanted" ] || echo "payload.message of '$JOB_NAME' ($job_id) set from ${checklist#"${repo_root}/"}"
 [ "$current_timeout" = "$TIMEOUT_SECONDS" ] || echo "payload.timeoutSeconds of '$JOB_NAME' ($job_id) set to $TIMEOUT_SECONDS (was ${current_timeout:-unset})"
+[ "$current_gate" = "$wanted_gate" ] || echo "trigger script of '$JOB_NAME' ($job_id) set to $gate_script"
+[ "$current_alert_to" = "$ALERT_CHAT" ] || echo "failure alert of '$JOB_NAME' ($job_id) set to announce on telegram"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
 echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # trigger a run"

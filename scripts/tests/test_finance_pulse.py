@@ -16,6 +16,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts/ensure-finance-pulse.sh"
 CHECKLIST = REPO / "scripts/finance-pulse.md"
+GATE = REPO / "scripts/finance-pulse-gate"
 
 FAKE_DOCKER = r"""#!/usr/bin/env python3
 import json, os, pathlib, sys
@@ -35,6 +36,18 @@ elif cmd[:2] == ["cron", "edit"]:
         if job["id"] == cmd[2]:
             if "--message" in cmd:
                 job["payload"]["message"] = cmd[cmd.index("--message") + 1]
+            if "--trigger-script" in cmd:
+                job["trigger"] = {
+                    "script": pathlib.Path(os.environ["GATE_FILE"]).read_text()
+                }
+            if "--failure-alert" in cmd:
+                job["failureAlert"] = {
+                    "after": int(cmd[cmd.index("--failure-alert-after") + 1]),
+                    "mode": cmd[cmd.index("--failure-alert-mode") + 1],
+                    "channel": cmd[cmd.index("--failure-alert-channel") + 1],
+                    "accountId": cmd[cmd.index("--failure-alert-account-id") + 1],
+                    "to": cmd[cmd.index("--failure-alert-to") + 1],
+                }
             if "--timeout-seconds" in cmd:
                 job["payload"]["timeoutSeconds"] = int(
                     cmd[cmd.index("--timeout-seconds") + 1]
@@ -46,7 +59,11 @@ else:
 
 
 def run(
-    tmp_path: Path, message: str, name: str = "ledger-pulse", timeout: int | None = 180
+    tmp_path: Path,
+    message: str,
+    name: str = "ledger-pulse",
+    timeout: int | None = 180,
+    env_file: str | None = "LIFEKIT_TELEGRAM_CHAT=4242\n",
 ):
     state = tmp_path / "state.json"
     if not state.exists():
@@ -77,10 +94,16 @@ def run(
     docker = bindir / "docker"
     docker.write_text(FAKE_DOCKER)
     docker.chmod(0o755)
+    envf = tmp_path / "stack.env"
+    envf.write_text(env_file or "")
     env = {
         **os.environ,
+        "ENV_FILE": str(envf),
+        "FINANCE_PULSE_ALERT_CHAT": "",
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "FAKE_STATE": str(state),
+        "GATE_FILE": str(GATE / "gate.js"),
+        "OPENCLAW_CONFIG_DIR": str(tmp_path / "config"),
     }
     return subprocess.run(
         ["bash", str(SCRIPT)], env=env, capture_output=True, text=True
@@ -151,3 +174,66 @@ def test_unset_timeout_is_set(tmp_path):
     res, state = run(tmp_path, "stale", timeout=None)
     assert res.returncode == 0, res.stderr
     assert json.loads(state.read_text())["jobs"][1]["payload"]["timeoutSeconds"] == 300
+
+
+def test_gate_is_installed_and_set_as_the_trigger_script(tmp_path):
+    res, state = run(tmp_path, "stale")
+    assert res.returncode == 0, res.stderr
+    (cmd,) = edits(tmp_path)
+    assert (
+        cmd[cmd.index("--trigger-script") + 1]
+        == "/home/node/.openclaw/gates/ledger-pulse/gate.js"
+    )
+    dest = tmp_path / "config/gates/ledger-pulse"
+    for name in ("gate.js", "pulse_gate.py"):
+        assert (dest / name).read_bytes() == (GATE / name).read_bytes()
+    assert (
+        json.loads(state.read_text())["jobs"][1]["trigger"]["script"].strip()
+        == (GATE / "gate.js").read_text().strip()
+    )
+
+
+def test_a_changed_gate_alone_is_re_applied(tmp_path):
+    run(tmp_path, "stale")  # converge everything
+    state = tmp_path / "state.json"
+    data = json.loads(state.read_text())
+    data["jobs"][1]["trigger"] = {"script": "old gate"}
+    state.write_text(json.dumps(data))
+    res, _ = run(tmp_path, "stale")
+    assert res.returncode == 0, res.stderr
+    _, second = edits(tmp_path)
+    assert "--message" not in second and "--timeout-seconds" not in second
+    assert "--trigger-script" in second
+
+
+def test_failure_alert_is_declared_to_the_owner_chat(tmp_path):
+    res, state = run(tmp_path, "stale")
+    assert res.returncode == 0, res.stderr
+    (cmd,) = edits(tmp_path)
+    assert "--failure-alert" in cmd
+    assert cmd[cmd.index("--failure-alert-to") + 1] == "4242"
+    assert cmd[cmd.index("--failure-alert-after") + 1] == "1"
+    assert cmd[cmd.index("--failure-alert-mode") + 1] == "announce"
+    assert cmd[cmd.index("--failure-alert-channel") + 1] == "telegram"
+    assert cmd[cmd.index("--failure-alert-account-id") + 1] == "default"
+    assert json.loads(state.read_text())["jobs"][1]["failureAlert"]["to"] == "4242"
+
+
+def test_a_missing_failure_alert_alone_is_re_applied(tmp_path):
+    run(tmp_path, "stale")  # converge everything
+    state = tmp_path / "state.json"
+    data = json.loads(state.read_text())
+    del data["jobs"][1]["failureAlert"]
+    state.write_text(json.dumps(data))
+    res, _ = run(tmp_path, "stale")
+    assert res.returncode == 0, res.stderr
+    _, second = edits(tmp_path)
+    assert "--failure-alert" in second
+    assert "--message" not in second and "--trigger-script" not in second
+
+
+def test_no_owner_chat_fails_without_editing(tmp_path):
+    res, _ = run(tmp_path, "stale", env_file=None)
+    assert res.returncode == 1
+    assert "failure alert" in res.stderr
+    assert edits(tmp_path) == []
