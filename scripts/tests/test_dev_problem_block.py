@@ -132,4 +132,3 @@ def test_a_state_dir_with_no_workspace_fails_loudly(tmp_path):
     r = run(tmp_path / "empty")
     assert r.returncode == 1
     assert "no agent workspace" in r.stderr
-
