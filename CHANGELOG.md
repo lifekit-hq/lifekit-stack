@@ -18,6 +18,43 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.12](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.11...v0.1.12) (2026-11-16)
+
+
+### Features
+
+* **fleet-publisher:** write screen-changes.json and baseline images for the dashboard ([#532](https://github.com/lifekit-hq/lifekit-stack/issues/532)) ([a591655](https://github.com/lifekit-hq/lifekit-stack/commit/a5916550a2d1a7289abfddb91468c782df9b58c8)), closes [#499](https://github.com/lifekit-hq/lifekit-stack/issues/499)
+* **ledger-persona:** pin finance-sentry 320a49a6 and wake Ledger's review loop from the pulse ([#514](https://github.com/lifekit-hq/lifekit-stack/issues/514)) ([b9d3288](https://github.com/lifekit-hq/lifekit-stack/commit/b9d3288ac7de36a10bedc5daffa46dae6f5b6db2))
+* **ledger-persona:** re-pin to finance-sentry 5ba0d626 and trim finance skill allowlist ([#513](https://github.com/lifekit-hq/lifekit-stack/issues/513)) ([9e0b8a3](https://github.com/lifekit-hq/lifekit-stack/commit/9e0b8a3691638faaf1c9bb0e57c129f90875195b))
+* **observability:** export Claude Code OpenTelemetry metrics to the collector and Grafana ([#521](https://github.com/lifekit-hq/lifekit-stack/issues/521)) ([44bae0a](https://github.com/lifekit-hq/lifekit-stack/commit/44bae0a501a227aa9c7f2dc281320022dcdff795))
+* **openclaw:** learnclaw reads the owner's LearnHarness record ([#507](https://github.com/lifekit-hq/lifekit-stack/issues/507)) ([7f0efd4](https://github.com/lifekit-hq/lifekit-stack/commit/7f0efd4444c43b382448a6c1c3222d157aafc3de))
+* **openclaw:** switch between Anthropic API key and subscription with spend guard ([#517](https://github.com/lifekit-hq/lifekit-stack/issues/517)) ([fd36eee](https://github.com/lifekit-hq/lifekit-stack/commit/fd36eeedda5069962f9cf5c6c4268b262fd4227e))
+* **people:** add basket access right and Logto sign-in branding ([#511](https://github.com/lifekit-hq/lifekit-stack/issues/511)) ([3530a98](https://github.com/lifekit-hq/lifekit-stack/commit/3530a9887e1222410ad403e767cce5ac1eeb834f))
+* **prometheus:** scrape basket-app /metrics ([#512](https://github.com/lifekit-hq/lifekit-stack/issues/512)) ([4ee7560](https://github.com/lifekit-hq/lifekit-stack/commit/4ee7560bba46ac4ea531c6c5d7e9c2d9c2ded20c))
+* **scripts:** add coverage and memo read step to finance pulse ([#524](https://github.com/lifekit-hq/lifekit-stack/issues/524)) ([c110055](https://github.com/lifekit-hq/lifekit-stack/commit/c110055635d4bca04d0c11ecf958f50a19c1a8a3))
+* **scripts:** add daily scout fetch timer over vault lens feeds ([#519](https://github.com/lifekit-hq/lifekit-stack/issues/519)) ([bfc6b83](https://github.com/lifekit-hq/lifekit-stack/commit/bfc6b8350d306733619fc81b9e0e4a57c5786661))
+* **scripts:** take the daily plan's learning line from learnclaw ([#526](https://github.com/lifekit-hq/lifekit-stack/issues/526)) ([4777189](https://github.com/lifekit-hq/lifekit-stack/commit/47771891d86e7c915f3d78f6e8fc1ad65d29e5c0))
+* **skills:** a video-eval verdict holds only for its rubric version ([#506](https://github.com/lifekit-hq/lifekit-stack/issues/506)) ([751abe7](https://github.com/lifekit-hq/lifekit-stack/commit/751abe7e3ddfc27af5ca20224e01071b1c73f1c2))
+* **skills:** copy accepted doc-door reports into Drive via an rclone drive.file uploader ([#502](https://github.com/lifekit-hq/lifekit-stack/issues/502)) ([c9c8f5f](https://github.com/lifekit-hq/lifekit-stack/commit/c9c8f5f387a1fb8366c022ae1ddc86c44ac1a828))
+* **skills:** intake judge reads live vault goals and can say adopt (rubric v6) ([#505](https://github.com/lifekit-hq/lifekit-stack/issues/505)) ([daaac68](https://github.com/lifekit-hq/lifekit-stack/commit/daaac685f019d8ad86a1eb22a8ffdf4b46dd9842))
+* **skills:** video-eval judges adoption first, not what is worth building (rubric v7) ([#510](https://github.com/lifekit-hq/lifekit-stack/issues/510)) ([4eedf80](https://github.com/lifekit-hq/lifekit-stack/commit/4eedf80715b23128582ed143e2bcbcea10a95f8a))
+
+
+### Bug Fixes
+
+* **alerting:** exclude bump rehearsal image from container-unhealthy ([#515](https://github.com/lifekit-hq/lifekit-stack/issues/515)) ([4ca296b](https://github.com/lifekit-hq/lifekit-stack/commit/4ca296bebdb262da6848d150f5c1e9015952915f))
+* **skills:** make doc-door Drive uploader install and verify pass on the live fleet ([#504](https://github.com/lifekit-hq/lifekit-stack/issues/504)) ([aa75fff](https://github.com/lifekit-hq/lifekit-stack/commit/aa75fff66520dc59f99a7230e2464b3aab9d8f70))
+* **sync:** serialize memory-sync with the vault lock and record git errors ([#516](https://github.com/lifekit-hq/lifekit-stack/issues/516)) ([425583e](https://github.com/lifekit-hq/lifekit-stack/commit/425583e3287b5af1d1df7948b1eba83eeb95e2b3))
+
+
+### Documentation
+
+* **finance-pulse:** note held market signals as batch content and record severe-move lane ([#520](https://github.com/lifekit-hq/lifekit-stack/issues/520)) ([0601ca7](https://github.com/lifekit-hq/lifekit-stack/commit/0601ca7c8ea0b3618f20f923bfef70cc4328a5ee))
+* **google:** record fleet Gmail recovery and sign-in arrangement ([#508](https://github.com/lifekit-hq/lifekit-stack/issues/508)) ([7d6fa28](https://github.com/lifekit-hq/lifekit-stack/commit/7d6fa28d5ec10040794fb337d15e614c20c76685))
+* replace basket and backstage memory estimates with measured 7-day peaks ([#527](https://github.com/lifekit-hq/lifekit-stack/issues/527)) ([7f0507a](https://github.com/lifekit-hq/lifekit-stack/commit/7f0507abaf6836711123913a9b6b0d1e26ffdbe7))
+* **runbook:** mark fleet gate hook and deny as not re-verified under 2026.10.9 ([#518](https://github.com/lifekit-hq/lifekit-stack/issues/518)) ([ee2212a](https://github.com/lifekit-hq/lifekit-stack/commit/ee2212ab4c47ecb5ce86c604552907f0aaf6ae20))
+* **runbook:** record fleet gate live re-verification under OpenClaw 2026.10.9 ([#522](https://github.com/lifekit-hq/lifekit-stack/issues/522)) ([75ec5de](https://github.com/lifekit-hq/lifekit-stack/commit/75ec5de38537e72be67b87349a67e2f4816d6121))
+
 ## [0.1.11](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.10...v0.1.11) (2026-11-08)
 
 
