@@ -243,11 +243,9 @@ def test_bundle_a_audit_keys():
 
 
 def test_gateway_runtime_hints_are_set():
-    block = service_block("openclaw-gateway")
-    assert "NODE_COMPILE_CACHE: /var/tmp/openclaw-compile-cache" in block
-    assert 'OPENCLAW_NO_RESPAWN: "1"' in block
-    dockerfile = (REPO / "compose/openclaw-gateway/Dockerfile").read_text()
-    assert "mkdir -p /var/tmp/openclaw-compile-cache" in dockerfile
+    env = compose_services()["openclaw-gateway"]["environment"]
+    assert env["NODE_COMPILE_CACHE"] == "/var/tmp/openclaw-compile-cache"
+    assert env["OPENCLAW_NO_RESPAWN"] == "1"
 
 
 def test_dreaming_stays_off():

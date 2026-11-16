@@ -780,7 +780,10 @@ image tag and compose env changed, recreates the gateway once.
   change for these keys; the deploy's upgrade path backs up the config and re-pins official
   plugins as usual.
 
-**Host steps (operator, after the deploy, gateway container `openclaw-openclaw-gateway-1`):**
+**Host steps (operator, gateway container `openclaw-openclaw-gateway-1`).** Steps 1 and 2 (per-agent
+models, then `scripts/ensure-kit-cron-models.sh`) must run BEFORE the gateway recreate; the new
+`modelPolicy.allow` lists only the 5.5 models, so do not recreate the gateway before they are done.
+Steps 3 onward run after the deploy.
 
 1. Per-agent models (host-state half; `openclaw config patch` merges, so unlisted keys stay):
    career, finance and learnclaw `model` -> `anthropic/claude-sonnet-5-5`; Kit's `model` ->
