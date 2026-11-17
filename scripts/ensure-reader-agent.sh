@@ -107,10 +107,17 @@ if bad:
 ' "$shipped_entry" >&2
 
 # No agent can message another one, and nothing routes a channel to the reader.
-a2a="$(docker exec "$GATEWAY" openclaw config get tools.agentToAgent.enabled 2>/dev/null | tr -d '[:space:]"')"
-case "$a2a" in
-  *true) echo "refusing: tools.agentToAgent.enabled is true; the reader must not be reachable by other agents" >&2; exit 1 ;;
-esac
+rc=0
+a2a="$(docker exec "$GATEWAY" openclaw config get tools.agentToAgent.enabled 2>&1)" || rc=$?
+if [ "$rc" != 0 ] && ! printf '%s' "$a2a" | grep -qi 'not found'; then
+  echo "could not read tools.agentToAgent.enabled from the gateway: ${a2a}" >&2
+  exit 1
+fi
+if [ "$rc" = 0 ]; then
+  case "$(printf '%s' "$a2a" | tr -d '[:space:]"')" in
+    *true) echo "refusing: tools.agentToAgent.enabled is true; the reader must not be reachable by other agents" >&2; exit 1 ;;
+  esac
+fi
 bindings="$(docker exec "$GATEWAY" openclaw agents list --json --bindings 2>/dev/null | pick_json '[]')" || bindings="[]"
 printf '%s' "$bindings" | python3 -c '
 import json, sys

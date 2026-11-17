@@ -86,6 +86,12 @@ if cmd[:2] == ["config", "get"]:
         print("[gateway] noise before the JSON")
         print(json.dumps(entry, indent=2))
     elif cmd[2] == "tools.agentToAgent.enabled":
+        if load("a2a_unset"):
+            print("Config path not found: tools.agentToAgent.enabled", file=sys.stderr)
+            sys.exit(1)
+        if load("a2a_fail"):
+            print("gateway closed (1006): connection refused", file=sys.stderr)
+            sys.exit(1)
         if load("a2a_noise"):
             print("[gateway] noise before the value")
         print(json.dumps(load("a2a", False)))
@@ -248,6 +254,26 @@ def test_agent_to_agent_messaging_is_refused_through_log_noise(box):
     assert done.returncode == 1 and "agentToAgent" in done.stderr
     box.put("a2a", False)
     assert box.run().returncode == 0
+
+
+def test_an_unset_agent_to_agent_key_is_disabled(box):
+    box.put("entry", ENTRY)
+    box.put("a2a_unset", True)
+    for args in ((), ("--check",)):
+        done = box.run(*args)
+        assert done.returncode == 0, (args, done.stderr)
+    assert box.workspace.exists()
+
+
+def test_a_failed_agent_to_agent_read_is_an_error(box):
+    box.put("entry", ENTRY)
+    box.put("a2a_fail", True)
+    for args in ((), ("--check",)):
+        done = box.run(*args)
+        assert done.returncode == 1, args
+        assert "could not read tools.agentToAgent.enabled" in done.stderr
+        assert "gateway closed" in done.stderr
+    assert not box.workspace.exists()
 
 
 def test_a_failed_config_read_is_an_error_not_an_absent_reader(box):
