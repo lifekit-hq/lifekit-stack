@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "main": "index.js",
+  "files": ["index.js", "openclaw.plugin.json", "p16-openclaw.json"],
   "openclaw": {
     "extensions": ["./index.js"]
   }

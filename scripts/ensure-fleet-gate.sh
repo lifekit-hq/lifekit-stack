@@ -13,11 +13,13 @@
 # (p16-openclaw.json, schema p16-openclaw.v1) and the deploy copies it in, so
 # there is no second copy of the rules. Where to find it:
 #   P16_OPENCLAW_TABLE      default /var/lib/lifekit/fleet-policy/p16-openclaw.json
-# A table that is absent is not an error (the plugin then gates nothing and
-# logs `table-missing`, so the first deploy does not wait on the renderer);
-# one that is not valid fails this script and leaves the installed copy alone.
-# The plugin re-reads the table when its mtime changes: a new table needs no
-# reload.
+# The plugin refuses to start without its table, so the table comes first and
+# the plugin code only after it: with no source table and no installed one this
+# script exits non-zero before touching the plugin (the plugin already running
+# stays as it is, a merge before the host copy leaves the live gate alone); a
+# source that is not valid fails it the same way and leaves the installed copy
+# alone. The plugin re-reads the table when its mtime changes: a new table
+# needs no reload.
 #
 # The deploy runs it (deploy-openclaw.sh, configure phase, before the platform
 # patch, so the restart that patch asks for on first enable finds the files).
@@ -40,6 +42,26 @@ config_dir="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
 table_src="${P16_OPENCLAW_TABLE:-/var/lib/lifekit/fleet-policy/${TABLE_NAME}}"
 src="${repo_root}/compose/openclaw-gateway/plugins/${PLUGIN}"
 dest="${config_dir}/extensions/${PLUGIN}"
+
+if [ -f "$table_src" ]; then
+  python3 - "$table_src" <<'PY' || { echo "fleet gate table $table_src is not a valid p16-openclaw.v1 table; installed copy and plugin left alone" >&2; exit 1; }
+import json, sys
+doc = json.load(open(sys.argv[1]))
+assert doc.get("schema") == "p16-openclaw.v1", "schema"
+tools = doc.get("tools")
+assert isinstance(tools, dict) and tools, "tools"
+assert all(isinstance(r, dict) and r.get("class") in ("A", "L", "S") for r in tools.values()), "class"
+PY
+  table_msg="$(if cmp -s "$table_src" "$dest/$TABLE_NAME"; then echo "fleet gate table unchanged -> $dest/$TABLE_NAME"; else
+    install -D -m 0644 "$table_src" "$dest/$TABLE_NAME"
+    echo "fleet gate table installed -> $dest/$TABLE_NAME"; fi)"
+elif [ -f "$dest/$TABLE_NAME" ]; then
+  table_msg="no table at $table_src; keeping the installed one"
+else
+  echo "no P16 table at $table_src and none installed: not installing the fleet-gate plugin (it refuses to start without its table; any plugin already installed keeps running). Run fleet-policy install and copy p16-openclaw.json to $table_src, then re-run." >&2
+  exit 1
+fi
+echo "$table_msg"
 
 changed=0
 for f in index.js openclaw.plugin.json package.json; do
@@ -84,25 +106,4 @@ if [ "$changed" -eq 0 ]; then
 else
   echo "fleet gate installed -> $dest"
   reload_gateway
-fi
-
-if [ -f "$table_src" ]; then
-  python3 - "$table_src" <<'PY' || { echo "fleet gate table $table_src is not a valid p16-openclaw.v1 table; installed copy left alone" >&2; exit 1; }
-import json, sys
-doc = json.load(open(sys.argv[1]))
-assert doc.get("schema") == "p16-openclaw.v1", "schema"
-tools = doc.get("tools")
-assert isinstance(tools, dict) and tools, "tools"
-assert all(isinstance(r, dict) and r.get("class") in ("A", "L", "S") for r in tools.values()), "class"
-PY
-  if ! cmp -s "$table_src" "$dest/$TABLE_NAME"; then
-    install -D -m 0644 "$table_src" "$dest/$TABLE_NAME"
-    echo "fleet gate table installed -> $dest/$TABLE_NAME"
-  else
-    echo "fleet gate table unchanged -> $dest/$TABLE_NAME"
-  fi
-elif [ -f "$dest/$TABLE_NAME" ]; then
-  echo "no table at $table_src; keeping the installed one"
-else
-  echo "no P16 table at $table_src yet: the gate logs table-missing and stops nothing until fleet-policy renders one" >&2
 fi
