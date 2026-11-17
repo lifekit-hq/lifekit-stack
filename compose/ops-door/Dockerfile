@@ -5,7 +5,7 @@
 FROM node:22-trixie-slim
 
 WORKDIR /app
-COPY package.json server.js app.js /app/
+COPY package.json server.js app.js http.js /app/
 
 ENV OPS_DOOR_PORT=8097
 

@@ -59,6 +59,13 @@ jobs:
             -v "$GITHUB_WORKSPACE/compose/notify-relay:/app:ro" -w /app \
             node:22-trixie-slim node --test
 
+      # ops-door's lifecycle and HTTP/spool tests, same image and isolation.
+      - name: Run ops-door tests
+        run: |
+          docker run --rm --network none \
+            -v "$GITHUB_WORKSPACE/compose/ops-door:/app:ro" -w /app \
+            node:22-trixie-slim node --test
+
   gitleaks-full:
     name: Gitleaks full-history scan
     uses: lifekit-hq/.github/.github/workflows/secrets-scan.yml@v1

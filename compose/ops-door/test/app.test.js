@@ -9,6 +9,7 @@ let issues;
 let comments;
 let decisions;
 let app;
+let clock;
 
 function fakeGithub() {
   return {
@@ -24,6 +25,7 @@ function fakeGithub() {
 }
 
 beforeEach(() => {
+  clock = "2026-11-17T10:00:00Z";
   issues = [];
   comments = [];
   decisions = [];
@@ -32,7 +34,7 @@ beforeEach(() => {
     decide: async (call) => decisions.push(call),
     repoUrl: "https://github.test/o/r",
     threshold: 3,
-    now: () => "2026-11-17T10:00:00Z",
+    now: () => clock,
   });
 });
 
@@ -65,12 +67,16 @@ test("first firing opens one issue with the envelope and returns the receipt", a
   assert.equal(parseState(issues[0].body).count, 1);
 });
 
-test("a repeat adds a count and the latest occurrence: one issue, count two, two receipts", async () => {
+test("a repeat adds a count and the notice time as latest occurrence, though startsAt never moves", async () => {
   const first = await send(alert());
-  const second = await send(alert({ startsAt: "2026-11-17T09:30:00Z" }));
+  clock = "2026-11-17T14:00:00Z";
+  const second = await send(alert());
   assert.equal(issues.length, 1);
-  assert.equal(parseState(issues[0].body).count, 2);
-  assert.equal(parseState(issues[0].body).latest, "2026-11-17T09:30:00Z");
+  const state = parseState(issues[0].body);
+  assert.equal(state.count, 2);
+  assert.equal(state.first, "2026-11-17T09:00:00Z");
+  assert.equal(state.latest, "2026-11-17T14:00:00Z");
+  assert.match(comments[0].body, /latest occurrence 2026-11-17T14:00:00Z/);
   assert.equal(first.receipts[0].id, second.receipts[0].id);
   assert.equal(second.receipts[0].count, 2);
   assert.equal(comments.length, 1);

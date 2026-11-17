@@ -12,8 +12,10 @@
  *
  * Lifecycle per alert, keyed by fingerprint (alert name + identifying labels):
  *   firing, no open issue   -> open one (a closed match is linked, not reopened)
- *   firing, open issue      -> count + latest occurrence; above the threshold,
- *                              exactly one Tier 2 call instead of a comment
+ *   firing, open issue      -> count + latest occurrence (the notice time, as
+ *                              startsAt stays fixed while an alert keeps
+ *                              firing); above the threshold, exactly one
+ *                              Tier 2 call instead of a comment
  *   resolved                -> comment only; closing is the merged fix's job
  *
  * The count, the latest occurrence and the escalation mark live in a JSON
@@ -142,7 +144,8 @@ export function createApp({
   });
 
   async function onFiring(alert, fp) {
-    const at = alert.startsAt || now();
+    const noticed = now();
+    const at = alert.startsAt || noticed;
     const { open, closed } = await findByFingerprint(fp.id);
     if (!open) {
       const s = { ...snapshot(alert, fp), count: 1, first: at, latest: at, escalated: "", reopens: closed?.number ?? 0 };
@@ -156,7 +159,7 @@ export function createApp({
       return receipt(issue, "submitted", { fingerprint: fp.id, count: 1 });
     }
     const prev = parseState(open.body);
-    const s = { ...prev, ...snapshot(alert, fp), count: prev.count + 1, latest: at };
+    const s = { ...prev, ...snapshot(alert, fp), count: prev.count + 1, latest: noticed };
     counters.repeat++;
     if (s.count > threshold && !s.escalated) {
       const callId = `ops-repeat-${fp.id}-${open.number}`;
@@ -170,14 +173,14 @@ export function createApp({
       s.escalated = callId;
       counters.escalated++;
       await github.updateIssue(open.number, { body: renderBody(s) });
-      await github.comment(open.number, `Fired ${s.count} times (latest ${at}). Past the threshold of ${threshold}: Tier 2 call \`${callId}\` filed.`);
+      await github.comment(open.number, `Fired ${s.count} times (latest ${noticed}). Past the threshold of ${threshold}: Tier 2 call \`${callId}\` filed.`);
       log("info", "ops repeat escalated", { issue: open.number, call: callId });
     } else if (s.escalated) {
       // Already escalated: keep the count honest, say nothing more.
       await github.updateIssue(open.number, { body: renderBody(s) });
     } else {
       await github.updateIssue(open.number, { body: renderBody(s) });
-      await github.comment(open.number, `Fired again (count ${s.count}), latest occurrence ${at}.`);
+      await github.comment(open.number, `Fired again (count ${s.count}), latest occurrence ${noticed}.`);
     }
     return receipt(open, "submitted", { fingerprint: fp.id, count: s.count });
   }
