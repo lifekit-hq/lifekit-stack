@@ -794,7 +794,7 @@ the new `modelPolicy.allow` lists only the 5.5 models. Steps 3 onward run after 
    `anthropic/claude-opus-5-5`. Check the agent ids with `openclaw agents list`.
 2. `scripts/ensure-kit-cron-models.sh --check`, then without `--check`: every Kit cron job without
    its own `payload.model` is pinned to Sonnet (`openclaw cron list` must then show a model on
-   each). A job that already names one is left alone, so also run
+   each model-running job; `command` jobs run no model and are skipped). A job that already names one is left alone, so also run
    `scripts/ensure-needs-you-digest.sh`: its digest row already carries a pinned model
    (`anthropic/claude-sonnet-4-6`), and re-running the script moves it to the 5.5 Sonnet.
 3. Pin the plugin installs: `openclaw plugins install "@openclaw/diagnostics-prometheus@<core>" --force`
