@@ -221,6 +221,7 @@ def test_failing_tests_stop_before_commit(box):
 def test_hidden_prompt_reads_without_echo_and_leaks_nothing(box):
     import pty
     import select
+    import signal
     import time
 
     pid, fd = pty.fork()
@@ -243,6 +244,8 @@ def test_hidden_prompt_reads_without_echo_and_leaks_nothing(box):
         if not sent and b"(hidden): " in out:
             os.write(fd, VALUE.encode() + b"\n")
             sent = True
+    if time.time() >= deadline:
+        os.kill(pid, signal.SIGKILL)
     _, status = os.waitpid(pid, 0)
     os.close(fd)
     text = out.decode(errors="replace")
