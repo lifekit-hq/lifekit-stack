@@ -1136,8 +1136,10 @@ Kit's main session never reads mail. A second row, `needs-you-mail-reader`, runs
 tool allow-list is exactly `google-workspace__search_gmail_messages` and
 `google-workspace__get_gmail_messages_content_batch`. That is the row's
 `payload.toolsAllow`, a cap the gateway enforced when the agents ran on the `openclaw`
-runtime and has not been re-verified under `claude-cli`, which they run on now: the run has
-no relay, `ask_user`, `sessions_send`, `message`, exec, file-write or Gmail-write tool,
+runtime and has not been re-verified under `claude-cli`, which they run on now. The job runs
+as the `reader` agent ("Reader agent"), whose own tool cap is proved on `claude-cli` by
+`scripts/reader-canary/run.sh`: the run has no relay, `ask_user`, `sessions_send`, `message`,
+file-write or Gmail send/draft tool, and its one command is the document door script,
 whatever the mail says. It delivers nothing; its run stays in its run history, whose
 `summary` is all of the run's text, kept from the head and cut at 2000 characters. The
 reader writes no text but its final reply, a mail section of under 1500 characters
@@ -2355,8 +2357,8 @@ Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
   devclaw MCP tools for every agent except `kit`. Every agent now files a development-class
   problem through the devclaw intake tool ("Development-class problems: file and carry on"),
   so a blanket deny would stop the route. If per-agent enforcement is ever verified under
-  `claude-cli` (not enforced when last tried, 2026-05-25, `docs/openclaw-agent-design.md`;
-  unverified under 2026.10.9, checked 2026-11-15, with no fleet-gate table installed), scope it
+  `claude-cli` for that agent (not enforced when last tried, 2026-05-25; enforced on 2026.11.4
+  for the `reader` agent's shape only, `scripts/reader-canary`; `docs/openclaw-agent-design.md`), scope it
   to the other devclaw tools: deny `devclaw__*` except the intake tool, and give a stop row to
   the rest.
 - **Rehearse:** `scripts/rehearse-fleet-gate.sh` loads the repo's plugin in node with a
@@ -2372,6 +2374,87 @@ Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
   `platform.patch.json` (a PR), or at once `docker exec "$G" openclaw config patch` with
   `{"plugins":{"entries":{"fleet-gate":{"enabled":false}}}}`; calls are no longer gated.
 
+### Reader agent
+
+The `reader` agent is the one agent that reads untrusted text: new mail and the documents
+attached to it. Both reading crons run as it - `doc-door` and `needs-you-mail-reader` - so a
+hostile message or document meets an agent that holds no write, send, web or delegation tool,
+not Kit, which does (decided in #528, built in #556). It runs only from those two cron jobs: no
+channel is bound to it, nothing chats with it, `tools.agentToAgent.enabled` stays false.
+
+- **What it holds** (`defaults/agents/reader/agent.json`, the agent entry; the persona is
+  `defaults/agents/reader/workspace/`): `tools.allow` is `exec` plus the two Gmail reads
+  (`google-workspace__search_gmail_messages`, `google-workspace__get_gmail_messages_content_batch`);
+  `tools.deny` lists every other tool group (fs, web, sessions, memory, ui, automation, messaging,
+  nodes, agents, media, `process`, `code_execution`), the Gmail send and draft tools and the
+  other MCP servers; no `tools.profile` (a profile hides MCP tools). `tools.exec.mode` is
+  `allowlist` and the one allowlisted path is the door script
+  (`/home/node/.openclaw/agents/reader/workspace/skills/doc-door/door.py`): any other command, a
+  pipe, a second command, a heredoc or an interpreter one-liner is refused. No Docker sandbox, no
+  docker socket. Model `anthropic/claude-sonnet-5-5`. It has no read tool, so `door.py scan` prints
+  the skill's reporting guide itself and a report is `door.py report <id> --title ... --fact ...`
+  (single-line arguments). The send path is Kit's and is unchanged: the reader has a read-only
+  Workspace route only. The needs-you digest's `cron runs` marker pull stays Kit's.
+- **The canary** (`scripts/reader-canary/run.sh`; `scripts/tests/test_reader_canary.py` runs it
+  in the suite): one real `openclaw agent --local --agent reader` turn on the `claude-cli` runtime in a
+  throwaway container from the gateway image (no network, no secrets, no live state), the real
+  claude binary against a mock model API that issues 16 tool calls, and a stub Workspace MCP and
+  door script that record what reaches them. It passes only when the model was offered exactly the
+  tools the allow-list grants, the five allowed calls (both Gmail reads, `door.py scan`, `show` and
+  `report`) ran, and each of the eleven denied calls (Gmail send and draft, any other command, a
+  chained command, an interpreter one-liner, native file write and read, web fetch, and the message, cron and
+  sessions tools) was refused and left no trace in the stub or the filesystem. A run that
+  could not start (no model request) fails; it never reads as a pass. Exit 77 means no Docker or no
+  image (a skip: the pytest wrapper skips loudly, or fails with `LIFEKIT_REQUIRE_CANARY=1`). Evidence stays in
+  `CANARY_OUT=<dir>`. The canary can fail: `CANARY_AGENT_JSON=<entry>` swaps the entry, and an entry with
+  no `tools` block gets the whole toolbox and fails on the Gmail send, draft and the three exec cases (checked when this
+  shipped), and `test_reader_canary.py` feeds the verdict synthetic leaks. What it does not cover: the cron
+  job's own `toolsAllow` (still unverified under `claude-cli`; step 6 checks it live) and the real Anthropic API
+  (the model is mocked; the tool surface the gateway builds is what is under test).
+- **Design A, not B.** The exec allowlist limited to `door.py` held in the canary with no leak, so the
+  door needs no trigger-script gate (the alternative in #528). If a future gateway version leaks a denied call
+  here, the canary turns red on the deploy host first; design B is then the answer.
+
+**Operator steps** (after the merge deploys; until step 2 is done the deploy skips the reader and
+leaves both crons on Kit, each with a note, so the merge changes nothing before then). On the VPS as `lifekit`, in
+`/srv/lifekit-stack`, gateway container `openclaw-openclaw-gateway-1`:
+
+1. Prove the cap on this box: `scripts/reader-canary/run.sh` must end with `reader canary passed`
+   (about two minutes; needs Docker and the `lifekit-openclaw:local` image). Do not go on if it does not.
+2. Apply the agent entry (host state, merged into the live config):
+   `docker exec -i openclaw-openclaw-gateway-1 openclaw config patch --stdin < defaults/agents/reader/agent.json`.
+   Read the apply hint it prints: restart the gateway only if it says the keys need it.
+3. `scripts/ensure-reader-agent.sh` (the deploy runs it too): installs the contract into
+   `/srv/openclaw/config/agents/reader/workspace`, allowlists the door script, and ends with
+   `reader agent verified` only when the live entry equals the shipped one, nothing is bound to the
+   reader, `tools.agentToAgent` is off and the reader's allowlist is exactly the door script.
+4. `scripts/ensure-doc-door.sh`: installs the skill into the reader's workspace and moves the
+   `doc-door` job to the reader. Then `scripts/ensure-needs-you-digest.sh`: moves
+   `needs-you-mail-reader` to the reader (the digest stays on Kit; it is not run by the deploy). Each
+   exits 1 if the live row's `agentId`, `toolsAllow` or delivery differs.
+5. Verify the move: `openclaw agents list --bindings` (reader, `bindings: 0`);
+   `openclaw cron list --all --json` - `doc-door` and `needs-you-mail-reader` show `agentId: reader`
+   and `payload.toolsAllow` `exec` / the two Gmail reads; `openclaw approvals get --json` - the
+   reader's allowlist is the door path and nothing else.
+6. Run both jobs once: `openclaw cron run <id> --expect-final --json`. `doc-door` ends `No new documents.`
+   or a report; `needs-you-mail-reader` replies between its markers, and `openclaw cron runs <id>
+   --limit 1 --sort desc --json` shows the reply and an `ok` status. A run that fails with a refused
+   tool (not a Google error) means the prompt asked for a tool the reader does not hold: fix the prompt, not the cap.
+
+**Rollback.** The deploy re-runs `ensure-doc-door.sh` on every OpenClaw-path merge, and it moves the job
+to the reader whenever the reader entry is applied and verified, so `DOC_DOOR_AGENT=kit` alone does not
+last: the next deploy undoes it. To keep the jobs on Kit, retire the reader first:
+
+1. `openclaw agents delete reader`, then remove its allowlist rows with
+   `openclaw approvals allowlist remove --agent reader <path>`. With no entry the deploy leaves both
+   jobs wherever they are.
+2. Move the jobs back: `DOC_DOOR_AGENT=kit scripts/ensure-doc-door.sh` and
+   `NEEDS_YOU_READER_AGENT=kit scripts/ensure-needs-you-digest.sh` (Kit's copy of the door skill is
+   installed by `ensure-doc-door.sh` on that run). `ensure-needs-you-digest.sh` is not run by the deploy,
+   so its move stays; the `doc-door` move stays only while the reader entry is absent.
+
+The env overrides alone are a one-off for testing: the next deploy puts `doc-door` back on the reader.
+
 ### Document door
 
 New document attachments in the owner's mailbox become one short cited report each, with no step
@@ -2381,7 +2464,7 @@ speaks MCP to `google-workspace-mcp` (Kit's connector) itself for mail, and to
 `google-workspace-mcp-fleet` (the fleet's own Google identity) for Drive, and calls only `search_gmail_messages`,
 `get_gmail_message_content` and `get_gmail_attachment_content` (PDF, DOCX, XLSX and PPTX of
 4 KiB to 15 MiB, mail from the last 3 days), converts each new attachment with MarkItDown, and
-prints it with numbered lines for kit to read. Kit files the report with `door.py report`, which
+prints it with numbered lines for the reader agent to read (Kit's, until the reader is applied: "Reader agent"). The agent files the report with `door.py report`, which
 accepts it only when it has a title, a Drive subject folder, an owner vault page, a one-line page
 proposal and 3 to 5 facts, each with a quote that is on the cited line, and nothing
 identifier-shaped (number runs, IBANs, e-mail addresses, PPS numbers). It then appends one
@@ -2393,7 +2476,7 @@ retried by the next scan. The page edit stays a proposal in the report.
   no-ops), `documents/` (the file and its converted text, a reading cache, never cited),
   `reports/`, and `venv/` (the job's own MarkItDown, pinned in `ensure-doc-door.sh`; bump the
   literal to upgrade).
-- **Fail-closed:** the job's tool allow-list is exactly `exec` and it delivers nothing; the
+- **Fail-closed:** the job's tool allow-list is exactly `exec`, it runs as the `reader` agent and it delivers nothing; the
   script exits 1 if the live row differs. A failed run alerts the owner through the `default`
   Telegram account, like the needs-you digest.
 - **Filing into Drive.** After a report is accepted, `door.py` files the original: it finds the
@@ -2484,11 +2567,12 @@ one sitting. Who takes the sign-in and the consent click, and where, is in that 
    specific Google Drive files you use with this app"; if it lists anything wider, click Cancel
    and stop. After *Allow*, rclone prints the token between `--->` and `<---End paste`. Leave that
    terminal open for step 4; the output is a credential, so no screenshot and no chat.
-4. **Install it (the VPS, as `lifekit`).**
+4. **Install it (the VPS, as `lifekit`).** The paths below are the reader agent's workspace; while
+   the job is still on Kit ("Reader agent"), use `agents/kit` instead.
 
    ```bash
    G=$(docker ps -q --filter label=com.docker.compose.project=openclaw --filter label=com.docker.compose.service=openclaw-gateway)
-   docker exec -it "$G" python3 /home/node/.openclaw/agents/kit/workspace/skills/doc-door/drive_upload.py configure
+   docker exec -it "$G" python3 /home/node/.openclaw/agents/reader/workspace/skills/doc-door/drive_upload.py configure
    ```
 
    It asks for the client id, then the client secret (hidden), then the pasted token block
@@ -2497,7 +2581,7 @@ one sitting. Who takes the sign-in and the consent click, and where, is in that 
 5. **Verify.**
 
    ```bash
-   docker exec "$G" python3 /home/node/.openclaw/agents/kit/workspace/skills/doc-door/drive_upload.py verify
+   docker exec "$G" python3 /home/node/.openclaw/agents/reader/workspace/skills/doc-door/drive_upload.py verify
    ```
 
    `VERIFY OK` means all of: the config is mode 0600 and asks for `drive.file`; **Google itself
@@ -2525,7 +2609,7 @@ the token's scope.
 
 ```bash
 docker exec -e DOC_DOOR_RCLONE_REMOTE=':local:/tmp/doc-door-rehearsal/' "$G" \
-  python3 /home/node/.openclaw/agents/kit/workspace/skills/doc-door/drive_upload.py verify uploader
+  python3 /home/node/.openclaw/agents/reader/workspace/skills/doc-door/drive_upload.py verify uploader
 ```
 
 CI covers the door-to-uploader handoff the same way, with no Google and no secret

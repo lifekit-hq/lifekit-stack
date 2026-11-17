@@ -242,6 +242,71 @@ def test_report_filed_and_logged_without_facts(env, capsys):
     assert "file-1" not in logged  # the Drive reference is never in the vault log
 
 
+GOOD_ARGS = [
+    "--title",
+    "Offer letter",
+    "--folder",
+    "Employment",
+    "--page",
+    "domains/career.md",
+    "--proposal",
+    "Add the start date and notice period to the employment section.",
+    "--fact",
+    'Employment starts early January | "Start date: 4 January 2027" [L3]',
+    "--fact",
+    'Two months of notice are required | "Notice period: two months" [L4]',
+    "--fact",
+    'Probation is six months | "Probation lasts six months" [L5]',
+]
+
+
+def test_a_report_as_arguments_is_the_same_report_as_stdin():
+    assert door.body_from_flags(GOOD_ARGS) == GOOD.strip("\n")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        GOOD_ARGS[2:],  # no title
+        [*GOOD_ARGS, "--title", "again"],  # a field twice
+        [*GOOD_ARGS, "--bogus", "x"],  # an unknown flag
+        [*GOOD_ARGS, "--fact"],  # a flag without its value
+        ["--title", "two\nlines", *GOOD_ARGS[2:]],  # a value on two lines
+    ],
+)
+def test_report_arguments_that_do_not_parse_are_none(args):
+    assert door.body_from_flags(args) is None
+
+
+def test_report_filed_from_arguments(env, capsys):
+    run(["scan"])
+    d = doc_id()
+    assert run(["report", d, *GOOD_ARGS]) == 0
+    assert door.load_state()["docs"][d]["status"] == "reported"
+    capsys.readouterr()
+    assert run(["report", doc_id(), "--title", "x"]) == 3
+    assert "report arguments:" in capsys.readouterr().err
+
+
+def test_scan_ends_with_how_to_report_because_the_reader_cannot_read_the_skill(
+    env, capsys
+):
+    assert run(["scan"]) == 0
+    out = capsys.readouterr().out
+    guide = out[out.index("=== HOW TO REPORT") :]
+    assert "door.py report" in guide and "{baseDir}" not in guide
+    assert str(SKILL) in guide
+    assert "=== END HOW TO REPORT ===" in guide
+
+
+def test_a_scan_with_nothing_new_prints_no_guide(env, capsys):
+    run(["scan"])
+    assert run(["report", doc_id(), *GOOD_ARGS]) == 0
+    capsys.readouterr()
+    run(["scan"])
+    assert "HOW TO REPORT" not in capsys.readouterr().out
+
+
 def test_log_failure_is_retried(env):
     run(["scan"])
     d = doc_id()
@@ -520,3 +585,14 @@ def test_default_drive_url_is_the_fleet_connector_not_kits():
     assert door.DRIVE_MCP_URL.endswith(":8000/mcp")
     assert "google-workspace-mcp-fleet" in door.DRIVE_MCP_URL
     assert door.DRIVE_MCP_URL != door.MCP_URL
+
+
+def test_a_cut_document_names_the_full_path_to_read_the_rest(env, capsys):
+    rec = {"subject": "s", "from": "f", "date": "d", "filename": "big.pdf"}
+    text = "\n".join(f"line {n} " + "x" * 80 for n in range(1, 400))
+    door.show("doc1", rec, text)
+    out = capsys.readouterr().out
+    cut = next(ln for ln in out.splitlines() if ln.startswith("[cut at L"))
+    n = int(cut.split("--from ")[1].split("`")[0])
+    assert f"`{SKILL / 'door.py'} show doc1 --from {n}`" in cut
+    assert f"L{n - 1}:" in out and f"L{n}:" not in out.replace(cut, "")

@@ -782,13 +782,27 @@ say "video-eval skill -> ${OPENCLAW_CONFIG_DIR}/agents/kit/workspace/skills"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-video-eval.sh" \
   || fail_later "video-eval skill install failed (output above)"
 
+# ─── reader agent ────────────────────────────────────────────────────────────
+#
+# The agent that reads untrusted mail and documents (the doc-door job runs as it,
+# the needs-you mail reader moves to it by ensure-needs-you-digest.sh). Its
+# persona changes only through this repo: the script writes the git contract
+# (defaults/agents/reader/workspace), allowlists the door script as its one
+# command, and fails closed when the live entry is not the shipped tool cap.
+# A box where the operator has not applied the entry yet skips with a note
+# (applying it stays an operator step, docs/runbook.md "Reader agent").
+say "reader agent contract and exec allowlist -> ${OPENCLAW_CONFIG_DIR}/agents/reader/workspace"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-reader-agent.sh" \
+  || fail_later "reader agent install failed (output above)"
+
 # ─── document door ───────────────────────────────────────────────────────────
 #
-# skills/doc-door lives in kit's workspace, so nothing else carries a merged
-# change to it there. The script installs the skill, pins its own MarkItDown
-# venv in the gateway state dir, and declares the scheduled job (exec only, no
-# delivery, verified fail-closed); docs/runbook.md, "Document door".
-say "doc-door skill and job -> ${OPENCLAW_CONFIG_DIR}/agents/kit/workspace/skills"
+# skills/doc-door lives in the reader agent's workspace (kit's until the reader
+# is applied), so nothing else carries a merged change to it there. The script
+# installs the skill, pins its own MarkItDown venv in the gateway state dir, and
+# declares the scheduled job (exec only, no delivery, verified fail-closed);
+# docs/runbook.md, "Document door".
+say "doc-door skill and job -> ${OPENCLAW_CONFIG_DIR}/agents/reader/workspace/skills"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-doc-door.sh" \
   || fail_later "doc-door install failed (output above)"
 

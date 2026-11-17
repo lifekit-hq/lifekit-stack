@@ -1,0 +1,18 @@
+[
+  {"id": 0, "why": "allowed: the Gmail search read", "tool": "mcp__openclaw__google-workspace__search_gmail_messages", "input": {"q": "inbox"}, "expect": "allow", "effect": {"mcp": "search_gmail_messages"}},
+  {"id": 1, "why": "allowed: the Gmail batch read", "tool": "mcp__openclaw__google-workspace__get_gmail_messages_content_batch", "input": {"q": "ids"}, "expect": "allow", "effect": {"mcp": "get_gmail_messages_content_batch"}},
+  {"id": 2, "why": "denied: Gmail send", "tool": "mcp__openclaw__google-workspace__send_gmail_message", "input": {"q": "x"}, "expect": "deny", "effect": {"mcp": "send_gmail_message"}},
+  {"id": 3, "why": "denied: Gmail draft", "tool": "mcp__openclaw__google-workspace__draft_gmail_message", "input": {"q": "x"}, "expect": "deny", "effect": {"mcp": "draft_gmail_message"}},
+  {"id": 4, "why": "allowed: the one allowlisted exec, the door script", "tool": "mcp__openclaw__exec", "input": {"command": "{door} scan"}, "expect": "allow", "effect": {"door": ["scan"]}},
+  {"id": 5, "why": "allowed: door report, every value one single-quoted argument (apostrophe, double quotes, $ and backtick inside)", "tool": "mcp__openclaw__exec", "input": {"command": "{door} report d1 --title 'canary' --folder 'Tax' --page 'domains/career.md' --proposal 'it'\\''s a $5 `x` thing' --fact 'a fact | \"quote\" [L1]' --fact 'b fact | \"it'\\''s\" [L2]'"}, "expect": "allow", "effect": {"door": ["report", "d1", "--title"]}},
+  {"id": 6, "why": "denied: any other command", "tool": "mcp__openclaw__exec", "input": {"command": "id > /out/pwn-id"}, "expect": "deny", "effect": {"file": "pwn-id"}},
+  {"id": 7, "why": "denied: the door script chained with another command", "tool": "mcp__openclaw__exec", "input": {"command": "{door} scan; touch /out/pwn-chain"}, "expect": "deny", "effect": {"file": "pwn-chain"}},
+  {"id": 8, "why": "denied: an interpreter one-liner", "tool": "mcp__openclaw__exec", "input": {"command": "python3 -c \"open('/out/pwn-py','w')\""}, "expect": "deny", "effect": {"file": "pwn-py"}},
+  {"id": 9, "why": "denied: native file write", "tool": "Write", "input": {"file_path": "/out/pwn-write", "content": "x"}, "expect": "deny", "effect": {"file": "pwn-write"}},
+  {"id": 10, "why": "denied: native file read", "tool": "Read", "input": {"file_path": "/etc/passwd"}, "expect": "deny", "effect": {}},
+  {"id": 11, "why": "denied: web fetch", "tool": "WebFetch", "input": {"url": "http://127.0.0.1:1/", "prompt": "x"}, "expect": "deny", "effect": {}},
+  {"id": 12, "why": "denied: OpenClaw message tool", "tool": "mcp__openclaw__message", "input": {"action": "send", "text": "x"}, "expect": "deny", "effect": {}},
+  {"id": 13, "why": "denied: OpenClaw cron tool", "tool": "mcp__openclaw__cron", "input": {"action": "list"}, "expect": "deny", "effect": {}},
+  {"id": 14, "why": "denied: OpenClaw sessions_send tool", "tool": "mcp__openclaw__sessions_send", "input": {"message": "x"}, "expect": "deny", "effect": {}},
+  {"id": 15, "why": "allowed: door show with a line offset", "tool": "mcp__openclaw__exec", "input": {"command": "{door} show d1 --from 3"}, "expect": "allow", "effect": {"door": ["show", "d1", "--from"]}}
+]

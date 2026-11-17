@@ -1,0 +1,41 @@
+{
+  "agents": {
+    "entries": {
+      "reader": {
+        "name": "Reader",
+        "description": "Reads untrusted mail and documents on a schedule; holds no write, send, web or delegation tool.",
+        "workspace": "/home/node/.openclaw/agents/reader/workspace",
+        "model": "anthropic/claude-sonnet-5-5",
+        "sandbox": { "mode": "off" },
+        "tools": {
+          "allow": [
+            "exec",
+            "google-workspace__search_gmail_messages",
+            "google-workspace__get_gmail_messages_content_batch"
+          ],
+          "deny": [
+            "group:fs",
+            "group:web",
+            "group:sessions",
+            "group:memory",
+            "group:ui",
+            "group:automation",
+            "group:messaging",
+            "group:nodes",
+            "group:agents",
+            "group:media",
+            "process",
+            "code_execution",
+            "google-workspace__send_*",
+            "google-workspace__draft_*",
+            "google-workspace-fleet__*",
+            "devclaw__*",
+            "finance-sentry__*"
+          ],
+          "exec": { "mode": "allowlist" },
+          "agentToAgent": { "send": [] }
+        }
+      }
+    }
+  }
+}
