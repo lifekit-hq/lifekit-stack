@@ -52,11 +52,21 @@ def box(tmp_path):
     for name in ("lifekit-gateway", "lifekit"):
         enc = run(
             [
-                "sops", "-e", "--config", str(work / ".sops.yaml"),
-                "--filename-override", f"secrets/{name}.env.sops",
-                "--input-type", "dotenv", "--output-type", "dotenv", "/dev/stdin",
+                "sops",
+                "-e",
+                "--config",
+                str(work / ".sops.yaml"),
+                "--filename-override",
+                f"secrets/{name}.env.sops",
+                "--input-type",
+                "dotenv",
+                "--output-type",
+                "dotenv",
+                "/dev/stdin",
             ],
-            work, env, input=plain,
+            work,
+            env,
+            input=plain,
         )
         assert enc.returncode == 0, enc.stderr
         (work / "secrets" / f"{name}.env.sops").write_text(enc.stdout)
@@ -96,12 +106,27 @@ def box(tmp_path):
 
 class SimpleBox:
     def __init__(self, root, work, env, log, scratch):
-        self.root, self.work, self.env, self.log, self.scratch = root, work, env, log, scratch
+        self.root, self.work, self.env, self.log, self.scratch = (
+            root,
+            work,
+            env,
+            log,
+            scratch,
+        )
 
     def decrypt(self, ref_file):
         d = run(
-            ["sops", "-d", "--input-type", "dotenv", "--output-type", "dotenv", str(ref_file)],
-            self.work, self.env,
+            [
+                "sops",
+                "-d",
+                "--input-type",
+                "dotenv",
+                "--output-type",
+                "dotenv",
+                str(ref_file),
+            ],
+            self.work,
+            self.env,
         )
         assert d.returncode == 0, d.stderr
         return d.stdout
@@ -117,7 +142,12 @@ def files_with_value(roots, skip):
 
 
 def test_stdin_puts_value_in_place_and_never_leaks(box):
-    p = run([str(SCRIPT), "gateway", "ANTHROPIC_API_KEY"], box.work, box.env, input=VALUE + "\n")
+    p = run(
+        [str(SCRIPT), "gateway", "ANTHROPIC_API_KEY"],
+        box.work,
+        box.env,
+        input=VALUE + "\n",
+    )
     assert p.returncode == 0, p.stderr
     assert VALUE not in p.stdout + p.stderr
     assert VALUE not in box.log.read_text()
@@ -140,9 +170,13 @@ def test_stdin_puts_value_in_place_and_never_leaks(box):
 
 
 def test_master_class_uses_master_file(box):
-    p = run([str(SCRIPT), "master", "ANTHROPIC_API_KEY"], box.work, box.env, input=VALUE)
+    p = run(
+        [str(SCRIPT), "master", "ANTHROPIC_API_KEY"], box.work, box.env, input=VALUE
+    )
     assert p.returncode == 0, p.stderr
-    assert f"ANTHROPIC_API_KEY={VALUE}" in box.decrypt(box.work / "secrets/lifekit.env.sops")
+    assert f"ANTHROPIC_API_KEY={VALUE}" in box.decrypt(
+        box.work / "secrets/lifekit.env.sops"
+    )
     assert "auth-mode.sh probe" not in p.stdout
 
 
@@ -167,7 +201,9 @@ def test_refusals_leave_the_file_alone_and_leak_nothing(box, args, stdin):
 
 def test_dirty_tree_is_refused(box):
     (box.work / "stray.txt").write_text("x")
-    p = run([str(SCRIPT), "gateway", "ANTHROPIC_API_KEY"], box.work, box.env, input=VALUE)
+    p = run(
+        [str(SCRIPT), "gateway", "ANTHROPIC_API_KEY"], box.work, box.env, input=VALUE
+    )
     assert p.returncode != 0 and "not clean" in p.stderr
 
 
