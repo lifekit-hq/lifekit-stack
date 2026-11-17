@@ -3021,7 +3021,8 @@ world = json.load(open(root + "/gh-world.json"))
 if world.get("fail"):
     sys.exit(1)
 if args[:2] == ["pr", "list"]:
-    print(json.dumps(world["pulls"].get(args[args.index("-R") + 1], [])))
+    kind = "merged" if args[args.index("--state") + 1] == "merged" else "pulls"
+    print(json.dumps(world.get(kind, {}).get(args[args.index("-R") + 1], [])))
 elif args[0] == "api" and "/compare/" in args[-1]:
     repo = args[-1].split("repos/")[1].split("/compare/")[0]
     head = args[-1].split("...")[1]
@@ -3035,11 +3036,14 @@ else:
 """
 
 
-def screens_world(fleet, pulls=None, compares=None, files=None, fail=False):
+def screens_world(
+    fleet, pulls=None, compares=None, files=None, fail=False, merged=None
+):
     (fleet.tmp / "gh-world.json").write_text(
         json.dumps(
             {
                 "pulls": pulls or {},
+                "merged": merged or {},
                 "compares": compares or {},
                 "files": files or {},
                 "fail": fail,
@@ -3125,6 +3129,7 @@ def test_screen_changes_feed_has_the_contract_shape_and_copies_the_images(fleet)
                 "pr": 212,
                 "title": "Root every page on cmn-page",
                 "url": f"https://github.com/{SCREEN_REPO}/pull/212",
+                "state": "open",
                 # The head commit's time, not the PR's last activity.
                 "ts": COMMIT_TIME,
                 "screens": [
@@ -3251,12 +3256,62 @@ def test_screen_changes_reuses_what_it_fetched_and_drops_a_closed_pull_request(f
     assert run_screens(fleet, gh).returncode == 0
     images = fleet.out / "screen-changes/lifekit-dashboard-212"
     assert (images / "after-fleet-phone-light.png").read_bytes().endswith(b"newer")
-    # Merged or closed: no longer open, so item and images go.
+    # Closed unmerged: no longer open and not merged, so item and images go.
     world["pulls"][SCREEN_REPO] = []
     (fleet.tmp / "gh-world.json").write_text(json.dumps(world))
     assert run_screens(fleet, gh).returncode == 0
     assert screen_feed(fleet)["items"] == []
     assert not (fleet.out / "screen-changes/lifekit-dashboard-212").exists()
+
+
+def merged_pull(number, merged_at, head=HEAD):
+    return {
+        **screen_pull(number, head=head),
+        "mergedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(merged_at)),
+    }
+
+
+WINDOW = 7 * 86400
+
+
+def test_screen_changes_keeps_a_merged_pull_request_for_seven_days(fleet):
+    gh = one_screen_world(fleet)
+    assert run_screens(fleet, gh).returncode == 0
+    images = fleet.out / "screen-changes/lifekit-dashboard-212"
+    assert screen_feed(fleet)["items"][0]["state"] == "open"
+    # Merged inside the window: still listed, as merged, with its images.
+    world = json.loads((fleet.tmp / "gh-world.json").read_text())
+    world["pulls"][SCREEN_REPO] = []
+    world["merged"][SCREEN_REPO] = [merged_pull(212, NOW - WINDOW + 60)]
+    (fleet.tmp / "gh-world.json").write_text(json.dumps(world))
+    assert run_screens(fleet, gh).returncode == 0
+    (item,) = screen_feed(fleet)["items"]
+    assert item["state"] == "merged"
+    assert item["merged_epoch"] == NOW - WINDOW + 60
+    assert item["ts"] == COMMIT_TIME
+    assert (images / "before-fleet-phone-light.png").is_file()
+    assert (fleet.tmp / "gh.log").read_text().count("compare") == 1
+    # Merged outside the window: item and images go.
+    world["merged"][SCREEN_REPO] = [merged_pull(212, NOW - WINDOW - 1)]
+    (fleet.tmp / "gh-world.json").write_text(json.dumps(world))
+    assert run_screens(fleet, gh).returncode == 0
+    assert screen_feed(fleet)["items"] == []
+    assert not images.exists()
+
+
+def test_screen_changes_lists_a_pull_request_first_seen_merged(fleet):
+    gh = one_screen_world(fleet)
+    world = json.loads((fleet.tmp / "gh-world.json").read_text())
+    world["pulls"][SCREEN_REPO] = []
+    world["merged"][SCREEN_REPO] = [
+        merged_pull(212, NOW - 86400),
+        merged_pull(213, NOW - 30 * 86400, head="d" * 40),
+    ]
+    (fleet.tmp / "gh-world.json").write_text(json.dumps(world))
+    assert run_screens(fleet, gh).returncode == 0
+    (item,) = screen_feed(fleet)["items"]
+    assert (item["pr"], item["state"]) == (212, "merged")
+    assert "d" * 40 not in (fleet.tmp / "gh.log").read_text()
 
 
 def test_screen_changes_keeps_the_previous_feed_when_gh_fails(fleet):

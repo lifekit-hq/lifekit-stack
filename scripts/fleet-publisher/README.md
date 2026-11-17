@@ -349,30 +349,38 @@ builds it and the publisher writes it world-readable, atomically, beside
 
 ## Screen changes feed (`OUT_DIR/screen-changes.json`)
 
-The open pull requests that add, change or remove a screen-baseline image
-(`*-linux.png`), with the images, for the dashboard's "Screen changes" section.
+The open pull requests, and those merged in the last 7 days, that add, change or
+remove a screen-baseline image (`*-linux.png`), with the images, for the dashboard's "Screen changes" section.
 The shape is the dashboard's contract (`docs/SCREEN-CHANGES.md` in
 lifekit-dashboard): schema `fleet-screen-changes.v1`, `generated_epoch`, and
-`items[]` of `id`, `home_id`, `repo`, `pr`, `title`, `url`, `ts`, `screens[]`
+`items[]` of `id`, `home_id`, `repo`, `pr`, `title`, `url`, `state`
+(`open|merged`), `ts`, `merged_epoch` (merged items only), `screens[]`
 (`name`, `status` `changed|added|removed`, `before`, `after`). `screen_changes.py`
 (beside the script; installed as `/usr/local/bin/lifekit-fleet-screens.py`;
 `FLEET_SCREENS` overrides) writes the file and the images itself, world-readable
 and atomically, the images first, beside `home-summary.json`. Nothing is pushed.
 
-- **Source**: `gh` (`FLEET_GH`, read-only: `pr list`, and GET `compare` and
+- **Source**: `gh` (`FLEET_GH`, read-only: `pr list` open and merged, and GET `compare` and
   `contents`) for the repos in `FLEET_SCREEN_REPOS` (space-separated
   `owner/name`; default `lifekit-hq/lifekit-dashboard`; empty turns the feed
   off). A repo outside that list is never read. Only paths matching
   `<name>-<project>-linux.png` are fetched, before at the PR's merge base and
   after at its head; an image must be a PNG of at most 4 MiB, else the screen is
   skipped (so is one missing the image its `status` needs).
-- **Items**: one per open PR with at least one such screen, at most 20, newest
-  `ts` first (the head commit's time, else the PR's last activity); a PR drops out
-  when it is merged or closed, and its images are deleted with it. At most 40
+- **Items**: one per PR with at least one such screen, at most 20, newest `ts`
+  first (the head commit's time, else the PR's last activity). An open PR is
+  `state: "open"`. A merged PR stays as `state: "merged"` with `merged_epoch`
+  for 7 days after the merge (fleet PRs merge within minutes, so the owner
+  would otherwise never see the change), its before and after images kept; past
+  the window, or when closed unmerged, it drops out and its images are deleted.
+  Merged PRs come from the last 50 merged per repo, reusing what was cached
+  while the PR was open (a PR first seen already merged is compared at its
+  listed base, which may yield no screens). At most 40
   screens per item. `id` is `<repo name>-<pr number>`; `home_id` is
   `FLEET_SCREEN_HOME`, else the first home's id. `title` is one line, cut at 160.
-  A veto is not read back: the item stays until its PR closes (the dashboard
-  remembers the veto per device).
+  A veto is not read back: the item stays until its window ends (the dashboard
+  remembers the veto per device and hides the item on its side; the revert it
+  asks for is an ordinary PR).
 - **Images** are copied to `OUT_DIR/screen-changes/<id>/before-<name>.png` and
   `after-<name>.png`, named exactly as the feed lists them. The dashboard serves
   only what the feed lists.
