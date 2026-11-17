@@ -1708,6 +1708,35 @@ kit `AGENTS.md`. Ledger's own persona still tells it to hand build work to Kit w
 prints 1 for each. **Rollback:** delete the text between and including the two marker lines in
 each `SOUL.md`.
 
+#### Agent-to-agent envelope and ack
+
+Agent-to-agent messages (`sessions_send`) are a door like any other: one envelope in, one receipt
+back. The rule is the vault build standard "Envelope and receipt at every door" (2026-11-16,
+decision 0016); this repo carries it into every agent's persona and does not restate it.
+
+- **One source:** `defaults/agents/shared/a2a-envelope.md`, between its `lifekit:a2a-envelope`
+  marker lines, spliced into each workspace's `SOUL.md` by the same
+  `scripts/ensure-dev-problem-block.sh` as the block above (both blocks in one pass; a lone or
+  reversed marker for either leaves the whole file alone). `ensure-learnclaw.sh` re-applies it.
+  `scripts/tests/test_dev_problem_block.py` asserts the envelope fields and the ack text.
+- **Ledger:** its own envelope section lives in finance-sentry `agent/ledger` (pinned by
+  `scripts/ledger-persona/PIN`). Replacing it with a pointer to this block, then a `PIN` bump,
+  is a separate finance-sentry change; until it lands Ledger carries both texts.
+
+Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
+
+```bash
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # two lines per agent
+```
+
+**Verify:** `grep -c 'lifekit:a2a-envelope:begin' /srv/openclaw/config/agents/*/workspace/SOUL.md`
+prints 1 for each. Then the exchange check, from the main agent: have Kit `sessions_send` Ledger
+one envelope with `type: request`, a fresh `thread` and `reply_expected: true`; read Ledger's
+session transcript and confirm its first message back is `type: ack` with that `thread`, a `state`
+of `submitted` or `rejected` and where the item lives, before any reply. Send the same `thread`
+again and confirm the ack's `state` is `working` and no second item exists. **Rollback:** delete
+the text between and including the two marker lines in each `SOUL.md`.
+
 ### Kit's workout log and gym-day nudge
 
 Kit logs a gym session from one typed or spoken line and confirms it in one line, answers

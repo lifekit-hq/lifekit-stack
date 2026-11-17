@@ -301,9 +301,12 @@ def test_ensure_writes_the_git_contract_over_the_live_one(tmp_path):
     assert r.returncode == 0, r.stderr
     for f in ("AGENTS.md", "IDENTITY.md", "skills/README.md"):
         assert (ws / f).read_bytes() == (CONTRACT / f).read_bytes()
-    # SOUL.md is the git persona plus the one shared dev-problem block the
+    # SOUL.md is the git persona plus the shared persona blocks the
     # deploy puts back after the copy (scripts/ensure-dev-problem-block.sh).
-    shared = (REPO / "defaults/agents/shared/dev-problems.md").read_text().strip("\n")
+    shared = "\n\n".join(
+        (REPO / f"defaults/agents/shared/{n}.md").read_text().strip("\n")
+        for n in ("dev-problems", "a2a-envelope")
+    )
     assert (ws / "SOUL.md").read_text() == (
         (CONTRACT / "SOUL.md").read_text().rstrip("\n") + "\n\n" + shared + "\n"
     )
