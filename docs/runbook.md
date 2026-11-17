@@ -4944,10 +4944,12 @@ join code on the replica; enrol a throwaway node through the edge routes with
 `--commands browser.proxy`; check `nodes list`; then check refusals through the
 same routes: a join code replayed (404), a wrong code (404), a WebSocket with no
 token (refused by the gateway's connect), and a plain browser request to `/`
-(sign-in redirect). `test_edge_routes.py` pins the rules; a throwaway Traefik
-with the real `openclaw.yml` and a stub upstream (20 requests: node join, both
-sockets, browser look-alikes, other methods and paths, the phone app, the
-sign-in callback) matched every request to the intended router.
+(sign-in redirect). `test_edge_routes.py` evaluates the real `openclaw.yml`
+rules against sample requests (node join, both sockets, browser look-alikes
+with `Origin` or `Cookie`, other methods and paths, the worker-artifact paths,
+the phone app, the sign-in callback) and asserts which router wins each. It
+evaluates the rules in Python, so it does not replace a throwaway Traefik with
+the real file for a change to the rule grammar.
 
 ### Before the cutover
 
