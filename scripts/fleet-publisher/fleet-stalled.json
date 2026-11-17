@@ -1,0 +1,12 @@
+{
+  "owners": ["dev", "ops", "finance", "life", "firstmate"],
+  "github": {
+    "days": 7,
+    "held_labels": ["hold", "on-hold", "held", "blocked"],
+    "default_owner": "dev",
+    "repo_owners": {}
+  },
+  "backlog": {"hours": 48},
+  "jobq": {"waiting_hours": 24},
+  "a2a": {"idle_hours": 24}
+}

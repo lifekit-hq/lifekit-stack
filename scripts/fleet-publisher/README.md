@@ -121,12 +121,15 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | --- | --- |
 | `schema`, `generated_epoch` | `fleet-status-page.v1`, the publish time |
 | `records[]` | Every open record each home's backlog lists, and each done record closed within the last 7 days (`list --limit 1000`; a list that fills the limit adds an `errors[]` line): `id`, `home_id`, `title`, `state` (`queued`, `held`, `in_flight`, `done`), `repo` (the record's own, `null` when it has none), `kind`, `priority` (number or `null`), `blocked`, `closed` (date or `null`), `pr_url` (its first `pr:` link), `hold` |
+| `records[]` | `created`, `stalled` | `created` is the record's creation date (`null` when it has none). `stalled` is `null` or `{since, threshold, owner}` (below); only a queued or in-flight record can carry it |
 | `records[].hold` | `null` unless held: `{kind, owner, until, reason}`. `owner` is `captain` (a captain call), `external` (an outside wait), else `firstmate` (parked, or a kind it does not know); `until` and `reason` are the restart condition |
 | `projects[]` | One row per project (see "One row per project"), then `name: "no project"` (`repo: null`) for records without one: `github` (owner/name), `in_flight`, `queued`, `held`, `held_external` (the held ones whose `hold.owner` is `external`: blocked on an outside party, shown as a state and never sent as a message), `last_landed` (`{id, home_id, title, closed, pr_url}` of the latest done record closed in the last 7 days, else `null`), `open_prs` and `open_prs_as_of` (epoch), `plan_url`. Busiest first, "no project" last |
 | `capacity[]` | Per on-host home: `home_id`, `machine`, `running` (lanes), `allowed` (the declared cap, `null` when none is), `cap_status` (`ok`, `none` for no cap declared, which the page shows as "no cap declared", or `invalid`), `quota` (runway status or `null`), `generated_epoch`, `idle_reason`; then one PC row (below) |
-| `queue` | `count` (open queued records, all homes), `held`, `held_external` (as in `projects[]`), `top` (10: `id`, `home_id`, `title`, `repo`, `priority`, `blocked`), `throughput` (`{days: 7, from, to, days_with_data, merged_prs, runs}` over the 7 whole UTC days before today, from the daily metrics), from which the dashboard computes an ETA |
+| `queue` | `count` (open queued records, all homes), `held`, `held_external` (as in `projects[]`), `top` (10: `id`, `home_id`, `title`, `repo`, `priority`, `blocked`, `stalled`), `throughput` (`{days: 7, from, to, days_with_data, merged_prs, runs}` over the 7 whole UTC days before today, from the daily metrics), from which the dashboard computes an ETA |
 | `intake` | The shared job queue's depth: `{waiting, running, done_24h, failed_24h}`, or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
+| `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
+| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`): `{read, reason}`; `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `follow_ups[]` | The owner pages still to be written |
 | `errors[]` | One line per source that could not be read this run |
 
@@ -184,6 +187,55 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
   The helper is bounded to 50 s; if it fails, overruns, prints no JSON object,
   or prints anything matching a credential pattern, `status_page` is `null` and
   the rest of the summary publishes as before.
+
+## Stalled items (`status_page.stalled`)
+
+One mechanical check over native age, no model (decision 0016, queue mechanics;
+the envelope and receipt every door carries are the vault build standard
+"Envelope and receipt at every door", 2026-11-16, and are not restated here).
+An item whose state has not changed for its queue's threshold is `stalled`,
+with its owner. The thresholds are **one config block**, `fleet-stalled.json`
+beside `fleet_status.py` (installed beside it as `lifekit-fleet-stalled.json`;
+`FLEET_STALLED_CONFIG` names another file). It is the only place the numbers
+live: the dashboard reads the result, never decides. Change a number there and
+the next run changes the result; there is no code change. A missing or malformed
+file marks nothing (`stalled` and `stalled_sources` are `null`, one `errors[]`
+line), never a guess.
+
+| Queue | Stalled when (default) | Config key | `since` | Owner |
+| --- | --- | --- | --- | --- |
+| GitHub issue of a registered project (a project whose backlog records name a GitHub repo) | open, no `held_labels` label, no update for 7 days | `github.days`, `github.held_labels` | the issue's `updatedAt` | its `ops`/`dev`/`finance`/`life` label (or `class:<x>`), else `github.repo_owners[<owner/name>]`, else `github.default_owner` (`dev`) |
+| Firstmate backlog record | `queued` or `in_flight` (held and done keep their own buckets), no status line for 48 hours | `backlog.hours` | the newer of the record's creation date and the last `[at=<epoch>]` in `<home>/state/<id>.status` | `firstmate` |
+| jobq job | attempts exhausted (`attempts` at the queue's `max_attempts`, `failed` or `queued`), or `queued` more than 24 hours | `jobq.waiting_hours` | finish time (exhausted) or `queued_at` | the envelope's `class` when it is an owner, else `firstmate` |
+| A2A thread | open and past its own `deadline`, or no turn for 24 hours | `a2a.idle_hours` | the `deadline`, or the last turn | the thread's `owner` when it is one, else `firstmate` |
+| Captain call | unchanged: days waited, as before | - | - | - |
+
+- **Shape.** `records[].stalled` and `queue.top[].stalled` are `null` or
+  `{since, threshold, owner}` (epoch seconds; `threshold` 0 for a rule with no
+  duration, an exhausted job or a passed deadline). `stalled[]` is
+  `[{owner, count, items: [{source, id, home_id, title, url, reason, since,
+  threshold}]}]` in the config's `owners` order (a count of 0 is kept), oldest
+  `since` first. `source` is `backlog`, `issue`, `job` or `thread`; `reason` is
+  `no-status-line`, `no-update`, `attempts-exhausted`, `waiting`,
+  `past-deadline` or `no-turn`. The schema stays `fleet-status-page.v1`; these
+  are new optional keys, and a consumer that ignores them is unchanged. The
+  dashboard's rendering is its own issue.
+- **GitHub issues** come from `gh issue list -R <owner/name> --state open`
+  (200 at most; a full page adds an `errors[]` line), read in the same per-repo
+  refresh, TTL and 15 s budget as the open PR count and cached beside it in
+  `status-open-prs.json`; a failed refresh keeps the last issues.
+- **Jobs** come from `jobq.py ages` in the gateway (`docker exec`, as intake):
+  id, kind, state, times and the envelope class, never a label, payload or
+  result. `FLEET_JOBS_CMD` replaces the command (empty skips); unset, it is
+  skipped when `FLEET_INTAKE_CMD` is set.
+- **A2A threads** come from `FLEET_A2A_CMD`, a command printing a JSON list of
+  `{thread, owner, deadline, last_turn, state, title}` (times as epoch or ISO;
+  a thread whose `state` is completed, failed, canceled or rejected is closed).
+  Today no relay or session store the publisher can reach holds those, so
+  unset, `stalled_sources.a2a` is `{read: false, reason: "no relay or session
+  records reachable"}`: the page says so rather than guessing.
+- **Failure** of one source empties only its own rows, sets its
+  `stalled_sources` entry to `read: false` and adds an `errors[]` line.
 
 ## Daily fleet metrics (`OUT_DIR/metrics/daily.jsonl`)
 

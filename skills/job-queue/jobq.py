@@ -6,6 +6,8 @@
     jobq.py output <id> what the job's run printed, for the turn that answers it
     jobq.py list        what is waiting, running, and recently finished
     jobq.py depth       counts only, as JSON, for the fleet status page
+    jobq.py ages        each job's state and times (no label or result), as JSON,
+                        for the fleet publisher's stalled check
     jobq.py drop <id>   remove one job
     jobq.py enqueue <kind> <key> ...  queue a job from a script, print its receipt
     jobq.py status <id> the receipt of one job, as it stands now
@@ -769,6 +771,28 @@ def depth(now: float | None = None) -> dict:
     }
 
 
+def ages() -> dict:
+    """Each job's state and times, with no label, result or payload, for the fleet
+    publisher's stalled check (which owns the thresholds). Read-only, like `depth`."""
+    jobs = [j for _, j in _jobs(root())]
+    return {
+        "schema": "jobq-ages.v1",
+        "max_attempts": max_attempts(),
+        "jobs": [
+            {
+                "id": j["id"],
+                "kind": j["kind"],
+                "status": j["status"],
+                "queued_at": j["queued_at"],
+                "finished_at": j.get("finished_at"),
+                "attempts": j["attempts"],
+                "class": (j.get("envelope") or {}).get("class"),
+            }
+            for j in sorted(jobs, key=lambda j: j["queued_at"])
+        ],
+    }
+
+
 def drop(jid: str) -> bool:
     with locked() as d:
         p = _path(d, jid)
@@ -848,6 +872,9 @@ def main(argv: list[str]) -> int:
         if cmd == "depth" and len(argv) == 2:
             print(json.dumps(depth()))
             return 0
+        if cmd == "ages" and len(argv) == 2:
+            print(json.dumps(ages()))
+            return 0
         if cmd == "enqueue":
             return _enqueue(argv[2:])
         if cmd == "status" and len(argv) == 3:
@@ -861,7 +888,7 @@ def main(argv: list[str]) -> int:
         print(f"jobq failed: {e}", file=sys.stderr)
         return 1
     print(
-        "usage: jobq.py next | output <id> | list | depth | drop <id> | status <id>\n"
+        "usage: jobq.py next | output <id> | list | depth | ages | drop <id> | status <id>\n"
         "       jobq.py enqueue <kind> <key> --skill S --handler JSON [--probe H] [--label L]\n"
         "         [--quiet] [--payload JSON] [--url U] [--origin O --owner W --class C\n"
         "         --acceptance A [--fingerprint F] [--thread T]]",

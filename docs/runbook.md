@@ -3183,6 +3183,12 @@ environment gains `FLEET_PLAN_MAP` only when the installer is given one
 project"): the alias list that folds a repo spelling naming no project, such as
 the vault's, into its project's row. It is host config, so a re-install without
 it drops the line.
+Stalled items (`status_page.stalled`, README "Stalled items") are marked by one
+mechanical age check over every queue; the thresholds are the one
+`scripts/fleet-publisher/fleet-stalled.json` (installed beside the helper), so
+changing a number is a PR to that file and a re-install, never a code change.
+The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
+publisher can reach exists; the page says so.
 
 The same run writes `/var/lib/lifekit-fleet/taken-for-you.json`, the dashboard's
 "Taken for you" feed: the last 200 actions the fleet took under a standing
