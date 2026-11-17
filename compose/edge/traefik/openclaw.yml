@@ -13,6 +13,16 @@
 #     control: these requests carry no identity (any copy is stripped), so the
 #     gateway's own device-token or setup-code pairing auth is the only gate,
 #     exactly as today. Mobile Safari sends `Safari/` and signs in.
+#   - A headless node host (`openclaw connect` / `openclaw node run`, the
+#     "Kit gets hands" browser node) cannot sign in either, so it gets three
+#     narrow routes, each carrying no identity: its one-time join request
+#     (`GET /j/<22-char code>`), its main WebSocket (the upgrade on `/` with no
+#     `Origin` and no `Cookie`) and the worker WebSocket
+#     (`/__openclaw__/worker`, same no-`Origin`/`Cookie` rule). The gateway's
+#     own credentials are the only gate on them: a single-use, 10-minute,
+#     per-IP rate-limited join code, then the bootstrap or device token on the
+#     socket's connect frame. A browser can never take these routes: it always
+#     sends `Origin` on a WebSocket, and the join route answers one path only.
 #   - Everything else (any browser) passes the `sso` check, which adds the
 #     signed-in email the gateway maps to the operator (trusted-proxy mode).
 #
@@ -61,6 +71,34 @@ http:
         HeaderRegexp(`User-Agent`, `^OpenClaw/`)
         || HeaderRegexp(`User-Agent`, `^Mozilla/5\.0 \((iPhone|iPad); [^)]*\) AppleWebKit/[0-9.]+ \([^)]*\) Mobile/[0-9A-Za-z]+$`)
       priority: 50
+      middlewares: [openclaw-no-identity]
+      service: openclaw
+    # Node-host enrolment (docs/runbook.md "Node host enrolment through the
+    # gateway edge"). Traefik forwards a WebSocket upgrade as it is.
+    openclaw-node-join:
+      entryPoints: [openclaw]
+      rule: Method(`GET`) && PathRegexp(`^/j/[A-Za-z0-9_-]{22}$`)
+      priority: 60
+      middlewares: [openclaw-no-identity]
+      service: openclaw
+    openclaw-node-socket:
+      entryPoints: [openclaw]
+      rule: >-
+        Path(`/`)
+        && HeaderRegexp(`Upgrade`, `(?i)^websocket$`)
+        && !HeaderRegexp(`Origin`, `.`)
+        && !HeaderRegexp(`Cookie`, `.`)
+      priority: 60
+      middlewares: [openclaw-no-identity]
+      service: openclaw
+    openclaw-node-worker:
+      entryPoints: [openclaw]
+      rule: >-
+        Path(`/__openclaw__/worker`)
+        && HeaderRegexp(`Upgrade`, `(?i)^websocket$`)
+        && !HeaderRegexp(`Origin`, `.`)
+        && !HeaderRegexp(`Cookie`, `.`)
+      priority: 60
       middlewares: [openclaw-no-identity]
       service: openclaw
     openclaw:

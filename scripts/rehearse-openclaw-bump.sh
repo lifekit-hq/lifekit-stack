@@ -258,9 +258,11 @@ TOLERATED = {
     # hence the anchored message prefix.
     "gateway_bind": ("core/doctor/security", {"message": r'WARNING: Gateway bound to "lan" \(0\.0\.0\.0\)'}),
     # Live state, not a bump effect: the trusted-proxy sign-in cutover leaves
-    # identity-header auth with no token/password path for machine clients, so
-    # new node hosts cannot authenticate. Already-paired nodes keep working;
-    # the live gap is tracked as its own item, not fixed by the rehearsal.
+    # identity-header auth with no token/password path for machine clients.
+    # The doctor reads config only: it cannot see the edge's node-host routes
+    # (compose/edge/traefik/openclaw.yml, #558), which are how a node host
+    # enrols, so the finding stays while that path works. Drop this entry only
+    # if gateway.auth ever gains a token/password SecretRef.
     "machine_client_auth": ("core/doctor/node-hosting-preconditions",
                             {"requirement": r"^machine-client-auth$", "path": r"^gateway\.auth$"}),
 }

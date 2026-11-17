@@ -103,9 +103,9 @@ except four classes the script tolerates: MCP servers that can't be resolved
 Claude credentials are mounted), the gateway's "lan" bind (by design:
 `--bind lan` inside the container, loopback-only publish on the host), and the
 node-hosting `machine-client-auth` finding at `gateway.auth` (live state since
-the trusted-proxy sign-in cutover: identity-header auth has no machine-client
-token path, so new node hosts cannot authenticate; paired nodes keep working,
-and the live gap is tracked separately). `doctor --fix` writes TOOLS.md
+the trusted-proxy sign-in cutover: the doctor sees identity-header auth with no
+token/password and cannot see the edge's node-host routes, which are how a node
+host enrols - [Node host enrolment](#node-host-enrolment-through-the-gateway-edge)). `doctor --fix` writes TOOLS.md
 migration backups under
 `/srv/openclaw/config/backups/`, so that path must be a directory: a stray
 file there fails the migration with ENOTDIR (the 2026-09-29 cleanup). On
@@ -4817,6 +4817,7 @@ this before the change merged.
 | --- | --- | --- | --- |
 | `openclaw`, `127.0.0.1:18892` (Serve's `:18789`) | `/oauth2/*` | oauth2-proxy (sign-in callback, sign-out) | - |
 | | the phone app: User-Agent `OpenClaw/...` (native) or an iPhone/iPad WKWebView without `Safari/` (its dashboard tab) | the gateway | no identity (any client-sent copy is removed); its device token or pairing code, as today |
+| | a node host (`openclaw connect`): `GET /j/<22-char code>`, or a WebSocket upgrade with no `Origin` and no `Cookie` on `/` or on `/__openclaw__/worker` | the gateway | no identity (any client-sent copy is removed); the join code, then the node's bootstrap or device token, checked by the gateway |
 | | anything else: every browser, Mobile Safari included | the `sso` check, then the gateway | `X-Auth-Request-Email`, the signed-in Logto email, on HTTP and the WebSocket upgrade |
 | `openclaw-internal`, `openclaw-edge:18893` (`lifekit-shared` only, not published) | `/api/diagnostics/prometheus` with the gateway-token bearer | the gateway | `service:prometheus`, capped at `operator.read` |
 | | `/v1/*` with the gateway-token bearer | the gateway | `service:finance-sentry`, capped at `operator.write` |
@@ -4883,6 +4884,70 @@ run, a failed check rolling back by itself, a failing rollback that keeps its
 saved state, and no secret value in any output. Its Prometheus stub reports
 the scrape up only while `trustedProxies` lists the edge, as the gateway
 does. `test_edge_routes.py` pins the routes and the User-Agent match.
+
+### Node host enrolment through the gateway edge
+
+A headless node host (`openclaw connect`, the desktop browser node "Kit gets
+hands" needs) cannot pass the sign-in, and the gateway in trusted-proxy mode
+takes no shared token, so the edge gives it three narrow routes with no
+identity (`openclaw-node-join`, `openclaw-node-socket`, `openclaw-node-worker`
+in `compose/edge/traefik/openclaw.yml`; the table above):
+
+- **Join:** `GET /j/<code>` only, with exactly the gateway's 22-character
+  URL-safe code. The gateway redeems it once (about 10 minutes, rate limited
+  per client IP, an opaque 404 on any miss).
+- **Main socket and worker socket:** a WebSocket upgrade on `/` and on
+  `/__openclaw__/worker` that carries neither `Origin` nor `Cookie`. A browser
+  always sends `Origin` on a WebSocket, so it can never take these routes and
+  keeps signing in. The node authenticates inside the socket (bootstrap token,
+  then its device token), so the gateway's own device auth is the only gate,
+  exactly as on the phone app's route. The User-Agent is not used: the node's
+  WebSocket client sends none.
+
+The cloud-worker artifact routes (`/__openclaw__/worker-bootstrap`, `-bundle`,
+`-transfer`) are not opened: a browser-only node host does not use them.
+
+**The alternative, weighed.** Keeping trusted-proxy and using the gateway's
+`gateway.auth.password` is not possible across the network: it is honoured
+only for clean loopback/direct callers (see "Why the service clients go
+through the edge"), and the node host is another machine. Switching to token
+mode would undo the sign-in gate for the dashboard. So the node host gets
+routes that bypass the identity check and lean on the gateway's own device
+auth, as the phone app already does.
+
+**The doctor finding stays.** `core/doctor/node-hosting-preconditions`
+`machine-client-auth` at `gateway.auth` is a config-only check, so it cannot
+clear while `gateway.auth` has no token/password and the mode is
+trusted-proxy; `scripts/rehearse-openclaw-bump.sh` keeps tolerating exactly
+that finding. A node host enrolling through these routes is the proof that the
+path works.
+
+**Enrolling a node (operator, after the routes are deployed).** The machine
+that hosts the node is chosen separately.
+
+1. On the gateway: `openclaw devices join-code` (admin credentials). Use the
+   `https://<name>:18789/j/<code>` URL it prints (the Serve origin).
+2. On the node machine: `openclaw connect <join-url> --service --commands
+   browser.proxy`. `--commands` restricts the advertised surface to the
+   browser proxy (no `system.run`); without it the node declares the full
+   default surface and bootstrap enrolment approves it.
+3. `openclaw nodes list` shows the node connected, advertising `browser.proxy`
+   only. Later command or capability expansion still needs `openclaw nodes
+   approve`.
+4. Route browser calls to it: `gateway.nodes.browser.node` (the node's id from
+   `nodes list`) in `compose/openclaw-gateway/platform.patch.json`, in the PR
+   that follows once the machine exists.
+
+**Rehearsal on a throwaway replica** (`docs/runbook.md` "OpenClaw behind the
+sign-in gate" shape: a copy of live state, never the live gateway): mint a
+join code on the replica; enrol a throwaway node through the edge routes with
+`--commands browser.proxy`; check `nodes list`; then check refusals through the
+same routes: a join code replayed (404), a wrong code (404), a WebSocket with no
+token (refused by the gateway's connect), and a plain browser request to `/`
+(sign-in redirect). `test_edge_routes.py` pins the rules; a throwaway Traefik
+with the real `openclaw.yml` and a stub upstream (20 requests: node join, both
+sockets, browser look-alikes, other methods and paths, the phone app, the
+sign-in callback) matched every request to the intended router.
 
 ### Before the cutover
 

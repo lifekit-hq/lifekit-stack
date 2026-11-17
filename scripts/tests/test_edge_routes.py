@@ -330,3 +330,103 @@ def test_reply_hook_entrypoint_is_loopback_published_and_trusts_no_forwarded_hea
 def test_hook_path_reaches_traefik_from_the_rendered_env():
     env = COMPOSE["services"]["traefik"]["environment"]
     assert env["OPENCLAW_HOOK_PATH"] == "${OPENCLAW_HOOK_PATH:-}"
+
+
+# --- node-host enrolment (#558) ------------------------------------------
+
+NODE_ROUTES = ("openclaw-node-join", "openclaw-node-socket", "openclaw-node-worker")
+
+
+def _rule(name):
+    return re.sub(r"\s+", " ", ROUTERS[name]["rule"])
+
+
+def test_node_host_routes_carry_no_identity_and_reach_the_gateway():
+    for name in NODE_ROUTES:
+        r = ROUTERS[name]
+        assert r["entryPoints"] == ["openclaw"]
+        # Strip any client-sent identity; the gateway's own join code or
+        # device token is the only gate, as on the phone app's route.
+        assert r["middlewares"] == ["openclaw-no-identity"], name
+        assert "sso" not in r["middlewares"]
+        assert r["service"] == "openclaw"
+
+
+def test_node_host_routes_rank_below_the_sign_in_callback_and_above_the_gate():
+    for name in NODE_ROUTES:
+        assert (
+            ROUTERS["openclaw-oauth2"]["priority"]
+            > ROUTERS[name]["priority"]
+            > ROUTERS["openclaw"]["priority"]
+        )
+
+
+def test_only_the_known_openclaw_routes_skip_the_sign_in_check():
+    open_routes = {
+        n
+        for n, r in _entrypoint_routers("openclaw").items()
+        if "sso" not in r.get("middlewares", [])
+    }
+    assert open_routes == {"openclaw-oauth2", "openclaw-app", *NODE_ROUTES}
+
+
+def _join_pattern():
+    (pattern,) = re.findall(r"PathRegexp\(`([^`]+)`\)", _rule("openclaw-node-join"))
+    return pattern
+
+
+def test_node_join_route_takes_a_get_on_one_join_code_path_only():
+    rule = _rule("openclaw-node-join")
+    assert "Method(`GET`)" in rule
+    assert "PathPrefix" not in rule
+    # The gateway's join code is 22 URL-safe characters; the route admits
+    # that shape and nothing under or beside it.
+    assert _join_pattern() == r"^/j/[A-Za-z0-9_-]{22}$"
+
+
+@pytest.mark.parametrize(
+    ("path", "joins"),
+    [
+        ("/j/" + "A" * 22, True),
+        ("/j/" + "a_-" * 7 + "Z", True),
+        ("/j/" + "A" * 21, False),
+        ("/j/" + "A" * 23, False),
+        ("/j/" + "A" * 22 + "/", False),
+        ("/j/" + "A" * 22 + "/x", False),
+        ("/j/", False),
+        ("/j", False),
+        ("/j/" + "A" * 21 + ".", False),
+        ("/x/j/" + "A" * 22, False),
+        ("/", False),
+    ],
+)
+def test_node_join_route_matches_the_join_url_shape_only(path, joins):
+    # Go's regexp and Python's agree on this subset (anchors, classes, counts).
+    assert bool(re.search(_join_pattern(), path)) is joins
+
+
+@pytest.mark.parametrize(
+    ("router", "path"),
+    [
+        ("openclaw-node-socket", "/"),
+        ("openclaw-node-worker", "/__openclaw__/worker"),
+    ],
+)
+def test_node_socket_routes_take_a_websocket_upgrade_with_no_browser_marks(
+    router, path
+):
+    rule = _rule(router)
+    assert f"Path(`{path}`)" in rule
+    assert "PathPrefix" not in rule
+    assert "HeaderRegexp(`Upgrade`, `(?i)^websocket$`)" in rule
+    # A browser always sends Origin on a WebSocket and signs in with a
+    # cookie, so a request with either keeps going through the gate.
+    assert "!HeaderRegexp(`Origin`, `.`)" in rule
+    assert "!HeaderRegexp(`Cookie`, `.`)" in rule
+
+
+def test_the_worker_bootstrap_and_transfer_routes_are_not_opened():
+    # Cloud-worker artifacts (/__openclaw__/worker-bootstrap, -bundle,
+    # -transfer) are out of scope: a browser-only node host does not use them.
+    for name in NODE_ROUTES:
+        assert "worker-" not in ROUTERS[name]["rule"]
