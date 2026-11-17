@@ -1573,6 +1573,7 @@ and the status read is an HTTP GET Kit could always make.
   `status` runs `curl -fsS -m 10 http://lifekit-dashboard:8080/api/fleet` and prints the
   body unchanged; a curl failure is its exit code and stderr. The URL is the fleet
   page's own data over the `lifekit-shared` network, so the skill gates on `curl` too.
+  `note` also takes the envelope flags and prints a receipt ("Envelope and receipt").
 - **Rules** (`SKILL.md`): status questions run `relay.sh status` and answer in one
   format: "Your call" (numbered, options when the record names them, no ids), "Your
   to-dos" (verb first), then a "Later" count line (parked, dated and blocked, counted from
