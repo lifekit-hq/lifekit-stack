@@ -18,6 +18,9 @@ sections"). Everything is read from structured sources, never from prose:
                 fleet-metrics daily rows
   intake        the shared job queue's depth (`jobq.py depth` in the gateway)
   how_it_works  one owner page per workflow, linked only once it exists
+  stalled       items whose state has not changed for their queue's threshold
+                (fleet-stalled.json beside this script): GitHub issues of the
+                registered projects, backlog items, jobq jobs, A2A threads
 
 Usage: fleet_status.py --home <id>=<path> [--home ...] --now <epoch>
          --state-dir <dir> [--daily <jsonl> ...] [--remote <json> ...]
@@ -27,7 +30,12 @@ wrapper finds it and node), CREDENTIAL_RE (a record whose text matches it is
 withheld), FLEET_GH (default gh; empty skips open PRs), FLEET_PR_TTL (seconds,
 default 600), FLEET_VAULT (default /srv/memory), FLEET_PLAN_MAP ("<repo>=<vault
 project> ..." where the names differ), FLEET_INTAKE_CMD (overrides the gateway
-`docker exec`; empty skips intake). A source that fails empties its own part
+`docker exec`; empty skips intake), FLEET_JOBS_CMD (the same for the job ages
+the stalled check reads; empty skips them, unset skips them too when
+FLEET_INTAKE_CMD is set),
+FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: none reachable),
+FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
+script). A source that fails empties its own part
 and adds a line to `errors`; the helper itself only fails on bad arguments.
 """
 
@@ -52,7 +60,15 @@ THROUGHPUT_DAYS = 7
 LIST_LIMIT = 1000
 PR_BUDGET = 15
 SHOW_BUDGET = 20
-LIST_FIELDS = "held,hold_kind,hold_until,hold_reason,priority,closed,links,blocked"
+LIST_FIELDS = (
+    "held,hold_kind,hold_until,hold_reason,priority,closed,links,blocked,created"
+)
+ISSUE_LIMIT = 200
+TITLE_CUT = 160
+STATUS_AT_RE = re.compile(r"\[at=(\d+)\]")
+STATUS_TAIL = 65536
+A2A_CLOSED = ("completed", "failed", "canceled", "rejected")
+STALLED_CONFIG = ("fleet-stalled.json", "lifekit-fleet-stalled.json")
 TRUNCATED = "\n... (truncated, "
 TOON_TABLE_RE = re.compile(r"^tasks\[\d+\]\{([^}]*)\}:$")
 TOON_FIELD_RE = re.compile(r"^  ([a-z_]+): (.*)$")
@@ -174,6 +190,8 @@ def record(home_id: str, row: dict[str, str | None]) -> dict[str, Any]:
         "closed": row.get("closed"),
         "pr_url": pr.group(1) if pr else None,
         "hold": None,
+        "created": row.get("created"),
+        "stalled": None,
     }
     if held:
         kind = row.get("hold_kind")
@@ -293,9 +311,11 @@ def repo_slug(repo: str, homes: list[tuple[str, str]]) -> str | None:
 def open_prs(
     slugs: set[str], cache: dict[str, Any], now: int, errors: list[str]
 ) -> None:
-    """Refresh cache[slug] = {count, as_of} for slugs older than FLEET_PR_TTL, within
-    PR_BUDGET seconds in all. A failed or skipped refresh keeps the last count, so
-    one bad minute never blanks a row."""
+    """Refresh cache[slug] = {count, as_of, issues} for slugs older than
+    FLEET_PR_TTL (or cached before issues were read), within PR_BUDGET seconds in
+    all: the open PR count, then the open issues the stalled check ages. A failed
+    or skipped refresh keeps the last count and issues, so one bad minute never
+    blanks a row."""
     gh = os.environ.get("FLEET_GH", "gh")
     if not gh:
         return
@@ -303,7 +323,11 @@ def open_prs(
     deadline = time.monotonic() + PR_BUDGET
     for slug in sorted(slugs):
         hit = cache.get(slug)
-        if isinstance(hit, dict) and now - int(hit.get("as_of") or 0) < ttl:
+        if (
+            isinstance(hit, dict)
+            and "issues" in hit
+            and now - int(hit.get("as_of") or 0) < ttl
+        ):
             continue
         left = deadline - time.monotonic()
         if left < 1:
@@ -326,9 +350,86 @@ def open_prs(
                 ],
                 timeout=min(20, int(left)),
             )
-            cache[slug] = {"count": len(json.loads(out)), "as_of": now}
+            kept = hit if isinstance(hit, dict) else {}
+            cache[slug] = {**kept, "count": len(json.loads(out)), "as_of": now}
         except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
             errors.append(f"open PRs of {slug} unreadable ({exc.__class__.__name__})")
+            continue
+        left = deadline - time.monotonic()
+        if left < 1:
+            errors.append("open issues not refreshed: the time budget ran out")
+            return
+        try:
+            out = run(
+                [
+                    gh,
+                    "issue",
+                    "list",
+                    "-R",
+                    slug,
+                    "--state",
+                    "open",
+                    "--limit",
+                    str(ISSUE_LIMIT),
+                    "--json",
+                    "number,title,url,updatedAt,labels",
+                ],
+                timeout=min(20, int(left)),
+            )
+            listed = json.loads(out)
+            cache[slug]["issues"] = [i for i in map(slim_issue, listed) if i]
+            if len(listed) >= ISSUE_LIMIT:
+                errors.append(
+                    f"open issues of {slug} hit the {ISSUE_LIMIT}-issue limit; some are not aged"
+                )
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+            errors.append(
+                f"open issues of {slug} unreadable ({exc.__class__.__name__})"
+            )
+
+
+def slim_issue(raw: Any) -> dict[str, Any] | None:
+    """The fields of one `gh issue list` row the stalled check needs; None for a
+    row without a number and an update time."""
+    if not isinstance(raw, dict):
+        return None
+    when = parse_time(raw.get("updatedAt"))
+    if not isinstance(raw.get("number"), int) or when is None:
+        return None
+    labels = raw.get("labels") or []
+    return {
+        "number": raw["number"],
+        "title": one_line(raw.get("title"), TITLE_CUT),
+        "url": raw.get("url") if isinstance(raw.get("url"), str) else None,
+        "updated": when,
+        "labels": [
+            str(label["name"]).lower()
+            for label in labels
+            if isinstance(label, dict) and label.get("name")
+        ],
+    }
+
+
+def parse_time(value: Any) -> int | None:
+    """An epoch from a number or an ISO 8601 time, else None."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    if isinstance(value, str) and value:
+        try:
+            when = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=dt.timezone.utc)
+        return int(when.timestamp())
+    return None
+
+
+def one_line(value: Any, cut: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    return text if len(text) <= cut else text[: cut - 1] + "…"
 
 
 def vault_page_url(vault: Path, page: str) -> str | None:
@@ -612,7 +713,18 @@ def queue(records: list[dict[str, Any]], paths: list[str], now: int) -> dict[str
         "held": sum(r["state"] == "held" for r in records),
         "held_external": held_external(records),
         "top": [
-            {k: r[k] for k in ("id", "home_id", "title", "repo", "priority", "blocked")}
+            {
+                k: r[k]
+                for k in (
+                    "id",
+                    "home_id",
+                    "title",
+                    "repo",
+                    "priority",
+                    "blocked",
+                    "stalled",
+                )
+            }
             for _, r in ranked[:TOP_QUEUE]
         ],
         "throughput": throughput(paths, now),
@@ -643,6 +755,314 @@ def intake() -> dict[str, Any]:
     ):
         raise ValueError("not a jobq depth document")
     return {k: doc[k] for k in keys}
+
+
+# --- stalled ---------------------------------------------------------------------
+#
+# One mechanical check, no model: an item whose state has not changed for its
+# queue's threshold is stalled, and carries its owner. The thresholds are the
+# fleet-stalled.json beside this script, the one source (the dashboard reads
+# the result, never decides).
+
+
+def stalled_config(errors: list[str]) -> dict[str, Any] | None:
+    """The thresholds, or None (with an `errors` line) when the file is missing
+    or malformed: nothing is then marked, never guessed."""
+    here = Path(__file__).resolve().parent
+    named = os.environ.get("FLEET_STALLED_CONFIG")
+    paths = [Path(named)] if named else [here / n for n in STALLED_CONFIG]
+    path = next((p for p in paths if p.is_file()), None)
+    if path is None:
+        errors.append("stalled thresholds not found: no item is marked stalled")
+        return None
+    try:
+        cfg = json.loads(path.read_text())
+        owners = cfg["owners"]
+        github, backlog = cfg["github"], cfg["backlog"]
+        jobq, a2a = cfg["jobq"], cfg["a2a"]
+        numbers = (
+            github["days"],
+            backlog["hours"],
+            jobq["waiting_hours"],
+            a2a["idle_hours"],
+        )
+        assert isinstance(owners, list) and owners
+        assert all(isinstance(o, str) and o for o in owners)
+        assert "firstmate" in owners and github["default_owner"] in owners
+        assert all(
+            isinstance(n, (int, float)) and not isinstance(n, bool) and n > 0
+            for n in numbers
+        )
+        assert isinstance(github["held_labels"], list)
+        assert isinstance(github["repo_owners"], dict)
+        assert set(github["repo_owners"].values()) <= set(owners)
+    except (OSError, ValueError, KeyError, TypeError, AssertionError):
+        errors.append(f"stalled thresholds in {path.name} unreadable: nothing marked")
+        return None
+    return cfg
+
+
+def stall(since: int, threshold: float, owner: str) -> dict[str, Any]:
+    return {"since": int(since), "threshold": int(threshold), "owner": owner}
+
+
+def last_status_epoch(home: str, rec_id: str) -> int | None:
+    """The newest `[at=<epoch>]` in the task's status file under the home's
+    state/, from the file's tail; None when it has none."""
+    path = Path(home) / "state" / f"{rec_id}.status"
+    if "/" in rec_id or not path.is_file():
+        return None
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - STATUS_TAIL))
+            tail = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    found = STATUS_AT_RE.findall(tail)
+    return int(found[-1]) if found else None
+
+
+def backlog_stalls(
+    records: list[dict[str, Any]],
+    homes: list[tuple[str, str]],
+    cfg: dict[str, Any],
+    now: int,
+) -> list[dict[str, Any]]:
+    """Queued or in-flight records with no status line (or, for one that has
+    none yet, no creation) inside the threshold. Held and done records keep
+    their own buckets. Marks each record's `stalled` and returns the rows."""
+    threshold = cfg["backlog"]["hours"] * 3600
+    paths = dict(homes)
+    rows = []
+    for rec in records:
+        if rec["state"] not in ("queued", "in_flight") or rec["home_id"] not in paths:
+            continue
+        created = parse_time(f"{rec['created']}T00:00:00Z") if rec["created"] else None
+        seen = [
+            t
+            for t in (created, last_status_epoch(paths[rec["home_id"]], rec["id"]))
+            if t is not None
+        ]
+        if not seen or now - max(seen) < threshold:
+            continue
+        rec["stalled"] = stall(max(seen), threshold, "firstmate")
+        rows.append(
+            {
+                "source": "backlog",
+                "id": rec["id"],
+                "home_id": rec["home_id"],
+                "title": rec["title"],
+                "url": None,
+                "reason": "no-status-line",
+                **{k: rec["stalled"][k] for k in ("since", "threshold")},
+                "owner": "firstmate",
+            }
+        )
+    return rows
+
+
+def issue_owner(slug: str, labels: list[str], cfg: dict[str, Any]) -> str:
+    """The issue's class label (`ops` or `class:ops`) when it is an owner, else
+    the repo's configured owner, else the default."""
+    for label in labels:
+        name = label.removeprefix("class:")
+        if name in cfg["owners"]:
+            return name
+    return cfg["github"]["repo_owners"].get(slug) or cfg["github"]["default_owner"]
+
+
+def issue_stalls(
+    slugs: set[str], pr_cache: dict[str, Any], cfg: dict[str, Any], now: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Open, unheld issues of each registered project with no update inside the
+    threshold, from the issues the open-PR refresh read (so within its budget)."""
+    gh = cfg["github"]
+    threshold = gh["days"] * 86400
+    held = {label.lower() for label in gh["held_labels"]}
+    rows, missing = [], []
+    for slug in sorted(slugs):
+        hit = pr_cache.get(slug)
+        issues = hit.get("issues") if isinstance(hit, dict) else None
+        if not isinstance(issues, list):
+            missing.append(slug)
+            continue
+        for issue in issues:
+            if held & set(issue["labels"]) or now - issue["updated"] < threshold:
+                continue
+            rows.append(
+                {
+                    "source": "issue",
+                    "id": f"{slug}#{issue['number']}",
+                    "home_id": None,
+                    "title": issue["title"],
+                    "url": issue["url"],
+                    "reason": "no-update",
+                    "since": issue["updated"],
+                    "threshold": int(threshold),
+                    "owner": issue_owner(slug, issue["labels"], cfg),
+                }
+            )
+    if not os.environ.get("FLEET_GH", "gh"):
+        source = {"read": False, "reason": "FLEET_GH is empty"}
+    elif not slugs:
+        source = {"read": False, "reason": "no registered project has a GitHub repo"}
+    elif missing:
+        source = {"read": False, "reason": f"issues not read for {', '.join(missing)}"}
+    else:
+        source = {"read": True, "reason": None}
+    return rows, source
+
+
+def jobs_cmd() -> list[str] | None:
+    """FLEET_JOBS_CMD as argv; [] for the gateway default; None to skip. Unset, it
+    is the default only while FLEET_INTAKE_CMD is unset too: an overridden intake
+    command means the gateway is not the source here."""
+    cmd = os.environ.get("FLEET_JOBS_CMD")
+    if cmd is None:
+        return [] if "FLEET_INTAKE_CMD" not in os.environ else None
+    return shlex.split(cmd) or None
+
+
+def job_stalls(
+    cfg: dict[str, Any], now: int, errors: list[str]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Jobs whose attempts are used up, or that have waited past the threshold,
+    from `jobq.py ages` (ids, kinds, states and times: never a label or result)."""
+    argv = jobs_cmd()
+    if argv is None:
+        return [], {"read": False, "reason": "job ages skipped"}
+    try:
+        if not argv:
+            found = run(
+                [
+                    "docker",
+                    "ps",
+                    "-q",
+                    *(a for f in GATEWAY_LABELS for a in ("--filter", f)),
+                ],
+                timeout=10,
+            ).split()
+            if not found:
+                raise OSError("no running openclaw-gateway container")
+            argv = ["docker", "exec", found[0], "python3", GATEWAY_JOBQ, "ages"]
+        doc = json.loads(run(argv, timeout=15))
+        jobs, limit = doc["jobs"], doc["max_attempts"]
+        assert isinstance(jobs, list) and isinstance(limit, int)
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        AssertionError,
+        subprocess.SubprocessError,
+    ) as exc:
+        errors.append(f"job ages unreadable ({exc.__class__.__name__})")
+        return [], {"read": False, "reason": "job ages unreadable"}
+    threshold = cfg["jobq"]["waiting_hours"] * 3600
+    owners = cfg["owners"]
+    rows = []
+    for job in jobs:
+        if not isinstance(job, dict) or not isinstance(job.get("id"), str):
+            continue
+        status, attempts = job.get("status"), job.get("attempts")
+        queued, finished = job.get("queued_at"), job.get("finished_at")
+        if not all(isinstance(n, (int, float)) for n in (attempts, queued)):
+            continue
+        klass = job.get("class")
+        owner = klass if klass in owners and klass != "unclear" else "firstmate"
+        if status in ("queued", "failed") and attempts >= limit:
+            since, reason, cut = finished or queued, "attempts-exhausted", 0
+        elif status == "queued" and now - queued >= threshold:
+            since, reason, cut = queued, "waiting", threshold
+        else:
+            continue
+        rows.append(
+            {
+                "source": "job",
+                "id": job["id"],
+                "home_id": None,
+                "title": one_line(job.get("kind"), TITLE_CUT),
+                "url": None,
+                "reason": reason,
+                "since": int(since),
+                "threshold": int(cut),
+                "owner": owner,
+            }
+        )
+    return rows, {"read": True, "reason": None}
+
+
+def thread_stalls(
+    cfg: dict[str, Any], now: int, errors: list[str]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Open A2A threads past their own deadline, or with no turn inside the
+    threshold, from FLEET_A2A_CMD (a JSON list of `{thread, owner, deadline,
+    last_turn, state}`). With no such source the section says so: a thread's age
+    is never guessed."""
+    argv = shlex.split(os.environ.get("FLEET_A2A_CMD") or "")
+    if not argv:
+        return [], {
+            "read": False,
+            "reason": "no relay or session records reachable",
+        }
+    try:
+        doc = json.loads(run(argv, timeout=15))
+        assert isinstance(doc, list)
+    except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as exc:
+        errors.append(f"A2A threads unreadable ({exc.__class__.__name__})")
+        return [], {"read": False, "reason": "A2A threads unreadable"}
+    idle = cfg["a2a"]["idle_hours"] * 3600
+    owners = cfg["owners"]
+    rows = []
+    for t in doc:
+        if not isinstance(t, dict) or not isinstance(t.get("thread"), str):
+            continue
+        if t.get("state") in A2A_CLOSED:
+            continue
+        deadline, turn = parse_time(t.get("deadline")), parse_time(t.get("last_turn"))
+        if deadline is not None and now > deadline:
+            since, reason, cut = deadline, "past-deadline", 0
+        elif turn is not None and now - turn >= idle:
+            since, reason, cut = turn, "no-turn", idle
+        else:
+            continue
+        owner = t.get("owner") if t.get("owner") in owners else "firstmate"
+        rows.append(
+            {
+                "source": "thread",
+                "id": t["thread"],
+                "home_id": None,
+                "title": one_line(t.get("title"), TITLE_CUT),
+                "url": None,
+                "reason": reason,
+                "since": int(since),
+                "threshold": int(cut),
+                "owner": owner,
+            }
+        )
+    return rows, {"read": True, "reason": None}
+
+
+def stalled_section(
+    rows: list[dict[str, Any]], owners: list[str]
+) -> list[dict[str, Any]]:
+    """The stalled rows grouped by owner, one group per configured owner (a
+    count of 0 is shown), the oldest first inside a group."""
+    groups = []
+    for owner in owners:
+        items = sorted(
+            (r for r in rows if r["owner"] == owner),
+            key=lambda r: (r["since"], r["source"], r["id"]),
+        )
+        groups.append(
+            {
+                "owner": owner,
+                "count": len(items),
+                "items": [{k: v for k, v in r.items() if k != "owner"} for r in items],
+            }
+        )
+    return groups
 
 
 # --- assembly --------------------------------------------------------------------
@@ -722,6 +1142,26 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             errors.append(f"{home_id}: capacity unreadable ({exc.__class__.__name__})")
     caps.extend(remote_capacity(e, errors) for e in remote_entries(args.remote, errors))
     rows = projects(records, homes, pr_cache, args.now, errors)
+    stalled, sources = None, None
+    if cfg := stalled_config(errors):
+        found = backlog_stalls(records, homes, cfg, args.now)
+        issues, github = issue_stalls(
+            {r["github"] for r in rows if r["github"]}, pr_cache, cfg, args.now
+        )
+        jobs, jobq = job_stalls(cfg, args.now, errors)
+        threads, a2a = thread_stalls(cfg, args.now, errors)
+        stalled = stalled_section(found + issues + jobs + threads, cfg["owners"])
+        sources = {
+            "backlog": {
+                "read": all(v is not None for v in by_home.values()),
+                "reason": None
+                if all(v is not None for v in by_home.values())
+                else "a home's backlog is unreadable",
+            },
+            "github": github,
+            "jobq": jobq,
+            "a2a": a2a,
+        }
     depth: dict[str, Any] | None = None
     if os.environ.get("FLEET_INTAKE_CMD") != "":
         try:
@@ -744,6 +1184,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "queue": queue(records, args.daily, args.now),
         "intake": depth,
         "how_it_works": how,
+        "stalled": stalled,
+        "stalled_sources": sources,
         "follow_ups": [
             f"owner page for {h['title'].lower()}" for h in how if not h["url"]
         ],

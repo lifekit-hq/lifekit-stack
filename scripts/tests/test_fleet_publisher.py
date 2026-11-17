@@ -1399,6 +1399,8 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     helper = root / "usr/local/bin/lifekit-fleet-status.py"
     assert os.access(helper, os.X_OK)
     assert helper.read_text() == (DIR / "fleet_status.py").read_text()
+    stalled = root / "usr/local/bin/lifekit-fleet-stalled.json"
+    assert stalled.read_text() == (DIR / "fleet-stalled.json").read_text()
     taken = root / "usr/local/bin/lifekit-fleet-taken.py"
     assert os.access(taken, os.X_OK)
     assert taken.read_text() == (DIR / "taken_feed.py").read_text()
@@ -1955,7 +1957,7 @@ _SPEC.loader.exec_module(fleet_status)
 
 LIST_COLUMNS = (
     "id,state,kind,repo,title,held,hold_kind,hold_until,hold_reason,priority,"
-    "closed,links,blocked"
+    "closed,links,blocked,created"
 )
 
 
@@ -1974,6 +1976,7 @@ def task(id_, state="queued", repo="alpha", title=None, **extra):
         "closed": None,
         "links": None,
         "blocked": "no",
+        "created": "2027-01-14",
     }
     return {**base, **extra}
 
@@ -2715,6 +2718,7 @@ def test_an_installed_publisher_finds_the_helper_beside_itself(homes, tmp_path):
     bindir.mkdir()
     shutil.copy(SCRIPT, bindir / "lifekit-fleet-publisher.sh")
     shutil.copy(DIR / "fleet_status.py", bindir / "lifekit-fleet-status.py")
+    shutil.copy(DIR / "fleet-stalled.json", bindir / "lifekit-fleet-stalled.json")
     vps = status_home(homes.tmp, "fm-vps", [task("a1")])
     result = subprocess.run(
         [
@@ -3279,3 +3283,260 @@ def test_screen_changes_withholds_an_item_that_looks_like_a_credential(fleet):
     assert run_screens(fleet, gh).returncode == 0
     assert screen_feed(fleet)["items"] == []
     assert "ghp_" not in (fleet.out / "screen-changes.json").read_text()
+
+
+# --- stalled: one mechanical check over every queue's native age -----------------
+
+DAY = 86400
+
+
+def stalled_world(homes, *, a2a=True, jobs=True, issues=True):
+    """The four sources of the done-when, plus what must stay quiet: a fresh
+    item per queue and a held one. Returns the run's extra environment."""
+    tmp = homes.tmp
+    old = "2027-01-01"  # two weeks before NOW
+    vps = status_home(
+        tmp,
+        "fm-vps",
+        [
+            task("silent", state="in_flight", repo="o/alpha", created=old),
+            task("fresh", state="in_flight", repo="o/alpha", created="2027-01-15"),
+            task(
+                "parked",
+                held="yes",
+                hold_kind="parked",
+                repo="o/alpha",
+                created=old,
+            ),
+            task("spoken", state="in_flight", repo="o/alpha", created=old),
+        ],
+    )
+    (vps / "state").mkdir(exist_ok=True)
+    (vps / "state/silent.status").write_text(f"working [at={NOW - 3 * DAY}]: x\n")
+    (vps / "state/spoken.status").write_text(
+        f"working [at={NOW - 3 * DAY}]: x\nworking [at={NOW - 60}]: y\n"
+    )
+
+    def iso(age):
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW - age))
+
+    listed = [
+        {
+            "number": 1,
+            "title": "Aged",
+            "url": "https://github.com/o/alpha/issues/1",
+            "updatedAt": iso(8 * DAY),
+            "labels": [{"name": "ops"}],
+        },
+        {
+            "number": 2,
+            "title": "Fresh",
+            "url": "https://github.com/o/alpha/issues/2",
+            "updatedAt": iso(DAY),
+            "labels": [],
+        },
+        {
+            "number": 3,
+            "title": "Aged but held",
+            "url": "https://github.com/o/alpha/issues/3",
+            "updatedAt": iso(30 * DAY),
+            "labels": [{"name": "Hold"}],
+        },
+    ]
+    (tmp / "gh-issues.json").write_text(json.dumps(listed))
+    gh = stub(
+        tmp / "gh",
+        'if [ "$1" = issue ]; then cat ' + str(tmp / "gh-issues.json") + "\n"
+        "else echo '[]'; fi\n",
+    )
+    job = {"kind": "video", "attempts": 0, "queued_at": NOW - DAY // 2}
+    (tmp / "jobs.json").write_text(
+        json.dumps(
+            {
+                "schema": "jobq-ages.v1",
+                "max_attempts": 3,
+                "jobs": [
+                    {
+                        **job,
+                        "id": "spent",
+                        "status": "failed",
+                        "attempts": 3,
+                        "finished_at": NOW - 5000,
+                        "class": "life",
+                    },
+                    {
+                        **job,
+                        "id": "waiting",
+                        "status": "queued",
+                        "queued_at": NOW - 2 * DAY,
+                        "class": None,
+                    },
+                    {**job, "id": "young", "status": "queued", "class": "life"},
+                    {**job, "id": "last-try", "status": "running", "attempts": 3},
+                    {**job, "id": "finished", "status": "done", "attempts": 1},
+                ],
+            }
+        )
+    )
+    (tmp / "threads.json").write_text(
+        json.dumps(
+            [
+                {
+                    "thread": "late",
+                    "owner": "finance",
+                    "deadline": NOW - 60,
+                    "last_turn": NOW - 10,
+                },
+                {"thread": "quiet", "owner": "dev", "last_turn": NOW - 2 * DAY},
+                {
+                    "thread": "live",
+                    "owner": "dev",
+                    "deadline": NOW + DAY,
+                    "last_turn": NOW - 60,
+                },
+                {
+                    "thread": "over",
+                    "owner": "dev",
+                    "state": "completed",
+                    "deadline": NOW - DAY,
+                },
+            ]
+        )
+    )
+    env = {"FLEET_GH": str(gh), "FLEET_PR_TTL": "0"}
+    env["FLEET_JOBS_CMD"] = f"cat {tmp / 'jobs.json'}"
+    env["FLEET_A2A_CMD"] = f"cat {tmp / 'threads.json'}"
+    return vps, env
+
+
+def stalled_ids(page):
+    return {g["owner"]: sorted(i["id"] for i in g["items"]) for g in page["stalled"]}
+
+
+def test_every_queue_marks_its_aged_items_stalled_with_the_right_owner(homes):
+    vps, env = stalled_world(homes)
+    assert homes.run(vps, **env).returncode == 0
+    page = status(homes)
+    assert page["errors"] == []
+    assert [g["owner"] for g in page["stalled"]] == [
+        "dev",
+        "ops",
+        "finance",
+        "life",
+        "firstmate",
+    ]
+    assert stalled_ids(page) == {
+        "dev": ["quiet"],
+        "ops": ["o/alpha#1"],
+        "finance": ["late"],
+        "life": ["spent"],
+        "firstmate": ["silent", "waiting"],
+    }
+    assert [g["count"] for g in page["stalled"]] == [1, 1, 1, 1, 2]
+    # The held issue, the held record, the fresh and the finished never stall.
+    flat = {i["id"]: i for g in page["stalled"] for i in g["items"]}
+    assert flat["silent"]["reason"] == "no-status-line"
+    assert flat["silent"]["since"] == NOW - 3 * DAY
+    assert flat["silent"]["threshold"] == 48 * 3600
+    assert flat["o/alpha#1"]["reason"] == "no-update"
+    assert flat["o/alpha#1"]["threshold"] == 7 * DAY
+    assert flat["spent"]["reason"] == "attempts-exhausted"
+    assert flat["waiting"]["reason"] == "waiting"
+    assert flat["late"]["reason"] == "past-deadline"
+    assert flat["quiet"]["reason"] == "no-turn"
+    assert page["stalled_sources"]["a2a"] == {"read": True, "reason": None}
+
+
+def test_a_stalled_record_carries_its_owner_and_a_fresh_one_carries_null(homes):
+    vps, env = stalled_world(homes)
+    assert homes.run(vps, **env).returncode == 0
+    got = {r["id"]: r for r in status(homes)["records"]}
+    assert got["silent"]["stalled"] == {
+        "since": NOW - 3 * DAY,
+        "threshold": 48 * 3600,
+        "owner": "firstmate",
+    }
+    for quiet in ("fresh", "parked", "spoken"):
+        assert got[quiet]["stalled"] is None
+    tops = {t["id"]: t for t in status(homes)["queue"]["top"]}
+    assert tops["parked"]["stalled"] is None if "parked" in tops else True
+
+
+def test_a_queued_record_stalls_on_its_creation_date(homes):
+    vps = status_home(
+        homes.tmp, "fm-vps", [task("old", created="2027-01-10"), task("new")]
+    )
+    assert homes.run(vps).returncode == 0
+    page = status(homes)
+    top = {t["id"]: t["stalled"] for t in page["queue"]["top"]}
+    assert top["new"] is None
+    assert top["old"]["owner"] == "firstmate"
+    assert top["old"]["since"] == NOW - 5 * DAY - 8 * 3600
+    assert stalled_ids(page)["firstmate"] == ["old"]
+
+
+def test_a_threshold_in_config_changes_the_result_with_no_code_change(homes):
+    vps, env = stalled_world(homes)
+    cfg = json.loads((DIR / "fleet-stalled.json").read_text())
+    cfg["github"]["days"] = 30
+    cfg["backlog"]["hours"] = 24 * 30
+    cfg["jobq"]["waiting_hours"] = 24 * 30
+    cfg["a2a"]["idle_hours"] = 24 * 30
+    path = homes.tmp / "stalled.json"
+    path.write_text(json.dumps(cfg))
+    assert homes.run(vps, FLEET_STALLED_CONFIG=str(path), **env).returncode == 0
+    # Only what is stalled by its own rule remains: spent attempts, a passed deadline.
+    assert stalled_ids(status(homes)) == {
+        "dev": [],
+        "ops": [],
+        "finance": ["late"],
+        "life": ["spent"],
+        "firstmate": [],
+    }
+
+
+def test_a_missing_or_broken_threshold_file_marks_nothing_and_says_so(homes):
+    vps, env = stalled_world(homes)
+    path = homes.tmp / "stalled.json"
+    path.write_text("{not json")
+    assert homes.run(vps, FLEET_STALLED_CONFIG=str(path), **env).returncode == 0
+    page = status(homes)
+    assert page["stalled"] is None and page["stalled_sources"] is None
+    assert all(r["stalled"] is None for r in page["records"])
+    assert any("stalled thresholds" in e for e in page["errors"])
+
+
+def test_an_unreachable_a2a_source_is_said_not_guessed(homes):
+    vps, env = stalled_world(homes)
+    del env["FLEET_A2A_CMD"]
+    assert homes.run(vps, **env).returncode == 0
+    page = status(homes)
+    assert page["stalled_sources"]["a2a"] == {
+        "read": False,
+        "reason": "no relay or session records reachable",
+    }
+    assert page["errors"] == []
+    assert stalled_ids(page)["finance"] == []
+
+
+def test_a_failing_source_empties_only_its_own_rows(homes):
+    vps, env = stalled_world(homes)
+    env["FLEET_JOBS_CMD"] = "false"
+    assert homes.run(vps, **env).returncode == 0
+    page = status(homes)
+    assert page["stalled_sources"]["jobq"]["read"] is False
+    assert any("job ages unreadable" in e for e in page["errors"])
+    assert stalled_ids(page)["life"] == []
+    assert stalled_ids(page)["ops"] == ["o/alpha#1"]
+
+
+def test_issues_are_read_inside_the_pr_budget_and_cached_with_the_count(homes):
+    vps, env = stalled_world(homes)
+    env["FLEET_PR_TTL"] = "600"
+    assert homes.run(vps, **env).returncode == 0
+    cache = json.loads((homes.tmp / "state/status-open-prs.json").read_text())
+    assert [i["number"] for i in cache["o/alpha"]["issues"]] == [1, 2, 3]
+    # A second run inside the TTL reads no gh at all and stalls the same.
+    (homes.tmp / "gh-issues.json").write_text("[]")
+    assert homes.run(vps, **env).returncode == 0
+    assert stalled_ids(status(homes))["ops"] == ["o/alpha#1"]

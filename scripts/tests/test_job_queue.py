@@ -282,6 +282,29 @@ def test_depth_counts_jobs_by_state_and_names_none(q):
     assert json.loads(out)["waiting"] == 1
 
 
+def test_ages_gives_states_and_times_and_no_label_or_result(q):
+    _add("AAA111", now=1000.0)
+    _add("BBB222", now=1001.0)
+    jobq.claim("reel-BBB222", now=1002.0)
+    jobq.finish("reel-BBB222", "Reel: https://example/BBB222", now=1003.0)
+    got = jobq.ages()
+    assert got["schema"] == "jobq-ages.v1" and got["max_attempts"] == 3
+    assert [(j["id"], j["status"]) for j in got["jobs"]] == [
+        ("reel-AAA111", "queued"),
+        ("reel-BBB222", "done"),
+    ]
+    assert got["jobs"][0]["attempts"] == 0
+    assert got["jobs"][1]["finished_at"] == 1003.0 and got["jobs"][0]["class"] is None
+    assert "example" not in json.dumps(got)
+    out = subprocess.run(
+        [sys.executable, str(SKILL / "jobq.py"), "ages"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert len(json.loads(out)["jobs"]) == 2
+
+
 def test_drop_removes_one_job(q):
     _add()
     assert jobq.drop("reel-AAA111") is True

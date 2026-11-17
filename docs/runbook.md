@@ -1959,7 +1959,8 @@ docker exec "$G" openclaw cron edit "$ID" \
 - **A changed gate:** the row stores the script, so when a deploy reports the gate `DIFFERS`,
   re-apply it: `docker exec "$G" openclaw cron edit "$ID" --trigger-script /home/node/.openclaw/skills/job-queue/drain-gate.js`.
 - **What is waiting:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py list`
-  (`depth` prints the counts only, as JSON: what the fleet status page shows).
+  (`depth` prints the counts only, as JSON: what the fleet status page shows; `ages` prints each
+  job's state and times with no label or result: what its stalled check reads).
   Do not run `jobq.py next` by hand while the egress answers: it starts the next job, and each
   `next` that hands out a run's output counts as an offer, the third unread one giving it up.
 - **Drop a job:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py drop <job id>`
@@ -3183,6 +3184,12 @@ environment gains `FLEET_PLAN_MAP` only when the installer is given one
 project"): the alias list that folds a repo spelling naming no project, such as
 the vault's, into its project's row. It is host config, so a re-install without
 it drops the line.
+Stalled items (`status_page.stalled`, README "Stalled items") are marked by one
+mechanical age check over every queue; the thresholds are the one
+`scripts/fleet-publisher/fleet-stalled.json` (installed beside the helper), so
+changing a number is a PR to that file and a re-install, never a code change.
+The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
+publisher can reach exists; the page says so.
 
 The same run writes `/var/lib/lifekit-fleet/taken-for-you.json`, the dashboard's
 "Taken for you" feed: the last 200 actions the fleet took under a standing
