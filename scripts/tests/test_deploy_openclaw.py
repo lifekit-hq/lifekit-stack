@@ -966,8 +966,10 @@ def post_up_ytt(env, tmp_path, ensure=None, curl_fail=False):
     for name in ("ensure-video-eval.sh", "ensure-job-queue.sh", "ensure-learnclaw.sh"):
         shutil.copy(REPO / "scripts" / name, fake / "scripts" / name)
     # The doc-door script drives the gateway container; its own tests cover it.
-    (fake / "scripts/ensure-doc-door.sh").write_text("#!/bin/sh\nexit 0\n")
-    (fake / "scripts/ensure-doc-door.sh").chmod(0o755)
+    # So does the reader agent's (its own tests: test_reader_agent.py).
+    for name in ("ensure-doc-door.sh", "ensure-reader-agent.sh"):
+        (fake / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
+        (fake / "scripts" / name).chmod(0o755)
     script = fake / "scripts/ensure-youtube-transcript.sh"
     if ensure is None:
         text = (REPO / "scripts/ensure-youtube-transcript.sh").read_text()
@@ -1280,6 +1282,9 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/ensure-video-drop-door.sh", True),
         ("scripts/ensure-learnclaw.sh", True),
         ("scripts/ensure-doc-door.sh", True),
+        ("scripts/ensure-reader-agent.sh", True),
+        ("defaults/agents/reader/agent.json", True),
+        ("scripts/reader-canary/run.sh", False),
         ("scripts/ensure-fleet-gate.sh", True),
         ("scripts/ensure-dev-problem-block.sh", True),
         ("compose/openclaw-gateway/plugins/video-drop-door/index.js", True),

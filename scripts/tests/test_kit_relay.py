@@ -1084,6 +1084,8 @@ if args[0] == "ps":
     sys.exit(0)
 cmd = args[args.index("openclaw") + 1:]
 data = json.loads(state.read_text())
+if cmd[:2] == ["config", "get"]:  # ensure-reader-agent.sh --check: no reader agent here
+    sys.exit(1)
 if cmd[:2] == ["cron", "list"]:
     print(json.dumps(data))
     sys.exit(0)
@@ -1098,6 +1100,7 @@ elif cmd[:2] == ["cron", "edit"]:
     for job in data["jobs"]:
         if job["id"] == cmd[2]:
             job["delivery"] = {"mode": "none" if "--no-deliver" in cmd else "announce"}
+            job["agentId"] = cmd[cmd.index("--agent") + 1]
             job["sessionTarget"] = cmd[cmd.index("--session") + 1]
             if "--session-key" in cmd:
                 job["sessionKey"] = cmd[cmd.index("--session-key") + 1]
@@ -1117,7 +1120,7 @@ BOTH_ROWS = [
 ]
 
 
-def run_digest(tmp_path, jobs, row_override=None):
+def run_digest(tmp_path, jobs, row_override=None, env=None):
     state = tmp_path / "state.json"
     if not state.exists():
         state.write_text(json.dumps({"jobs": jobs}))
@@ -1132,6 +1135,7 @@ def run_digest(tmp_path, jobs, row_override=None):
             "FAKE_STATE": str(state),
             "NEEDS_YOU_ALERT_CHAT": "12345",
             "FAKE_ROW_OVERRIDE": json.dumps(row_override or {}),
+            **(env or {}),
         },
         capture_output=True,
         text=True,
@@ -1302,6 +1306,41 @@ def test_digest_refuses_a_reader_row_with_more_than_the_gmail_read_tools(tmp_pat
         assert "the mail reader could do more than read mail" in result.stderr
         # the digest is never pointed at a reader that failed the check
         assert not [c for c in calls if c[:3] == ["cron", "edit", "job1"]]
+
+
+def agent_of(argv):
+    return argv[argv.index("--agent") + 1]
+
+
+def test_the_mail_reader_stays_on_kit_until_the_reader_agent_is_installed(tmp_path):
+    result, calls = run_digest(tmp_path, BOTH_ROWS)
+    assert result.returncode == 0, result.stderr
+    assert "reader agent not installed" in result.stdout
+    assert agent_of(edit_of(calls, "reader1")) == "kit"
+    assert agent_of(edit_of(calls, "job1")) == "kit"
+
+
+def test_the_mail_reader_moves_to_the_reader_and_the_digest_stays_on_kit(tmp_path):
+    result, calls = run_digest(
+        tmp_path, BOTH_ROWS, env={"NEEDS_YOU_READER_AGENT": "reader"}
+    )
+    assert result.returncode == 0, result.stderr
+    reader = edit_of(calls, "reader1")
+    assert agent_of(reader) == "reader" and tools_of(reader) == READER_TOOLS
+    digest = edit_of(calls, "job1")
+    assert agent_of(digest) == "kit"
+    assert "agent:reader" in result.stdout
+
+
+def test_digest_refuses_a_reader_row_that_runs_as_another_agent(tmp_path):
+    result, _ = run_digest(
+        tmp_path,
+        BOTH_ROWS,
+        row_override={"reader1": {"agentId": "kit"}},
+        env={"NEEDS_YOU_READER_AGENT": "reader"},
+    )
+    assert result.returncode != 0
+    assert "agentId='kit', want 'reader'" in result.stderr
 
 
 def test_digest_refuses_a_row_with_a_wider_tool_list(tmp_path):

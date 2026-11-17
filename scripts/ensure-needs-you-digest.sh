@@ -10,11 +10,14 @@
 #
 # Mail is read in a separate run, never in kit's main session. A second job,
 # needs-you-mail-reader, runs 15 minutes before each digest as an isolated
-# session whose tool allow-list is exactly the two Gmail read tools (READER_TOOLS
-# below): no relay, ask_user, sessions_send, message, file write, exec or Gmail
-# write tool exists in that run. The allow-list is the job's stored toolsAllow
-# cap, enforced by the gateway (verified under the `openclaw` runtime; not
-# re-verified under `claude-cli`, which the agents run on now), not by the prompt.
+# session of the `reader` agent (docs/runbook.md, "Reader agent"; kit while the
+# reader is not installed yet), whose tool allow-list is exactly the two Gmail
+# read tools (READER_TOOLS below): no relay, ask_user, sessions_send, message,
+# file write, exec or Gmail write tool exists in that run. The job's stored
+# toolsAllow cap was verified under the `openclaw` runtime and is not re-verified
+# under `claude-cli`; the reader agent's own cap (no send or draft tool, no
+# command but the door script) is the layer proved on claude-cli, by
+# scripts/reader-canary/run.sh.
 # The reader has no delivery; its run stays in its run history, where the
 # summary is all of the run's text, head-kept and cut at 2000 characters. The
 # reader wraps its reply (the mail section, within 1500 characters) in the
@@ -112,6 +115,20 @@ GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
 [ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 JOB_NAME=needs-you-digest
 AGENT=kit
+# The mail reader job runs as the reader agent once the operator has applied it
+# (ensure-reader-agent.sh --check passes: shipped cap live, no bindings, exec
+# allowlist = the door script); until then, as kit, as before. READER_AGENT=kit
+# is also the rollback: re-run this script with it set.
+READER_AGENT="${NEEDS_YOU_READER_AGENT:-}"
+if [ -z "$READER_AGENT" ]; then
+  rc=0
+  "$(cd "$(dirname "$0")" && pwd)/ensure-reader-agent.sh" --check || rc=$?
+  case "$rc" in
+    0) READER_AGENT=reader ;;
+    3) READER_AGENT=kit; echo "reader agent not installed: the mail reader job stays on kit (docs/runbook.md, \"Reader agent\")" ;;
+    *) exit "$rc" ;;
+  esac
+fi
 SESSION_KEY="agent:${AGENT}:main"
 CRON_EXPR="${NEEDS_YOU_DIGEST_CRON:-0 9,17 * * *}"
 CRON_TZ="${NEEDS_YOU_DIGEST_TZ:-Europe/Dublin}"
@@ -199,7 +216,7 @@ if [ -z "$reader_id" ]; then
     --display-name "Needs-you mail reader" \
     --description "Reads the new mail with the two Gmail read tools only and keeps its summary in run history for the needs-you digest; delivers nothing. Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)." \
     --cron "$READER_CRON" --tz "$CRON_TZ" --exact \
-    --agent "$AGENT" --session isolated \
+    --agent "$READER_AGENT" --session isolated \
     --message "$READER_MESSAGE" \
     --tools "$READER_TOOLS" \
     --light-context \
@@ -212,7 +229,7 @@ if [ -z "$reader_id" ]; then
 fi
 docker exec "$GATEWAY" openclaw cron edit "$reader_id" \
   --cron "$READER_CRON" --tz "$CRON_TZ" --exact \
-  --agent "$AGENT" --session isolated \
+  --agent "$READER_AGENT" --session isolated \
   --message "$READER_MESSAGE" \
   --tools "$READER_TOOLS" \
   --light-context \
@@ -231,6 +248,9 @@ job = next((j for j in json.load(sys.stdin)["jobs"] if j.get("id") == job_id), N
 if job is None:
     sys.exit(f"verify: job {job_id} is not listed after converging")
 bad = []
+live_agent = job.get("agentId") or job.get("agent")
+if live_agent != sys.argv[3]:
+    bad.append("agentId=" + repr(live_agent) + ", want " + repr(sys.argv[3]))
 allow = (job.get("payload") or {}).get("toolsAllow")
 if not isinstance(allow, list) or sorted(allow) != sorted(tools):
     bad.append("payload.toolsAllow=" + repr(allow) + ", want exactly " + repr(tools))
@@ -241,7 +261,7 @@ if mode != "none":
     bad.append("delivery.mode=" + repr(mode) + ", want none")
 if bad:
     sys.exit("refusing: the mail reader could do more than read mail: " + "; ".join(bad))
-' "$reader_id" "$READER_TOOLS" >&2
+' "$reader_id" "$READER_TOOLS" "$READER_AGENT" >&2
 
 MESSAGE="$(digest_message "$reader_id")"
 
@@ -311,7 +331,7 @@ if live_model != model:
     sys.exit("refusing: needs-you-digest payload.model=" + repr(live_model) + ", want " + repr(model))
 ' "$job_id" "$SESSION_KEY" "$DIGEST_TOOLS" "$DIGEST_MODEL" >&2
 
-echo "cron '$READER_NAME' ($reader_id) converged: $READER_CRON @ $CRON_TZ, agent:$AGENT isolated, tools $READER_TOOLS only, no delivery (verified)"
+echo "cron '$READER_NAME' ($reader_id) converged: $READER_CRON @ $CRON_TZ, agent:$READER_AGENT isolated, tools $READER_TOOLS only, no delivery (verified)"
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT -> $SESSION_KEY (announce, verified in-chat only), tools $DIGEST_TOOLS, failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id   # delivery preview: announce -> current session"
 echo "        docker exec $GATEWAY openclaw cron run $reader_id --expect-final --json   # the mail section, or 'No new mail.'"

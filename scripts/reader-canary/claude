@@ -1,0 +1,7 @@
+#!/bin/sh
+# Canary shim for the `claude` binary: the same unmodified binary, pointed at the mock
+# Anthropic API on loopback with a dummy key. The argv OpenClaw built is logged first,
+# then passed through untouched, so the run is the real tool-cap enforcement.
+printf '%s\n' "$*" >> "${CANARY_ARGV_LOG:-/tmp/argv.log}"
+export ANTHROPIC_BASE_URL="http://127.0.0.1:${MOCK_PORT:-18080}" ANTHROPIC_API_KEY=sk-canary-mock
+exec "${CANARY_REAL_CLAUDE:-/home/node/.npm-global/bin/claude}" "$@"
