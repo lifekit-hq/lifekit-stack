@@ -81,13 +81,19 @@ if cmd[:2] == ["config", "get"]:
     if cmd[2] == "agents.entries.reader":
         entry = load("entry")
         if entry is None:
-            print("Config path not found: agents.entries.reader", file=sys.stderr)
+            if load("unset_phrase"):
+                print("Config path is valid but unset: agents.entries.reader", file=sys.stderr)
+            else:
+                print("Config path not found: agents.entries.reader", file=sys.stderr)
             sys.exit(1)
         print("[gateway] noise before the JSON")
         print(json.dumps(entry, indent=2))
     elif cmd[2] == "tools.agentToAgent.enabled":
         if load("a2a_unset"):
-            print("Config path not found: tools.agentToAgent.enabled", file=sys.stderr)
+            if load("unset_phrase"):
+                print("Config path is valid but unset: tools.agentToAgent.enabled", file=sys.stderr)
+            else:
+                print("Config path not found: tools.agentToAgent.enabled", file=sys.stderr)
             sys.exit(1)
         if load("a2a_fail"):
             print("gateway closed (1006): connection refused", file=sys.stderr)
@@ -191,6 +197,23 @@ def test_without_the_entry_nothing_is_installed_and_check_says_so(box):
     assert done.returncode == 0 and "no 'reader' agent" in done.stderr
     assert not box.workspace.exists()
     assert box.run("--check").returncode == 3
+
+
+def test_a_valid_but_unset_entry_is_an_absent_reader(box):
+    box.put("unset_phrase", True)
+    done = box.run()
+    assert done.returncode == 0 and "no 'reader' agent" in done.stderr
+    assert not box.workspace.exists()
+    assert box.run("--check").returncode == 3
+
+
+def test_a_valid_but_unset_agent_to_agent_key_is_disabled(box):
+    box.put("entry", ENTRY)
+    box.put("a2a_unset", True)
+    box.put("unset_phrase", True)
+    for args in ((), ("--check",)):
+        done = box.run(*args)
+        assert done.returncode == 0, (args, done.stderr)
 
 
 def test_a_shipped_entry_converges_and_is_then_check_clean(box):

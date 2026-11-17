@@ -64,14 +64,16 @@ while (i := text.find("[" if key == "[]" else "{", i)) != -1:
 sys.exit(1)' "$1"
 }
 
-# Only "path not found" means the agent is not installed; any other failure of the
-# read is an error, never an absent reader (a live reader must not read as absent).
+# Only "path not found" / "valid but unset" (OpenClaw 2026.11.4+) mean the agent is not
+# installed; any other failure of the read is an error, never an absent reader (a live
+# reader must not read as absent).
+absent_re='not found|valid but unset'
 rc=0
 got="$(docker exec "$GATEWAY" openclaw config get "agents.entries.${AGENT}" --json 2>&1)" || rc=$?
 entry=""
 if [ "$rc" = 0 ]; then
   entry="$(printf '%s' "$got" | pick_json '*')" || { echo "could not read agents.entries.${AGENT} from the gateway: ${got}" >&2; exit 1; }
-elif ! printf '%s' "$got" | grep -qi 'not found'; then
+elif ! printf '%s' "$got" | grep -qiE "$absent_re"; then
   echo "could not read agents.entries.${AGENT} from the gateway: ${got}" >&2
   exit 1
 fi
@@ -109,7 +111,7 @@ if bad:
 # No agent can message another one, and nothing routes a channel to the reader.
 rc=0
 a2a="$(docker exec "$GATEWAY" openclaw config get tools.agentToAgent.enabled 2>&1)" || rc=$?
-if [ "$rc" != 0 ] && ! printf '%s' "$a2a" | grep -qi 'not found'; then
+if [ "$rc" != 0 ] && ! printf '%s' "$a2a" | grep -qiE "$absent_re"; then
   echo "could not read tools.agentToAgent.enabled from the gateway: ${a2a}" >&2
   exit 1
 fi
