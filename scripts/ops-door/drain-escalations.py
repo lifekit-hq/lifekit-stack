@@ -31,7 +31,10 @@ from pathlib import Path
 ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,120}$")
 # The two answers the captain can tap; the first is the recommendation.
 OPTIONS = (
-    ("another-fix", "Try a different fix: the drainer re-reads the alert and the issue"),
+    (
+        "another-fix",
+        "Try a different fix: the drainer re-reads the alert and the issue",
+    ),
     ("accept", "Accept the alert as it is and park the issue"),
 )
 
@@ -65,7 +68,9 @@ def argv_for(call: dict, fleet_policy: str) -> list[str]:
 
 
 def main() -> int:
-    spool = Path(os.environ.get("OPS_DOOR_SPOOL_DIR", "/var/lib/lifekit/ops-door/escalations"))
+    spool = Path(
+        os.environ.get("OPS_DOOR_SPOOL_DIR", "/var/lib/lifekit/ops-door/escalations")
+    )
     fleet_policy = os.environ.get("FLEET_POLICY_BIN", "fleet-policy")
     done = spool / "done"
     if not spool.is_dir():
@@ -76,14 +81,22 @@ def main() -> int:
     for path in sorted(spool.glob("*.json")):
         try:
             call = json.loads(path.read_text())
-            if not ID.match(str(call.get("id", ""))) or call["id"] != path.stem or not call.get("title"):
+            if (
+                not ID.match(str(call.get("id", "")))
+                or call["id"] != path.stem
+                or not call.get("title")
+            ):
                 raise ValueError("malformed request")
         except (OSError, ValueError, KeyError) as err:
             print(f"ops-door-escalate: {path.name}: {err}", file=sys.stderr)
             failed += 1
             continue
         proc = subprocess.run(
-            argv_for(call, fleet_policy), capture_output=True, text=True, check=False, timeout=60
+            argv_for(call, fleet_policy),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
         )
         if proc.returncode != 0:
             print(
