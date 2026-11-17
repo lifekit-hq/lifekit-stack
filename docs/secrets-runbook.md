@@ -20,10 +20,12 @@ scripts/set-secret.sh gateway ANTHROPIC_API_KEY    # <master|gateway> <NAME>; hi
 
 It writes the value into the right SOPS file (no plaintext on disk, never in
 argv or output), runs `test_secrets.py`, commits on a branch, opens the PR and
-enables merge on green, then prints what the deploy does next (for the gateway
-file: `openclaw secrets reload`, then `scripts/openclaw-auth/auth-mode.sh
-probe`). It needs only bash, `sops`, `git` and `gh`. The class-specific steps
-after the merge (render, redeploy) are in the table below. `edit.sh` stays for
+enables merge on green, then prints what happens next: for the gateway file the
+deploy runs `openclaw secrets reload` (then check with
+`scripts/openclaw-auth/auth-mode.sh probe`); for the master file the deploy
+does not render it, so it lists the two manual steps (render, redeploy). It
+needs only bash, `sops`, `git` and `gh`. The per-class sequences are in the
+table below. `edit.sh` stays for
 adding a new name or changing several values at once.
 
 ## The four moves
