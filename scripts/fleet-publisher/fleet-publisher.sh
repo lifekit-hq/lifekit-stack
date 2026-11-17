@@ -59,7 +59,7 @@
 # (default ~/.local/state/fleet-policy), built by taken_feed.py beside this
 # script (FLEET_TAKEN overrides; installed as lifekit-fleet-taken.py).
 # Also writes OUT_DIR/screen-changes.json and OUT_DIR/screen-changes/<id>/*.png,
-# the "Screen changes" feed (contract in README.md): the open PRs that change a
+# the "Screen changes" feed (contract in README.md): the open or recently merged PRs that change a
 # screen-baseline image, from screen_changes.py beside this script
 # (FLEET_SCREENS overrides; installed as lifekit-fleet-screens.py).
 # The dashboard never reads Lavish or fleet-home state. Writes TEXTFILE_DIR/fleet.prom:
@@ -792,7 +792,7 @@ if ! publish_taken; then
 fi
 # The "Screen changes" feed, beside home-summary.json: screen_changes.py beside
 # this script (FLEET_SCREENS overrides; installed as lifekit-fleet-screens.py)
-# lists the open PRs of the FLEET_SCREEN_REPOS repos through gh, copies the
+# lists the open (and last 7 days' merged) PRs of the FLEET_SCREEN_REPOS repos through gh, copies the
 # baseline images they change to OUT_DIR/screen-changes/ and writes
 # screen-changes.json itself (atomically, images first). A helper that reads
 # nothing (exit 3, e.g. FLEET_GH empty) leaves the previous feed as it was; any
