@@ -853,8 +853,9 @@ openclaw_phase_smoke() {
 # A per-agent, per-run session id keeps the turn out of the agents' main
 # sessions (one shared id fails: a session is placed with its first agent
 # and the gateway refuses another agent in it) and out of any earlier smoke
-# session: a fixed id carries CLI history across a credential change, which
-# the gateway refuses ("cli session history refused across auth boundary").
+# session. It does not avoid "cli session history refused across auth
+# boundary: reason=auth-unknown": that line fires on every claude-cli turn in
+# subscription mode and is expected (docs/runbook.md "auth-unknown ...").
 # No --deliver, so nothing reaches Telegram. scripts/openclaw-smoke-verdict.py
 # judges the output: status "ok" with a non-empty reply passes, auth and quota
 # errors only warn, anything else fails the run.

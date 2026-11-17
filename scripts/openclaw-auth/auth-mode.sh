@@ -273,9 +273,10 @@ apply_patch() {
 # verify_turns EXPECTED_PROVIDER -> every check agent answers a real turn on it
 verify_turns() {
   local a out status provider stamp
-  # A fresh session per run: a session carries its history across a credential
-  # or runtime change, and the gateway refuses that ("cli session history
-  # refused across auth boundary", the same reason the deploy smoke uses one).
+  # A fresh session per run keeps the check out of the agents' real sessions
+  # (as in the deploy smoke). It does not avoid "cli session history refused
+  # across auth boundary: reason=auth-unknown": that fires on every claude-cli
+  # turn in subscription mode and is expected (docs/runbook.md).
   stamp="$(date -u +%Y%m%dT%H%M%S)"
   for a in ${CHECK_AGENTS//,/ }; do
     out="$(oc agent --agent "$a" --session-key "agent:$a:auth-check-$stamp" --message "Reply OK" \
