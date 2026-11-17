@@ -40,6 +40,7 @@ WORKSPACE_DIR="/home/node/.openclaw/agents/finance/workspace"
 WORKSPACE_ALLOW=(
   '^(AGENTS|SOUL|IDENTITY|USER|MEMORY|HEARTBEAT|TOOLS|BOOTSTRAP)\.md$'
   '^AGENTS\.md\.(bak\..+|pre-persona-install)$'
+  '^SOUL\.md\.bak-.+$'
   '^\.openclaw/'
   '^openclaw-workspace-state\.json(\..+)?$'
   '^\.openclaw-cli-images/[^/]+$'
