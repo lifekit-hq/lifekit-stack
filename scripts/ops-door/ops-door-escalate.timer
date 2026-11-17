@@ -1,0 +1,10 @@
+[Unit]
+Description=File the ops-door's spooled Tier 2 calls every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

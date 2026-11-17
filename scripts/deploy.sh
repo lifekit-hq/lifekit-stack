@@ -508,6 +508,22 @@ if [[ "${EDGE_UP}" == 1 ]]; then edge_compose ps; fi
 # scripts/deploy-openclaw.sh, phase `smoke`.
 openclaw_phase smoke
 
+# ─── Ops door: receiver live, host timer reported ───────────────────────────
+#
+# scripts/ensure-ops-door.sh asserts the alert-to-issue receiver is up, ready
+# (the GitHub token is placed and accepted) and can write its escalation spool;
+# a failure turns the deploy red like the contract below (the containers are
+# already up). The host timer that files its Tier 2 calls is root-installed,
+# so it is report-only, same shape as the host facts further down.
+say "ops door: receiver live"
+bash "${REPO_DIR}/scripts/ensure-ops-door.sh" \
+  || fail_later "ops door: the receiver is not live (output above); place the GitHub token and install the host timer per docs/runbook.md \"Ops door\""
+OPS_DOOR_STATUS=0
+bash "${REPO_DIR}/scripts/ops-door/install-ops-door.sh" --check || OPS_DOOR_STATUS=$?
+if [[ "${OPS_DOOR_STATUS}" != 0 ]]; then
+  printf '\033[1;31m✗ ops door host timer: not converged (lines above); apply the root step in docs/runbook.md "Ops door"\033[0m\n' >&2
+fi
+
 # ─── Platform contract: running containers ──────────────────────────────────
 #
 # After the smoke turns on purpose: they are real traffic, so the gateway has

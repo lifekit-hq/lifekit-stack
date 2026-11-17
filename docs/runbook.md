@@ -5829,6 +5829,70 @@ resolving; a `warning` rule's resolve is silent) via `fm-inbox.sh note`; a
 Prometheus or Loki outage is its own transition so it is reported once, not every poll. Does not touch Grafana contact
 points, policies, or credentials.
 
+## Ops door
+
+The ops queue is this repo's issues, and its door is the alert itself
+(decision 0016, issue #543). Grafana's webhook contact point `ops-door`
+(`compose/observability/grafana/provisioning/alerting/contact-points.yml.tmpl`)
+POSTs every alert notice, any severity, to the `ops-door` compose service
+(`compose/ops-door/`, `:8097`, internal-only, 128m), which files or updates a
+GitHub issue in `lifekit-hq/lifekit-stack`. The envelope on each issue and the
+receipt in each reply are the build-standards entry "Envelope and receipt at
+every door" (vault, 2026-11-16); the receiver enforces it where the issue is
+made and this section does not restate it. The route in `policies.yml.tmpl`
+is `continue: true`, so Telegram delivery for incidents is unchanged, and it
+sits after the external-heartbeat route, so the dead-man alert is never filed.
+
+What it does, per alert fingerprint (alert name plus identifying labels;
+`severity` and `grafana_folder` are left out so a re-grading does not fork an
+incident):
+
+- **First firing** opens one issue labelled `ops` and returns the receipt.
+- **A repeat** on the open issue adds a count and the latest occurrence (the
+  count and the other state live in a marker inside the issue body, so the
+  receiver keeps none of its own) and one comment, with the same receipt.
+- **Past the threshold** (`OPS_DOOR_REPEAT_THRESHOLD`, default 3 notices) the
+  next repeat files exactly one Tier 2 call instead of another comment: the
+  receiver spools `ops-repeat-<fingerprint>-<issue>.json`, the host timer
+  `ops-door-escalate` runs `fleet-policy decide` for it, and the issue records
+  the call id, so later repeats only raise the count.
+- **A resolve** comments and leaves closing to the merged fix.
+- **A firing after close** opens a new issue that links the closed one.
+
+Because Grafana re-notifies a still-firing group every 4h, a fix that did not
+close an alert reaches the threshold after about 12h without anyone resending.
+
+**Host steps (once, in this order).** The deploy goes red at "ops door:
+receiver live" until the first is done.
+
+1. Mint the token: GitHub, Settings, Developer settings, fine-grained token,
+   resource owner `lifekit-hq`, repository `lifekit-hq/lifekit-stack` only,
+   permission Issues read/write and nothing else, the longest expiry offered.
+   Store it without printing it or writing it to a file, as
+   `OPS_DOOR_GITHUB_TOKEN` in the master file ("The four moves" in
+   `docs/secrets-runbook.md`, the single-value `sops set` form), merge, render
+   `stack.env`, redeploy. Add its row to the master table in `docs/secrets.md` in the
+   same change that sets the value (`scripts/tests/test_secrets.py` fails when the
+   inventory and the file disagree, so the row and the value land together, not
+   before). The deploy recreates `ops-door` and its `/ready`
+   proves GitHub accepts the token. Create the `ops` label once (`gh label
+   create ops --repo lifekit-hq/lifekit-stack`); the receiver lists issues by it.
+2. As root on the host: `sudo bash /srv/lifekit-stack/scripts/ops-door/install-ops-door.sh`
+   creates the spool `/var/lib/lifekit/ops-door/escalations` (the container
+   writes, the operator account owns it) and installs the `ops-door-escalate`
+   timer. The deploy reports its state with `install-ops-door.sh --check`.
+3. Grafana reads provisioning at startup; the deploy's provisioning reload
+   picks up the new contact point and route on the next deploy.
+
+Check it: `docker exec compose-ops-door-1 node -e "fetch('http://127.0.0.1:8097/ready').then(r=>console.log(r.status))"`
+prints 200; `curl`-style test notices go to `POST /alerts` from inside the
+compose network with an Alertmanager payload; `systemctl list-timers
+ops-door-escalate.timer` and `journalctl -u ops-door-escalate` show the drain.
+A token that expires or is revoked turns `/ready` red, which turns the next
+deploy red and shows as a failing `ops-door` target; rotate it with the secrets
+runbook. Logs are JSON with a trace id; `/metrics` carries
+`ops_door_events_total{outcome=...}`.
+
 ## Alert remedies
 
 What the agent that receives an `alert-inbox` note (above) may do about each

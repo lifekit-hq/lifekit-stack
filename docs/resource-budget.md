@@ -47,7 +47,7 @@ history to 2026-10-01 plus a live cgroup reading (measurements below the table).
 | Group | Budget (GiB) | Contains | Basis |
 | --- | --- | --- | --- |
 | openclaw | 3.5 | `openclaw-gateway`, `google-workspace-mcp`, `google-workspace-mcp-fleet` (compose project `openclaw`) | 3723 + 153 MiB; the fleet connector is the same idle image as `google-workspace-mcp` (about 150 MiB), added 2026-11-08 inside the same budget, to be measured with the next window |
-| platform | 1.5 | prometheus, loki, grafana, tempo, otel-collector, node-exporter, container-exporter, notify-relay (compose project `compose`) | 1.3 GiB (sum of peaks) |
+| platform | 1.5 | prometheus, loki, grafana, tempo, otel-collector, node-exporter, container-exporter, notify-relay, ops-door (compose project `compose`) | 1.3 GiB (sum of peaks) |
 | finance-sentry | 1.25 | api, postgres, mcp, gateway, frontend (`finance-sentry-*`, compose project `docker`) | 1.05 GiB (average 0.81) |
 | devclaw-mcp | 0.25 | `devclaw-mcp` (compose project `devclaw`; its sandboxes count in the burst pool) | 130 MiB |
 | dashboard | 0.25 | the dashboard service (compose project `dashboard`) | 114 MiB |

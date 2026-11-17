@@ -1,0 +1,9 @@
+{
+  "name": "ops-door",
+  "private": true,
+  "type": "module",
+  "description": "Alertmanager/Grafana webhook receiver that files and updates lifekit-stack GitHub issues. No dependencies.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
