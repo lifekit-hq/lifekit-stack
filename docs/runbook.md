@@ -5372,6 +5372,28 @@ changes nothing and only verifies. `api` also adds the `anthropic:api-key`
 SecretRef profile (`secrets apply`, id `anthropic-api-key`, no value involved)
 to every agent that lacks it.
 
+**The key profile needs the gateway stopped (OpenClaw 2026.11.4).** OpenClaw
+2026.11.4 lets a running gateway own its state database, and `openclaw secrets
+apply` (the only way to store the SOPS exec SecretRef) has no gateway route, so
+it answers "OpenClaw state database is busy" while the gateway is up (`secrets
+store` and `models auth paste-api-key` do route through it, but they keep the
+value in the database and cannot take our SecretRef). When `api` or
+`ensure-profiles` meets that refusal it changes nothing, says so, and prints the
+one command for the offline step. A **host operator** runs it (it stops the
+gateway; an agent never does):
+
+```bash
+bash /srv/lifekit-stack/scripts/openclaw-auth/auth-mode.sh offline-profiles
+```
+
+It stops `openclaw-cli` and `openclaw-gateway` through the deploy's
+`openclaw_compose`, runs `openclaw secrets apply --allow-exec` (dry run first) as
+a `run --rm --no-deps -T --entrypoint openclaw` one-shot with the plan, starts
+the gateway again on every exit path (a failed apply included), waits for it to
+be healthy and runs `secrets reload`. Then re-run `auth-mode.sh api`, which finds
+the profiles in place and goes on to the mode switch and the per-agent turns.
+Expect the assistants to be down for the length of that one-shot.
+
 **Putting a key in place (captain).** Create a Console key, then run one command
 from your PC (the operator key lives there): `scripts/set-secret.sh gateway
 ANTHROPIC_API_KEY`. It asks for the value with a hidden prompt (or reads it from

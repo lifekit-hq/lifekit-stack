@@ -23,6 +23,10 @@
 #   auth-mode.sh probe                       live 1-token key probe, one JSON line
 #   auth-mode.sh ensure-profiles             add the SecretRef key profile to every
 #                                            agent that lacks it (api does this itself)
+#   auth-mode.sh offline-profiles            HOST OPERATOR ONLY, never an agent: the
+#                                            same, with the gateway STOPPED (OpenClaw
+#                                            2026.11.4 state ownership); it stops
+#                                            the gateway and always starts it again
 #
 # A switch is one `openclaw config patch` inside the gateway; the gateway is
 # restarted only when the apply hint says the changed keys need it. It is then
@@ -294,14 +298,16 @@ verify_turns() {
 other_mode() { [[ "$1" == api ]] && echo subscription || echo api; }
 provider_of() { [[ "$1" == api ]] && echo anthropic || echo claude-cli; }
 
-ensure_profiles() {
-  local live states a missing plan targets="[]"
+# build_plan -> writes $work/plan.json for every agent lacking the key profile;
+# returns 3 when none lacks it. Names only the ref id, never a value.
+build_plan() {
+  local live states a missing targets="[]"
   live="$(live_config)" || exit 2
   states="$(key_states "$live")" || exit 2
   mapfile -t missing < <(jq -r '.[] | select(.profile | not) | .agent' <<< "$states")
   if ((${#missing[@]} == 0)); then
     say "every agent already has $PROFILE"
-    return 0
+    return 3
   fi
   say "adding $PROFILE (SecretRef $KEY_REF) to: ${missing[*]}"
   for a in "${missing[@]}"; do
@@ -310,17 +316,87 @@ ensure_profiles() {
       pathSegments: ["profiles", $p, "key"], agentId: $a, authProfileProvider: "anthropic",
       ref: {source: "exec", provider: "sops", id: $id}}]' <<< "$targets")"
   done
-  plan="$work/plan.json"
   jq -n --argjson t "$targets" \
-    '{version: 1, protocolVersion: 1, options: {scrubEnv: false, scrubAuthProfilesForProviderTargets: false}, targets: $t}' > "$plan"
-  "$DOCKER" exec -i "$cid" sh -c 'cat > /tmp/auth-mode-plan.json' < "$plan"
-  local rc=0
-  oc secrets apply --from /tmp/auth-mode-plan.json --allow-exec --dry-run > /dev/null 2>&1 &&
-    oc secrets apply --from /tmp/auth-mode-plan.json --allow-exec > /dev/null 2>&1 &&
+    '{version: 1, protocolVersion: 1, options: {scrubEnv: false, scrubAuthProfilesForProviderTargets: false}, targets: $t}' > "$work/plan.json"
+}
+
+# The one-line command a host operator runs for the offline step.
+offline_cmd() { printf 'bash %q offline-profiles' "$HERE/auth-mode.sh"; }
+
+ensure_profiles() {
+  local rc=0 log="$work/secrets-apply.log"
+  build_plan || { rc=$?; ((rc == 3)) && return 0; exit 2; }
+  "$DOCKER" exec -i "$cid" sh -c 'cat > /tmp/auth-mode-plan.json' < "$work/plan.json"
+  oc secrets apply --from /tmp/auth-mode-plan.json --allow-exec --dry-run > "$log" 2>&1 &&
+    oc secrets apply --from /tmp/auth-mode-plan.json --allow-exec >> "$log" 2>&1 &&
     oc secrets reload > /dev/null 2>&1 || rc=1
   "$DOCKER" exec "$cid" rm -f /tmp/auth-mode-plan.json
-  ((rc == 0)) || say "secrets apply failed for the key profile"
+  if ((rc != 0)); then
+    if grep -qi 'state database is busy' "$log"; then
+      # OpenClaw 2026.11.4: secrets apply writes the state database, and a
+      # running gateway holds it; there is no gateway route for this command.
+      say "the running gateway holds OpenClaw's state database, so secrets apply cannot add the key profile."
+      say "the gateway must be stopped for this one step. As a host operator (it stops the gateway; never an agent), run:"
+      say "  $(offline_cmd)"
+      say "then re-run: bash $HERE/auth-mode.sh api"
+    else
+      say "secrets apply failed for the key profile"
+    fi
+  fi
   return "$rc"
+}
+
+# offline_profiles: HOST OPERATOR ONLY. Same plan as ensure_profiles, applied by a
+# one-shot container while the gateway is stopped, the pattern deploy-openclaw.sh
+# uses for its offline steps. The gateway is started again on every exit path.
+offline_profiles() {
+  local rc=0 i
+  stopped=0 # global: the EXIT trap reads it after this function returns
+  build_plan || { rc=$?; ((rc == 3)) && return 0; exit 2; }
+  REPO_DIR="${REPO_DIR:-$(cd "$HERE/../.." && pwd)}"
+  # shellcheck source=../lib/deploy-common.sh disable=SC1091
+  source "$HERE/../lib/deploy-common.sh"
+  # the shared helpers define their own say/die; keep this script's (stderr)
+  say() { echo "auth-mode: $*" >&2; }
+  die() {
+    say "$*"
+    exit 2
+  }
+  restore_gateway() {
+    ((stopped)) || return 0
+    stopped=0
+    say "starting openclaw-gateway again"
+    openclaw_compose up -d openclaw-gateway > /dev/null || say "COULD NOT START THE GATEWAY: run 'docker compose -p openclaw up -d openclaw-gateway'"
+  }
+  trap 'restore_gateway; rm -rf "$work"' EXIT
+  local -a one_shot=(run --rm --no-deps -T -v "$work/plan.json:/tmp/auth-mode-plan.json:ro"
+    --entrypoint openclaw openclaw-gateway secrets apply --from /tmp/auth-mode-plan.json --allow-exec)
+  say "stopping openclaw-cli and openclaw-gateway"
+  stopped=1
+  openclaw_compose --profile cli stop openclaw-cli openclaw-gateway > /dev/null || rc=1
+  ((rc != 0)) || openclaw_compose "${one_shot[@]}" --dry-run > /dev/null || rc=1
+  ((rc != 0)) || openclaw_compose "${one_shot[@]}" > /dev/null || rc=1
+  restore_gateway
+  ((rc == 0)) || {
+    say "offline secrets apply failed; the gateway was started again, the key profile is NOT added"
+    return 1
+  }
+  cid=""
+  for ((i = 0; i < 30; i++)); do
+    cid="$("$DOCKER" ps -q --filter label=com.docker.compose.project=openclaw \
+      --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+    [[ -z "$cid" ]] || break
+    sleep "$POLL"
+  done
+  if [[ -z "$cid" ]] || ! wait_healthy; then
+    say "gateway not healthy ${HEALTH_WAIT}s after the start"
+    return 1
+  fi
+  oc secrets reload > /dev/null 2>&1 || {
+    say "secrets reload failed"
+    return 1
+  }
+  say "the key profile is in place; now run: bash $HERE/auth-mode.sh api"
 }
 
 # switch_to api|subscription
@@ -389,5 +465,6 @@ case "$cmd" in
   api) cmd_api ;;
   subscription) switch_to subscription || exit 1 ;;
   ensure-profiles) ensure_profiles || exit 1 ;;
-  *) die "usage: auth-mode.sh status [--json] [--quick] | api [--force] | subscription [--reason TEXT] | mode | probe | ensure-profiles" ;;
+  offline-profiles) offline_profiles || exit 1 ;;
+  *) die "usage: auth-mode.sh status [--json] [--quick] | api [--force] | subscription [--reason TEXT] | mode | probe | ensure-profiles | offline-profiles" ;;
 esac

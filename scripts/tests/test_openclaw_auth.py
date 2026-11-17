@@ -59,7 +59,26 @@ def merge(dst, patch):
 def flag(name):
     return os.path.exists(f"{state}/{name}")
 
-if args[0] == "ps":
+if args[0] == "compose":
+    sub = args[args.index("openclaw") + 1:]
+    if "stop" in sub:
+        open(f"{state}/_stopped", "w").close()
+    elif "up" in sub:
+        if os.path.exists(f"{state}/_up_fails"):
+            sys.exit(1)
+        os.remove(f"{state}/_stopped")
+    elif "run" in sub:
+        if flag("_offline_fails"):
+            print("boom", file=sys.stderr)
+            sys.exit(1)
+        if "--dry-run" not in sub:
+            profiles = load("profiles", {})
+            for agent in load("plan_agents", []):
+                profiles.setdefault(agent, {})["profile"] = True
+            save("profiles", profiles)
+    else:
+        sys.exit(3)
+elif args[0] == "ps":
     print("cid123")
 elif args[0] == "restart":
     pass
@@ -121,6 +140,9 @@ elif args[0] == "exec":
             }))
         elif cmd[:2] == ["secrets", "apply"]:
             if flag("_secrets_fail"):
+                sys.exit(1)
+            if flag("_busy") and "--dry-run" not in cmd and not flag("_stopped"):
+                print("OpenClaw state database is busy. A running Gateway can hold this ownership until it stops", file=sys.stderr)
                 sys.exit(1)
             if "--dry-run" not in cmd:
                 profiles = load("profiles", {})
@@ -203,6 +225,7 @@ def box(tmp_path):
         "AUTH_MODE_HEALTH_WAIT": "0",
         "AUTH_CHECK_AGENTS": "kit,finance",
         "OPENCLAW_SPEND_STATE_DIR": str(spend),
+        "OPENCLAW_COMPOSE_AUTH_MODE": "token",
     }
 
     def put(name, value):
@@ -448,6 +471,61 @@ def test_api_adds_the_secretref_profile_to_agents_lacking_it(box):
     assert all(a["profile"] for a in status["agents"])
     # no key value can be in any call: only the ref id travels
     assert not any("sk-ant" in c for c in calls)
+
+
+def test_api_names_the_offline_step_when_the_gateway_holds_the_database(box):
+    box.put("plan_agents", ["kit", "finance"])
+    box.flag("_busy")
+    proc = box.auth("api", expect=1)
+    assert "holds OpenClaw's state database" in proc.stderr
+    assert f"bash {AUTH_MODE} offline-profiles" in proc.stderr
+    assert "docker compose" not in "\n".join(box.calls())  # api never stops anything
+    assert box.config()["auth"]["order"]["anthropic"] == []  # no half switch
+
+
+def test_a_plain_apply_failure_is_not_called_busy(box):
+    box.flag("_secrets_fail")
+    proc = box.auth("api", expect=1)
+    assert "offline-profiles" not in proc.stderr
+    assert "secrets apply failed" in proc.stderr
+
+
+def test_offline_profiles_stops_applies_in_a_one_shot_and_restarts(box):
+    box.put("plan_agents", ["kit", "finance"])
+    box.flag("_busy")
+    box.auth("offline-profiles")
+    calls = [c for c in box.calls() if c.startswith("compose")]
+    verbs = [
+        "stop" if " stop " in c else "up" if " up " in c else "run" for c in calls
+    ]
+    assert verbs == ["stop", "run", "run", "up"]
+    assert "--profile cli stop openclaw-cli openclaw-gateway" in calls[0]
+    for c in calls[1:3]:
+        assert (
+            "run --rm --no-deps -T" in c
+            and "--entrypoint openclaw openclaw-gateway secrets apply" in c
+        )
+    assert "--dry-run" in calls[1] and "--dry-run" not in calls[2]
+    assert any("secrets reload" in c for c in box.calls())
+    assert not (box.state / "_stopped").exists()
+    assert not any("sk-ant" in c for c in box.calls())
+    status = json.loads(box.auth("status", "--json", "--quick").stdout)
+    assert all(a["profile"] for a in status["agents"])
+    box.auth("api")  # the profiles are in place: api now completes
+
+
+def test_offline_profiles_starts_the_gateway_again_when_the_apply_fails(box):
+    box.flag("_offline_fails")
+    proc = box.auth("offline-profiles", expect=1)
+    assert "started again" in proc.stderr
+    assert any(" up " in c for c in box.calls() if c.startswith("compose"))
+    assert not (box.state / "_stopped").exists()
+
+
+def test_offline_profiles_does_nothing_when_every_agent_has_the_profile(box):
+    box.put("profiles", {"kit": {"profile": True}, "finance": {"profile": True}})
+    box.auth("offline-profiles")
+    assert not [c for c in box.calls() if c.startswith("compose")]
 
 
 def test_api_skips_profiles_that_already_exist(box):
