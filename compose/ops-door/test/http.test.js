@@ -33,14 +33,14 @@ function fakeGithub() {
   };
 }
 
-async function start({ token = "t", ready = async () => true, maxBody } = {}) {
+async function start({ token = "t", ready = async () => true, maxBody, log } = {}) {
   const app = createApp({
     github: fakeGithub(),
     decide: createSpool(dir),
     repoUrl: "https://github.test/o/r",
     threshold: 1,
   });
-  server = createServer(createHandler({ app, token, ready, maxBody }));
+  server = createServer(createHandler({ app, token, ready, maxBody, log }));
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 }
@@ -142,4 +142,18 @@ test("readiness: a failed probe is retried within the deploy wait, a success is 
   assert.equal(await ready(), true);
   assert.equal(probes, 2, "success cached");
   assert.equal(await createReadiness({ token: "", probe: async () => {} })(), false);
+});
+
+test("a probe carrying a traceparent logs its trace id; one without logs nothing", async () => {
+  const lines = [];
+  await start({ log: (level, msg, fields) => lines.push({ level, msg, ...fields }) });
+  const trace = "0af7651916cd43dd8448eb211c80319c";
+  const traceparent = `00-${trace}-b7ad6b7169203331-01`;
+  for (const path of ["/health", "/ready", "/metrics"]) {
+    assert.equal((await fetch(`${base}${path}`, { headers: { traceparent } })).status, 200);
+  }
+  await fetch(`${base}/health`);
+  const probes = lines.filter((l) => l.msg === "probe");
+  assert.deepEqual(probes.map((l) => l.route), ["/health", "/ready", "/metrics"]);
+  assert.ok(probes.every((l) => l.trace_id === trace && l.status === 200));
 });

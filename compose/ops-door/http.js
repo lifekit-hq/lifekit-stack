@@ -8,6 +8,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const MAX_BODY = 1_000_000;
+const PROBES = new Set(["/health", "/ready", "/metrics"]);
 const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/;
 
 /**
@@ -72,6 +73,11 @@ export function createHandler({ app, token, ready, log = () => {}, maxBody = MAX
       res.end(typeof body === "string" ? body : JSON.stringify(body));
     };
     const path = (req.url ?? "").split("?")[0];
+    const m = TRACEPARENT.exec(String(req.headers.traceparent ?? "").trim());
+    const trace_id = m ? m[1] : randomBytes(16).toString("hex");
+    if (m && req.method === "GET" && PROBES.has(path)) {
+      res.on("finish", () => log("info", "probe", { trace_id, route: path, status: res.statusCode }));
+    }
     try {
       if (req.method === "GET" && path === "/health") return send(200, { ok: true });
       if (req.method === "GET" && path === "/ready") {
@@ -81,8 +87,6 @@ export function createHandler({ app, token, ready, log = () => {}, maxBody = MAX
         return send(200, app.metrics(), "text/plain; version=0.0.4");
       }
       if (req.method === "POST" && path === "/alerts") {
-        const m = TRACEPARENT.exec(String(req.headers.traceparent ?? "").trim());
-        const trace_id = m ? m[1] : randomBytes(16).toString("hex");
         if (!token) return send(503, { error: "no github token configured" });
         let payload;
         try {
