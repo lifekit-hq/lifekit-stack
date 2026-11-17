@@ -5803,9 +5803,10 @@ receiver live" until the first is done.
    Store it without printing it or writing it to a file, as
    `OPS_DOOR_GITHUB_TOKEN` in the master file ("The four moves" in
    `docs/secrets-runbook.md`, the single-value `sops set` form), merge, render
-   `stack.env`, redeploy. The same PR adds the token's row to the master table in
-   `docs/secrets.md` (`scripts/tests/test_secrets.py` fails when the inventory and
-   the file disagree, so the row and the value land together). The deploy recreates `ops-door` and its `/ready`
+   `stack.env`, redeploy. Add its row to the master table in `docs/secrets.md` in the
+   same change that sets the value (`scripts/tests/test_secrets.py` fails when the
+   inventory and the file disagree, so the row and the value land together, not
+   before). The deploy recreates `ops-door` and its `/ready`
    proves GitHub accepts the token. Create the `ops` label once (`gh label
    create ops --repo lifekit-hq/lifekit-stack`); the receiver lists issues by it.
 2. As root on the host: `sudo bash /srv/lifekit-stack/scripts/ops-door/install-ops-door.sh`
