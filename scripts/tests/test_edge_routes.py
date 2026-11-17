@@ -203,52 +203,6 @@ def test_openclaw_app_route_carries_no_identity():
     }
 
 
-def _ua_patterns():
-    return re.findall(
-        r"HeaderRegexp\(`User-Agent`, `([^`]+)`\)", ROUTERS["openclaw-app"]["rule"]
-    )
-
-
-@pytest.mark.parametrize(
-    ("ua", "app"),
-    [
-        ("OpenClaw/3 CFNetwork/3896.100.1.2.1 Darwin/27.0.0", True),
-        (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 "
-            "(KHTML, like Gecko) Mobile/15E148",
-            True,
-        ),
-        (
-            "Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) AppleWebKit/605.1.15 "
-            "(KHTML, like Gecko) Mobile/15E148",
-            True,
-        ),
-        # Mobile Safari, desktop browsers and anything else sign in.
-        (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 "
-            "(KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1",
-            False,
-        ),
-        (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-            "(KHTML, like Gecko) Version/18.7 Safari/605.1.15",
-            False,
-        ),
-        (
-            "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
-            False,
-        ),
-        ("curl/8.14.1", False),
-        ("", False),
-    ],
-)
-def test_openclaw_app_route_matches_the_phone_app_only(ua, app):
-    patterns = _ua_patterns()
-    assert len(patterns) == 2
-    # Go's regexp and Python's agree on this subset (anchors, classes, groups).
-    assert any(re.search(p, ua) for p in patterns) is app
-
-
 def test_openclaw_internal_routes_each_match_one_path_and_the_bearer():
     routes = _entrypoint_routers("openclaw-internal")
     assert set(routes) == {"openclaw-prometheus", "openclaw-finance-sentry"}
@@ -370,63 +324,208 @@ def test_only_the_known_openclaw_routes_skip_the_sign_in_check():
     assert open_routes == {"openclaw-oauth2", "openclaw-app", *NODE_ROUTES}
 
 
-def _join_pattern():
-    (pattern,) = re.findall(r"PathRegexp\(`([^`]+)`\)", _rule("openclaw-node-join"))
-    return pattern
+_TOKEN = re.compile(r"\s*(&&|\|\||!|\(|\)|,|\w+|`[^`]*`)")
 
 
-def test_node_join_route_takes_a_get_on_one_join_code_path_only():
-    rule = _rule("openclaw-node-join")
-    assert "Method(`GET`)" in rule
-    assert "PathPrefix" not in rule
-    # The gateway's join code is 22 URL-safe characters; the route admits
-    # that shape and nothing under or beside it.
-    assert _join_pattern() == r"^/j/[A-Za-z0-9_-]{22}$"
+def _tokens(rule):
+    pos, out = 0, []
+    rule = rule.strip()
+    while pos < len(rule):
+        m = _TOKEN.match(rule, pos)
+        assert m, f"cannot tokenise {rule!r} at {pos}"
+        out.append(m.group(1))
+        pos = m.end()
+    return out
+
+
+def _compile(rule):
+    """Compile a Traefik v3 rule into a predicate over (method, path, headers).
+
+    Covers the grammar these routes use: && and || (&& binds tighter), !,
+    parentheses, Method, Path, PathPrefix, PathRegexp, Header, HeaderRegexp.
+    Header names are case-insensitive; a missing header matches nothing, so
+    `!HeaderRegexp(...)` is true for it. Regexps are Go RE2 searches (unanchored
+    unless the pattern anchors itself); the (?i) prefix works the same in Python.
+    """
+    toks = _tokens(rule)
+    pos = 0
+
+    def peek():
+        return toks[pos] if pos < len(toks) else None
+
+    def take(expected=None):
+        nonlocal pos
+        tok = toks[pos]
+        assert expected is None or tok == expected, (tok, expected)
+        pos += 1
+        return tok
+
+    def parse_or():
+        parts = [parse_and()]
+        while peek() == "||":
+            take()
+            parts.append(parse_and())
+        return lambda r: any(p(r) for p in parts)
+
+    def parse_and():
+        parts = [parse_not()]
+        while peek() == "&&":
+            take()
+            parts.append(parse_not())
+        return lambda r: all(p(r) for p in parts)
+
+    def parse_not():
+        if peek() == "!":
+            take()
+            inner = parse_not()
+            return lambda r: not inner(r)
+        if peek() == "(":
+            take()
+            inner = parse_or()
+            take(")")
+            return inner
+        return parse_call()
+
+    def parse_call():
+        name = take()
+        take("(")
+        args = [take()[1:-1]]
+        while peek() == ",":
+            take()
+            args.append(take()[1:-1])
+        take(")")
+        return _matcher(name, args)
+
+    predicate = parse_or()
+    assert pos == len(toks), f"trailing tokens in {rule!r}"
+    return predicate
+
+
+def _header_values(request, name):
+    return [v for k, v in request["headers"].items() if k.lower() == name.lower()]
+
+
+def _matcher(name, args):
+    if name == "Method":
+        return lambda r: r["method"] == args[0]
+    if name == "Path":
+        return lambda r: r["path"] == args[0]
+    if name == "PathPrefix":
+        return lambda r: r["path"].startswith(args[0])
+    if name == "PathRegexp":
+        return lambda r: re.search(args[0], r["path"]) is not None
+    if name == "Header":
+        return lambda r: args[1] in _header_values(r, args[0])
+    if name == "HeaderRegexp":
+        return lambda r: any(re.search(args[1], v) for v in _header_values(r, args[0]))
+    raise AssertionError(f"rule matcher {name} is not modelled")
+
+
+OPENCLAW_ROUTES = {
+    name: (r["priority"], _compile(r["rule"]))
+    for name, r in _entrypoint_routers("openclaw").items()
+}
+
+
+def _winner(path, *, method="GET", **headers):
+    request = {"method": method, "path": path, "headers": headers}
+    matched = sorted(
+        (
+            (prio, name)
+            for name, (prio, rule) in OPENCLAW_ROUTES.items()
+            if rule(request)
+        ),
+        reverse=True,
+    )
+    assert matched, "no router matches"
+    # Traefik breaks a priority tie by rule length; the tests demand none.
+    assert len(matched) == 1 or matched[0][0] > matched[1][0], matched
+    return matched[0][1]
+
+
+WS = {"Upgrade": "websocket"}
+CODE = "A" * 22
+IPHONE_WEBVIEW = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Mobile/15E148"
+)
+MOBILE_SAFARI = IPHONE_WEBVIEW.replace(
+    "Mobile/15E148", "Version/18.7 Mobile/15E148 Safari/604.1"
+)
 
 
 @pytest.mark.parametrize(
-    ("path", "joins"),
+    ("request_", "router"),
     [
-        ("/j/" + "A" * 22, True),
-        ("/j/" + "a_-" * 7 + "Z", True),
-        ("/j/" + "A" * 21, False),
-        ("/j/" + "A" * 23, False),
-        ("/j/" + "A" * 22 + "/", False),
-        ("/j/" + "A" * 22 + "/x", False),
-        ("/j/", False),
-        ("/j", False),
-        ("/j/" + "A" * 21 + ".", False),
-        ("/x/j/" + "A" * 22, False),
-        ("/", False),
+        # Node host: the join request, then its two sockets, carry no browser marks.
+        ({"path": f"/j/{CODE}"}, "openclaw-node-join"),
+        ({"path": "/j/" + "a_-" * 7 + "Z"}, "openclaw-node-join"),
+        ({"path": "/", "headers": WS}, "openclaw-node-socket"),
+        ({"path": "/", "headers": {"upgrade": "WebSocket"}}, "openclaw-node-socket"),
+        ({"path": "/__openclaw__/worker", "headers": WS}, "openclaw-node-worker"),
+        # A browser WebSocket always sends Origin, and a signed-in one a cookie.
+        ({"path": "/", "headers": {**WS, "Origin": "https://x.example"}}, "openclaw"),
+        ({"path": "/", "headers": {**WS, "Cookie": "_oauth2_proxy=abc"}}, "openclaw"),
+        (
+            {
+                "path": "/__openclaw__/worker",
+                "headers": {**WS, "Origin": "https://x.example"},
+            },
+            "openclaw",
+        ),
+        (
+            {"path": "/__openclaw__/worker", "headers": {**WS, "Cookie": "a=b"}},
+            "openclaw",
+        ),
+        # Without an Upgrade these are ordinary page loads.
+        ({"path": "/"}, "openclaw"),
+        ({"path": "/__openclaw__/worker"}, "openclaw"),
+        ({"path": "/", "headers": {"Upgrade": "h2c"}}, "openclaw"),
+        # The socket routes answer one path each.
+        ({"path": "/chat", "headers": WS}, "openclaw"),
+        ({"path": "/__openclaw__/worker/x", "headers": WS}, "openclaw"),
+        # Join: GET on exactly one 22-character code, nothing beside or under it.
+        ({"path": f"/j/{CODE}", "method": "POST"}, "openclaw"),
+        ({"path": "/j/" + "A" * 21}, "openclaw"),
+        ({"path": "/j/" + "A" * 23}, "openclaw"),
+        ({"path": f"/j/{CODE}/"}, "openclaw"),
+        ({"path": f"/j/{CODE}/x"}, "openclaw"),
+        ({"path": "/j/" + "A" * 21 + "."}, "openclaw"),
+        ({"path": "/j/"}, "openclaw"),
+        ({"path": "/j"}, "openclaw"),
+        ({"path": f"/x/j/{CODE}"}, "openclaw"),
+        # Cloud-worker artifacts stay behind the sign-in.
+        ({"path": "/__openclaw__/worker-bundle", "headers": WS}, "openclaw"),
+        ({"path": "/__openclaw__/worker-bootstrap/abc", "headers": WS}, "openclaw"),
+        ({"path": "/__openclaw__/worker-bundle"}, "openclaw"),
+        ({"path": "/__openclaw__/worker-transfer/abc", "method": "POST"}, "openclaw"),
+        # The sign-in callback and the phone app keep their routes.
+        ({"path": "/oauth2/callback", "headers": WS}, "openclaw-oauth2"),
+        ({"path": "/oauth2/sign_in"}, "openclaw-oauth2"),
+        (
+            {
+                "path": "/",
+                "headers": {"User-Agent": "OpenClaw/3 CFNetwork/3896 Darwin/27.0"},
+            },
+            "openclaw-app",
+        ),
+        ({"path": "/", "headers": {"User-Agent": IPHONE_WEBVIEW}}, "openclaw-app"),
+        (
+            {
+                "path": "/",
+                "headers": {"User-Agent": IPHONE_WEBVIEW.replace("iPhone;", "iPad;")},
+            },
+            "openclaw-app",
+        ),
+        # Mobile Safari, desktop browsers and anything else sign in.
+        ({"path": "/", "headers": {"User-Agent": MOBILE_SAFARI}}, "openclaw"),
+        ({"path": "/", "headers": {"User-Agent": "curl/8.14.1"}}, "openclaw"),
+        ({"path": "/", "headers": {"User-Agent": ""}}, "openclaw"),
     ],
 )
-def test_node_join_route_matches_the_join_url_shape_only(path, joins):
-    # Go's regexp and Python's agree on this subset (anchors, classes, counts).
-    assert bool(re.search(_join_pattern(), path)) is joins
-
-
-@pytest.mark.parametrize(
-    ("router", "path"),
-    [
-        ("openclaw-node-socket", "/"),
-        ("openclaw-node-worker", "/__openclaw__/worker"),
-    ],
-)
-def test_node_socket_routes_take_a_websocket_upgrade_with_no_browser_marks(
-    router, path
-):
-    rule = _rule(router)
-    assert f"Path(`{path}`)" in rule
-    assert "PathPrefix" not in rule
-    assert "HeaderRegexp(`Upgrade`, `(?i)^websocket$`)" in rule
-    # A browser always sends Origin on a WebSocket and signs in with a
-    # cookie, so a request with either keeps going through the gate.
-    assert "!HeaderRegexp(`Origin`, `.`)" in rule
-    assert "!HeaderRegexp(`Cookie`, `.`)" in rule
-
-
-def test_the_worker_bootstrap_and_transfer_routes_are_not_opened():
-    # Cloud-worker artifacts (/__openclaw__/worker-bootstrap, -bundle,
-    # -transfer) are out of scope: a browser-only node host does not use them.
-    for name in NODE_ROUTES:
-        assert "worker-" not in ROUTERS[name]["rule"]
+def test_openclaw_requests_take_the_expected_router(request_, router):
+    request_ = {"method": "GET", "headers": {}, **request_}
+    assert (
+        _winner(request_["path"], method=request_["method"], **request_["headers"])
+        == router
+    )
