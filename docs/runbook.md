@@ -5366,8 +5366,14 @@ hot-reloads. It then runs a real throwaway turn per agent in `AUTH_CHECK_AGENTS`
 (default `kit`; set `AUTH_CHECK_AGENTS=kit,finance,career` for the lot; fresh session
 `agent:<id>:auth-check-<time>` each run, nothing delivered) and requires it to be answered by
 the new mode's provider (`anthropic` for `api`, `claude-cli` for
-`subscription`). If the patch, the restart or a turn fails, the previous values
-are patched back and the command exits 1. Switching to the mode already active
+`subscription`). The check turns run with `--thinking low`: `off` is rejected by
+some models on the direct runtime (`claude-opus-5-5`), and `low` is accepted by
+every model in both modes. If the patch, the restart or a turn fails, the previous values
+are patched back and the command exits 1. The rollback sets every key the switch
+changed back to its exact old value and **deletes** (null) any key or whole
+profile that did not exist before (for `api`, the `anthropic:api-key` profile),
+so it validates against the schema; a rollback that still fails prints
+`ROLLBACK FAILED`. Switching to the mode already active
 changes nothing and only verifies. `api` also adds the `anthropic:api-key`
 SecretRef profile (`secrets apply`, id `anthropic-api-key`, no value involved)
 to every agent that lacks it.
@@ -5392,7 +5398,8 @@ It stops `openclaw-cli` and `openclaw-gateway` through the deploy's
 `openclaw_compose`, runs `openclaw secrets apply --allow-exec` (dry run first) as
 a `run --rm --no-deps -T --entrypoint openclaw` one-shot with the plan, starts
 the gateway again on every exit path (a failed apply included), waits for it to
-be healthy and runs `secrets reload`. Then re-run `auth-mode.sh api`, which finds
+be healthy and runs `secrets reload`, retrying it once after waiting for health
+again if the gateway is not ready for it yet. Then re-run `auth-mode.sh api`, which finds
 the profiles in place and goes on to the mode switch and the per-agent turns.
 Expect the assistants to be down for the length of that one-shot.
 
