@@ -277,6 +277,8 @@ def full_deploy(
     stub(fake / "scripts/deploy-grafana-oidc.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
     stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
+    stub(fake / "scripts/ensure-ops-door.sh", "#!/bin/sh\nexit 0\n")
+    stub(fake / "scripts/ops-door/install-ops-door.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/tmp-scratch-policy.sh", LOGGING_SH % "tmp-scratch")
     stub(fake / "scripts/ledger-persona/ledger-persona.py", LEDGER_PERSONA_PY)
     stub(fake / "scripts/reminder-bot/build-image.sh", REMINDER_BUILD_SH)
@@ -1441,6 +1443,8 @@ def run_gated_deploy(env, tmp_path, mode, touched):
     stub(fake / "scripts/deploy-grafana-oidc.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
     stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
+    stub(fake / "scripts/ensure-ops-door.sh", "#!/bin/sh\nexit 0\n")
+    stub(fake / "scripts/ops-door/install-ops-door.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/tmp-scratch-policy.sh", LOGGING_SH % "tmp-scratch")
     stub(fake / "scripts/ledger-persona/ledger-persona.py", LEDGER_PERSONA_PY)
     stub(
