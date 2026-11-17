@@ -59,13 +59,14 @@ labels, as `scripts/deploy-openclaw.sh` does) with `docker exec`.
 | The gateway answers on its host port | `GET /healthz`, the endpoint the healthcheck and deploy use | `healthz` |
 | Plugins loaded, model and child runtimes usable, every enabled channel account connected | `openclaw health --json` | `plugin-errors`, `plugins-unavailable`, `model-runtime-degraded`, `child-runtime-unavailable`, `channels-down` |
 | No plugin-compat drift from the upgrade | `openclaw doctor --post-upgrade --json`: any finding fails | `post-upgrade-findings` |
-| Every configured MCP server connects | `openclaw mcp probe --json` | `mcp-probe` |
+| Every configured MCP server is reachable from the gateway | `openclaw mcp status --json` for the configured set, then a fetch of each server's URL from inside the gateway (any HTTP answer below 500) | `mcp-status-unreadable`, `mcp-probe:<server,...>` |
 | No error-class doctor finding | bare `openclaw doctor --json` (OpenClaw's read-only advisory set): `error`/`critical`/`high`/`fatal` fails | `doctor:<checkId,...>` |
 
 The check makes no model call. Doctor warnings are tolerated, because the live
 install has standing ones, such as the by-design `lan` bind. A single MCP server
-being down also fails the check, since the probe cannot tell an upgrade fault
-from an outage. Only a real agent turn proves that the agent runtimes answer,
+being down also fails the check, since the check cannot tell an upgrade fault
+from an outage. `openclaw mcp probe` is not used: since 2026.11.4 it needs
+exclusive offline state ownership (the gateway stopped). Only a real agent turn proves that the agent runtimes answer,
 and a turn writes a session, so this check does not run one. The deploy's smoke
 turn (`openclaw_phase_smoke` in `scripts/deploy-openclaw.sh`) covers that on
 every image bump. The fuller pre-merge proof is `scripts/rehearse-openclaw-bump.sh`

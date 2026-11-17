@@ -29,10 +29,14 @@ esac
 args=" $* "
 case "$args" in
   *" --version "*) echo "OpenClaw ${STUB_OC_VERSION:-2026.9.8} (fc23bc8)" ;;
+  *" -- http://"*)
+    printf '%s\n' "$*" >> "$STUB_DIR/mcp-fetch.log"
+    case "$args" in *"${STUB_MCP_DOWN:-@@none@@}"*) exit 1 ;; esac
+    exit 0 ;;
   *" node -e "*) [ -z "${STUB_HEALTHZ_RC:-}" ] || exit "$STUB_HEALTHZ_RC"; echo "${STUB_HEALTHZ:-{\"ok\":true,\"status\":\"live\"\}}" ;;
   *" health --json "*) cat "$STUB_DIR/health.json" ;;
   *" doctor --post-upgrade --json "*) cat "$STUB_DIR/post-upgrade.json" ;;
-  *" mcp probe --json "*) cat "$STUB_DIR/mcp.json"; exit "${STUB_MCP_RC:-0}" ;;
+  *" mcp status --json "*) cat "$STUB_DIR/mcp.json"; exit "${STUB_MCP_RC:-0}" ;;
   *" doctor --json "*) cat "$STUB_DIR/doctor.json" ;;
   *) echo "unexpected exec: $*" >&2; exit 99 ;;
 esac
@@ -85,7 +89,13 @@ HEALTHY_HEALTH = {
         }
     },
 }
-HEALTHY_MCP = {"servers": {"a": {"tools": 3}, "b": {"tools": 1}}, "tools": []}
+HEALTHY_MCP = {
+    "servers": [
+        {"name": "a", "enabled": True, "ok": True, "launch": "http://a-mcp:8000/mcp"},
+        {"name": "b", "enabled": True, "ok": True, "launch": "http://b-mcp:5100/"},
+        {"name": "off", "enabled": False, "ok": True, "launch": "http://off:1/"},
+    ]
+}
 # The live install's standing warnings: never red on their own.
 HEALTHY_DOCTOR = {
     "ok": False,
@@ -242,6 +252,18 @@ def test_openclaw_never_fixes_restarts_or_recreates(rig):
         assert forbidden not in joined
 
 
+def test_openclaw_mcp_check_needs_no_offline_state_ownership(rig):
+    # `mcp probe` needs the gateway stopped since 2026.11.4: the smoke reads
+    # the configured set offline-safely and fetches each enabled server's URL.
+    rc, line = smoke(rig, "openclaw", "--expect-version", "2026.9.8")
+    assert rc == 0, line
+    assert "mcp=2/2" in line
+    assert " mcp probe" not in (rig["stub"] / "docker.log").read_text()
+    fetched = (rig["stub"] / "mcp-fetch.log").read_text()
+    assert "http://a-mcp:8000/mcp" in fetched and "http://b-mcp:5100/" in fetched
+    assert "off:1" not in fetched
+
+
 @pytest.mark.parametrize(
     ("setup", "env", "reason"),
     [
@@ -287,8 +309,8 @@ def test_openclaw_never_fixes_restarts_or_recreates(rig):
             {},
             "post-upgrade-findings",
         ),
-        (None, {"STUB_MCP_RC": "1"}, "mcp-probe"),
-        (("mcp.json", {"servers": {"a": {"tools": 3}, "b": {}}}), {}, "mcp-probe"),
+        (None, {"STUB_MCP_RC": "1"}, "mcp-status-unreadable"),
+        (None, {"STUB_MCP_DOWN": "b-mcp"}, "mcp-probe:b"),
         (
             (
                 "doctor.json",

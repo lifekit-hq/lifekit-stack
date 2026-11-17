@@ -201,7 +201,9 @@ template, like finance-sentry's `${FINANCE_SENTRY_MCP_TOKEN}`. The gateway
 resolves the template from its own environment, which
 `compose/openclaw/docker-compose.yml` fills from `DEVCLAW_MCP_TOKEN` in
 `stack.env`; the value never appears in git or in the config file. Check with
-`docker exec openclaw-openclaw-gateway-1 openclaw mcp probe`.
+`docker exec openclaw-openclaw-gateway-1 openclaw mcp status`
+(`mcp probe` needs the gateway stopped since 2026.11.4; `scripts/upgrade-smoke/openclaw.sh`
+fetches each server's URL from the gateway instead).
 
 **Undo:** run `openclaw mcp unset devclaw` in the gateway container, then
 remove the `DEVCLAW_MCP_TOKEN` line from the gateway's `environment` in
@@ -2933,7 +2935,7 @@ GW=openclaw-openclaw-gateway-1
 docker inspect --format '{{.State.Health.Status}}' "$GW"     # healthy
 docker exec "$GW" node -e "fetch('http://127.0.0.1:18789/healthz').then((r)=>r.text()).then(console.log)"   # {"ok":true,...}; the host port exists only in token mode
 docker exec "$GW" openclaw channels status                  # all 6 Telegram accounts connected
-docker exec "$GW" openclaw mcp probe                        # every MCP server answers
+docker exec "$GW" openclaw mcp status                       # configured servers; `mcp probe` needs the gateway stopped since 2026.11.4 (scripts/upgrade-smoke/openclaw.sh checks reachability)
 curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=up{job="openclaw"}'   # value "1"
 docker ps -a --filter label=com.docker.compose.project=compose \
   --filter label=com.docker.compose.service=openclaw-gateway -q          # empty
