@@ -1,0 +1,14 @@
+[Unit]
+Description=File the ops-door's spooled Tier 2 calls through fleet-policy decide
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The operator account whose home holds fleet-policy (and so its call log).
+# install-ops-door.sh substitutes both placeholders at install time.
+User=__OPS_DOOR_USER__
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=OPS_DOOR_SPOOL_DIR=/var/lib/lifekit/ops-door/escalations
+ExecStart=/usr/bin/python3 __REPO_DIR__/scripts/ops-door/drain-escalations.py
+MemoryMax=128M
+TasksMax=64

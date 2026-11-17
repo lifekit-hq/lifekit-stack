@@ -50,3 +50,18 @@ contactPoints:
             {{ end -}}
             {{ end }}
         disableResolveMessage: false
+
+  # The ops queue's door (docs/runbook.md "Ops door"): every alert, whatever its
+  # severity, also reaches ops-door, which files or updates one lifekit-stack
+  # issue per alert fingerprint. It is a second recipient beside Telegram
+  # (policies.yml.tmpl routes it with `continue`), never instead of it. The
+  # body is Grafana's Alertmanager-compatible webhook payload.
+  - orgId: 1
+    name: ops-door
+    receivers:
+      - uid: ops-door
+        type: webhook
+        settings:
+          url: http://ops-door:8097/alerts
+          httpMethod: POST
+        disableResolveMessage: false

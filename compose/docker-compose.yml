@@ -20,6 +20,9 @@
 #    mount, loopback-bound, scraped by prometheus alongside the other targets.
 #   people-serve         — (profile `people`, off by default) the people tool as a JSON API
 #                           for the dashboard's People page; docs/runbook.md "People serve".
+#   ops-door             — the ops queue's door: Grafana's webhook contact point files
+#    one lifekit-stack GitHub issue per alert fingerprint (docs/runbook.md "Ops door").
+#    Internal-only on :8097.
 #   notify-relay         — the one renderer of owner notifications: a JSON envelope on
 #    /notify (docs/message-format.md), or devclaw's legacy /devclaw + /text POSTs,
 #    becomes Telegram HTML sent via the Bot API. Internal-only on :8090.
@@ -473,6 +476,58 @@ services:
       test:
         - CMD-SHELL
         - "node -e \"fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  ops-door:
+    <<: *policy
+    # The ops queue's door (docs/runbook.md "Ops door"): Grafana's webhook
+    # contact point POSTs firing/resolved notices here and each alert
+    # fingerprint becomes one lifekit-stack GitHub issue. Internal-only on
+    # :8097, `default` network (Grafana is in this project; no cross-project
+    # caller). Tier 2 calls it files are written to the spool bind mount and
+    # run by the host unit ops-door-escalate (scripts/ops-door/), because
+    # `fleet-policy` lives on the host, not in a container.
+    #
+    # BUILDX_NO_DEFAULT_ATTESTATIONS=1: see notify-relay.
+    build:
+      context: ./ops-door
+    image: ops-door:local
+    labels:
+      lifekit.contract: "v1"
+      lifekit.contract.port: "8097"
+      lifekit.contract.health: /health
+      lifekit.contract.ready: /ready
+      lifekit.contract.metrics: /metrics
+      lifekit.contract.ingress: internal
+    networks:
+      - default
+    read_only: true
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          pids: 128
+    environment:
+      OPS_DOOR_PORT: "8097"
+      OPS_DOOR_REPO: ${OPS_DOOR_REPO:-lifekit-hq/lifekit-stack}
+      # Repeats before one Tier 2 call is filed instead of another comment.
+      OPS_DOOR_REPEAT_THRESHOLD: ${OPS_DOOR_REPEAT_THRESHOLD:-3}
+      # Fine-grained token, Issues read/write on that one repo only. Placed
+      # through the secrets runbook; empty until then (/ready answers 503).
+      OPS_DOOR_GITHUB_TOKEN: ${OPS_DOOR_GITHUB_TOKEN:-}
+      OPS_DOOR_SPOOL_DIR: /spool
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - /var/lib/lifekit/ops-door/escalations:/spool
+    expose:
+      - "8097"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"fetch('http://127.0.0.1:8097/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
       interval: 30s
       timeout: 5s
       retries: 5

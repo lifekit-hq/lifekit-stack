@@ -28,6 +28,16 @@ policies:
     repeat_interval: 4h
     routes:
 __HEARTBEAT_ROUTES__
+      # The ops queue's door (docs/runbook.md "Ops door") sees every alert, any
+      # severity, and does not stop the match: Telegram delivery below is
+      # unchanged. It sits after the heartbeat route, which is not `continue`,
+      # so the external dead-man alert is the one it never files.
+      - receiver: ops-door
+        continue: true
+        group_by: ['alertname']
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
       - receiver: telegram-lifekit
         object_matchers:
           - ["severity", "=", "critical"]
