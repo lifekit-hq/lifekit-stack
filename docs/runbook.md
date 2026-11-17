@@ -1722,9 +1722,9 @@ decision 0016); this repo carries it into every agent's persona and does not res
   `scripts/ensure-dev-problem-block.sh` as the block above (both blocks in one pass; a lone or
   reversed marker for either leaves the whole file alone). `ensure-learnclaw.sh` re-applies it.
   `scripts/tests/test_dev_problem_block.py` asserts the envelope fields and the ack text.
-- **Ledger:** its own envelope section lives in finance-sentry `agent/ledger` (pinned by
-  `scripts/ledger-persona/PIN`). Replacing it with a pointer to this block, then a `PIN` bump,
-  is a separate finance-sentry change; until it lands Ledger carries both texts.
+- **Ledger:** its persona (finance-sentry `agent/ledger`, pinned by `scripts/ledger-persona/PIN`)
+  carries a pointer to this block, not a second envelope text; the pin is at the commit that
+  made that change.
 
 Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
 
@@ -5169,7 +5169,7 @@ override with `--workspace DIR` or `LEDGER_WORKSPACE`. `install` refuses a
 persona over OpenClaw's `bootstrapMaxChars` (20,000 characters), because the
 agent would load it truncated; `--allow-oversize` overrides. The pin must be
 at or past finance-sentry's trim under that limit (#968; the composition is about
-19,990 characters at the 2026-11-16 pin, it was about 23,300 before the trim). Only `AGENTS.md` is
+19,800 characters at the 2026-11-17 pin, it was about 23,300 before the trim). Only `AGENTS.md` is
 written: `MEMORY.md` and `USER.md` are vault pointers set by their own deploy
 step (see [Workspace memory files are pointers](#workspace-memory-files-are-pointers)),
 and the other workspace files stay host state. `install`
