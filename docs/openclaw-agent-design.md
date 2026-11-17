@@ -47,6 +47,7 @@ A domain that fails the test is a skill in kit, not an agent.
 | Workspace `MEMORY.md` / `USER.md` | the vault pointers in `defaults/workspace-pointers/`, written by `deploy.sh` |
 | Workspace templates | `defaults/agents/<id>/workspace/`, copied into the agent's workspace by hand, except learnclaw's, which the deploy installs (`scripts/ensure-learnclaw.sh`) (resolve the path with `openclaw agents list --json`; container paths under `/home/node/.openclaw/` map to `/srv/openclaw/config/` on the host) |
 | Persona block shared by every agent ("Development-class problems") | `defaults/agents/shared/dev-problems.md`, put into each workspace `SOUL.md` by `scripts/ensure-dev-problem-block.sh` (`docs/runbook.md`, "Development-class problems: file and carry on") |
+| Persona block shared by every agent ("Agent-to-agent messages: envelope and receipt") | `defaults/agents/shared/a2a-envelope.md`, put into each workspace `SOUL.md` by the same script (`docs/runbook.md`, "Agent-to-agent envelope and ack") |
 | Skills | not vendored; see each workspace's `skills/README.md` |
 
 The platform half is in git and deployed on merge; the per-agent half (entries, bindings, channels, crons, auth) is host state and ships as operator steps in the PR that changes it. See `docs/runbook.md`, "Host-config patch".

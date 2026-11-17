@@ -1698,7 +1698,7 @@ Operator steps, once per host after the PR deploys (as `lifekit`; the live works
 live `AGENTS.md` are host state):
 
 ```bash
-sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # one line per agent
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # two lines per agent (this block, then the a2a envelope)
 ```
 
 Then paste the revised devclaw line of `defaults/agents/kit/workspace/AGENTS.md` into the live
