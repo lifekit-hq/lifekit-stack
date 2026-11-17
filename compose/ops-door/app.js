@@ -93,7 +93,6 @@ export function renderBody(s) {
       .map(([k, v]) => `\`${k}=${v}\``)
       .join(" ")}`,
   );
-  if (s.source) lines.push(`Alert: ${s.source}`);
   if (s.reopens) lines.push("", `Fires again after #${s.reopens} was closed.`);
   if (s.escalated) lines.push("", `Repeated past the threshold: Tier 2 call \`${s.escalated}\` filed.`);
   return lines.join("\n");
@@ -106,7 +105,6 @@ const snapshot = (alert, fp) => ({
   labels: Object.fromEntries(identifyingLabels(alert.labels)),
   summary: clip(alert.annotations?.summary, 300),
   description: clip(alert.annotations?.description),
-  source: alert.generatorURL || "",
 });
 
 export function createApp({

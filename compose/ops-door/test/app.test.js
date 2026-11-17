@@ -67,6 +67,12 @@ test("first firing opens one issue with the envelope and returns the receipt", a
   assert.equal(parseState(issues[0].body).count, 1);
 });
 
+test("the issue body never carries the alert's source link, which names the tailnet host", async () => {
+  await send(alert({ generatorURL: "https://box.example.ts.net:3000/alerting/grafana/abc/view" }));
+  assert.ok(!issues[0].body.includes("ts.net"));
+  assert.ok(!JSON.stringify(parseState(issues[0].body)).includes("ts.net"));
+});
+
 test("a repeat adds a count and the notice time as latest occurrence, though startsAt never moves", async () => {
   const first = await send(alert());
   clock = "2026-11-17T14:00:00Z";
