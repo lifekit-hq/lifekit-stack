@@ -1085,6 +1085,7 @@ if args[0] == "ps":
 cmd = args[args.index("openclaw") + 1:]
 data = json.loads(state.read_text())
 if cmd[:2] == ["config", "get"]:  # ensure-reader-agent.sh --check: no reader agent here
+    print("Config path not found: " + cmd[2], file=sys.stderr)
     sys.exit(1)
 if cmd[:2] == ["cron", "list"]:
     print(json.dumps(data))

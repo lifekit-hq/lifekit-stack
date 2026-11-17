@@ -585,3 +585,14 @@ def test_default_drive_url_is_the_fleet_connector_not_kits():
     assert door.DRIVE_MCP_URL.endswith(":8000/mcp")
     assert "google-workspace-mcp-fleet" in door.DRIVE_MCP_URL
     assert door.DRIVE_MCP_URL != door.MCP_URL
+
+
+def test_a_cut_document_names_the_full_path_to_read_the_rest(env, capsys):
+    rec = {"subject": "s", "from": "f", "date": "d", "filename": "big.pdf"}
+    text = "\n".join(f"line {n} " + "x" * 80 for n in range(1, 400))
+    door.show("doc1", rec, text)
+    out = capsys.readouterr().out
+    cut = next(ln for ln in out.splitlines() if ln.startswith("[cut at L"))
+    n = int(cut.split("--from ")[1].split("`")[0])
+    assert f"`{SKILL / 'door.py'} show doc1 --from {n}`" in cut
+    assert f"L{n - 1}:" in out and f"L{n}:" not in out.replace(cut, "")

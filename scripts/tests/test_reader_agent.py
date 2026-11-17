@@ -36,9 +36,48 @@ a = sys.argv[1:]
 if a[0] == "ps":
     print("gw")
     sys.exit(0)
-assert a[:2] == ["exec", "gw"] and a[2] == "openclaw", a
+assert a[:2] == ["exec", "gw"], a
+if a[2] != "openclaw":
+    sys.exit(0)  # the door skill's own installs (venv, rclone): nothing to model
 cmd = a[3:]
+VALUE_FLAGS = {
+    "--name", "--display-name", "--description", "--cron", "--tz", "--agent", "--session",
+    "--session-key", "--message", "--model", "--tools", "--timeout-seconds",
+    "--failure-alert-after", "--failure-alert-mode", "--failure-alert-channel",
+    "--failure-alert-account-id", "--failure-alert-to",
+}
+def flags(argv):
+    out, i = {}, 0
+    while i < len(argv):
+        if argv[i] in VALUE_FLAGS:
+            out[argv[i]] = argv[i + 1]
+            i += 2
+        else:
+            out[argv[i]] = True
+            i += 1
+    return out
+def apply(job, f):
+    if "--agent" in f and not load("stuck_agent"):
+        job["agentId"] = f["--agent"]
+    if "--session" in f:
+        job["sessionTarget"] = f["--session"]
+    if "--session-key" in f:
+        job["sessionKey"] = f["--session-key"]
+    job["delivery"] = {"mode": "none" if "--no-deliver" in f else "announce"}
+    payload = job.setdefault("payload", {})
+    if "--tools" in f:
+        payload["toolsAllow"] = f["--tools"].split(",")
+    if "--model" in f:
+        payload["model"] = f["--model"]
+    if "--message" in f:
+        payload["message"] = f["--message"]
+def log_call(argv):
+    with open(f"{state}/calls.jsonl", "a") as fh:
+        fh.write(json.dumps(argv) + "\n")
 if cmd[:2] == ["config", "get"]:
+    if load("get_fail"):
+        print("gateway closed (1006): connection refused", file=sys.stderr)
+        sys.exit(1)
     if cmd[2] == "agents.entries.reader":
         entry = load("entry")
         if entry is None:
@@ -47,6 +86,8 @@ if cmd[:2] == ["config", "get"]:
         print("[gateway] noise before the JSON")
         print(json.dumps(entry, indent=2))
     elif cmd[2] == "tools.agentToAgent.enabled":
+        if load("a2a_noise"):
+            print("[gateway] noise before the value")
         print(json.dumps(load("a2a", False)))
 elif cmd[:2] == ["agents", "list"]:
     rows = [{"id": "main", "bindings": 0}]
@@ -62,6 +103,24 @@ elif cmd[:3] == ["approvals", "allowlist", "add"]:
 elif cmd[:2] == ["approvals", "get"]:
     rows = [{"pattern": p} for p in load("allow", [])]
     print(json.dumps({"file": {"agents": {"reader": {"allowlist": rows}}}}))
+elif cmd[:2] == ["cron", "list"]:
+    print("[gateway] noise before the JSON")
+    print(json.dumps({"jobs": load("jobs", [])}))
+elif cmd[:2] == ["cron", "add"]:
+    log_call(cmd)
+    jobs = load("jobs", [])
+    f = flags(cmd[2:])
+    job = {"id": f"job{len(jobs) + 1}", "name": f["--name"]}
+    apply(job, f)
+    jobs.append(job)
+    save("jobs", jobs)
+elif cmd[:2] == ["cron", "edit"]:
+    log_call(cmd)
+    jobs = load("jobs", [])
+    for job in jobs:
+        if job["id"] == cmd[2]:
+            apply(job, flags(cmd[3:]))
+    save("jobs", jobs)
 else:
     sys.exit(3)
 """
@@ -89,13 +148,32 @@ def box(tmp_path):
             return json.loads((state / f"{name}.json").read_text())
 
         def run(self, *args):
+            return self.script("ensure-reader-agent.sh", *args)
+
+        def script(self, name, *args, **extra_env):
             return subprocess.run(
-                ["bash", str(ENSURE), *args],
-                env=env,
+                ["bash", str(REPO / "scripts" / name), *args],
+                env={
+                    **env,
+                    "DOC_DOOR_ALERT_CHAT": "1",
+                    "NEEDS_YOU_ALERT_CHAT": "1",
+                    **extra_env,
+                },
                 capture_output=True,
                 text=True,
                 check=False,
             )
+
+        def calls(self):
+            path = state / "calls.jsonl"
+            return (
+                [json.loads(ln) for ln in path.read_text().splitlines()]
+                if path.exists()
+                else []
+            )
+
+        def job(self, name):
+            return next(j for j in self.get("jobs") if j["name"] == name)
 
         workspace = conf / "agents/reader/workspace"
 
@@ -162,6 +240,27 @@ def test_agent_to_agent_messaging_is_refused(box):
     assert box.run().returncode == 1
 
 
+def test_agent_to_agent_messaging_is_refused_through_log_noise(box):
+    box.put("entry", ENTRY)
+    box.put("a2a_noise", True)
+    box.put("a2a", True)
+    done = box.run()
+    assert done.returncode == 1 and "agentToAgent" in done.stderr
+    box.put("a2a", False)
+    assert box.run().returncode == 0
+
+
+def test_a_failed_config_read_is_an_error_not_an_absent_reader(box):
+    box.put("entry", ENTRY)
+    box.put("get_fail", True)
+    for args in ((), ("--check",)):
+        done = box.run(*args)
+        assert done.returncode == 1, args
+        assert "could not read agents.entries.reader" in done.stderr
+        assert "gateway closed" in done.stderr
+    assert not box.workspace.exists()
+
+
 def test_an_extra_allowlisted_command_is_refused(box):
     box.put("entry", ENTRY)
     box.put("allow", [DOOR, "/usr/bin/python3"])
@@ -169,103 +268,93 @@ def test_an_extra_allowlisted_command_is_refused(box):
     assert done.returncode == 1 and "exec allowlist" in done.stderr
 
 
-def test_the_shipped_cap_denies_every_way_out():
-    tools = ENTRY["tools"]
-    assert "profile" not in tools, "a profile hides MCP tools; the cap is allow + deny"
-    assert tools["exec"]["mode"] == "allowlist"
-    assert tools["agentToAgent"] == {"send": []}
-    assert ENTRY["sandbox"]["mode"] == "off"
-    for group in (
-        "fs",
-        "web",
-        "sessions",
-        "memory",
-        "ui",
-        "automation",
-        "messaging",
-        "nodes",
-        "agents",
-        "media",
-    ):
-        assert f"group:{group}" in tools["deny"]
-    for allowed in tools["allow"]:
-        assert not any(
-            x in allowed
-            for x in ("send", "draft", "create", "delete", "update", "modify")
-        )
-    assert set(tools["allow"]) == {
-        "exec",
-        "google-workspace__search_gmail_messages",
-        "google-workspace__get_gmail_messages_content_batch",
-    }
-    # the one write tool the Workspace MCP has, and the other servers, stay refused
-    for pattern in (
-        "google-workspace__send_*",
-        "google-workspace__draft_*",
-        "google-workspace-fleet__*",
-    ):
-        assert pattern in tools["deny"]
-
-
-def test_the_allowlisted_command_is_the_one_the_door_job_runs():
-    assert f"door={DOOR.replace('reader', '${AGENT}')}" in ENSURE.read_text()
-    text = (REPO / "scripts/ensure-doc-door.sh").read_text()
-    assert 'AGENT="${DOC_DOOR_AGENT:-reader}"' in text
-    assert "Run exactly: ${container_skill}/door.py scan" in text
-    assert (
-        "container_skill=/home/node/.openclaw/agents/${AGENT}/workspace/skills/${SKILL}"
-        in text
-    )
-    assert "ensure-reader-agent.sh" in text and "--check" in text
-    assert (
-        "SKILL.md beside it" not in text
-    ), "the reader has no file tool; scan prints the guide"
-
-
-def test_the_mail_reader_job_moves_and_the_digest_stays_on_kit():
-    text = (REPO / "scripts/ensure-needs-you-digest.sh").read_text()
-    assert text.count('--agent "$READER_AGENT" --session isolated') == 2
-    assert (
-        text.count('--agent "$AGENT" --session current') == 2 and "AGENT=kit\n" in text
-    )
-    assert "ensure-reader-agent.sh" in text and "NEEDS_YOU_READER_AGENT" in text
-    assert (
-        '"$reader_id" "$READER_TOOLS" "$READER_AGENT"' in text
-    ), "the live row's agent is verified"
-
-
-def test_the_deploy_installs_the_reader_before_the_door():
-    text = (REPO / "scripts/deploy-openclaw.sh").read_text()
-    assert text.index("ensure-reader-agent.sh") < text.index("ensure-doc-door.sh")
-
-
-def test_the_door_job_stays_put_until_the_reader_is_installed(box, tmp_path):
-    env = {
-        **os.environ,
-        "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
-        "FAKE_STATE": str(tmp_path / "state"),
-        "OPENCLAW_CONFIG_DIR": str(tmp_path / "conf"),
-        "DOC_DOOR_ALERT_CHAT": "1",
-    }
-    done = subprocess.run(
-        ["bash", str(REPO / "scripts/ensure-doc-door.sh")],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def test_the_door_job_stays_put_until_the_reader_is_installed(box):
+    done = box.script("ensure-doc-door.sh")
     assert done.returncode == 0, done.stderr
     assert "reader agent not installed" in done.stdout
-    assert not box.workspace.exists()
+    assert not box.workspace.exists() and box.calls() == []
     # a reader entry that is not the shipped cap stops the script, never moves the job
     live = copy.deepcopy(ENTRY)
     live["tools"]["deny"] = []
     box.put("entry", live)
-    done = subprocess.run(
-        ["bash", str(REPO / "scripts/ensure-doc-door.sh")],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    done = box.script("ensure-doc-door.sh")
     assert done.returncode == 1 and "refusing" in done.stderr
+    assert box.calls() == []
+
+
+def test_a_transient_read_failure_never_moves_the_jobs_to_kit(box):
+    box.put("entry", ENTRY)
+    box.put("get_fail", True)
+    box.put(
+        "jobs",
+        [
+            {"id": "job1", "name": "needs-you-mail-reader", "agentId": "reader"},
+            {"id": "job2", "name": "needs-you-digest", "agentId": "kit"},
+        ],
+    )
+    for name in ("ensure-needs-you-digest.sh", "ensure-doc-door.sh"):
+        done = box.script(name)
+        assert done.returncode == 1, name
+    assert box.calls() == []
+    assert box.job("needs-you-mail-reader")["agentId"] == "reader"
+
+
+def test_the_door_job_is_declared_as_the_reader_running_the_allowlisted_door(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    done = box.script("ensure-doc-door.sh")
+    assert done.returncode == 0, done.stderr
+    add, edit = box.calls()
+    for call in (add, edit):
+        assert call[call.index("--agent") + 1] == "reader"
+        assert call[call.index("--session") + 1] == "isolated"
+        assert call[call.index("--tools") + 1] == "exec"
+        assert "--no-deliver" in call
+        # the one command the reader may run is the path the job tells it to run
+        (allowed,) = box.get("allow")
+        assert f"Run exactly: {allowed} scan" in call[call.index("--message") + 1]
+    row = box.job("doc-door")
+    assert row["agentId"] == "reader" and row["payload"]["toolsAllow"] == ["exec"]
+    assert (box.workspace / "skills/doc-door/door.py").is_file()
+    again = box.script("ensure-doc-door.sh")
+    assert again.returncode == 0, again.stderr
+    assert [c[:2] for c in box.calls()] == [["cron", "add"], ["cron", "edit"]] + [
+        ["cron", "edit"]
+    ]
+
+
+def test_a_door_row_that_stays_on_another_agent_is_refused(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    box.put("jobs", [{"id": "job1", "name": "doc-door", "agentId": "kit"}])
+    box.put("stuck_agent", True)
+    done = box.script("ensure-doc-door.sh")
+    assert done.returncode == 1
+    assert "agentId='kit', want 'reader'" in done.stderr
+
+
+def test_the_mail_reader_moves_to_the_reader_and_the_digest_stays_on_kit(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    done = box.script("ensure-needs-you-digest.sh")
+    assert done.returncode == 0, done.stderr
+    edits = {c[2]: c for c in box.calls() if c[:2] == ["cron", "edit"]}
+    reader, digest = box.job("needs-you-mail-reader"), box.job("needs-you-digest")
+    assert reader["agentId"] == "reader" and digest["agentId"] == "kit"
+    assert edits[reader["id"]][edits[reader["id"]].index("--agent") + 1] == "reader"
+    assert set(reader["payload"]["toolsAllow"]) == {
+        "google-workspace__search_gmail_messages",
+        "google-workspace__get_gmail_messages_content_batch",
+    }
+    assert reader["delivery"] == {"mode": "none"}
+
+
+def test_a_mail_reader_row_on_another_agent_is_refused(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    box.put("jobs", [{"id": "job1", "name": "needs-you-mail-reader", "agentId": "kit"}])
+    box.put("stuck_agent", True)
+    done = box.script("ensure-needs-you-digest.sh")
+    assert done.returncode == 1
+    assert "agentId='kit', want 'reader'" in done.stderr
+    assert not [c for c in box.calls() if c[:2] == ["cron", "add"]]

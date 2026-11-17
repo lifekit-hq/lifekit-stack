@@ -64,7 +64,17 @@ while (i := text.find("[" if key == "[]" else "{", i)) != -1:
 sys.exit(1)' "$1"
 }
 
-entry="$(docker exec "$GATEWAY" openclaw config get "agents.entries.${AGENT}" --json 2>/dev/null | pick_json '*')" || entry=""
+# Only "path not found" means the agent is not installed; any other failure of the
+# read is an error, never an absent reader (a live reader must not read as absent).
+rc=0
+got="$(docker exec "$GATEWAY" openclaw config get "agents.entries.${AGENT}" --json 2>&1)" || rc=$?
+entry=""
+if [ "$rc" = 0 ]; then
+  entry="$(printf '%s' "$got" | pick_json '*')" || { echo "could not read agents.entries.${AGENT} from the gateway: ${got}" >&2; exit 1; }
+elif ! printf '%s' "$got" | grep -qi 'not found'; then
+  echo "could not read agents.entries.${AGENT} from the gateway: ${got}" >&2
+  exit 1
+fi
 if [ -z "$entry" ]; then
   echo "no '${AGENT}' agent in the live config: nothing installed, its jobs stay where they are." >&2
   echo "  apply it (after the canary passes): docs/runbook.md, \"Reader agent\"" >&2
@@ -97,9 +107,9 @@ if bad:
 ' "$shipped_entry" >&2
 
 # No agent can message another one, and nothing routes a channel to the reader.
-a2a="$(docker exec "$GATEWAY" openclaw config get tools.agentToAgent.enabled 2>/dev/null | tr -d '[:space:]' | tail -c 5)"
+a2a="$(docker exec "$GATEWAY" openclaw config get tools.agentToAgent.enabled 2>/dev/null | tr -d '[:space:]"')"
 case "$a2a" in
-  true) echo "refusing: tools.agentToAgent.enabled is true; the reader must not be reachable by other agents" >&2; exit 1 ;;
+  *true) echo "refusing: tools.agentToAgent.enabled is true; the reader must not be reachable by other agents" >&2; exit 1 ;;
 esac
 bindings="$(docker exec "$GATEWAY" openclaw agents list --json --bindings 2>/dev/null | pick_json '[]')" || bindings="[]"
 printf '%s' "$bindings" | python3 -c '

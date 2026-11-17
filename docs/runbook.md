@@ -2441,12 +2441,19 @@ leaves both crons on Kit, each with a note, so the merge changes nothing before 
    --limit 1 --sort desc --json` shows the reply and an `ok` status. A run that fails with a refused
    tool (not a Google error) means the prompt asked for a tool the reader does not hold: fix the prompt, not the cap.
 
-**Rollback.** `DOC_DOOR_AGENT=kit scripts/ensure-doc-door.sh` and
-`NEEDS_YOU_READER_AGENT=kit scripts/ensure-needs-you-digest.sh` move the two jobs back to Kit
-(Kit's copy of the door skill is installed by `ensure-doc-door.sh` on that run). To retire the agent:
-`openclaw agents delete reader` (after the jobs are back on Kit), then remove the reader's allowlist
-rows with `openclaw approvals allowlist remove --agent reader <path>`. Until the entry is applied the
-deploy leaves both jobs on Kit.
+**Rollback.** The deploy re-runs `ensure-doc-door.sh` on every OpenClaw-path merge, and it moves the job
+to the reader whenever the reader entry is applied and verified, so `DOC_DOOR_AGENT=kit` alone does not
+last: the next deploy undoes it. To keep the jobs on Kit, retire the reader first:
+
+1. `openclaw agents delete reader`, then remove its allowlist rows with
+   `openclaw approvals allowlist remove --agent reader <path>`. With no entry the deploy leaves both
+   jobs wherever they are.
+2. Move the jobs back: `DOC_DOOR_AGENT=kit scripts/ensure-doc-door.sh` and
+   `NEEDS_YOU_READER_AGENT=kit scripts/ensure-needs-you-digest.sh` (Kit's copy of the door skill is
+   installed by `ensure-doc-door.sh` on that run). `ensure-needs-you-digest.sh` is not run by the deploy,
+   so its move stays; the `doc-door` move stays only while the reader entry is absent.
+
+The env overrides alone are a one-off for testing: the next deploy puts `doc-door` back on the reader.
 
 ### Document door
 

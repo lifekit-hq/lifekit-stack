@@ -269,7 +269,7 @@ def show(doc_id: str, rec: dict, text: str, start: int = 1) -> None:
         row = f"L{i}: {ln}"
         if used + len(row) > MAX_TEXT:
             out.append(
-                f"[cut at L{i}: the document continues; read the rest with `door.py show {doc_id} --from {i}`]"
+                f"[cut at L{i}: the document continues; read the rest with `{Path(__file__).resolve()} show {doc_id} --from {i}`]"
             )
             break
         out.append(row)
