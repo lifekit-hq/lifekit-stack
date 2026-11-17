@@ -5236,6 +5236,22 @@ invalid or revoked key (the state on 2026-11-14, when the 2026-10 key still in
 the file answered 401, so the box stays in `subscription` mode until a new key
 is placed), `exhausted` a key with no credit left.
 
+### `auth-unknown` on every claude-cli turn is expected
+
+In `subscription` mode the gateway log carries "cli session history refused
+across auth boundary: reason=auth-unknown" on every `claude-cli` turn (89 of 89
+turns in the #529 scout). The runtime has no account identity to bind the CLI
+chat history to, so it never reuses that history; it is not a credential
+change and not a tool-authorization failure, and the turn still answers.
+
+- **Do nothing about it.** It is not an alert condition and not a reason to
+  roll back an auth-mode switch.
+- **Do not drop `sessions_history`** to silence it: the tool is unrelated to
+  the refusal, and the line stays either way.
+- The fresh per-run session ids in the deploy smoke and `auth-mode.sh` checks
+  keep those turns out of the agents' real sessions; they do not avoid this
+  line.
+
 ### Spend guard
 
 OpenClaw's usage records carry tokens, not dollars, and only turns answered by
