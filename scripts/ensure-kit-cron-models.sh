@@ -13,6 +13,8 @@
 #   scripts/ensure-kit-cron-models.sh           # pin every unpinned Kit job
 #   scripts/ensure-kit-cron-models.sh --check   # report only; exit 1 if any is unpinned
 #
+# A job whose payload.kind is "command" runs no model, so it is skipped silently
+# (reported as "skipped: command job") in both modes; it still counts as matched.
 # Only jobs whose payload.model is EMPTY are touched. A job that already names
 # a model (any model) is a deliberate choice and is reported, never rewritten.
 # A row naming no agent counts as Kit's (the default agent). Finding no Kit job
@@ -45,19 +47,24 @@ jobs_json="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null)
   exit 1
 }
 
-# id<TAB>name<TAB>model for every job of this agent (model empty when unset).
+# id<TAB>name<TAB>kind<TAB>model for every job of this agent (kind "-" when unset,
+# model empty when unset; tab is whitespace to `read`, so no empty field mid-row).
 # A row naming no agent runs as the default agent, so it counts as this one's.
 rows="$(printf '%s' "$jobs_json" | jq -r --arg a "$AGENT" '
   (if type == "array" then . else (.jobs // []) end)
   | map(select((.agentId // .agent // $a) == $a))
-  | .[] | [.id, (.name // .id), ((.payload.model // "") | tostring)] | @tsv')"
+  | .[] | [.id, (.name // .id), ((.payload.kind // "-") | tostring), ((.payload.model // "") | tostring)] | @tsv')"
 
 matched=0
 unpinned=0
 failed=0
-while IFS=$'\t' read -r id name model; do
+while IFS=$'\t' read -r id name kind model; do
   [ -n "$id" ] || continue
   matched=$((matched + 1))
+  if [ "$kind" = "command" ]; then
+    echo "skipped: command job '$name' ($id) runs no model"
+    continue
+  fi
   if [ -n "$model" ]; then
     echo "ok: '$name' ($id) runs on $model"
     continue

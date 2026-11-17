@@ -134,3 +134,28 @@ def test_zero_matching_jobs_warns_and_fails(tmp_path, args):
     assert proc.returncode == 1
     assert "no kit cron jobs matched" in proc.stderr
     assert edits == []
+
+
+@pytest.mark.parametrize("args", [(), ("--check",)])
+def test_command_jobs_are_skipped_not_pinned_or_flagged(tmp_path, args):
+    jobs = {
+        "jobs": [
+            {
+                "id": "m",
+                "name": "evening-day-plan",
+                "agentId": "kit",
+                "payload": {"kind": "command"},
+            },
+            {
+                "id": "p",
+                "name": "pinned",
+                "agentId": "kit",
+                "payload": {"model": "x/y"},
+            },
+        ]
+    }
+    proc, state, edits = run(tmp_path, *args, jobs=jobs)
+    assert proc.returncode == 0, proc.stderr
+    assert "skipped: command job 'evening-day-plan' (m)" in proc.stdout
+    assert edits == []
+    assert "model" not in state["jobs"][0]["payload"]
