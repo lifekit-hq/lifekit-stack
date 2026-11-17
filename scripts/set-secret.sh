@@ -112,18 +112,20 @@ cat <<EOF
 ${NAME} is in place on ${BRANCH}; merge is enabled for when CI is green:
   ${PR_URL}
 
-Next, nothing for you to run: the deploy after the merge applies it.
 EOF
 if [[ "${CLASS}" == gateway ]]; then
   cat <<'EOF'
+Next, nothing for you to run: the deploy after the merge applies it.
   - the deploy pulls the file and runs `openclaw secrets reload`
   - then check it on the box: bash scripts/openclaw-auth/auth-mode.sh probe
     (one JSON line: ok | rejected | exhausted | limited | unknown | no-key)
 EOF
 else
   cat <<'EOF'
-  - master file: after the merge, render and redeploy for the consumers of this
-    value (docs/secrets-runbook.md, "Rotation, one sequence per class")
+Next, two manual steps after the merge (the deploy does not render the master file):
+  1. render it on the box: sudo bash scripts/secrets/render-stack-env.sh
+  2. redeploy for the consumers of this value
+     (docs/secrets-runbook.md, "Rotation, one sequence per class")
 EOF
 fi
 }

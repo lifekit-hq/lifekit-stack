@@ -178,6 +178,9 @@ def test_master_class_uses_master_file(box):
         box.work / "secrets/lifekit.env.sops"
     )
     assert "auth-mode.sh probe" not in p.stdout
+    # the render step is manual; the closing text must name it
+    assert "sudo bash scripts/secrets/render-stack-env.sh" in p.stdout
+    assert "nothing for you to run" not in p.stdout
 
 
 @pytest.mark.parametrize(
@@ -213,3 +216,45 @@ def test_failing_tests_stop_before_commit(box):
     assert p.returncode != 0
     assert "pr create" not in box.log.read_text()
     assert VALUE not in p.stdout + p.stderr
+
+
+def test_hidden_prompt_reads_without_echo_and_leaks_nothing(box):
+    import pty
+    import select
+    import signal
+    import time
+
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.chdir(box.work)
+        os.execve(str(SCRIPT), [str(SCRIPT), "gateway", "ANTHROPIC_API_KEY"], box.env)
+    out = b""
+    sent = False
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        r, _, _ = select.select([fd], [], [], 1)
+        if r:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+        if not sent and b"(hidden): " in out:
+            os.write(fd, VALUE.encode() + b"\n")
+            sent = True
+    if time.time() >= deadline:
+        os.kill(pid, signal.SIGKILL)
+    _, status = os.waitpid(pid, 0)
+    os.close(fd)
+    text = out.decode(errors="replace")
+    assert sent, text
+    assert os.waitstatus_to_exitcode(status) == 0, text
+    # no echo: the terminal output never carries the typed value
+    assert VALUE not in text
+    assert VALUE not in box.log.read_text()
+    enc = box.work / "secrets/lifekit-gateway.env.sops"
+    assert f"ANTHROPIC_API_KEY={VALUE}" in box.decrypt(enc)
+    assert files_with_value([box.root], skip=set()) == []
+    assert VALUE not in run(["git", "log", "-p", "-1"], box.work).stdout
