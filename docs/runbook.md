@@ -798,7 +798,7 @@ the new `modelPolicy.allow` lists only the 5.5 models. Steps 3 onward run after 
    `scripts/ensure-needs-you-digest.sh`: its digest row already carries a pinned model
    (`anthropic/claude-sonnet-4-6`), and re-running the script moves it to the 5.5 Sonnet.
 3. Pin the plugin installs: `openclaw plugins install "@openclaw/diagnostics-prometheus@<core>" --force`
-   and the same for `@openclaw/duckduckgo` (the core version is `openclaw --version`); then
+   and the same for `@openclaw/duckduckgo-plugin` (the core version is `openclaw --version`); then
    `openclaw plugins inspect <id>` shows the exact version and `openclaw security audit` drops
    the unpinned-spec warning.
 4. Tool allow-list: run one verification turn first (`openclaw agent --agent kit -m "list your
