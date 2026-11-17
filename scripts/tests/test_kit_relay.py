@@ -1412,3 +1412,138 @@ def test_gateway_mounts_the_relay_key_read_only_and_names_the_host():
         in gateway["volumes"]
     )
     assert "host.docker.internal:host-gateway" in gateway["extra_hosts"]
+
+
+# ─── the envelope and the receipt ────────────────────────────────────────────
+
+ENVELOPE = (
+    "--origin",
+    "kit",
+    "--owner",
+    "firstmate",
+    "--class",
+    "dev",
+    "--acceptance",
+    "the nightly backup is confirmed",
+    "--thread",
+    "backup-nightly",
+)
+
+
+def _enveloped(relay, tmp_path, *extra, body=b"Did the nightly backup run?\n"):
+    write_exec(relay.bin / "ssh", FAKE_SSH_FORCED)
+    f = tmp_path / "body.txt"
+    f.write_bytes(body)
+    return subprocess.run(
+        ["sh", str(CLIENT), "note", str(f), *extra],
+        env=relay.env,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_an_enveloped_note_leads_with_the_envelope_and_prints_the_receipt(
+    relay, tmp_path
+):
+    r = _enveloped(relay, tmp_path, *ENVELOPE)
+    assert r.returncode == 0, r.stderr
+    out = lines(r)
+    assert out[0]["schema"] == "kit-relay-received.v1"
+    note = out[1]
+    assert note["outcome"] == "created"
+    assert out[2] == {
+        "id": note["id"],
+        "url": "relay.sh replies fm-vps",
+        "state": "submitted",
+    }
+    (saved,) = relay.notes()
+    assert saved.read_text() == (
+        "---\n"
+        "origin: kit\nowner: firstmate\nclass: dev\n"
+        "fingerprint: backup-nightly\n"
+        "acceptance: the nightly backup is confirmed\n"
+        "thread: backup-nightly\n"
+        "---\n"
+        "Did the nightly backup run?\n"
+    )
+
+
+def test_a_second_note_on_the_same_thread_returns_the_first_receipt_working(
+    relay, tmp_path
+):
+    first = lines(_enveloped(relay, tmp_path, *ENVELOPE))
+    # Another day's wording of the same question: the thread is what matches.
+    second = lines(
+        _enveloped(relay, tmp_path, *ENVELOPE, body=b"Still no sign of the backup.\n")
+    )
+    assert second[2]["id"] == first[2]["id"]
+    assert second[2]["state"] == "working"
+    assert second[1]["outcome"] == "replay"
+    assert len(relay.notes()) == 1
+    assert len(relay.requests()) == 1
+
+
+def test_a_different_thread_is_a_second_note(relay, tmp_path):
+    first = lines(_enveloped(relay, tmp_path, *ENVELOPE))
+    other = [*ENVELOPE[:-1], "disk-space"]
+    second = lines(_enveloped(relay, tmp_path, *other))
+    assert second[2]["id"] != first[2]["id"]
+    assert second[2]["state"] == "submitted"
+    assert len(relay.notes()) == 2
+
+
+def test_the_thread_defaults_to_the_bodys_digest(relay, tmp_path):
+    no_thread = ENVELOPE[:-2]
+    first = lines(_enveloped(relay, tmp_path, *no_thread))
+    again = lines(_enveloped(relay, tmp_path, *no_thread))
+    assert again[2]["id"] == first[2]["id"] and again[2]["state"] == "working"
+    thread = hashlib.sha256(b"Did the nightly backup run?\n").hexdigest()[:16]
+    assert f"thread: kit-{thread}\n" in relay.notes()[0].read_text()
+
+
+def test_the_receipt_names_the_home_it_went_to(relay, tmp_path):
+    out = lines(_enveloped(relay, tmp_path, "firstmate", *ENVELOPE))
+    assert out[2]["url"] == "relay.sh replies firstmate"
+    assert len(relay.notes(relay.main)) == 1 and not relay.notes()
+
+
+@pytest.mark.parametrize("field", ["--origin", "--owner", "--class", "--acceptance"])
+def test_a_note_missing_an_envelope_field_is_refused_and_nothing_is_sent(
+    relay, tmp_path, field
+):
+    args = list(ENVELOPE)
+    i = args.index(field)
+    del args[i : i + 2]
+    r = _enveloped(relay, tmp_path, *args)
+    assert r.returncode == 64
+    assert f"envelope missing: {field[2:]}" in r.stderr.decode()
+    assert not relay.notes() and not relay.calls()
+
+
+def test_a_note_with_an_unknown_class_or_flag_is_refused(relay, tmp_path):
+    bad = [*ENVELOPE[:5], "weather", *ENVELOPE[6:]]
+    assert _enveloped(relay, tmp_path, *bad).returncode == 64
+    assert _enveloped(relay, tmp_path, *ENVELOPE, "--priority", "high").returncode == 64
+    assert not relay.notes()
+
+
+def test_an_enveloped_note_not_yet_announced_still_gets_its_receipt(relay, tmp_path):
+    (relay.home / "note-exit").write_text("3")
+    r = _enveloped(relay, tmp_path, *ENVELOPE)
+    assert r.returncode == 3
+    assert lines(r)[2]["state"] == "submitted"
+
+
+def test_a_failed_send_prints_no_receipt(recording_ssh, tmp_path):
+    f = tmp_path / "body.txt"
+    f.write_bytes(b"x\n")
+    result, _, _ = recording_ssh("note", str(f), *ENVELOPE)
+    assert result.stdout == ""  # the recording ssh printed nothing: no id, no receipt
+
+
+def test_a_note_without_the_envelope_is_unchanged(relay, tmp_path):
+    r = _enveloped(relay, tmp_path)
+    assert r.returncode == 0, r.stderr
+    out = lines(r)
+    assert len(out) == 2 and out[1]["outcome"] == "created"
+    assert relay.notes()[0].read_bytes() == b"Did the nightly backup run?\n"

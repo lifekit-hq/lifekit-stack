@@ -7,6 +7,8 @@
     jobq.py list        what is waiting, running, and recently finished
     jobq.py depth       counts only, as JSON, for the fleet status page
     jobq.py drop <id>   remove one job
+    jobq.py enqueue <kind> <key> ...  queue a job from a script, print its receipt
+    jobq.py status <id> the receipt of one job, as it stands now
     jobq.py runner <id> the run itself, started by `next`, never by hand
 
 Some fetches cannot leave from this server (Instagram and YouTube refuse its
@@ -53,6 +55,14 @@ A quiet job (one filed by an agent that reads its status, not by the owner)
 is given up with NO_REPLY instead: its producer polls the job.
 Finished jobs stay JOBQ_KEEP_DAYS (default 14) for `list`, then are pruned.
 
+A door carries the envelope and returns a receipt (docs/runbook.md, "Envelope
+and receipt"; the text is one build-standards entry in the vault, cited there,
+never restated here). `enqueue` takes the envelope fields as flags and prints
+the receipt `{id, url, state}` on stdout; the drop door (a producer that adds
+jobs itself) may carry none, or only the fields it fills itself. A repeat of a
+job that is still waiting or running adds a count and the latest occurrence to
+that job; a finished job queued again names the finished one it reopens.
+
 `next` prints one line first, for the gate: "JOBQ ready" (a turn's
 instructions follow), "JOBQ idle" (nothing to answer: nothing queued, one
 running, or one just started) or "JOBQ wait" (jobs wait, the egress does not
@@ -61,6 +71,7 @@ answer). Anything else is a fault the gate surfaces.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import fcntl
 import json
@@ -90,6 +101,17 @@ HOST = re.compile(r"[A-Za-z0-9.-]{1,253}")
 QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
 LOCK = ".lock"
 NO_REPLY = "NO_REPLY"
+# The envelope every door accepts (build-standards, "Envelope and receipt at
+# every door"): the class names and the A2A state names are that entry's.
+CLASSES = ("dev", "ops", "finance", "life", "unclear")
+ENVELOPE_REQUIRED = ("origin", "owner", "class", "acceptance")
+ENVELOPE_FIELDS = (*ENVELOPE_REQUIRED, "fingerprint", "thread")
+STATE_NAMES = {
+    QUEUED: "submitted",
+    RUNNING: "working",
+    DONE: "completed",
+    FAILED: "failed",
+}
 # Set for the handler by its runner: the job this process was started for.
 RUN_ENV = "JOBQ_RUN_ID"
 
@@ -225,13 +247,17 @@ def add(
     payload: dict | None = None,
     label: str = "",
     quiet: bool = False,
+    envelope: dict | None = None,
     now: float | None = None,
 ) -> tuple[bool, int]:
     """Queue a job. Returns (added, jobs waiting): added is False when the
     same job is already queued or running. A finished one is queued again.
     The label (such as the link the owner sent) names the job to the owner.
     An empty probe means the job needs no egress; a quiet job's give-up says
-    nothing to the owner."""
+    nothing to the owner. The envelope (see `make_envelope`) is kept as given.
+    A repeat of a job still waiting or running adds to its count and records
+    the latest occurrence; a finished job queued again names the one it
+    reopens."""
     now = time.time() if now is None else now
     if probe and not HOST.fullmatch(probe):
         raise ValueError(f"bad probe host: {probe!r}")
@@ -241,27 +267,83 @@ def add(
         p = _path(d, jid)
         old = _load(p)
         added = old is None or old["status"] in (DONE, FAILED)
+        if not added:
+            old["repeats"] = old.get("repeats", 0) + 1
+            old["latest"] = {"at": now, **_latest(envelope)}
+            _save(p, old)
         if added:
             _out(d, jid).unlink(missing_ok=True)
-            _save(
-                p,
-                {
+            job = {
+                "id": jid,
+                "kind": kind,
+                "key": key,
+                "owner": owner,
+                "handler": list(handler),
+                "probe": probe,
+                "payload": payload or {},
+                "label": " ".join(label.split())[:300],
+                "quiet": quiet,
+                "status": QUEUED,
+                "queued_at": now,
+                "attempts": 0,
+            }
+            if envelope:
+                job["envelope"] = dict(envelope)
+            if old is not None:
+                job["reopens"] = {
                     "id": jid,
-                    "kind": kind,
-                    "key": key,
-                    "owner": owner,
-                    "handler": list(handler),
-                    "probe": probe,
-                    "payload": payload or {},
-                    "label": " ".join(label.split())[:300],
-                    "quiet": quiet,
-                    "status": QUEUED,
-                    "queued_at": now,
-                    "attempts": 0,
-                },
-            )
+                    "status": old["status"],
+                    "finished_at": old.get("finished_at", 0),
+                }
+            _save(p, job)
         waiting = sum(1 for _, j in _jobs(d) if j["status"] in (QUEUED, RUNNING))
     return added, waiting
+
+
+def _latest(envelope: dict | None) -> dict:
+    """What a repeat tells the open job about itself: who raised it again."""
+    e = envelope or {}
+    return {k: e[k] for k in ("origin", "thread") if e.get(k)}
+
+
+def make_envelope(
+    fields: dict, *, default_fingerprint: str = "", default_thread: str = ""
+) -> dict:
+    """The envelope from the fields a door was given, or ValueError naming
+    what a door refuses: a missing required field, a class or an unknown field
+    outside the list. The fingerprint and the thread, when a door gives none,
+    are the job's own (an intake job deduplicates on its key, and a one-shot
+    job is its own thread)."""
+    unknown = sorted(set(fields) - set(ENVELOPE_FIELDS))
+    if unknown:
+        raise ValueError(f"unknown envelope field: {', '.join(unknown)}")
+    env = {k: " ".join(str(fields.get(k) or "").split()) for k in ENVELOPE_FIELDS}
+    env["fingerprint"] = env["fingerprint"] or default_fingerprint
+    env["thread"] = env["thread"] or default_thread
+    missing = [k for k in ENVELOPE_REQUIRED if not env[k]]
+    if missing:
+        raise ValueError(f"envelope missing: {', '.join(missing)}")
+    if env["class"] not in CLASSES:
+        raise ValueError(f"envelope class must be one of {', '.join(CLASSES)}")
+    return env
+
+
+def receipt(jid: str, url: str, state: str) -> dict:
+    """The receipt every door returns at once, `{id, url, state}`. The state is
+    a job's own status, in the A2A name."""
+    return {"id": jid, "url": url, "state": STATE_NAMES.get(state, state)}
+
+
+def status_command(jid: str) -> str:
+    return shlex.join([sys.executable, str(Path(__file__).resolve()), "status", jid])
+
+
+def job_receipt(jid: str, url: str = "") -> dict | None:
+    """The receipt of a job as it stands now, or None when there is no such job."""
+    job = get(jid)
+    if job is None:
+        return None
+    return receipt(jid, url or status_command(jid), job["status"])
 
 
 def get(jid: str) -> dict | None:
@@ -696,6 +778,55 @@ def drop(jid: str) -> bool:
     return existed
 
 
+def _enqueue(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="jobq.py enqueue", exit_on_error=False)
+    ap.add_argument("kind")
+    ap.add_argument("key")
+    ap.add_argument("--skill", required=True, help="the skill that answers the owner")
+    ap.add_argument("--handler", required=True, help="the handler command, a JSON list")
+    ap.add_argument("--probe", default="")
+    ap.add_argument("--label", default="")
+    ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--payload", default="{}", help="a JSON object")
+    ap.add_argument("--url", default="", help="what the receipt's url names")
+    for f in ENVELOPE_FIELDS:
+        ap.add_argument(f"--{f}", default=None)
+    try:
+        a = ap.parse_args(argv)
+        handler = json.loads(a.handler)
+        payload = json.loads(a.payload)
+    except (argparse.ArgumentError, ValueError) as e:
+        raise ValueError(f"enqueue: {e}") from e
+    if not (
+        isinstance(handler, list)
+        and handler
+        and all(isinstance(x, str) for x in handler)
+    ):
+        raise ValueError("enqueue: --handler must be a JSON list of strings")
+    if not isinstance(payload, dict):
+        raise ValueError("enqueue: --payload must be a JSON object")  # noqa: TRY004
+    jid = job_id(a.kind, a.key)
+    given = {f: getattr(a, f) for f in ENVELOPE_FIELDS if getattr(a, f)}
+    envelope = (
+        make_envelope(given, default_fingerprint=a.label or jid, default_thread=jid)
+        if given
+        else None
+    )
+    add(
+        a.kind,
+        a.key,
+        owner=a.skill,
+        handler=handler,
+        probe=a.probe,
+        payload=payload,
+        label=a.label,
+        quiet=a.quiet,
+        envelope=envelope,
+    )
+    print(json.dumps(job_receipt(jid, a.url), separators=(",", ":")))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     os.umask(0o077)
     cmd = argv[1] if len(argv) > 1 else ""
@@ -717,6 +848,12 @@ def main(argv: list[str]) -> int:
         if cmd == "depth" and len(argv) == 2:
             print(json.dumps(depth()))
             return 0
+        if cmd == "enqueue":
+            return _enqueue(argv[2:])
+        if cmd == "status" and len(argv) == 3:
+            r = job_receipt(argv[2])
+            print(json.dumps(r, separators=(",", ":")) if r else f"no job {argv[2]}")
+            return 0 if r else 1
         if cmd == "drop" and len(argv) == 3:
             print(f"dropped {argv[2]}" if drop(argv[2]) else f"no job {argv[2]}")
             return 0
@@ -724,7 +861,11 @@ def main(argv: list[str]) -> int:
         print(f"jobq failed: {e}", file=sys.stderr)
         return 1
     print(
-        "usage: jobq.py next | output <id> | list | depth | drop <id>", file=sys.stderr
+        "usage: jobq.py next | output <id> | list | depth | drop <id> | status <id>\n"
+        "       jobq.py enqueue <kind> <key> --skill S --handler JSON [--probe H] [--label L]\n"
+        "         [--quiet] [--payload JSON] [--url U] [--origin O --owner W --class C\n"
+        "         --acceptance A [--fingerprint F] [--thread T]]",
+        file=sys.stderr,
     )
     return 2
 

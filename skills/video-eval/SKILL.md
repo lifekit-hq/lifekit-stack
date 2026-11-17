@@ -63,6 +63,8 @@ REPORT
 
 It prints the three lines at once: the new verdict, or `already judged <date>` when that source or title was judged before (nothing new is filed). Exit 3 lists what does not follow the rubric, as for `report`. The report is kept in `reports/ideas/`, its row in the same `index.md`.
 
+A caller that is a script (not the owner's chat) adds the envelope flags `--owner --class --acceptance [--fingerprint] [--thread]` to `enqueue`, `idea`, `link`, `note` or `repo`; the call then ends with one receipt line, `{"id","url","state"}`. Without them nothing changes. The envelope's definition is the build-standards entry cited in the runbook's "Envelope and receipt".
+
 ## Where things are kept
 
 Everything is on this server, in a private directory (`~/.life-state/intake/`, not served, not in git): `reports/` (the full report per item and rubric version) and `index.md` (one row per item judged, appended only) for good, `transcripts/` 14 days, files waiting to run in `inbox/` until their run. The owner's ranked goals the run prints for you are the headings of the vault's goals page, read live at every run; never write them anywhere. The text also reached you as tool output, so it stays in your session history after a file is gone. Do not paste the transcript or the report anywhere else: not a note to firstmate, not a GitHub issue, not the vault. An accepted report reaches the vault on its own: a host job files it there with its transcript within the hour, so never write it there yourself. The owner can ask for the full report; then send it (`python3 {baseDir}/video.py show video-<id>`). Deleting anything earlier is a host step (`docs/runbook.md`, "Video evaluation"); if the owner asks, say so rather than improvising a delete.

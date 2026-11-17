@@ -5,7 +5,8 @@
 # "Video evaluation"). The job runs inside the gateway like any other; its
 # answer goes to whoever polls it here, never to the owner's chat.
 #
-#   video-eval.sh enqueue <link> [--check]   queue a YouTube or Instagram link
+#   video-eval.sh enqueue <link> [--check] [ENVELOPE]
+#                                            queue a YouTube or Instagram link
 #   video-eval.sh backfill FILE...           queue files already downloaded,
 #                                            without fetching them again:
 #                                            reel-<shortcode>.mp4, yt-<id>.<lang>.vtt,
@@ -14,19 +15,28 @@
 #                                            and a finished job's three lines
 #   video-eval.sh report <job id>            the job's full report
 #   video-eval.sh index                      every item judged, one row each
-#   video-eval.sh idea [FILE]                file a judged idea's report (FILE,
+#   video-eval.sh idea [FILE] [ENVELOPE]     file a judged idea's report (FILE,
 #                                            else stdin): no job, no fetch;
 #                                            always origin scout; prints its
 #                                            three lines at once
-#   video-eval.sh link [FILE] [--check]      file a judged link's or article's
+#   video-eval.sh link [FILE] [--check] [ENVELOPE]  file a judged link's or article's
 #                                            report (FILE, else stdin) the same
 #                                            way, as VIDEO_EVAL_ORIGIN
-#   video-eval.sh note [FILE] [--check]      file a judged text note's report
+#   video-eval.sh note [FILE] [--check] [ENVELOPE]  file a judged text note's report
 #                                            (FILE, else stdin) the same way
-#   video-eval.sh repo [FILE] [--check]      file a judged repo's or tool's
+#   video-eval.sh repo [FILE] [--check] [ENVELOPE]  file a judged repo's or tool's
 #                                            report (FILE, else stdin) the same way
-#   video-eval.sh voice FILE [--check]       queue a voice note (an audio file):
+#   video-eval.sh voice FILE [--check] [ENVELOPE]  queue a voice note (an audio file):
 #                                            transcribed, then judged as a note
+#
+# ENVELOPE is --owner W --class C --acceptance A [--fingerprint F] [--thread T]
+# (class: dev | ops | finance | life | unclear; the origin is VIDEO_EVAL_ORIGIN,
+# always scout for idea). With any of them the item is refused (exit 2) when a
+# required field is missing, and the last line printed is the receipt
+# {"id":...,"url":...,"state":...}, a JSON line: `state` is the A2A name
+# (submitted, working, completed, failed), `url` the status command or the
+# report path. Without them nothing changes. docs/runbook.md, "Envelope and
+# receipt".
 #
 # Completion signal: `status` prints `done` or `failed` on its first line once
 # the job is finished, and a done job's last line is `report: <host path>`.
@@ -47,7 +57,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '7,29p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '7,39p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -68,6 +78,25 @@ if [ -z "$GATEWAY" ]; then
 fi
 
 host_paths() { sed 's#/home/node/\.life-state/#/var/lib/lifekit/#g'; }
+
+# Splits the envelope flags (each takes a value) from the other arguments:
+# envelope=(flag value ...), rest=(everything else, in order).
+split_envelope() {
+  envelope=() rest=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --owner | --class | --acceptance | --fingerprint | --thread)
+        [ $# -ge 2 ] || usage
+        envelope+=("$1" "$2")
+        shift 2
+        ;;
+      *)
+        rest+=("$1")
+        shift
+        ;;
+    esac
+  done
+}
 
 video() { $DOCKER exec "$GATEWAY" python3 "$SCRIPT" "$@"; }
 
@@ -100,17 +129,19 @@ case "$cmd" in
     video show "$1"
     ;;
   idea)
-    [ $# -le 1 ] || usage
-    if [ $# -eq 1 ] && [ ! -f "$1" ]; then
-      echo "$1: no such file" >&2
+    split_envelope "$@"
+    [ "${#rest[@]}" -le 1 ] || usage
+    if [ "${#rest[@]}" -eq 1 ] && [ ! -f "${rest[0]}" ]; then
+      echo "${rest[0]}: no such file" >&2
       exit 1
     fi
-    $DOCKER exec -i "$GATEWAY" python3 "$SCRIPT" idea \
-      <"${1:-/dev/stdin}" | host_paths
+    $DOCKER exec -i "$GATEWAY" python3 "$SCRIPT" idea "${envelope[@]}" \
+      <"${rest[0]:-/dev/stdin}" | host_paths
     ;;
   link | note | repo | voice)
     check=() file=""
-    for a in "$@"; do
+    split_envelope "$@"
+    for a in "${rest[@]}"; do
       case "$a" in
         --check) check=(--check) ;;
         *) [ -z "$file" ] || usage; file="$a" ;;
@@ -126,7 +157,7 @@ case "$cmd" in
       name=("$(basename "$file")")
     fi
     $DOCKER exec -i "$GATEWAY" python3 "$SCRIPT" "$cmd" "${name[@]}" \
-      --origin "$ORIGIN" "${check[@]}" <"${file:-/dev/stdin}" | host_paths
+      --origin "$ORIGIN" "${check[@]}" "${envelope[@]}" <"${file:-/dev/stdin}" | host_paths
     ;;
   *) usage ;;
 esac

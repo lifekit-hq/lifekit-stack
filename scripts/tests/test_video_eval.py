@@ -2280,3 +2280,191 @@ def test_the_wrapper_prints_host_paths(tmp_path):
 def test_the_wrapper_usage(tmp_path, args):
     r, _ = _wrapper(tmp_path, *args)
     assert r.returncode == 2
+
+
+# --- the envelope and the receipt ----------------------------------------------------
+
+ENV_FLAGS = (
+    "--owner",
+    "firstmate",
+    "--class",
+    "dev",
+    "--acceptance",
+    "the verdict is in the intake index",
+    "--thread",
+    "scout-batch-7",
+)
+
+
+def _receipt(r) -> dict:
+    """The receipt is the last line of stdout, one JSON object."""
+    return json.loads(r.stdout.splitlines()[-1])
+
+
+def test_enqueue_with_the_envelope_stores_it_and_prints_the_receipt(box):
+    r = box.cli("enqueue", YT, "--origin", "firstmate", *ENV_FLAGS)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith(f"video queued - job video-yt-{VID}")
+    assert _receipt(r) == {
+        "id": f"video-yt-{VID}",
+        "url": f"video-eval.sh status video-yt-{VID}",
+        "state": "submitted",
+    }
+    assert box.job(f"video-yt-{VID}")["envelope"] == {
+        "origin": "firstmate",
+        "owner": "firstmate",
+        "class": "dev",
+        "fingerprint": video.normalize_url(YT),
+        "acceptance": "the verdict is in the intake index",
+        "thread": "scout-batch-7",
+    }
+
+
+def test_enqueue_without_the_envelope_prints_what_it_always_did(box):
+    r = box.cli("enqueue", YT, "--origin", "firstmate")
+    assert r.returncode == 0 and r.stdout.count("\n") == 1
+    assert "envelope" not in box.job(f"video-yt-{VID}")
+
+
+def test_a_repeat_enqueue_returns_the_same_receipt_and_counts_the_repeat(box):
+    first = _receipt(box.cli("enqueue", YT, "--origin", "firstmate", *ENV_FLAGS))
+    r = box.cli("enqueue", YT, "--origin", "scout", *ENV_FLAGS)
+    assert r.stdout.startswith("video already queued")
+    assert _receipt(r) == first
+    job = box.job(f"video-yt-{VID}")
+    assert job["repeats"] == 1 and job["latest"]["origin"] == "scout"
+    assert job["envelope"]["origin"] == "firstmate"
+
+
+@pytest.mark.parametrize("flag", ["--owner", "--class", "--acceptance"])
+def test_enqueue_refuses_an_item_missing_an_envelope_field(box, flag):
+    args = list(ENV_FLAGS)
+    i = args.index(flag)
+    del args[i : i + 2]
+    r = box.cli("enqueue", YT, "--origin", "firstmate", *args)
+    assert r.returncode == 2
+    assert f"envelope missing: {flag[2:]}" in r.stderr
+    assert not box.queue.exists()
+
+
+def test_the_drop_door_without_the_envelope_still_works_and_fills_its_own(box):
+    r = box.cli("door", YT)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith("video queued: youtube video")
+    assert r.stdout.count("\n") == 1  # the door's receipt stays one line
+    assert box.job(f"video-yt-{VID}")["envelope"] == {"origin": "kit", "class": "life"}
+
+
+def test_a_door_file_fills_origin_and_class_too(box, tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"x")
+    assert box.cli("door-file", str(clip)).returncode == 0
+    (job,) = box.queue.glob("video-file-*.json")
+    assert json.loads(job.read_text())["envelope"] == {"origin": "kit", "class": "life"}
+
+
+def test_a_judged_video_enqueued_again_returns_its_report_as_completed(box):
+    jid = f"video-yt-{VID}"
+    box.cli("enqueue", YT, "--origin", "firstmate")
+    box.start(jid)
+    video.file_report(jid, report_text("accept"))
+    r = box.cli("enqueue", YT, "--origin", "firstmate", *ENV_FLAGS)
+    assert r.returncode == 0, r.stderr
+    receipt = _receipt(r)
+    assert receipt["state"] == "completed" and receipt["id"] == jid
+    assert receipt["url"].startswith(str(box.root / "reports"))
+
+
+def test_ingest_and_voice_take_the_envelope_too(box):
+    r = box.cli("ingest", "clip.mp4", "--origin", "firstmate", *ENV_FLAGS, stdin=b"x")
+    assert r.returncode == 0, r.stderr
+    assert _receipt(r)["state"] == "submitted"
+    (job,) = box.queue.glob("video-file-*.json")
+    assert json.loads(job.read_text())["envelope"]["thread"] == "scout-batch-7"
+
+
+def test_an_idea_with_the_envelope_prints_the_receipt_and_keeps_the_envelope(box):
+    r = box.cli("idea", *ENV_FLAGS, stdin=idea_text())
+    assert r.returncode == 0, r.stderr
+    row = box.index()[0]
+    saved = box.root / row["report"]
+    lines = r.stdout.splitlines()
+    assert lines[:3] == [
+        "One tool for both scripts",
+        "idea · dev-tooling · accept -> the agent fleet: try it on one job",
+        f"report: {saved}",
+    ]
+    assert json.loads(lines[3]) == {
+        "id": saved.name.split(".")[0],
+        "url": str(saved),
+        "state": "completed",
+    }
+    kept = json.loads(saved.with_name(saved.name + ".envelope.json").read_text())
+    assert kept["envelope"]["origin"] == "scout"  # an idea is always the scout's
+    assert kept["envelope"]["fingerprint"] == IDEA_SOURCE
+    assert kept["count"] == 1
+
+
+def test_the_same_idea_filed_again_returns_its_receipt_and_counts_it(box):
+    first = box.cli("idea", *ENV_FLAGS, stdin=idea_text())
+    again = box.cli("idea", *ENV_FLAGS, stdin=idea_text())
+    assert _receipt(again) == _receipt(first)
+    assert len(box.index()) == 1
+    saved = box.root / box.index()[0]["report"]
+    kept = json.loads(saved.with_name(saved.name + ".envelope.json").read_text())
+    assert kept["count"] == 2 and kept["latest"]["origin"] == "scout"
+
+
+def test_an_idea_missing_an_envelope_field_is_refused_and_not_filed(box):
+    r = box.cli("idea", "--owner", "firstmate", "--class", "dev", stdin=idea_text())
+    assert r.returncode == 2 and "envelope missing: acceptance" in r.stderr
+    assert box.index() == []
+
+
+def test_an_idea_without_the_envelope_prints_no_receipt(box):
+    r = box.cli("idea", stdin=idea_text())
+    assert r.returncode == 0 and len(r.stdout.splitlines()) == 3
+    saved = box.root / box.index()[0]["report"]
+    assert not saved.with_name(saved.name + ".envelope.json").exists()
+
+
+@pytest.mark.parametrize("cmd", ["link", "note", "repo"])
+def test_a_directly_filed_item_takes_the_envelope_and_returns_a_receipt(box, cmd):
+    text = {"link": link_text, "note": note_text, "repo": repo_text}[cmd]()
+    r = box.cli(cmd, "--origin", "firstmate", *ENV_FLAGS, stdin=text)
+    assert r.returncode == 0, r.stderr
+    receipt = _receipt(r)
+    assert receipt["state"] == "completed" and receipt["id"].startswith(f"{cmd}-")
+    assert Path(receipt["url"]).is_file()
+
+
+def test_the_wrapper_passes_the_envelope_to_enqueue_and_idea(tmp_path):
+    r, calls = _wrapper(tmp_path, "enqueue", YT, *ENV_FLAGS)
+    assert r.returncode == 0, r.stderr
+    assert calls[-1] == (
+        f"docker exec gw1 python3 {SCRIPT} enqueue {YT} {' '.join(ENV_FLAGS)}"
+        " --origin firstmate"
+    )
+    report = tmp_path / "idea.txt"
+    report.write_text("12345")
+    for args in (["idea", *ENV_FLAGS, str(report)], ["idea", str(report), *ENV_FLAGS]):
+        r, calls = _wrapper(tmp_path, *args)
+        assert r.returncode == 0, r.stderr
+        assert (
+            f"docker exec -i gw1 python3 {SCRIPT} idea {' '.join(ENV_FLAGS)}" in calls
+        )
+        assert "got 5 bytes" in calls
+
+
+def test_the_wrapper_passes_the_envelope_to_link_after_the_origin(tmp_path):
+    r, calls = _wrapper(tmp_path, "link", "--check", *ENV_FLAGS, stdin="123")
+    assert r.returncode == 0, r.stderr
+    assert (
+        f"docker exec -i gw1 python3 {SCRIPT} link --origin firstmate --check "
+        f"{' '.join(ENV_FLAGS)}" in calls
+    )
+
+
+def test_the_wrapper_refuses_an_envelope_flag_with_no_value(tmp_path):
+    r, _ = _wrapper(tmp_path, "idea", "--owner")
+    assert r.returncode == 2

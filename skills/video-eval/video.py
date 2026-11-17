@@ -94,6 +94,15 @@ own link (the repo, else the tool's homepage), the source it is recorded and
 matched under, so a repo sent once as a link answers with that verdict. Its
 report is kept in reports/repos/.
 
+Envelope and receipt (docs/runbook.md, "Envelope and receipt"): `enqueue`,
+`ingest`, `voice`, `idea`, `link`, `note` and `repo` take the envelope as
+`--owner W --class C --acceptance A [--fingerprint F] [--thread T]` (the
+origin is `--origin`, always scout for `idea`). With any of them given, a door
+refuses an item missing a field (exit 2) and prints the receipt `{id, url,
+state}` as one JSON line after its usual answer; the fields are kept with the
+job, or beside an idea's report. Without them nothing changes: the drop door
+(`door`, `door-file`) fills origin kit and class life itself.
+
 Exit 1 is an unexpected failure (reason on stderr), 2 a usage error, 3 a
 report that does not follow the rubric.
 
@@ -115,6 +124,7 @@ import datetime
 import fcntl
 import hashlib
 import http.client
+import json
 import os
 import re
 import shutil
@@ -188,6 +198,11 @@ OWNER = "video-eval"
 PROBE = {"instagram": "www.instagram.com", "youtube": "www.youtube.com", "file": ""}
 KEY_PREFIX = {"instagram": "ig", "youtube": "yt", "file": "file"}
 ORIGINS = ("kit", "firstmate", "scout")
+# The envelope flags beyond --origin; any of them given means an envelope.
+ENVELOPE_FLAGS = ("owner", "class", "acceptance", "fingerprint", "thread")
+# The drop door's own envelope: the owner sent it on Telegram.
+DOOR_ENVELOPE = {"origin": "kit", "class": "life"}
+STATUS_CMD = "video-eval.sh status"
 REPLY_ORIGINS = {"kit"}
 MODES = ("standard", "claim-check")
 FAILED = "evaluation failed"
@@ -203,6 +218,9 @@ USAGE = (
     "       video.py note [file] --origin kit|firstmate|scout [--check] < report\n"
     "       video.py repo [file] --origin kit|firstmate|scout [--check] < report\n"
     "       video.py voice <name> --origin kit|firstmate|scout [--check] < audio\n"
+    "  envelope (enqueue, ingest, voice, idea, link, note, repo; prints a receipt):\n"
+    "       --owner W --class dev|ops|finance|life|unclear --acceptance A\n"
+    "       [--fingerprint F] [--thread T]\n"
     "       video.py door <message text> | door-file <saved video>"
 )
 
@@ -685,23 +703,59 @@ class Queued:
     repeat: tuple[str, ...] = ()
 
 
-def _queue(
-    item: Item, origin: str, mode: str, path: Path | None = None, kind: str = KIND
-) -> str:
-    q = _file_job(item, origin, mode, path, kind)
+def _envelope(
+    fields: dict | None, origin: str, url: str, thread: str, door: bool = False
+) -> dict | None:
+    """The envelope for an item: the fields a producer gave (refused when one
+    is missing), the drop door's own, or none. Fingerprint and thread default
+    to the item's link and its own job or report id."""
+    if fields:
+        return jobq().make_envelope(
+            {**fields, "origin": origin}, default_fingerprint=url, default_thread=thread
+        )
+    return dict(DOOR_ENVELOPE) if door else None
+
+
+def _job_receipt(q: Queued) -> str:
+    """The receipt line for a queued item: its job's own state, or the earlier
+    verdict's report when the index already held it (nothing was queued)."""
     if q.repeat:
-        return "\n".join(q.repeat)
+        url = q.repeat[-1].removeprefix("report: ")
+        r = jobq().receipt(f"{KIND}-{q.item.key}", url, "done")
+    else:
+        r = jobq().job_receipt(q.jid, f"{STATUS_CMD} {q.jid}")
+    return json.dumps(r, separators=(",", ":"))
+
+
+def _queue(
+    item: Item,
+    origin: str,
+    mode: str,
+    path: Path | None = None,
+    kind: str = KIND,
+    fields: dict | None = None,
+) -> str:
+    env = _envelope(fields, origin, item.url, f"{KIND}-{item.key}")
+    q = _file_job(item, origin, mode, path, kind, env)
+    tail = "\n" + _job_receipt(q) if env else ""
+    if q.repeat:
+        return "\n".join(q.repeat) + tail
     when = (
         "judged on the next drain turn"
         if path is not None
         else "judged once the download route is up"
     )
     head = f"{kind} queued" if q.added else f"{kind} already queued"
-    return f"{head} - job {q.jid}, {when} ({q.waiting} waiting)"
+    return f"{head} - job {q.jid}, {when} ({q.waiting} waiting)" + tail
 
 
 def _file_job(
-    item: Item, origin: str, mode: str, path: Path | None = None, kind: str = KIND
+    item: Item,
+    origin: str,
+    mode: str,
+    path: Path | None = None,
+    kind: str = KIND,
+    envelope: dict | None = None,
 ) -> Queued:
     """Queue an item, unless the index already holds its verdict: then that
     verdict is the answer, and nothing is queued. kind is what it is judged
@@ -737,6 +791,7 @@ def _file_job(
         payload=payload,
         label=item.url,
         quiet=origin not in REPLY_ORIGINS,
+        envelope=envelope,
     )
     return Queued(item, jid, added, waiting)
 
@@ -745,28 +800,42 @@ def default_mode(item: Item, check: bool) -> str:
     return "claim-check" if check or item.source != "youtube" else "standard"
 
 
-def enqueue(arg: str, origin: str, check: bool = False) -> str | None:
+def enqueue(
+    arg: str, origin: str, check: bool = False, fields: dict | None = None
+) -> str | None:
     item = parse_link(arg)
     if item is None:
         return None
-    return _queue(item, origin, default_mode(item, check))
+    return _queue(item, origin, default_mode(item, check), fields=fields)
 
 
-def ingest(name: str, data: bytes, origin: str, check: bool = False) -> str:
+def ingest(
+    name: str,
+    data: bytes,
+    origin: str,
+    check: bool = False,
+    fields: dict | None = None,
+) -> str:
     """Queue a file already on this host: a video the owner sent, or a backfill
     of one already downloaded."""
     item, kept = _kept(name, data)
-    return _queue(item, origin, default_mode(item, check), kept)
+    return _queue(item, origin, default_mode(item, check), kept, fields=fields)
 
 
-def voice(name: str, data: bytes, origin: str, check: bool = False) -> str:
+def voice(
+    name: str,
+    data: bytes,
+    origin: str,
+    check: bool = False,
+    fields: dict | None = None,
+) -> str:
     """Queue a voice note: transcribed like a video file, judged as a note."""
     rubric = load_rubric()
     if NOTE not in rubric.list("kinds"):
         raise ValueError(f"{rubric.path} has no {NOTE} kind")
     mode = _producer_mode(origin, check)
     item, kept = _kept(name, data, NOTE)
-    return _queue(item, origin, mode, kept, NOTE)
+    return _queue(item, origin, mode, kept, NOTE, fields)
 
 
 def _kept(name: str, data: bytes, kind: str = KIND) -> tuple[Item, Path]:
@@ -865,7 +934,9 @@ def door(text: str) -> str | None:
     item = door_link(text)
     if item is None:
         return None
-    return _door_receipt(_file_job(item, "kit", default_mode(item, False)))
+    return _door_receipt(
+        _file_job(item, "kit", default_mode(item, False), envelope=dict(DOOR_ENVELOPE))
+    )
 
 
 def door_file(media: Path) -> str | None:
@@ -881,7 +952,11 @@ def door_file(media: Path) -> str | None:
     if st.st_size > MAX_INGEST_BYTES:
         raise ValueError(f"{media.name} is larger than {MAX_INGEST_BYTES >> 20} MB")
     item, kept = _kept(media.name, media.read_bytes())
-    return _door_receipt(_file_job(item, "kit", default_mode(item, False), kept))
+    return _door_receipt(
+        _file_job(
+            item, "kit", default_mode(item, False), kept, envelope=dict(DOOR_ENVELOPE)
+        )
+    )
 
 
 def _door_receipt(q: Queued) -> str:
@@ -1306,37 +1381,51 @@ def _row(
     }
 
 
-def file_idea(text: str, now: float | None = None) -> tuple[int, str]:
+def file_idea(
+    text: str, now: float | None = None, fields: dict | None = None
+) -> tuple[int, str]:
     """(exit code, output) for `idea`, always filed as the scout's. The idea is
     recorded under its primary source's link."""
-    return _file_direct(text, IDEA, IDEA_FIELDS, IDEA_ORIGIN, IDEA_MODE, now)
+    return _file_direct(text, IDEA, IDEA_FIELDS, IDEA_ORIGIN, IDEA_MODE, now, fields)
 
 
 def file_link(
-    text: str, origin: str, check: bool = False, now: float | None = None
+    text: str,
+    origin: str,
+    check: bool = False,
+    now: float | None = None,
+    fields: dict | None = None,
 ) -> tuple[int, str]:
     """(exit code, output) for `link`: a link or an article, recorded under its
     own link."""
     mode = _producer_mode(origin, check)
-    return _file_direct(text, LINK, LINK_FIELDS, origin, mode, now)
+    return _file_direct(text, LINK, LINK_FIELDS, origin, mode, now, fields)
 
 
 def file_note(
-    text: str, origin: str, check: bool = False, now: float | None = None
+    text: str,
+    origin: str,
+    check: bool = False,
+    now: float | None = None,
+    fields: dict | None = None,
 ) -> tuple[int, str]:
     """(exit code, output) for `note`: a text note, recorded under its text's
     digest."""
     mode = _producer_mode(origin, check)
-    return _file_direct(text, NOTE, NOTE_FIELDS, origin, mode, now)
+    return _file_direct(text, NOTE, NOTE_FIELDS, origin, mode, now, fields)
 
 
 def file_repo(
-    text: str, origin: str, check: bool = False, now: float | None = None
+    text: str,
+    origin: str,
+    check: bool = False,
+    now: float | None = None,
+    fields: dict | None = None,
 ) -> tuple[int, str]:
     """(exit code, output) for `repo`: a repo or a tool, recorded under its
     own link."""
     mode = _producer_mode(origin, check)
-    return _file_direct(text, REPO, REPO_FIELDS, origin, mode, now)
+    return _file_direct(text, REPO, REPO_FIELDS, origin, mode, now, fields)
 
 
 def _producer_mode(origin: str, check: bool) -> str:
@@ -1352,12 +1441,14 @@ def _file_direct(
     origin: str,
     mode: str,
     now: float | None = None,
+    envelope_fields: dict | None = None,
 ) -> tuple[int, str]:
     """(exit code, output) for an item its producer has judged already: the
     three lines, an earlier verdict for the same item, or the reasons the
     report does not follow the rubric. Its report is kept in reports/<kind>s/,
     out of reach of intake-to-vault, which files a video's report with its
-    transcript."""
+    transcript. With envelope fields the output ends with the receipt line, and
+    the envelope is kept beside the report (see `_keep_envelope`)."""
     now = time.time() if now is None else now
     rubric = load_rubric()
     if kind not in rubric.list("kinds"):
@@ -1394,7 +1485,10 @@ def _file_direct(
     if row is not None:
         if normalize_url(row["source"]) != url:
             _append_repeat(root, row, url, origin, rubric, kind)
-        return 0, "\n".join(repeat_reply(row))
+        out = "\n".join(repeat_reply(row))
+        return 0, out + _direct_receipt(
+            root, row, origin, url, envelope_fields, now, True
+        )
     fit(r, rubric.list("max-lines"), rubric.list("max-chars"))
     key = hashlib.sha256(url.encode()).hexdigest()[:16]
     path = root / "reports" / f"{kind}s" / f"{kind}-{key}.{rubric.stamp}.md"
@@ -1402,7 +1496,55 @@ def _file_direct(
     _private_write(path, stamp(r, url, origin, mode, rubric, now, kind))
     row = _row(r, kind, origin, url, rubric, root, path, now)
     append_row(root, row)
-    return 0, "\n".join(reply_lines(row, root))
+    out = "\n".join(reply_lines(row, root))
+    return 0, out + _direct_receipt(root, row, origin, url, envelope_fields, now, False)
+
+
+def _report_id(row: dict) -> str:
+    """The id of a directly filed item: its report's name without the rubric
+    stamp and suffix (idea-<key>)."""
+    return Path(row["report"]).name.split(".")[0]
+
+
+def _direct_receipt(
+    root: Path,
+    row: dict,
+    origin: str,
+    url: str,
+    fields: dict | None,
+    now: float,
+    repeat: bool,
+) -> str:
+    """The receipt line (with its newline) for an item filed directly, or
+    nothing when no envelope was given: the id of the report, its path as the
+    url, and the state completed (it was judged when it was filed)."""
+    if not fields:
+        return ""
+    jid = _report_id(row)
+    env = _envelope(fields, origin, url, jid)
+    _keep_envelope(root / row["report"], env, now, repeat)
+    r = jobq().receipt(jid, str(root / row["report"]), "done")
+    return "\n" + json.dumps(r, separators=(",", ":"))
+
+
+def _keep_envelope(report: Path, env: dict, now: float, repeat: bool) -> None:
+    """The envelope beside the report it came with (<report>.envelope.json).
+    An item filed again keeps its first envelope and gains a count and the
+    latest occurrence, the same rule the queue applies to a repeated job."""
+    path = report.with_name(report.name + ".envelope.json")
+    kept = {}
+    if repeat and path.is_file():
+        try:
+            kept = json.loads(path.read_text())
+        except ValueError:
+            kept = {}
+    kept.setdefault("envelope", env)
+    kept["count"] = kept.get("count", 0) + 1
+    kept["latest"] = {
+        "at": now,
+        **{k: env[k] for k in ("origin", "thread") if env.get(k)},
+    }
+    _private_write(path, json.dumps(kept, indent=1, sort_keys=True) + "\n")
 
 
 # --- the index ----------------------------------------------------------------------
@@ -1562,29 +1704,47 @@ def show(jid: str) -> str:
 # --- the command line ---------------------------------------------------------------
 
 
-def _flags(args: list[str]) -> tuple[list[str], str, bool]:
-    origin, check, rest = "kit", False, []
+def _flags(args: list[str]) -> tuple[list[str], str, bool, dict]:
+    """(arguments, origin, check, envelope fields): the envelope fields are
+    only those the caller gave, empty when it gave none."""
+    origin, check, rest, fields = "kit", False, [], {}
     it = iter(args)
     for a in it:
         if a == "--check":
             check = True
         elif a == "--origin":
             origin = next(it, "")
+        elif a.startswith("--") and a[2:] in ENVELOPE_FLAGS:
+            fields[a[2:]] = next(it, "")
         else:
             rest.append(a)
-    return rest, origin, check
+    return rest, origin, check, fields
 
 
 def main(argv: list[str]) -> int:
     # The door's argument is the owner's message as sent, never read for flags.
     door_cmd = argv[1] if len(argv) == 3 and argv[1] in ("door", "door-file") else ""
-    args, origin, check = ([], "kit", False) if door_cmd else _flags(argv[1:])
+    args, origin, check, fields = (
+        ([], "kit", False, {}) if door_cmd else _flags(argv[1:])
+    )
     if not door_cmd and (not args or args[0] in ("-h", "--help")):
         print(__doc__.split("\n\n")[0] + "\n" + USAGE, file=sys.stderr)
         return 2
     os.umask(0o077)
     cmd, rest = (door_cmd, argv[2:]) if door_cmd else (args[0], args[1:])
     try:
+        if fields:
+            # A door refuses an item missing a field, before it files anything.
+            try:
+                env_origin = IDEA_ORIGIN if cmd == "idea" else origin
+                jobq().make_envelope(
+                    {**fields, "origin": env_origin},
+                    default_fingerprint="-",
+                    default_thread="-",
+                )
+            except ValueError as e:
+                print(f"video refused: {e}", file=sys.stderr)
+                return 2
         if cmd in ("door", "door-file"):
             out = door(rest[0]) if cmd == "door" else door_file(Path(rest[0]))
             if out is None:
@@ -1613,13 +1773,13 @@ def main(argv: list[str]) -> int:
             return code
         if cmd == "idea" and len(rest) <= 1 and "--origin" not in argv:
             text = Path(rest[0]).read_text() if rest else sys.stdin.read()
-            code, out = file_idea(text)
+            code, out = file_idea(text, fields=fields)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
         if cmd in ("link", "note", "repo") and len(rest) <= 1:
             text = Path(rest[0]).read_text() if rest else sys.stdin.read()
             filer = {"link": file_link, "note": file_note, "repo": file_repo}[cmd]
-            code, out = filer(text, origin, check)
+            code, out = filer(text, origin, check, fields=fields)
             print(out, file=sys.stderr if code else sys.stdout)
             return code
         if cmd == "status" and len(rest) == 1:
@@ -1635,7 +1795,7 @@ def main(argv: list[str]) -> int:
             )
             return 0
         if cmd == "enqueue" and len(rest) == 1:
-            out = enqueue(rest[0], origin, check)
+            out = enqueue(rest[0], origin, check, fields)
             if out is None:
                 print(
                     f"not a YouTube or Instagram video link: {rest[0]}", file=sys.stderr
@@ -1644,10 +1804,10 @@ def main(argv: list[str]) -> int:
             print(out)
             return 0
         if cmd == "ingest" and len(rest) == 1:
-            print(ingest(rest[0], sys.stdin.buffer.read(), origin, check))
+            print(ingest(rest[0], sys.stdin.buffer.read(), origin, check, fields))
             return 0
         if cmd == "voice" and len(rest) == 1:
-            print(voice(rest[0], sys.stdin.buffer.read(), origin, check))
+            print(voice(rest[0], sys.stdin.buffer.read(), origin, check, fields))
             return 0
         if (
             cmd
