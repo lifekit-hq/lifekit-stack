@@ -15,8 +15,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 ENSURE = REPO / "scripts/ensure-dev-problem-block.sh"
 SHARED = REPO / "defaults/agents/shared/dev-problems.md"
+A2A = REPO / "defaults/agents/shared/a2a-envelope.md"
 BEGIN = "<!-- lifekit:dev-problems:begin -->"
 END = "<!-- lifekit:dev-problems:end -->"
+A2A_BEGIN = "<!-- lifekit:a2a-envelope:begin -->"
 
 # What each agent's persona holds before the block lands (host state: free text).
 PERSONAS = {
@@ -29,7 +31,8 @@ PERSONAS = {
 
 
 def block_text() -> str:
-    return SHARED.read_text().strip("\n")
+    """Both shared blocks as they land in a SOUL.md: dev-problems, then a2a."""
+    return SHARED.read_text().strip("\n") + "\n\n" + A2A.read_text().strip("\n")
 
 
 def state(tmp_path, personas=None):
@@ -64,6 +67,7 @@ def test_every_workspace_gets_the_block_and_keeps_its_own_persona(tmp_path):
         # The persona stays exactly as it was, with the block after a blank line.
         assert soul(root, agent) == before.rstrip("\n") + "\n\n" + block_text() + "\n"
         assert f"agent '{agent}': dev-problem block installed" in r.stdout
+        assert f"agent '{agent}': a2a-envelope block installed" in r.stdout
 
 
 def test_a_second_run_changes_nothing(tmp_path):
@@ -73,7 +77,7 @@ def test_a_second_run_changes_nothing(tmp_path):
     r = run(root)
     assert r.returncode == 0, r.stderr
     assert {a: soul(root, a) for a in PERSONAS} == first
-    assert r.stdout.count("block unchanged") == len(PERSONAS)
+    assert r.stdout.count("block unchanged") == 2 * len(PERSONAS)
 
 
 def test_a_changed_block_replaces_in_place_without_a_second_copy(tmp_path):
@@ -88,9 +92,10 @@ def test_a_changed_block_replaces_in_place_without_a_second_copy(tmp_path):
     assert r.returncode == 0, r.stderr
     assert soul(root, "kit") == (
         f"# Kit\n\nintro\n\n{BEGIN}\n## Development-class problems\n\nnew text\n{END}"
-        "\n\nafter the block\n"
+        f"\n\nafter the block\n\n{A2A.read_text().strip()}\n"
     )
-    assert "block updated" in r.stdout
+    assert "dev-problem block updated" in r.stdout
+    assert "a2a-envelope block installed" in r.stdout
 
 
 def test_named_agents_only(tmp_path):
@@ -125,10 +130,57 @@ def test_dry_run_writes_nothing(tmp_path):
     r = run(root, DRY_RUN="1")
     assert r.returncode == 0, r.stderr
     assert {a: soul(root, a) for a in PERSONAS} == PERSONAS
-    assert r.stdout.count("block would-install") == len(PERSONAS)
+    assert r.stdout.count("block would-install") == 2 * len(PERSONAS)
 
 
 def test_a_state_dir_with_no_workspace_fails_loudly(tmp_path):
     r = run(tmp_path / "empty")
     assert r.returncode == 1
     assert "no agent workspace" in r.stderr
+
+
+def test_the_block_carries_the_envelope_and_the_ack(tmp_path):
+    # Every agent's SOUL.md gets the envelope fields and the ack rule, and the
+    # rule cites the vault build standard rather than restating it.
+    root = state(tmp_path)
+    assert run(root).returncode == 0
+    for agent in PERSONAS:
+        text = soul(root, agent)
+        assert A2A_BEGIN in text
+        for field in (
+            '"a2a":1',
+            '"thread"',
+            '"from"',
+            '"to"',
+            '"type"',
+            '"turn"',
+            '"reply_expected"',
+            '"deadline"',
+            '"origin"',
+            '"owner"',
+            '"class"',
+            '"fingerprint"',
+            '"acceptance"',
+            '"body"',
+        ):
+            assert field in text, field
+        # The receipt: one ack first, before any work, with its state and home.
+        assert "`type: ack`" in text
+        assert "before any work or reply" in text
+        assert "`submitted` or `rejected`" in text
+        assert "where the item now lives" in text
+        # An already-open thread gets no second item.
+        assert "no second item" in text and "`state: working`" in text
+        # The sender stores the receipt and never re-sends.
+        assert "never re-send" in text
+        assert "Envelope and receipt at every door" in text
+
+
+def test_a_lone_a2a_marker_leaves_the_whole_file_untouched(tmp_path):
+    broken = "# Kit\n\n" + A2A_BEGIN + "\nhalf a block\n"
+    root = state(tmp_path, {"kit": broken, "career": PERSONAS["career"]})
+    r = run(root)
+    assert r.returncode == 1
+    assert "a2a-envelope marker" in r.stderr and "left untouched" in r.stderr
+    assert soul(root, "kit") == broken
+    assert A2A_BEGIN in soul(root, "career")

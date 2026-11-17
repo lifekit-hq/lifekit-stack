@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# ensure-dev-problem-block.sh - put the one shared "Development-class problems"
-# persona block (defaults/agents/shared/dev-problems.md) into the SOUL.md of
-# every OpenClaw agent workspace, so each agent files a development-class
-# problem through devclaw intake and carries on, never telling the owner
-# (docs/runbook.md, "Development-class problems: file and carry on").
+# ensure-dev-problem-block.sh - put the shared persona blocks into the SOUL.md
+# of every OpenClaw agent workspace:
+#   dev-problems  (defaults/agents/shared/dev-problems.md): file a development-class
+#                 problem through devclaw intake and carry on, never telling the owner
+#                 (docs/runbook.md, "Development-class problems: file and carry on").
+#   a2a-envelope  (defaults/agents/shared/a2a-envelope.md): the one agent-to-agent
+#                 envelope and the mandatory ack (docs/runbook.md, "Agent-to-agent
+#                 envelope and ack").
 #
-# One source, one block: the text lives only in the shared file. The script
-# finds every workspace under <config>/agents/*/workspace and replaces the
+# One source per block: the text lives only in its shared file. The script
+# finds every workspace under <config>/agents/*/workspace and replaces each
 # block between its two marker lines in that workspace's SOUL.md, or appends it
 # when the markers are absent. Nothing else in the file is touched, so the
 # per-agent persona and Ledger's own notes stay as they are. (Ledger's AGENTS.md
@@ -25,15 +28,22 @@
 # Env overrides:
 #   OPENCLAW_CONFIG_DIR     host path of the gateway state dir
 #                           (default: /srv/openclaw/config, as in compose)
-#   DEV_PROBLEM_BLOCK_FILE  the block to install (default: the shared file)
+#   DEV_PROBLEM_BLOCK_FILE  the dev-problems block to install (default: the shared file)
+#   A2A_BLOCK_FILE          the a2a-envelope block to install (default: the shared file)
 #   DRY_RUN=1               report what would change, write nothing
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-block="${DEV_PROBLEM_BLOCK_FILE:-${repo_root}/defaults/agents/shared/dev-problems.md}"
 config_dir="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
 
-[ -f "$block" ] || { echo "no block file at $block" >&2; exit 1; }
+# label|marker name|block file; the markers are <!-- lifekit:NAME:begin|end -->.
+blocks=(
+  "dev-problem|dev-problems|${DEV_PROBLEM_BLOCK_FILE:-${repo_root}/defaults/agents/shared/dev-problems.md}"
+  "a2a-envelope|a2a-envelope|${A2A_BLOCK_FILE:-${repo_root}/defaults/agents/shared/a2a-envelope.md}"
+)
+for spec in "${blocks[@]}"; do
+  [ -f "${spec##*|}" ] || { echo "no block file at ${spec##*|}" >&2; exit 1; }
+done
 
 if [ "$#" -gt 0 ]; then
   agents=("$@")
@@ -48,38 +58,44 @@ if [ "${#agents[@]}" -eq 0 ]; then
   exit 1
 fi
 
-# stdout: installed | updated | unchanged | would-install | would-update.
-# Exit 3: a lone or reversed marker, file untouched.
+# stdout: one "<label> <verb>" line per block, verb = installed | updated |
+# unchanged | would-install | would-update. All blocks are checked before
+# anything is written, so a lone or reversed marker for any of them (exit 3)
+# leaves the whole file untouched.
 splice() { # $1 = SOUL.md path
-  python3 - "$1" "$block" "${DRY_RUN:-}" <<'PY'
+  python3 - "$1" "${DRY_RUN:-}" "${blocks[@]}" <<'PY'
 import os, sys, tempfile
 
-path, block_path, dry = sys.argv[1], sys.argv[2], bool(sys.argv[3])
-BEGIN, END = "<!-- lifekit:dev-problems:begin -->", "<!-- lifekit:dev-problems:end -->"
-block = open(block_path, encoding="utf-8").read().strip("\n")
+path, dry = sys.argv[1], bool(sys.argv[2])
 text = open(path, encoding="utf-8").read()
-
-b, e = text.find(BEGIN), text.find(END)
-if (b < 0) != (e < 0) or text.count(BEGIN) > 1 or text.count(END) > 1 or (b >= 0 and e < b):
-    sys.exit(3)
-if b >= 0:
-    new = text[:b] + block + text[e + len(END):]
-    verb = "updated"
-else:
-    new = text.rstrip("\n") + ("\n\n" if text.strip() else "") + block + "\n"
-    verb = "installed"
-if new == text:
-    print("unchanged")
-    sys.exit(0)
-if dry:
-    print("would-" + ("update" if verb == "updated" else "install"))
-    sys.exit(0)
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".soul-")
-with os.fdopen(fd, "w", encoding="utf-8") as f:
-    f.write(new)
-os.chmod(tmp, os.stat(path).st_mode & 0o7777)
-os.replace(tmp, path)
-print(verb)
+WOULD = {"installed": "would-install", "updated": "would-update"}
+new, out = text, []
+for spec in sys.argv[3:]:
+    label, name, block_path = spec.split("|", 2)
+    BEGIN, END = f"<!-- lifekit:{name}:begin -->", f"<!-- lifekit:{name}:end -->"
+    block = open(block_path, encoding="utf-8").read().strip("\n")
+    b, e = new.find(BEGIN), new.find(END)
+    if (b < 0) != (e < 0) or new.count(BEGIN) > 1 or new.count(END) > 1 or (b >= 0 and e < b):
+        print(f"lone, repeated or reversed {name} marker", file=sys.stderr)
+        sys.exit(3)
+    if b >= 0:
+        after = new[:b] + block + new[e + len(END):]
+        verb = "updated"
+    else:
+        after = new.rstrip("\n") + ("\n\n" if new.strip() else "") + block + "\n"
+        verb = "installed"
+    if after == new:
+        out.append(f"{label} unchanged")
+    else:
+        out.append(f"{label} " + (WOULD[verb] if dry else verb))
+    new = after
+if new != text and not dry:
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".soul-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(new)
+    os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+    os.replace(tmp, path)
+print("\n".join(out))
 PY
 }
 
@@ -91,10 +107,12 @@ for agent in "${agents[@]}"; do
     rc=1
     continue
   fi
-  if verb="$(splice "$soul")"; then
-    echo "agent '$agent': dev-problem block $verb -> $soul"
+  if verbs="$(splice "$soul")"; then
+    while IFS= read -r line; do
+      echo "agent '$agent': ${line% *} block ${line##* } -> $soul"
+    done <<<"$verbs"
   else
-    echo "agent '$agent': $soul has a lone, repeated or reversed block marker; left untouched" >&2
+    echo "agent '$agent': $soul left untouched (block marker problem above)" >&2
     rc=1
   fi
 done
