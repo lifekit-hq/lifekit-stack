@@ -4,9 +4,13 @@
 Writes OUT_DIR/screen-changes.json (schema fleet-screen-changes.v1, contract:
 README.md "Screen changes feed" and the dashboard's docs/SCREEN-CHANGES.md) and
 copies the before/after PNGs it lists to OUT_DIR/screen-changes/<id>/<file>:
-one item per open pull request, in an allowlisted repo, whose diff adds,
-changes or removes a screen-baseline image (`*-linux.png`), newest first, at
-most 20 items and 40 screens each.
+one item per pull request, in an allowlisted repo, whose diff adds, changes or
+removes a screen-baseline image (`*-linux.png`), newest first, at most 20 items
+and 40 screens each. An open PR is `state: "open"`; a merged one stays for
+MERGED_WINDOW (7 days after `merged_epoch`) as `state: "merged"`, images
+included, and is deleted with its images after that. A closed, unmerged PR
+leaves at once. A veto is not read back (the dashboard keeps it per device and
+drops the item on its side).
 
 Usage: screen_changes.py --out-dir <dir> --state-dir <dir> --now <epoch>
          --home-id <id>
@@ -19,7 +23,7 @@ text matches it is withheld). Exit 3 means nothing was read, so the previous
 feed stays; any other failure also leaves the previous feed and its images
 as they were.
 
-gh is read-only here (`pr list`, `api` GETs). What was fetched for a head
+gh is read-only here (`pr list` open and merged, `api` GETs). What was fetched for a head
 commit is cached in --state-dir, so a quiet minute is one `pr list` per repo.
 """
 
@@ -43,6 +47,7 @@ DEFAULT_REPOS = "lifekit-hq/lifekit-dashboard"
 MAX_ITEMS = 20
 MAX_SCREENS = 40
 PR_LIMIT = 50
+MERGED_WINDOW = 7 * 86400
 TITLE_MAX = 160
 IMAGE_MAX_BYTES = 4 * 1024 * 1024
 BUDGET_SECONDS = 40
@@ -119,6 +124,17 @@ class Reader:
             "pr", "list", "-R", repo, "--state", "open", "--limit", str(PR_LIMIT),
             "--json", "number,title,headRefOid,baseRefOid,updatedAt",
         )  # fmt: skip
+        return self.rows(out)
+
+    def merged(self, repo: str) -> list[dict[str, Any]]:
+        out = self.call(
+            "pr", "list", "-R", repo, "--state", "merged", "--limit", str(PR_LIMIT),
+            "--json", "number,title,headRefOid,baseRefOid,updatedAt,mergedAt",
+        )  # fmt: skip
+        return self.rows(out)
+
+    @staticmethod
+    def rows(out: bytes) -> list[dict[str, Any]]:
         rows = json.loads(out)
         if not isinstance(rows, list):
             raise ValueError("pr list is not a list")
@@ -247,7 +263,13 @@ def build(args: argparse.Namespace) -> dict[str, Any] | None:
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
     for repo in repos:
-        for pr in reader.pulls(repo):
+        # Open first, so an item present in both lists stays open.
+        listed = [(pr, "open") for pr in reader.pulls(repo)]
+        for pr in reader.merged(repo):
+            merged = epoch(pr.get("mergedAt"))
+            if merged is not None and merged + MERGED_WINDOW > args.now:
+                listed.append((pr, "merged"))
+        for pr, state in listed:
             number, head, base = (
                 pr.get("number"),
                 pr.get("headRefOid"),
@@ -303,9 +325,12 @@ def build(args: argparse.Namespace) -> dict[str, Any] | None:
                 "pr": number,
                 "title": title,
                 "url": f"https://github.com/{repo}/pull/{number}",
+                "state": state,
                 "ts": ts,
                 "screens": screens,
             }
+            if state == "merged":
+                item["merged_epoch"] = epoch(pr.get("mergedAt"))
             if credential.search(json.dumps(item, ensure_ascii=False)):
                 continue
             seen.add(item_id)

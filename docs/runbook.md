@@ -3209,7 +3209,7 @@ no container is touched).
 
 The same run writes `/var/lib/lifekit-fleet/screen-changes.json` and the images
 under `screen-changes/`, the dashboard's "Screen changes" feed: each open pull
-request in `FLEET_SCREEN_REPOS` (default `lifekit-hq/lifekit-dashboard`) that
+request, or one merged in the last 7 days, in `FLEET_SCREEN_REPOS` (default `lifekit-hq/lifekit-dashboard`) that
 changes a `*-linux.png` baseline, with its before and after images (contract in
 the README "Screen changes feed"). It reads GitHub through the admin account's
 `gh`, read-only, so that account's `gh auth` must reach the repo. The helper
