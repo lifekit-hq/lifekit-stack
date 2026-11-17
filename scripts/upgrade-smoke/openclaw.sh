@@ -139,21 +139,49 @@ out="$(gw doctor --post-upgrade --json | json_check 'print(len(d.get("findings")
 [[ "${out}" == 0 ]] || RED+=("post-upgrade-findings")
 
 # ---------------------------------------------------------------- MCP
-# Every configured MCP server must connect: an upgrade that breaks the MCP
-# client breaks all of them. The probe exits non-zero naming the first failure.
+# Every configured MCP server must be reachable from the gateway: an upgrade
+# that breaks the gateway's network or MCP config breaks all of them.
+# `openclaw mcp probe` is not usable here: since 2026.11.4 it needs exclusive
+# offline state ownership (the gateway stopped), so the smoke reads the
+# configured set from `mcp status --json` (offline-safe, connects to nothing)
+# and fetches each HTTP server's own URL from inside the gateway container. Any
+# HTTP answer below 500 counts (an unauthenticated GET gets 400/401 from a
+# healthy MCP endpoint); a refused connection, timeout or 5xx is red. A server
+# with no URL (stdio) is judged by its status entry alone. Red names the server.
 rc=0
-mcp="$(gw mcp probe --json)" || rc=$?
+mcp="$(gw mcp status --json)" || rc=$?
 out="$(json_check '
-if d.get("ok") is False: print("PARSE_ERROR"); sys.exit()
-s = d.get("servers") or {}
-n = sum(1 for v in s.values() if isinstance(v, dict) and isinstance(v.get("tools"), int))
-print(f"{n}/{len(s)}")
+import re
+if not isinstance(d.get("servers"), list): print("PARSE_ERROR"); sys.exit()
+for s in d["servers"]:
+    if not isinstance(s, dict) or s.get("enabled") is False: continue
+    name = re.sub(r"[^A-Za-z0-9_.-]", "?", str(s.get("name") or "unknown"))[:60]
+    m = re.search(r"https?://\S+", str(s.get("launch") or ""))
+    print(name, m.group(0) if m else ("-" if s.get("ok") is not False else "!"))
 ' <<<"${mcp}" || true)"
-if ((rc != 0)) || [[ "${out}" == PARSE_ERROR || -z "${out}" ]]; then
-  RED+=("mcp-probe")
+if ((rc != 0)) || [[ "${out}" == *PARSE_ERROR* ]]; then
+  RED+=("mcp-status-unreadable")
 else
-  MCP="${out}"
-  [[ "${MCP%/*}" == "${MCP#*/}" ]] || RED+=("mcp-probe")
+  mcp_up=0 mcp_total=0 mcp_bad=()
+  while read -r name target; do
+    [[ -n "${name}" ]] || continue
+    mcp_total=$((mcp_total + 1))
+    case "${target}" in
+      -) mcp_up=$((mcp_up + 1)) ;;
+      "!" | "") mcp_bad+=("${name}") ;;
+      *)
+        if timeout "${TIMEOUT}" docker exec "${GW}" node -e \
+          "fetch(process.argv[1],{signal:AbortSignal.timeout(8000)}).then((r)=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))" \
+          -- "${target}" </dev/null >/dev/null 2>&1; then
+          mcp_up=$((mcp_up + 1))
+        else
+          mcp_bad+=("${name}")
+        fi
+        ;;
+    esac
+  done <<<"${out}"
+  MCP="${mcp_up}/${mcp_total}"
+  ((${#mcp_bad[@]} == 0)) || RED+=("mcp-probe:$(IFS=,; echo "${mcp_bad[*]}")")
 fi
 
 # ---------------------------------------------------------------- doctor lint
