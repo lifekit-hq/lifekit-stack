@@ -2567,11 +2567,12 @@ one sitting. Who takes the sign-in and the consent click, and where, is in that 
    specific Google Drive files you use with this app"; if it lists anything wider, click Cancel
    and stop. After *Allow*, rclone prints the token between `--->` and `<---End paste`. Leave that
    terminal open for step 4; the output is a credential, so no screenshot and no chat.
-4. **Install it (the VPS, as `lifekit`).**
+4. **Install it (the VPS, as `lifekit`).** The paths below are the reader agent's workspace; while
+   the job is still on Kit ("Reader agent"), use `agents/kit` instead.
 
    ```bash
    G=$(docker ps -q --filter label=com.docker.compose.project=openclaw --filter label=com.docker.compose.service=openclaw-gateway)
-   docker exec -it "$G" python3 /home/node/.openclaw/agents/kit/workspace/skills/doc-door/drive_upload.py configure
+   docker exec -it "$G" python3 /home/node/.openclaw/agents/reader/workspace/skills/doc-door/drive_upload.py configure
    ```
 
    It asks for the client id, then the client secret (hidden), then the pasted token block
@@ -2580,7 +2581,7 @@ one sitting. Who takes the sign-in and the consent click, and where, is in that 
 5. **Verify.**
 
    ```bash
-   docker exec "$G" python3 /home/node/.openclaw/agents/kit/workspace/skills/doc-door/drive_upload.py verify
+   docker exec "$G" python3 /home/node/.openclaw/agents/reader/workspace/skills/doc-door/drive_upload.py verify
    ```
 
    `VERIFY OK` means all of: the config is mode 0600 and asks for `drive.file`; **Google itself
@@ -2608,7 +2609,7 @@ the token's scope.
 
 ```bash
 docker exec -e DOC_DOOR_RCLONE_REMOTE=':local:/tmp/doc-door-rehearsal/' "$G" \
-  python3 /home/node/.openclaw/agents/kit/workspace/skills/doc-door/drive_upload.py verify uploader
+  python3 /home/node/.openclaw/agents/reader/workspace/skills/doc-door/drive_upload.py verify uploader
 ```
 
 CI covers the door-to-uploader handoff the same way, with no Google and no secret
