@@ -227,10 +227,18 @@ patch_for() {
 # Leaf paths of a patch: scalars and arrays (an array replaces whole), never objects.
 LEAVES='def lp: path(def r: if type == "object" then .[] | r else . end; r);'
 
-# rollback_for PATCH LIVE -> the same paths set back to their live values (null deletes)
+# rollback_for PATCH LIVE -> the patch that undoes PATCH. A leaf whose path exists
+# live is set back to its exact live value; where the live config lacks a key (or a
+# whole object, e.g. the api-key profile) the rollback deletes the shallowest missing
+# ancestor with null, because leaf-by-leaf nulls would leave an empty or partial
+# object that fails schema validation.
 rollback_for() {
   jq -c --argjson live "$2" "$LEAVES"'
-    reduce (lp as $p | $p) as $p ({}; setpath($p; $live | getpath($p)))' <<< "$1"
+    [lp as $p
+     | ([range(1; ($p | length) + 1) as $n | $p[:$n] | . as $q | select(($live | try getpath($q) catch null) == null)] | first // $p)]
+    | unique as $t
+    | reduce ($t[] | . as $x | select([$t[] | select(length < ($x | length) and $x[:length] == .)] | length == 0)) as $q
+        ({}; setpath($q; $live | try getpath($q) catch null))' <<< "$1"
 }
 
 # pending_paths PATCH LIVE -> dotted path of every leaf whose live value differs
@@ -282,10 +290,12 @@ verify_turns() {
   # (as in the deploy smoke). It does not avoid "cli session history refused
   # across auth boundary: reason=auth-unknown": that fires on every claude-cli
   # turn in subscription mode and is expected (docs/runbook.md).
+  # --thinking low, not off: claude-opus-5-5 on the direct runtime rejects "off",
+  # and low is accepted by every model in both modes.
   stamp="$(date -u +%Y%m%dT%H%M%S)"
   for a in ${CHECK_AGENTS//,/ }; do
     out="$(oc agent --agent "$a" --session-key "agent:$a:auth-check-$stamp" --message "Reply OK" \
-      --thinking off --json --timeout 180 2> /dev/null || true)"
+      --thinking low --json --timeout 180 2> /dev/null || true)"
     status="$(jq -r '.status // "none"' <<< "$out" 2> /dev/null || echo none)"
     provider="$(jq -r '.result.meta.executionTrace.winnerProvider // "none"' <<< "$out" 2> /dev/null || echo none)"
     if [[ "$status" != ok || "$provider" != "$1" ]]; then
@@ -395,9 +405,16 @@ offline_profiles() {
     say "gateway not healthy ${HEALTH_WAIT}s after the start"
     return 1
   fi
+  # healthy is not always ready for a reload right after a start: retry once
+  # after waiting for health again
   oc secrets reload > /dev/null 2>&1 || {
-    say "secrets reload failed"
-    return 1
+    say "secrets reload not accepted yet; retrying once"
+    wait_healthy || true
+    sleep "$POLL"
+    oc secrets reload > /dev/null 2>&1 || {
+      say "secrets reload failed"
+      return 1
+    }
   }
   say "the key profile is in place; now run: bash $HERE/auth-mode.sh api"
 }

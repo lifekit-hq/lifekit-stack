@@ -59,6 +59,17 @@ def merge(dst, patch):
 def flag(name):
     return os.path.exists(f"{state}/{name}")
 
+def schema_errors(config):
+    # the slice of the live schema the rollback bug hit: every auth profile is a
+    # complete object with a provider and a mode from the enum
+    errors = []
+    for pid, prof in config.get("auth", {}).get("profiles", {}).items():
+        if not isinstance(prof, dict) or not isinstance(prof.get("provider"), str):
+            errors.append(f"auth.profiles.{pid}.provider undefined")
+        elif prof.get("mode") not in ("api_key", "aws-sdk", "oauth", "token"):
+            errors.append(f"auth.profiles.{pid}.mode invalid")
+    return errors
+
 if args[0] == "compose":
     sub = args[args.index("openclaw") + 1:]
     if "stop" in sub:
@@ -119,6 +130,12 @@ elif args[0] == "exec":
             if flag("_patch_rejects"):
                 print("schema error", file=sys.stderr)
                 sys.exit(1)
+            candidate = json.loads(json.dumps(config))
+            merge(candidate, patch)
+            errors = schema_errors(candidate)
+            if errors:
+                print("schema error: " + "; ".join(errors), file=sys.stderr)
+                sys.exit(1)
             if "--dry-run" not in cmd:
                 merge(config, patch)
                 save("config.json", config)
@@ -150,9 +167,17 @@ elif args[0] == "exec":
                     profiles.setdefault(agent, {})["profile"] = True
                 save("profiles", profiles)
         elif cmd[:2] == ["secrets", "reload"]:
-            pass
+            if flag("_reload_fails"):
+                sys.exit(1)
+            if flag("_reload_fails_once") and not flag("_reload_failed"):
+                open(f"{state}/_reload_failed", "w").close()
+                sys.exit(1)
         elif cmd[0] == "agent":
             agent = cmd[cmd.index("--agent") + 1]
+            if cmd[cmd.index("--thinking") + 1] == "off":
+                # claude-opus-5-5 on the direct runtime: "Thinking level off is not supported"
+                print(json.dumps({"status": "error"}))
+                sys.exit(1)
             model = config["agents"]["entries"][agent]["model"]
             model = model if isinstance(model, str) else model["primary"]
             models = config["agents"]["entries"][agent].get("models") or config["agents"]["defaults"]["models"]
@@ -512,6 +537,35 @@ def test_offline_profiles_stops_applies_in_a_one_shot_and_restarts(box):
     box.auth("api")  # the profiles are in place: api now completes
 
 
+def test_offline_profiles_waits_for_health_before_the_reload(box):
+    box.put("plan_agents", ["kit", "finance"])
+    box.flag("_busy")
+    box.auth("offline-profiles")
+    calls = box.calls()
+    up = next(i for i, c in enumerate(calls) if c.startswith("compose") and " up " in c)
+    reload_ = next(i for i, c in enumerate(calls) if "secrets reload" in c)
+    assert any(c.startswith("inspect") for c in calls[up:reload_])
+
+
+def test_offline_profiles_retries_the_reload_once(box):
+    box.put("plan_agents", ["kit", "finance"])
+    box.flag("_busy")
+    box.flag("_reload_fails_once")
+    proc = box.auth("offline-profiles")
+    assert sum("secrets reload" in c for c in box.calls()) == 2
+    assert "secrets reload failed" not in proc.stderr
+    assert "the key profile is in place" in proc.stderr
+
+
+def test_offline_profiles_reports_a_reload_that_keeps_failing(box):
+    box.put("plan_agents", ["kit", "finance"])
+    box.flag("_busy")
+    box.flag("_reload_fails")
+    proc = box.auth("offline-profiles", expect=1)
+    assert sum("secrets reload" in c for c in box.calls()) == 2
+    assert "secrets reload failed" in proc.stderr
+
+
 def test_offline_profiles_starts_the_gateway_again_when_the_apply_fails(box):
     box.flag("_offline_fails")
     proc = box.auth("offline-profiles", expect=1)
@@ -564,10 +618,47 @@ def test_failed_verification_rolls_the_config_back(box):
     box.flag("_turn_fails_on_anthropic")
     proc = box.auth("api", expect=1)
     assert "rolling back to subscription mode" in proc.stderr
-    after = box.config()
-    # a deleted key leaves an empty object in the fake; the real CLI drops it
-    after["auth"]["profiles"].pop("anthropic:api-key")
-    assert after == before
+    assert box.config() == before
+    assert "ROLLBACK FAILED" not in proc.stderr
+    assert box.calls()[-1] != ""  # the rollback patch was applied, not skipped
+
+
+def test_check_turns_use_a_thinking_level_every_model_accepts(box):
+    proc = box.auth("api")
+    turns = [c for c in box.calls() if " agent --agent " in c]
+    assert len(turns) == 2 and all("--thinking low" in c for c in turns)
+    assert "--thinking off" not in "\n".join(box.calls())
+    assert "verification turn on kit: ok on anthropic" in proc.stderr
+
+
+def test_rollback_to_subscription_deletes_what_the_switch_created(box):
+    box.flag("_turn_fails_on_anthropic")
+    proc = box.auth("api", expect=1)
+    assert "rolling back to subscription mode" in proc.stderr
+    patches = [c for c in box.calls() if "config patch --stdin" in c]
+    assert len(patches) == 4  # dry run + apply, then dry run + rollback
+    cfg = box.config()
+    assert "anthropic:api-key" not in cfg["auth"]["profiles"]
+    assert cfg["auth"]["order"]["anthropic"] == []
+
+
+def test_rollback_to_api_restores_the_exact_old_values(box):
+    box.set_mode("api")
+    before = box.config()
+    box.flag("_turn_fails_on_claude-cli")
+    proc = box.auth("subscription", expect=1)
+    assert "rolling back to api mode" in proc.stderr
+    assert "ROLLBACK FAILED" not in proc.stderr
+    assert box.config() == before
+    assert before["auth"]["order"]["anthropic"] == ["anthropic:api-key"]
+
+
+def test_a_failed_apply_rolls_back_clean_against_the_schema(box):
+    box.flag("_restart_hint")
+    before = box.config()
+    box.flag("_turn_fails_on_anthropic")
+    box.auth("api", expect=1)
+    assert box.config() == before
 
 
 def test_rejected_patch_leaves_the_config_alone(box):
