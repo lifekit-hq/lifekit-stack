@@ -5353,7 +5353,7 @@ bash auth-mode.sh subscription      # back to the Claude Code runtime
 bash auth-mode.sh api --dry-run     # print and validate the config patch, change nothing
 ```
 
-Run it as any account in the `docker` group; it drives the gateway through
+Run it as any account in the `docker` group (`offline-profiles`, below, is the exception); it drives the gateway through
 `docker exec` and the `openclaw` CLI, never reading `openclaw.json` or a secret
 file. Every OpenClaw CLI call takes ~20 s, so a status is under a minute and a
 switch a few minutes.
