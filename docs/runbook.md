@@ -5380,10 +5380,12 @@ store` and `models auth paste-api-key` do route through it, but they keep the
 value in the database and cannot take our SecretRef). When `api` or
 `ensure-profiles` meets that refusal it changes nothing, says so, and prints the
 one command for the offline step. A **host operator** runs it (it stops the
-gateway; an agent never does):
+gateway; an agent never does), as `lifekit` (or root): the compose helper reads
+`openclaw.json`, which other accounts cannot, and the script stops with that
+hint before touching the gateway when it cannot:
 
 ```bash
-bash /srv/lifekit-stack/scripts/openclaw-auth/auth-mode.sh offline-profiles
+sudo -u lifekit bash /srv/lifekit-stack/scripts/openclaw-auth/auth-mode.sh offline-profiles
 ```
 
 It stops `openclaw-cli` and `openclaw-gateway` through the deploy's

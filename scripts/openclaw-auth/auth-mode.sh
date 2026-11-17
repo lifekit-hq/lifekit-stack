@@ -26,7 +26,8 @@
 #   auth-mode.sh offline-profiles            HOST OPERATOR ONLY, never an agent: the
 #                                            same, with the gateway STOPPED (OpenClaw
 #                                            2026.11.4 state ownership); it stops
-#                                            the gateway and always starts it again
+#                                            the gateway and always starts it again;
+#                                            run as lifekit or root (reads openclaw.json)
 #
 # A switch is one `openclaw config patch` inside the gateway; the gateway is
 # restarted only when the apply hint says the changed keys need it. It is then
@@ -321,7 +322,7 @@ build_plan() {
 }
 
 # The one-line command a host operator runs for the offline step.
-offline_cmd() { printf 'bash %q offline-profiles' "$HERE/auth-mode.sh"; }
+offline_cmd() { printf 'sudo -u lifekit bash %q offline-profiles' "$HERE/auth-mode.sh"; }
 
 ensure_profiles() {
   local rc=0 log="$work/secrets-apply.log"
@@ -369,6 +370,8 @@ offline_profiles() {
     openclaw_compose up -d openclaw-gateway > /dev/null || say "COULD NOT START THE GATEWAY: run 'docker compose -p openclaw up -d openclaw-gateway'"
   }
   trap 'restore_gateway; rm -rf "$work"' EXIT
+  OPENCLAW_COMPOSE_AUTH_MODE="$(openclaw_auth_mode)" || exit 2
+  export OPENCLAW_COMPOSE_AUTH_MODE
   local -a one_shot=(run --rm --no-deps -T -v "$work/plan.json:/tmp/auth-mode-plan.json:ro"
     --entrypoint openclaw openclaw-gateway secrets apply --from /tmp/auth-mode-plan.json --allow-exec)
   say "stopping openclaw-cli and openclaw-gateway"

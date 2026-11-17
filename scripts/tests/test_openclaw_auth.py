@@ -241,10 +241,10 @@ def box(tmp_path):
         path = state / "_calls"
         return path.read_text().splitlines() if path.exists() else []
 
-    def auth(*args, expect=0):
+    def auth(*args, expect=0, env_extra=None):
         proc = subprocess.run(
             ["bash", str(AUTH_MODE), *args],
-            env=env,
+            env={**env, **(env_extra or {})},
             capture_output=True,
             text=True,
             check=False,
@@ -518,6 +518,26 @@ def test_offline_profiles_starts_the_gateway_again_when_the_apply_fails(box):
     assert "started again" in proc.stderr
     assert any(" up " in c for c in box.calls() if c.startswith("compose"))
     assert not (box.state / "_stopped").exists()
+
+
+def test_offline_profiles_refuses_before_stopping_when_the_config_is_unreadable(
+    box, tmp_path
+):
+    conf = tmp_path / "unreadable"
+    (conf / "openclaw.json").mkdir(parents=True)  # reading it fails for any account
+    box.put("plan_agents", ["kit", "finance"])
+    proc = box.auth(
+        "offline-profiles",
+        expect=2,
+        env_extra={
+            "OPENCLAW_COMPOSE_AUTH_MODE": "",
+            "OPENCLAW_CONFIG_DIR": str(conf),
+        },
+    )
+    assert "run as the deploy account (lifekit) or root" in proc.stderr
+    assert "started again" not in proc.stderr
+    assert "COULD NOT START" not in proc.stderr
+    assert not [c for c in box.calls() if c.startswith("compose")]
 
 
 def test_offline_profiles_does_nothing_when_every_agent_has_the_profile(box):
