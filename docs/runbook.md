@@ -5283,9 +5283,9 @@ went stale while finance-sentry moved on; they were cleaned up by hand twice.
   and the finance workspace through `docker exec` into the gateway, read-only.
   Any file in the auto-memory dir is a hit. A workspace file is a hit unless it
   matches `WORKSPACE_ALLOW` in the script: the OpenClaw bootstrap files and
-  `AGENTS.md` and `SOUL.md` persona backups (`SOUL.md.bak-*`), OpenClaw's own state, inbound chat media, the vault
-  daily notes `memory/YYYY-MM-DD.md`, installed `skills/`, and Ledger's MCP
-  helper scripts. It prints one `<area>: <path>` line per hit and exits 1 (0
+  `AGENTS.md` and `SOUL.md` persona backups (`SOUL.md.bak-*`), OpenClaw's own
+  state, inbound chat media, the vault daily notes `memory/YYYY-MM-DD.md`,
+  installed `skills/`, and Ledger's MCP helper scripts. It prints one `<area>: <path>` line per hit and exits 1 (0
   clean, 2 when it cannot run). It never deletes or moves a file.
 - **The report.** `lifekit-ledger-drift.timer` runs it every 5 minutes as the
   admin account with `--textfile`, which writes
