@@ -5372,9 +5372,12 @@ changes nothing and only verifies. `api` also adds the `anthropic:api-key`
 SecretRef profile (`secrets apply`, id `anthropic-api-key`, no value involved)
 to every agent that lacks it.
 
-**Putting a key in place (captain).** Create a Console key, then
-`scripts/secrets/edit.sh gateway` and replace `ANTHROPIC_API_KEY`, merge the
-change (the OpenClaw deploy runs `openclaw secrets reload`), and check it:
+**Putting a key in place (captain).** Create a Console key, then run one command
+from your PC (the operator key lives there): `scripts/set-secret.sh gateway
+ANTHROPIC_API_KEY`. It asks for the value with a hidden prompt (or reads it from
+stdin), swaps it into the SOPS file without any plaintext touching disk or argv,
+runs the secrets tests, opens the PR and enables merge on green. The OpenClaw
+deploy after the merge runs `openclaw secrets reload`; then check it:
 
 ```bash
 bash auth-mode.sh probe     # one JSON line: ok | rejected | exhausted | limited | unknown | no-key

@@ -9,10 +9,28 @@ the gateway refs in a dry run before writing, and reloads them after.
 Tools: `sops` (pinned by `compose/openclaw-gateway/install-sops.sh`; the
 admin account also has its own), `age-keygen` for minting keys, `git`.
 
+## Putting a key in place
+
+One command from the operator's PC, for a value that already has a row in the
+inventory (a rotation):
+
+```bash
+scripts/set-secret.sh gateway ANTHROPIC_API_KEY    # <master|gateway> <NAME>; hidden prompt, or pipe the value on stdin
+```
+
+It writes the value into the right SOPS file (no plaintext on disk, never in
+argv or output), runs `test_secrets.py`, commits on a branch, opens the PR and
+enables merge on green, then prints what the deploy does next (for the gateway
+file: `openclaw secrets reload`, then `scripts/openclaw-auth/auth-mode.sh
+probe`). It needs only bash, `sops`, `git` and `gh`. The class-specific steps
+after the merge (render, redeploy) are in the table below. `edit.sh` stays for
+adding a new name or changing several values at once.
+
 ## The four moves
 
 ```bash
-# 1. edit a value in place (an operator key; nothing plaintext touches disk)
+# 1. edit values in place (an operator key; nothing plaintext touches disk);
+#    a single value: scripts/set-secret.sh does this, tests and PR included
 scripts/secrets/edit.sh master        # or: gateway
 .venv/bin/python -m pytest -q scripts/tests/test_secrets.py
 git commit -am "chore(secrets): rotate <NAME>"     # then PR, CI green, merge
@@ -67,7 +85,7 @@ moves with its own key and never the captain's:
 | **storage-key** | `OFFBOX_BACKUP_R2_ACCESS_KEY_ID`, `OFFBOX_BACKUP_R2_SECRET_ACCESS_KEY` | the same R2 token as finance-sentry's `BACKUP_R2_ACCESS_KEY`/`BACKUP_R2_SECRET_KEY` (shared bucket, `lifekit/` prefix; `docs/runbook.md` "Off-box backup (R2)"), so a rotation is one change in both repos. Cloudflare dashboard, R2, Manage API tokens: a new token with the same scope ("Object Read & Write" on that bucket); the new values into finance-sentry `docker/.env.sops` and here, copied sops-to-sops (`sops decrypt --extract '["BACKUP_R2_ACCESS_KEY"]' <finance-sentry>/docker/.env.sops` piped through `json.dumps` into `sops set ... '["OFFBOX_BACKUP_R2_ACCESS_KEY_ID"]'`, likewise the secret), merge both, render, then delete the old token. No redeploy here: the host timer reads `stack.env` on each run. Verify: `sudo systemctl start lifekit-offbox-backup.service` and its journal. |
 | **age-identity** | `OFFBOX_BACKUP_AGE_IDENTITY` | the on-box key the monthly restore check decrypts with. Mint and store it in one step, never printed or written to a file: `SOPS_AGE_KEY_FILE=~/.config/sops/age/firstmate.agekey sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops '["OFFBOX_BACKUP_AGE_IDENTITY"]' "$(age-keygen 2>/dev/null \| grep '^AGE-SECRET-KEY-1' \| python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')"`; update the public half in the inventory row (`sops decrypt --extract ... \| age-keygen -y`), merge, render. Sets written before the change stay readable by the captain key only, so run a backup and then the restore check by hand right after. On compromise also treat every stored set as seen (it is the same data the box holds). |
 | **api-token, gateway file** | `CLAUDE_OAUTH_TOKEN` | yearly, before it expires: "Claude service token" below. |
-| **api-token, gateway file** | `ANTHROPIC_API_KEY` | Console key with prepaid credit. Rotate on exposure, or when `auth-mode.sh probe` says `rejected`/`exhausted`: new key in the Anthropic Console (revoke the old one), `scripts/secrets/edit.sh gateway`, update the inventory row, merge; the deploy runs `openclaw secrets reload`. Verify with "Claude service token" below; `auth-mode.sh api` switches OpenClaw onto it. |
+| **api-token, gateway file** | `ANTHROPIC_API_KEY` | Console key with prepaid credit. Rotate on exposure, or when `auth-mode.sh probe` says `rejected`/`exhausted`: new key in the Anthropic Console (revoke the old one), `scripts/set-secret.sh gateway ANTHROPIC_API_KEY`, update the inventory row, merge; the deploy runs `openclaw secrets reload`. Verify with "Claude service token" below; `auth-mode.sh api` switches OpenClaw onto it. |
 | **admin-password** | `GRAFANA_ADMIN_PASSWORD` | `docker exec compose-grafana-1 grafana cli admin reset-admin-password '<new>'` (the env value is read at first boot only), then the same value with `edit.sh master`, merge, render, redeploy. Verify: `deploy.sh`'s provisioning reload succeeds. |
 | **db-password** | `LOGTO_DB_PASSWORD` | the env value sets the password on the first boot of an empty volume only, so change the role first: `openssl rand -hex 32`, then `docker exec identity-postgres-1 psql -U logto -d logto -c "ALTER ROLE logto PASSWORD '<new>'"`, then the same value with `edit.sh master`, merge, render, redeploy (recreates logto with the new `DB_URL`; it cannot open new connections in between). Verify: the deploy's identity step turns healthy. |
 | **parked** | `PARKED_BINANCE_API_KEY`, `PARKED_BINANCE_API_SECRET` | captain's call: rotate at Binance, `edit.sh master`. When a consumer appears, drop the prefix and move the row; if none by 2026-12-31, delete both. |
@@ -218,7 +236,7 @@ back when it does not pass. `openclaw models status --probe` refuses to run
 while the gateway is up; `auth-mode.sh probe` is the live check that works.
 
 **Replacing the API key (captain):** new key in the Anthropic Console (revoke
-the old one), `scripts/secrets/edit.sh gateway` (replace `ANTHROPIC_API_KEY`),
+the old one), `scripts/set-secret.sh gateway ANTHROPIC_API_KEY`,
 update the inventory row, merge (the OpenClaw deploy runs `openclaw secrets
 reload`), then `auth-mode.sh probe` must say `ok` and `auth-mode.sh api`
 switches over. A top-up of the same key only needs `credit_usd` in
