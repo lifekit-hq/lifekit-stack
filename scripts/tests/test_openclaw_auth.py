@@ -495,9 +495,7 @@ def test_offline_profiles_stops_applies_in_a_one_shot_and_restarts(box):
     box.flag("_busy")
     box.auth("offline-profiles")
     calls = [c for c in box.calls() if c.startswith("compose")]
-    verbs = [
-        "stop" if " stop " in c else "up" if " up " in c else "run" for c in calls
-    ]
+    verbs = ["stop" if " stop " in c else "up" if " up " in c else "run" for c in calls]
     assert verbs == ["stop", "run", "run", "up"]
     assert "--profile cli stop openclaw-cli openclaw-gateway" in calls[0]
     for c in calls[1:3]:
