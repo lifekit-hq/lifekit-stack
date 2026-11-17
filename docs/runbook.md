@@ -5353,7 +5353,7 @@ bash auth-mode.sh subscription      # back to the Claude Code runtime
 bash auth-mode.sh api --dry-run     # print and validate the config patch, change nothing
 ```
 
-Run it as any account in the `docker` group; it drives the gateway through
+Run it as any account in the `docker` group (`offline-profiles`, below, is the exception); it drives the gateway through
 `docker exec` and the `openclaw` CLI, never reading `openclaw.json` or a secret
 file. Every OpenClaw CLI call takes ~20 s, so a status is under a minute and a
 switch a few minutes.
@@ -5371,6 +5371,30 @@ are patched back and the command exits 1. Switching to the mode already active
 changes nothing and only verifies. `api` also adds the `anthropic:api-key`
 SecretRef profile (`secrets apply`, id `anthropic-api-key`, no value involved)
 to every agent that lacks it.
+
+**The key profile needs the gateway stopped (OpenClaw 2026.11.4).** OpenClaw
+2026.11.4 lets a running gateway own its state database, and `openclaw secrets
+apply` (the only way to store the SOPS exec SecretRef) has no gateway route, so
+it answers "OpenClaw state database is busy" while the gateway is up (`secrets
+store` and `models auth paste-api-key` do route through it, but they keep the
+value in the database and cannot take our SecretRef). When `api` or
+`ensure-profiles` meets that refusal it changes nothing, says so, and prints the
+one command for the offline step. A **host operator** runs it (it stops the
+gateway; an agent never does), as `lifekit` (or root): the compose helper reads
+`openclaw.json`, which other accounts cannot, and the script stops with that
+hint before touching the gateway when it cannot:
+
+```bash
+sudo -u lifekit bash /srv/lifekit-stack/scripts/openclaw-auth/auth-mode.sh offline-profiles
+```
+
+It stops `openclaw-cli` and `openclaw-gateway` through the deploy's
+`openclaw_compose`, runs `openclaw secrets apply --allow-exec` (dry run first) as
+a `run --rm --no-deps -T --entrypoint openclaw` one-shot with the plan, starts
+the gateway again on every exit path (a failed apply included), waits for it to
+be healthy and runs `secrets reload`. Then re-run `auth-mode.sh api`, which finds
+the profiles in place and goes on to the mode switch and the per-agent turns.
+Expect the assistants to be down for the length of that one-shot.
 
 **Putting a key in place (captain).** Create a Console key, then run one command
 from your PC (the operator key lives there): `scripts/set-secret.sh gateway

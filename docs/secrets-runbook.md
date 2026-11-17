@@ -246,8 +246,9 @@ switches over. A top-up of the same key only needs `credit_usd` in
 
 **A newly added agent must get the refs.** The refs are per agent: a new agent
 has no `anthropic:api-key` of its own. `auth-mode.sh ensure-profiles` (or `api`)
-adds the key profile to every agent that lacks it. For a profile of another
-kind, the plan shape is one target per agent (shown for a setup-token; the key
+adds the key profile to every agent that lacks it (on OpenClaw 2026.11.4 with the
+gateway stopped: `auth-mode.sh offline-profiles`, runbook "OpenClaw auth mode").
+For a profile of another kind, the plan shape is one target per agent (shown for a setup-token; the key
 profile uses type `auth-profiles.api_key.key`, path `profiles.anthropic:api-key.key`
 and id `anthropic-api-key`):
 
@@ -267,6 +268,9 @@ docker exec openclaw-openclaw-gateway-1 openclaw secrets apply --from /tmp/plan.
 docker exec openclaw-openclaw-gateway-1 openclaw secrets reload
 docker exec openclaw-openclaw-gateway-1 rm /tmp/plan.json
 ```
+
+On OpenClaw 2026.11.4 the `secrets apply` lines answer "state database is busy"
+while the gateway runs; use the offline one-shot (runbook "OpenClaw auth mode").
 
 Then run the check above for that agent.
 
