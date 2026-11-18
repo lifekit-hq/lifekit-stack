@@ -2414,7 +2414,8 @@ channel is bound to it, nothing chats with it, `tools.agentToAgent.enabled` stay
   throwaway container from the gateway image (no network, no secrets, no live state), the real
   claude binary against a mock model API that issues 16 tool calls, and a stub Workspace MCP and
   door script that record what reaches them. It passes only when the model was offered exactly the
-  tools the allow-list grants, the five allowed calls (both Gmail reads, `door.py scan`, `show` and
+  tools the allow-list grants (Claude Code's inert `DeferredToolPlaceholder` stub, matched on its whole
+  shape, is not counted; a lookalike still fails), the five allowed calls (both Gmail reads, `door.py scan`, `show` and
   `report`) ran, and each of the eleven denied calls (Gmail send and draft, any other command, a
   chained command, an interpreter one-liner, native file write and read, web fetch, and the message, cron and
   sessions tools) was refused and left no trace in the stub or the filesystem. A run that
