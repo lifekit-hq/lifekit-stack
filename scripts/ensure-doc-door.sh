@@ -25,6 +25,12 @@
 # rclone next to the job's venv; the copies stay off until the operator's
 # one-time consent has written the rclone config.
 #
+# The row is gated by a trigger script (scripts/doc-door-gate/scan.js, installed to
+# the gateway state dir) that runs `door.py check`: a tick with no new mail
+# attachment and nothing pending starts no model turn (docs/runbook.md, "Gates for
+# the scheduled mail jobs"). The gate applies to the reader agent only: the script
+# stored in the row calls the reader's copy of door.py by path.
+#
 # The deploy runs it (deploy-openclaw.sh, post-up phase). By hand, on the VPS
 # host as lifekit, from the repo checkout:
 #   /srv/lifekit-stack/scripts/ensure-doc-door.sh
@@ -33,12 +39,16 @@
 #   DOC_DOOR_AGENT   agent the job runs as (default: reader; kit is the rollback)
 #   DOC_DOOR_CRON    cron expression (default: "20 7,13,19 * * *")
 #   DOC_DOOR_TZ      IANA tz (default: Europe/Dublin)
+#   DOC_DOOR_MODEL   the job's model (default: the repo's cron model, scripts/lib/cron-model.sh)
 #   DOC_DOOR_ALERT_CHAT  owner Telegram chat id for the failure alert
 #                    (default: LIFEKIT_TELEGRAM_CHAT from ENV_FILE)
 #   ENV_FILE         host env file (default: /srv/lifekit-secrets/stack.env)
 #   OPENCLAW_CONFIG_DIR  host path of the gateway state dir (default: /srv/openclaw/config)
 set -euo pipefail
 
+# shellcheck source=scripts/lib/cron-model.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-model.sh"
+MODEL="${DOC_DOOR_MODEL:-$(cron_model)}"
 MARKITDOWN_VERSION="0.1.9"
 AGENT="${DOC_DOOR_AGENT:-reader}"
 SKILL=doc-door
@@ -69,6 +79,10 @@ fi
 install -D -m 0644 "${repo_root}/skills/${SKILL}/SKILL.md" "$skill_dest/SKILL.md"
 install -D -m 0755 "${repo_root}/skills/${SKILL}/door.py" "$skill_dest/door.py"
 install -D -m 0755 "${repo_root}/skills/${SKILL}/drive_upload.py" "$skill_dest/drive_upload.py"
+gate_src="${repo_root}/scripts/doc-door-gate"
+gate_dest="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}/gates/doc-door"
+[ -s "$gate_src/scan.js" ] || { echo "missing or empty: $gate_src/scan.js" >&2; exit 1; }
+install -D -m 0644 "$gate_src/scan.js" "$gate_dest/scan.js"
 echo "skill installed -> $skill_dest"
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
@@ -143,17 +157,29 @@ if [ -z "$job_id" ]; then
     --description "Files a cited report for each new document attachment in the mailbox; reads mail and files the original into a Drive subject folder (create only), delivers nothing. Declared by scripts/ensure-doc-door.sh (source: lifekit-stack)." \
     --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
     --agent "$AGENT" --session isolated \
-    --message "$MESSAGE" --tools "$JOB_TOOLS" --light-context \
+    --message "$MESSAGE" --model "$MODEL" --tools "$JOB_TOOLS" --light-context \
     --timeout-seconds 600 --no-deliver --json >/dev/null
   job_id="$(find_job_id "$JOB_NAME")"
   [ -n "$job_id" ] || { echo "cron add ran but no '$JOB_NAME' job is listed" >&2; exit 1; }
   echo "created cron '$JOB_NAME' ($job_id)"
 fi
+# The trigger script, set only when the stored one differs (the gate belongs to the reader).
+gate_args=()
+if [ "$AGENT" = reader ]; then
+  current_gate="$(live_jobs | python3 -c '
+import json, sys
+for job in json.load(sys.stdin)["jobs"]:
+    if job.get("id") == sys.argv[1]:
+        print(((job.get("trigger") or {}).get("script") or "").strip(), end="")
+        break' "$job_id")"
+  [ "$current_gate" = "$(cat "$gate_src/scan.js")" ] \
+    || gate_args=(--trigger-script /home/node/.openclaw/gates/doc-door/scan.js)
+fi
 docker exec "$GATEWAY" openclaw cron edit "$job_id" \
   --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
   --agent "$AGENT" --session isolated \
-  --message "$MESSAGE" --tools "$JOB_TOOLS" --light-context \
-  --timeout-seconds 600 --no-deliver \
+  --message "$MESSAGE" --model "$MODEL" --tools "$JOB_TOOLS" --light-context \
+  --timeout-seconds 600 --no-deliver "${gate_args[@]}" \
   --failure-alert --failure-alert-after 1 \
   --failure-alert-mode announce --failure-alert-channel telegram \
   --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT" >/dev/null
@@ -177,9 +203,12 @@ if job.get("sessionTarget") != "isolated" or job.get("sessionKey"):
 mode = (job.get("delivery") or {}).get("mode")
 if mode != "none":
     bad.append("delivery.mode=" + repr(mode) + ", want none")
+live_model = (job.get("payload") or {}).get("model")
+if live_model != sys.argv[4]:
+    bad.append("payload.model=" + repr(live_model) + ", want " + repr(sys.argv[4]))
 if bad:
     sys.exit("refusing: the document door could do more than declared: " + "; ".join(bad))
-' "$job_id" "$JOB_TOOLS" "$AGENT" >&2
+' "$job_id" "$JOB_TOOLS" "$AGENT" "$MODEL" >&2
 
-echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, tools $JOB_TOOLS only, no delivery (verified)"
+echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, model $MODEL, tools $JOB_TOOLS only, no delivery (verified)"
 echo "verify: docker exec $GATEWAY openclaw cron run $job_id --expect-final --json"

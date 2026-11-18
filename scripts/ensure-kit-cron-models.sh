@@ -3,7 +3,8 @@
 # Kit, so none inherits Kit's interactive Opus default.
 #
 # Kit's interactive chat runs on anthropic/claude-opus-5-5 (per-agent model in
-# the host-state half of openclaw.json). A cron job with no payload.model of
+# the host-state half of openclaw.json). The gateway bills the metered API key,
+# so every Opus token is money. A cron job with no payload.model of
 # its own inherits that, at ~2.5x the allowance per token, for turns that
 # never needed it (today brief, evening plan note, Sunday review, vault
 # cleanup, job-queue drain). Cron rows live in the gateway store, not the
@@ -15,19 +16,24 @@
 #
 # A job whose payload.kind is "command" runs no model, so it is skipped silently
 # (reported as "skipped: command job") in both modes; it still counts as matched.
-# Only jobs whose payload.model is EMPTY are touched. A job that already names
-# a model (any model) is a deliberate choice and is reported, never rewritten.
+# A job is repinned when its payload.model is empty or is not the repo's cron
+# model (scripts/lib/cron-model.sh, read from platform.patch.json): the policy
+# owns the choice, so a row left on an older Opus (outside
+# modelPolicy.allow) converges too. A job already on the cron model is reported.
 # A row naming no agent counts as Kit's (the default agent). Finding no Kit job
 # at all is an error, not a pass. Re-running converges. Acceptance: `openclaw cron list` shows a model on every
 # Kit job.
 #
 # Env overrides:
 #   KIT_AGENT             the agent id whose jobs are pinned (default: kit)
-#   KIT_CRON_MODEL        the model pinned (default: anthropic/claude-sonnet-5-5)
+#   KIT_CRON_MODEL        the model pinned (default: the repo's cron model)
 set -euo pipefail
 
+# shellcheck source=scripts/lib/cron-model.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-model.sh"
+
 AGENT="${KIT_AGENT:-kit}"
-MODEL="${KIT_CRON_MODEL:-anthropic/claude-sonnet-5-5}"
+MODEL="${KIT_CRON_MODEL:-$(cron_model)}"
 check_only=0
 case "${1:-}" in
   --check) check_only=1 ;;
@@ -65,13 +71,17 @@ while IFS=$'\t' read -r id name kind model; do
     echo "skipped: command job '$name' ($id) runs no model"
     continue
   fi
-  if [ -n "$model" ]; then
+  if [ "$model" = "$MODEL" ]; then
     echo "ok: '$name' ($id) runs on $model"
     continue
   fi
   unpinned=$((unpinned + 1))
   if [ "$check_only" -eq 1 ]; then
-    echo "unpinned: '$name' ($id) inherits ${AGENT}'s default model"
+    if [ -z "$model" ]; then
+      echo "unpinned: '$name' ($id) inherits ${AGENT}'s default model"
+    else
+      echo "off-policy: '$name' ($id) runs on $model, not $MODEL"
+    fi
   else
     if docker exec "$GATEWAY" openclaw cron edit "$id" --model "$MODEL" >/dev/null; then
       echo "pinned: '$name' ($id) -> $MODEL"
@@ -88,7 +98,7 @@ if [ "$matched" -eq 0 ]; then
 fi
 
 if [ "$check_only" -eq 1 ] && [ "$unpinned" -gt 0 ]; then
-  echo "$unpinned ${AGENT} job(s) unpinned; run without --check to pin them" >&2
+  echo "$unpinned ${AGENT} job(s) not on $MODEL; run without --check to pin them" >&2
   exit 1
 fi
 if [ "$failed" -gt 0 ]; then

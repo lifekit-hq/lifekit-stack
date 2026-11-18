@@ -36,6 +36,8 @@ elif cmd[:2] == ["cron", "edit"]:
         if job["id"] == cmd[2]:
             if "--message" in cmd:
                 job["payload"]["message"] = cmd[cmd.index("--message") + 1]
+            if "--model" in cmd:
+                job["payload"]["model"] = cmd[cmd.index("--model") + 1]
             if "--trigger-script" in cmd:
                 job["trigger"] = {
                     "script": pathlib.Path(os.environ["GATE_FILE"]).read_text()

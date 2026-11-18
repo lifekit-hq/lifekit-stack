@@ -1562,7 +1562,12 @@ def smoke_repo(tmp_path):
     """A scratch git repo holding what the smoke phase reads, with the real
     claude-code.sh (piped into the gateway) and a stub openclaw.sh."""
     fake = tmp_path / "smoke-repo"
-    for rel in (*PINS, "scripts/openclaw-smoke-verdict.py"):
+    for rel in (
+        *PINS,
+        "scripts/openclaw-smoke-verdict.py",
+        "scripts/lib/cron-model.sh",
+        "compose/openclaw-gateway/platform.patch.json",
+    ):
         (fake / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / rel, fake / rel)
     (fake / "scripts/upgrade-smoke").mkdir(parents=True)

@@ -417,6 +417,32 @@ the stored script differs; the same script converges the row's failure alert (`-
 gated run: `openclaw cron run <id> --expect-final --json` (afternoon runs with nothing pending report no run). **Undo:**
 `openclaw cron edit <id> --clear-trigger`, and keep the script from re-adding it (revert this change).
 
+**The model for recurring jobs and the deploy smoke turn.** One model, defined once: `agents.defaults.model.primary`
+in `compose/openclaw-gateway/platform.patch.json`, the same file as `modelPolicy.allow`. `scripts/lib/cron-model.sh`
+(`cron_model`) reads it and refuses a model that is not on the allow list. The deploy smoke turn
+(`openclaw agent --model`), `ensure-kit-cron-models.sh` (every Kit cron row, strictly: a row on another model,
+an older Opus included, is repinned), `ensure-needs-you-digest.sh` (digest and mail reader), `ensure-doc-door.sh` and
+`ensure-finance-pulse.sh` all take it from there, so no script names a model. `scripts/tests/test_cron_model_policy.py`
+fails when a script spells a model out, drops its `--model`, or the policy model leaves the allow list. Kit's chat model
+is a per-agent entry (host state) and is not covered. The scripts are host steps after the merge: the deploy runs
+`ensure-doc-door.sh`; run `ensure-kit-cron-models.sh`, `ensure-needs-you-digest.sh` and `ensure-finance-pulse.sh` as
+`lifekit` (each with `--check` first where it has one). `agents.defaults.heartbeat` stays `every: "0m"` (no heartbeat runs;
+the finance pulse is the gated `ledger-pulse` row above), so it makes no model call.
+
+**Gates for the scheduled mail jobs.** Like `ledger-pulse` and `job-queue-drain`, the doc-door scan and the needs-you mail
+reader are gated by a trigger script, so a tick with nothing to do starts no model turn and leaves no run history. Both
+gates only ask `door.py` in the reader agent's workspace (`scripts/doc-door-gate/scan.js` runs `door.py check`,
+`mail.js` runs `door.py mail-check`; each is one read-only mail search, nothing filed, converted or reported). `check` wakes the
+scan when a document waits for its report, a Drive filing, report copy or vault log line is pending, or the search shows a message
+the scan has not seen; `mail-check` wakes the reader when the reader's own search window has mail. Both also wake on a search that
+fails or an answer they cannot read, so a fault never silences the job. A skipped reader tick would make the digest read "the mail
+read has not run": `mail-check` stamps its last empty check, and the digest prompt (when the reader is gated) runs
+`door.py mail-idle` before it adds a "mail unavailable" line, treating a stamp under 60 minutes old as "No new mail." The deploy installs
+`scan.js` (`ensure-doc-door.sh`); `ensure-needs-you-digest.sh` installs `mail.js` and sets the reader row's `--trigger-script`
+only when the reader agent and its doc-door skill are in place (otherwise the row runs every tick, as before, and a stale trigger is
+cleared). Check one idle and one busy tick: `openclaw cron run <id> --expect-final --json`. **Undo:**
+`openclaw cron edit <id> --clear-trigger`, and revert the script change.
+
 **Lanes for market signals.** finance-sentry delivers a severe intraday move (a held name moving 2x its alert bar) immediately by wake; routine `MarketStructure` and `NewsCluster` signals are held and batched into the three-times-a-day `ledger-pulse`, step 1 of `scripts/finance-pulse.md`.
 
 **The payload is stateless (the rule).** Every `agentTurn` cron run is a fresh
@@ -518,7 +544,7 @@ openclaw cron create --json <<JSON
   "payload": {
     "kind": "agentTurn",
     "message": "placeholder - ensure-finance-pulse.sh replaces this with the preamble plus scripts/finance-pulse.md",
-    "model": "anthropic/claude-sonnet-4-6",
+    "model": "anthropic/claude-sonnet-5-5",
     "timeoutSeconds": 300,
     "lightContext": true,
     "toolsAllow": ["*"]
@@ -794,11 +820,13 @@ the new `modelPolicy.allow` lists only the 5.5 models. Steps 3 onward run after 
 1. Per-agent models (host-state half; `openclaw config patch` merges, so unlisted keys stay):
    career, finance and learnclaw `model` -> `anthropic/claude-sonnet-5-5`; Kit's `model` ->
    `anthropic/claude-opus-5-5`. Check the agent ids with `openclaw agents list`.
-2. `scripts/ensure-kit-cron-models.sh --check`, then without `--check`: every Kit cron job without
-   its own `payload.model` is pinned to Sonnet (`openclaw cron list` must then show a model on
-   each model-running job; `command` jobs run no model and are skipped). A job that already names one is left alone, so also run
-   `scripts/ensure-needs-you-digest.sh`: its digest row already carries a pinned model
-   (`anthropic/claude-sonnet-4-6`), and re-running the script moves it to the 5.5 Sonnet.
+2. `scripts/ensure-kit-cron-models.sh --check`, then without `--check`: every Kit cron job whose
+   `payload.model` is empty or is not the repo's cron model (`agents.defaults.model.primary` in
+   `compose/openclaw-gateway/platform.patch.json`, read by `scripts/lib/cron-model.sh`) is pinned to it,
+   so a row left on an older Opus (`claude-opus-4-7`) converges too (`openclaw cron list` must then show
+   the cron model on each model-running job; `command` jobs run no model and are skipped). Also run
+   `scripts/ensure-needs-you-digest.sh`, `ensure-doc-door.sh` and `ensure-finance-pulse.sh`: each
+   declares its own row's model from the same place.
 3. Pin the plugin installs: `openclaw plugins install "@openclaw/diagnostics-prometheus@<core>" --force`
    and the same for `@openclaw/duckduckgo-plugin` (the core version is `openclaw --version`); then
    `openclaw plugins inspect <id>` shows the exact version and `openclaw security audit` drops
@@ -2427,7 +2455,7 @@ channel is bound to it, nothing chats with it, `tools.agentToAgent.enabled` stay
   job's own `toolsAllow` (still unverified under `claude-cli`; step 6 checks it live) and the real Anthropic API
   (the model is mocked; the tool surface the gateway builds is what is under test).
 - **Design A, not B.** The exec allowlist limited to `door.py` held in the canary with no leak, so the
-  door needs no trigger-script gate (the alternative in #528). If a future gateway version leaks a denied call
+  door needs no trigger-script gate for its exec cap (the alternative in #528; the gates above only save model turns). If a future gateway version leaks a denied call
   here, the canary turns red on the deploy host first; design B is then the answer.
 
 **Operator steps** (after the merge deploys; until step 2 is done the deploy skips the reader and
@@ -2708,7 +2736,7 @@ G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
 docker exec "$G" openclaw agents add learnclaw \
   --workspace /home/node/.openclaw/agents/learnclaw/workspace \
   --agent-dir /home/node/.openclaw/agents/learnclaw/agent \
-  --model anthropic/claude-sonnet-4-6 --non-interactive --json
+  --model anthropic/claude-sonnet-5-5 --non-interactive --json
 # 2. As lifekit: install the contract and the skill, drop the bootstrap stub.
 sudo -u lifekit /srv/lifekit-stack/scripts/ensure-learnclaw.sh
 sudo -u lifekit rm -f /srv/openclaw/config/agents/learnclaw/workspace/BOOTSTRAP.md

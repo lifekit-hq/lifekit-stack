@@ -250,9 +250,11 @@ def test_digest_reports_a_missing_ledger_a_bad_ledger_and_a_failed_status(tmp_pa
 # --- the digest's declaration ------------------------------------------------
 
 
-def test_the_digest_job_is_pinned_to_sonnet_and_verified_live():
+def test_the_digest_job_is_pinned_to_the_cron_model_and_verified_live():
     text = ENSURE_DIGEST.read_text()
-    assert text.count('--model "$DIGEST_MODEL"') == 2  # cron add and cron edit
+    # cron add and cron edit of the digest, and of the mail reader
+    assert text.count('--model "$DIGEST_MODEL"') == 4
+    assert "cron_model" in text  # the model comes from the repo's config
     assert "payload.model=" in text  # fail-closed check of the live row
     assert "needs-you-digest.mjs" in text
 
