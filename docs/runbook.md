@@ -423,7 +423,9 @@ in `compose/openclaw-gateway/platform.patch.json`, the same file as `modelPolicy
 (`openclaw agent --model`), `ensure-kit-cron-models.sh` (every Kit cron row, strictly: a row on another model,
 an older Opus included, is repinned), `ensure-needs-you-digest.sh` (digest and mail reader), `ensure-doc-door.sh` and
 `ensure-finance-pulse.sh` all take it from there, so no script names a model. `scripts/tests/test_cron_model_policy.py`
-fails when a script spells a model out, drops its `--model`, or the policy model leaves the allow list. Kit's chat model
+fails when a script spells a model out or the policy model leaves the allow list; a dropped `--model` is caught by the
+per-script behavioral tests (`test_deploy_openclaw.py`, `test_kit_cron_models.py`, `test_reader_agent.py`,
+`test_finance_pulse.py`), which assert the policy model in the stubbed argv. Kit's chat model
 is a per-agent entry (host state) and is not covered. The scripts are host steps after the merge: the deploy runs
 `ensure-doc-door.sh`; run `ensure-kit-cron-models.sh`, `ensure-needs-you-digest.sh` and `ensure-finance-pulse.sh` as
 `lifekit` (each with `--check` first where it has one). `agents.defaults.heartbeat` stays `every: "0m"` (no heartbeat runs;
