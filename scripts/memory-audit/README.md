@@ -26,8 +26,7 @@ the default `/home/node/memory` is the gateway's mount for the cron), runs
 report and `log.md` line are committed + pushed by the host `memory-sync.timer`.
 
 Retired with this change: `vault-lint.py`, `vault-autofix.py`, `vault-rotate.py`,
-`gen-report.py`, their pytest suite, and `skills/memory-vault/scripts/vault_scan.py`
-(git history keeps them). `openclaw wiki compile` is no longer part of the audit: the
+`gen-report.py` and their pytest suite (git history keeps them). `openclaw wiki compile` is no longer part of the audit: the
 typed layer it compiled (`claims[]`, entities/syntheses/reports) was retired from the vault.
 
 ## The model pass (`memory-vault-cleanup`)
