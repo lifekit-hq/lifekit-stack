@@ -113,7 +113,7 @@ def test_scan_gate_wakes_when_the_mailbox_cannot_be_searched(env, capsys):
 
 def test_mail_gate_idle_stamps_the_marker_and_reads_the_readers_window(env, capsys):
     assert run(capsys, "mail-check") == (0, "MAIL idle\n")
-    (tool, args), = FakeMcp.calls
+    ((tool, args),) = FakeMcp.calls
     assert args["query"] in ("in:inbox newer_than:16h", "in:inbox newer_than:8h")
     rc, out = run(capsys, "mail-idle")
     assert out.startswith("idle ") and int(out.split()[1]) > 0

@@ -70,9 +70,9 @@ def test_no_script_names_a_model_outside_the_policy(script):
     for n, line in enumerate(script.read_text().splitlines(), 1):
         for m in MODEL_ID.findall(line):
             full = m if m.startswith("anthropic/") else f"anthropic/{m}"
-            assert full in ALLOW, (
-                f"{script.name}:{n} names {m}, not in modelPolicy.allow"
-            )
+            assert (
+                full in ALLOW
+            ), f"{script.name}:{n} names {m}, not in modelPolicy.allow"
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
@@ -81,6 +81,6 @@ def test_every_model_flag_takes_the_policy_variable_never_a_literal(script):
         if line.lstrip().startswith("#"):
             continue
         for arg in re.findall(r"--model[ =](\S+)", line):
-            assert arg.startswith(('"$', "$")), (
-                f"{script.name}:{n}: --model {arg} is a literal; use cron_model"
-            )
+            assert arg.startswith(
+                ('"$', "$")
+            ), f"{script.name}:{n}: --model {arg} is a literal; use cron_model"
