@@ -1,5 +1,6 @@
-"""ensure-kit-cron-models.sh pins a Sonnet model on every Kit cron job that has
-none, leaves a job that already names a model alone, and never touches another
+"""ensure-kit-cron-models.sh pins the repo's cron model (agents.defaults.model.primary)
+on every Kit cron job that has none or names another model (outside
+modelPolicy.allow), leaves a job already on it alone, and never touches another
 agent's job.
 
 `docker` is stubbed: `ps` returns a fake gateway id, `cron list` prints a state
@@ -18,7 +19,9 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts/ensure-kit-cron-models.sh"
-SONNET = "anthropic/claude-sonnet-5-5"
+SONNET = json.loads(
+    (REPO / "compose/openclaw-gateway/platform.patch.json").read_text()
+)["agents"]["defaults"]["model"]["primary"]
 
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
 
@@ -49,7 +52,13 @@ else:
 JOBS = {
     "jobs": [
         {"id": "a", "name": "today-brief", "agentId": "kit", "payload": {}},
-        {"id": "b", "name": "vault", "agentId": "kit", "payload": {"model": "x/y"}},
+        {"id": "b", "name": "vault", "agentId": "kit", "payload": {"model": SONNET}},
+        {
+            "id": "e",
+            "name": "weekly",
+            "agentId": "kit",
+            "payload": {"model": "anthropic/claude-opus-4-7"},
+        },
         {"id": "c", "name": "ledger-pulse", "agentId": "finance", "payload": {}},
         {"id": "d", "name": "drain", "agentId": "kit", "payload": {"model": ""}},
     ]
@@ -83,25 +92,26 @@ def run(tmp_path: Path, *args: str, fail_id: str = "", jobs: dict = JOBS):
     return proc, json.loads(state.read_text()), done
 
 
-def test_pins_only_unpinned_kit_jobs(tmp_path):
+def test_repins_unpinned_and_off_policy_kit_jobs_only(tmp_path):
     proc, state, edits = run(tmp_path)
     assert proc.returncode == 0, proc.stderr
     models = {j["id"]: j["payload"].get("model") for j in state["jobs"]}
-    assert models == {"a": SONNET, "b": "x/y", "c": None, "d": SONNET}
-    assert [e[2] for e in edits] == ["a", "d"]
+    assert models == {"a": SONNET, "b": SONNET, "c": None, "d": SONNET, "e": SONNET}
+    assert sorted(e[2] for e in edits) == ["a", "d", "e"]
 
 
 def test_second_run_changes_nothing(tmp_path):
     run(tmp_path)
     proc, _, edits = run(tmp_path)
     assert proc.returncode == 0
-    assert len(edits) == 2  # only the first run's edits
+    assert len(edits) == 3  # only the first run's edits
 
 
 def test_check_reports_and_fails_without_editing(tmp_path):
     proc, state, edits = run(tmp_path, "--check")
     assert proc.returncode == 1
     assert "unpinned: 'today-brief' (a)" in proc.stdout
+    assert "off-policy: 'weekly' (e) runs on anthropic/claude-opus-4-7" in proc.stdout
     assert edits == []
     assert "model" not in state["jobs"][0]["payload"]
 
@@ -109,7 +119,7 @@ def test_check_reports_and_fails_without_editing(tmp_path):
 def test_a_failed_edit_does_not_stop_the_rest_and_fails_the_run(tmp_path):
     proc, state, _ = run(tmp_path, fail_id="a")
     assert proc.returncode == 1
-    assert state["jobs"][3]["payload"]["model"] == SONNET
+    assert state["jobs"][4]["payload"]["model"] == SONNET
     assert "failed: could not pin 'today-brief'" in proc.stderr
 
 
@@ -150,7 +160,7 @@ def test_command_jobs_are_skipped_not_pinned_or_flagged(tmp_path, args):
                 "id": "p",
                 "name": "pinned",
                 "agentId": "kit",
-                "payload": {"model": "x/y"},
+                "payload": {"model": SONNET},
             },
         ]
     }

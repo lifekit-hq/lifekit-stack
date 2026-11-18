@@ -25,7 +25,7 @@
 //        openclaw agents add --non-interactive \
 //          --workspace /home/node/.openclaw/agents/kit/workspace \
 //          --agent-dir /home/node/.openclaw/agents/kit/agent \
-//          --model anthropic/claude-sonnet-4-6 kit
+//          --model anthropic/claude-sonnet-5-5 kit
 //   2. Overwrite the auto-generated AGENTS.md + SOUL.md with this repo's:
 //        cp defaults/agents/kit/workspace/AGENTS.md /srv/openclaw/agents/kit/workspace/
 //        cp defaults/agents/kit/workspace/SOUL.md   /srv/openclaw/agents/kit/workspace/
@@ -56,7 +56,7 @@
         agentDir: "/home/node/.openclaw/agents/kit/agent",
         // Sonnet: Kit handles every domain — needs reasoning for cross-domain
         // synthesis and for picking the right skill / MCP tool per intent.
-        model: "anthropic/claude-sonnet-4-6"
+        model: "anthropic/claude-sonnet-5-5"
       }
     ]
   },

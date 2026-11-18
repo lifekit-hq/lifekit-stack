@@ -9,6 +9,9 @@ them on the server and keep one cited report per document (SKILL.md).
     door.py report <doc id> --title T --folder F --page P --proposal X --fact L...
                                           the same report as arguments, one line each
     door.py status                        counts per state, one line each
+    door.py check                         the scan job's gate: "DOOR idle" or "DOOR wake"
+    door.py mail-check                    the mail reader's gate: "MAIL idle" or "MAIL wake"
+    door.py mail-idle                     when mail-check last found nothing
 
 Toward Google it speaks MCP to two servers and calls only the tools in
 ALLOWED_TOOLS: three mail reads on the google-workspace server (Kit's personal
@@ -25,6 +28,11 @@ The accepted report itself is also copied into Drive by drive_upload.py (rclone,
 a drive.file-only consent of its own), once that consent is in; until then
 nothing is attempted. A failure there leaves the copy pending and the next scan
 retries it, and never fails the scan either.
+
+`check` and `mail-check` are the trigger scripts' read-only questions (docs/runbook.md,
+"Gates for the scheduled mail jobs"): one mail search each and no model, so a tick with
+nothing to do starts no agent turn. Neither files, converts or reports anything, and
+any answer they cannot read as "nothing to do" wakes the job as before.
 
 State lives in DOC_DOOR_DIR (default ~/.life-state/doc-door, mode 700, outside
 the vault, never cited as a source): state.json (idempotency: one record per
@@ -45,7 +53,9 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import drive_upload  # noqa: E402 - the sibling module, found through the line above
@@ -128,8 +138,8 @@ def save_state(state: dict) -> None:
 
 
 class Mcp:
-    def __init__(self, url: str = MCP_URL):
-        self.url, self.sid, self.n = url, None, 0
+    def __init__(self, url: str = MCP_URL, timeout: int = 120):
+        self.url, self.sid, self.n, self.timeout = url, None, 0, timeout
         self._rpc(
             "initialize",
             {
@@ -151,7 +161,7 @@ class Mcp:
         for hop in range(2):  # urllib will not replay a POST: follow one 307/308 here
             req = urllib.request.Request(url, data, headers)
             try:
-                with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 - fixed internal URL
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - fixed internal URL
                     self.sid = resp.headers.get("Mcp-Session-Id") or self.sid
                     raw = resp.read().decode()
                 break
@@ -332,6 +342,7 @@ def scan(days: int, limit: int) -> int:
         try:
             msg = parse_message(mcp.call("get_gmail_message_content", message_id=mid))
             wanted = [a for a in msg["attachments"] if kind_of(a["filename"])]
+            rejected = 0
             for a in wanted:
                 if shown >= MAX_NEW:
                     break
@@ -345,9 +356,11 @@ def scan(days: int, limit: int) -> int:
                     )
                 )
                 if not MIN_BYTES <= len(blob) <= MAX_BYTES:
+                    rejected += 1
                     continue
                 doc_id = hashlib.sha256(blob).hexdigest()[:16]
                 if doc_id in docs:
+                    rejected += 1
                     continue
                 rec = {
                     "message_id": mid,
@@ -374,7 +387,7 @@ def scan(days: int, limit: int) -> int:
                 save_state(state)
                 show(doc_id, rec, text)
                 shown += 1
-            if not wanted:
+            if rejected == len(wanted):
                 state.setdefault("skipped", []).append(mid)
         except Exception as exc:  # noqa: BLE001
             print(f"message {mid[:8]}: {exc}")
@@ -741,6 +754,107 @@ def status() -> int:
     return 0
 
 
+# --- gates: does a scheduled tick need a model turn at all? -------------------------------
+
+
+GATE_TIMEOUT = 12  # seconds per MCP request: a trigger script has a 30 s budget
+
+
+def check() -> int:
+    """The doc-door job's gate: "DOOR idle", or "DOOR wake" and a reason line.
+
+    Wakes when a document waits for its report, a Drive filing or report copy is
+    still pending (the scan retries those), a message in the window is one the
+    scan has not seen, or the mailbox cannot be searched. A message the scan has
+    seen is in state.json: either a document of its own or in `skipped`.
+    """
+    state = load_state()
+    docs = state["docs"]
+    if any(r["status"] == "converted" for r in docs.values()):
+        print("DOOR wake\na converted document waits for its report")
+        return 0
+    reported = [r for r in docs.values() if r["status"] == "reported"]
+    if any(r.get("drive", "pending") != "filed" for r in reported):
+        print("DOOR wake\na Drive filing is pending")
+        return 0
+    if drive_upload.configured() and any(r.get("copy") != "filed" for r in reported):
+        print("DOOR wake\na report copy is pending")
+        return 0
+    if any(r["status"] == "reported" and not r.get("logged") for r in docs.values()):
+        print("DOOR wake\na vault log line is pending")
+        return 0
+    try:
+        ids = parse_search(
+            Mcp(timeout=GATE_TIMEOUT).call(
+                "search_gmail_messages",
+                query=SEARCH_QUERY.format(days=3),
+                page_size=25,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - the scan reports it as it always did
+        print(f"DOOR wake\nmail check failed: {short_reason(exc)}")
+        return 0
+    seen = {r["message_id"] for r in docs.values()} | set(state.get("skipped", []))
+    if any(mid not in seen for mid in ids):
+        print("DOOR wake\na message in the window is new to the scan")
+        return 0
+    print("DOOR idle")
+    return 0
+
+
+MAIL_IDLE = HOME / "mail-gate-idle.json"
+MAIL_EMPTY = re.compile(
+    r"\bno (?:new )?(?:messages|emails|results)\b|\bfound 0\b", re.I
+)
+
+
+def mail_window_query(now_utc: datetime) -> str:
+    """The needs-you mail reader's own window: 16h before 12:00 Europe/Dublin, 8h after."""
+    hours = 16 if now_utc.astimezone(ZoneInfo("Europe/Dublin")).hour < 12 else 8
+    return f"in:inbox newer_than:{hours}h"
+
+
+def mail_check() -> int:
+    """The needs-you mail reader's gate: "MAIL idle", or "MAIL wake" and a reason.
+
+    Idle only when the reader's own search answers with no messages; a message, an
+    error or a reply of an unknown shape wakes the reader, which then runs as it
+    always did. An idle answer is stamped in MAIL_IDLE: it leaves no run history,
+    and the digest reads the stamp (mail-idle) instead of "the mail read has not run".
+    """
+    at = datetime.now(timezone.utc)
+    try:
+        text = Mcp(timeout=GATE_TIMEOUT).call(
+            "search_gmail_messages", query=mail_window_query(at), page_size=25
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"MAIL wake\nmail check failed: {short_reason(exc)}")
+        return 0
+    if parse_search(text):
+        print("MAIL wake\nmail arrived in the window")
+        return 0
+    if not MAIL_EMPTY.search(text):
+        print("MAIL wake\nsearch reply not recognised as empty")
+        return 0
+    try:
+        _private(HOME)
+        MAIL_IDLE.write_text(json.dumps({"atMs": int(at.timestamp() * 1000)}))
+        MAIL_IDLE.chmod(0o600)
+    except OSError:
+        pass  # the digest then says the read has not run; no model turn was spent
+    print("MAIL idle")
+    return 0
+
+
+def mail_idle() -> int:
+    """`idle <epoch ms>` of the last empty mail-check, or `none`."""
+    try:
+        print(f"idle {int(json.loads(MAIL_IDLE.read_text())['atMs'])}")
+    except (OSError, ValueError, KeyError, TypeError):
+        print("none")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         die(__doc__ or "", 2)
@@ -761,6 +875,12 @@ def main(argv: list[str]) -> int:
         return 0
     if cmd == "status":
         return status()
+    if cmd == "check":
+        return check()
+    if cmd == "mail-check":
+        return mail_check()
+    if cmd == "mail-idle":
+        return mail_idle()
     die(__doc__ or "", 2)
     return 2
 

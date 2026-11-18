@@ -877,10 +877,15 @@ openclaw_phase_smoke() {
 # errors only warn, anything else fails the run.
 SMOKE_AGENTS="${SMOKE_AGENTS:-kit}"
 SMOKE_RUN="$(date -u +%Y%m%dT%H%M%SZ)"
+# The turn only has to prove the runtime answers, so it runs on the repo's cron
+# model (scripts/lib/cron-model.sh), never on an agent's own (Opus) default.
+# shellcheck source=scripts/lib/cron-model.sh
+source "${REPO_DIR}/scripts/lib/cron-model.sh"
+SMOKE_MODEL="$(cron_model)" || { fail_later "smoke model: not in modelPolicy.allow"; return 0; }
 say "smoke turns (${SMOKE_AGENTS})"
 for agent in ${SMOKE_AGENTS}; do
   OUT="$(openclaw_compose exec -T openclaw-gateway \
-    openclaw agent --agent "${agent}" --session-id "deploy-smoke-${agent}-${SMOKE_RUN}" --timeout 150 --json \
+    openclaw agent --agent "${agent}" --session-id "deploy-smoke-${agent}-${SMOKE_RUN}" --model "${SMOKE_MODEL}" --timeout 150 --json \
       -m "Deploy smoke test: reply with exactly the word pong and nothing else." 2>&1 || true)"
   VERDICT="$(printf '%s' "${OUT}" | python3 "${REPO_DIR}/scripts/openclaw-smoke-verdict.py")"
   case "${VERDICT}" in

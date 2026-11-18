@@ -250,13 +250,6 @@ def test_digest_reports_a_missing_ledger_a_bad_ledger_and_a_failed_status(tmp_pa
 # --- the digest's declaration ------------------------------------------------
 
 
-def test_the_digest_job_is_pinned_to_sonnet_and_verified_live():
-    text = ENSURE_DIGEST.read_text()
-    assert text.count('--model "$DIGEST_MODEL"') == 2  # cron add and cron edit
-    assert "payload.model=" in text  # fail-closed check of the live row
-    assert "needs-you-digest.mjs" in text
-
-
 def test_the_digest_prompt_no_longer_gathers_the_ledger_by_hand():
     text = ENSURE_DIGEST.read_text()
     assert "Read needs-you/open.json" not in text

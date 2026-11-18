@@ -22,11 +22,12 @@
 # state dir and sets it as the row's trigger script, so a run with nothing
 # pending costs no model turn (docs/runbook.md, "The ledger-pulse gate").
 #
-# Converges: the live payload.message, payload.timeoutSeconds and trigger script
+# Converges: the live payload.message, payload.timeoutSeconds, payload.model
+# (the repo's cron model, scripts/lib/cron-model.sh) and trigger script
 # are compared with the declared ones and rewritten with `openclaw cron edit
-# --message` / `--timeout-seconds` / `--trigger-script` only when they differ.
-# The edit hot-reloads (cron rows are a no-op-restart category); nothing is
-# restarted. The row's schedule, delivery, model and the old scratch are not
+# --message` / `--timeout-seconds` / `--model` / `--trigger-script` only when
+# they differ. The edit hot-reloads (cron rows are a no-op-restart category);
+# nothing is restarted. The row's schedule, delivery and the old scratch are not
 # touched.
 #
 # It also converges the row's failure alert (`--failure-alert ...` to the owner
@@ -54,6 +55,10 @@ GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
 [ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 JOB_NAME="ledger-pulse"
+# The one cron model, from the repo's config (scripts/lib/cron-model.sh).
+# shellcheck source=scripts/lib/cron-model.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-model.sh"
+MODEL="${FINANCE_PULSE_MODEL:-$(cron_model)}"
 
 ALERT_CHAT="${FINANCE_PULSE_ALERT_CHAT:-}"
 if [ -z "$ALERT_CHAT" ] && [ -r "$ENV_FILE" ]; then
@@ -130,6 +135,12 @@ for job in json.load(sys.stdin)["jobs"]:
         print((job.get("payload") or {}).get("timeoutSeconds", ""), end="")
         break' "$JOB_NAME")"
 
+current_model="$(printf '%s' "$jobs" | python3 -c '
+import json, sys
+for job in json.load(sys.stdin)["jobs"]:
+    if job.get("name") == sys.argv[1]:
+        print((job.get("payload") or {}).get("model") or "", end="")
+        break' "$JOB_NAME")"
 current_gate="$(printf '%s' "$jobs" | python3 -c '
 import json, sys
 for job in json.load(sys.stdin)["jobs"]:
@@ -151,12 +162,13 @@ edit_args=()
 [ "$current_gate" = "$wanted_gate" ] || edit_args+=(--trigger-script "$gate_script")
 [ "$current" = "$wanted" ] || edit_args+=(--message "$wanted")
 [ "$current_timeout" = "$TIMEOUT_SECONDS" ] || edit_args+=(--timeout-seconds "$TIMEOUT_SECONDS")
+[ "$current_model" = "$MODEL" ] || edit_args+=(--model "$MODEL")
 [ "$current_alert_to" = "$ALERT_CHAT" ] || edit_args+=(--failure-alert --failure-alert-after 1
   --failure-alert-mode announce --failure-alert-channel telegram
   --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT")
 
 if [ "${#edit_args[@]}" -eq 0 ]; then
-  echo "payload.message, timeoutSeconds ($TIMEOUT_SECONDS), gate and failure alert of '$JOB_NAME' ($job_id) already declared (${checklist#"${repo_root}/"}, ${gate_src#"${repo_root}/"}); nothing to do"
+  echo "payload.message, timeoutSeconds ($TIMEOUT_SECONDS), model ($MODEL), gate and failure alert of '$JOB_NAME' ($job_id) already declared (${checklist#"${repo_root}/"}, ${gate_src#"${repo_root}/"}); nothing to do"
   exit 0
 fi
 
@@ -164,6 +176,7 @@ fi
 docker exec "$GATEWAY" openclaw cron edit "$job_id" "${edit_args[@]}" >/dev/null
 [ "$current" = "$wanted" ] || echo "payload.message of '$JOB_NAME' ($job_id) set from ${checklist#"${repo_root}/"}"
 [ "$current_timeout" = "$TIMEOUT_SECONDS" ] || echo "payload.timeoutSeconds of '$JOB_NAME' ($job_id) set to $TIMEOUT_SECONDS (was ${current_timeout:-unset})"
+[ "$current_model" = "$MODEL" ] || echo "payload.model of '$JOB_NAME' ($job_id) set to $MODEL (was ${current_model:-unset})"
 [ "$current_gate" = "$wanted_gate" ] || echo "trigger script of '$JOB_NAME' ($job_id) set to $gate_script"
 [ "$current_alert_to" = "$ALERT_CHAT" ] || echo "failure alert of '$JOB_NAME' ($job_id) set to announce on telegram"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
