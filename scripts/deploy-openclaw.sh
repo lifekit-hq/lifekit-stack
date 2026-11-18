@@ -461,8 +461,10 @@ OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-video-d
 # compose/openclaw-gateway/plugins/fleet-gate gates every agent tool call
 # against the P16 table fleet-policy renders (docs/runbook.md, "Fleet gate").
 # Installed before the platform patch for the same reason as the drop door: the
-# restart that patch asks for on first enable finds the files. A table that is
-# absent is a warning in the script, not a red deploy; one that is invalid is.
+# restart that patch asks for on first enable finds the files. The plugin
+# refuses to start without its table, so the script installs nothing (the
+# running plugin stays) and the deploy goes red until the table is on the host,
+# as it does for an invalid one.
 say "fleet gate plugin -> ${OPENCLAW_CONFIG_DIR}/extensions"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-fleet-gate.sh" \
   || fail_later "fleet gate plugin install failed (output above)"

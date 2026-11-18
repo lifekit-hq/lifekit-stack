@@ -2297,12 +2297,17 @@ Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
   events from 2026-11-08T22:15Z to 2026-11-15T09:09Z, every one `table-missing` with effect
   `allowed`. The plugin runs on tool calls, so `before_tool_call` is invoked; this confirms
   the hook fires, not that it vetoes.
-- **Current condition: the gate allows and logs everything.** The P16 table
-  (`p16-openclaw.json`) was never installed: the extension directory holds `index.js`,
-  `openclaw.plugin.json` and `package.json` only, the source `ensure-fleet-gate.sh` reads
-  (`/var/lib/lifekit/fleet-policy/p16-openclaw.json`) does not exist, and fleet-policy has
-  no renderer for it. A live veto has not been observed and cannot be until a table is
-  rendered and installed (follow-up for fleet-policy).
+- **Current condition (2026-11-15, before the refuse-to-start change): the gate allows and
+  logs everything.** The P16 table (`p16-openclaw.json`) was never installed: the extension
+  directory holds `index.js`, `openclaw.plugin.json` and `package.json` only, and the source
+  `ensure-fleet-gate.sh` reads (`/var/lib/lifekit/fleet-policy/p16-openclaw.json`) did not
+  exist. fleet-policy now renders the table (`fleet-policy install`); a live veto has not
+  been observed until it is copied to the host and installed. Since the plugin refuses to
+  start without it, the host steps are, in order: `fleet-policy install`, copy the rendered
+  `p16-openclaw.json` to `/var/lib/lifekit/fleet-policy/p16-openclaw.json`, then
+  `scripts/ensure-fleet-gate.sh` (or the next deploy). Until the table is there the ensure
+  script installs nothing and the deploy goes red, so the plugin already running stays as it
+  is.
 
 - **Seam:** the `fleet-gate` gateway plugin (`compose/openclaw-gateway/plugins/fleet-gate`),
   `before_tool_call` for every tool and `after_tool_call` for the outcome of the logged
@@ -2312,7 +2317,8 @@ Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
   `openclaw plugins reload fleet-gate`.
 - **The table:** `p16-openclaw.json` (schema `p16-openclaw.v1`) is rendered by fleet-policy
   from the P16 rows, so the rules live once; the plugin makes no network call and holds no
-  second copy. `ensure-fleet-gate.sh` validates it and copies it next to the plugin
+  second copy. `ensure-fleet-gate.sh` validates it and copies it next to the plugin, before
+  the plugin code
   (source: `P16_OPENCLAW_TABLE`, default `/var/lib/lifekit/fleet-policy/p16-openclaw.json`);
   the plugin re-reads it when its mtime changes, so a new table needs no reload. Shape:
   `{"schema": "p16-openclaw.v1", "tools": {"<tool>" | "<prefix>*": {"class": "A"|"L"|"S",
@@ -2343,13 +2349,18 @@ Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
   `~/.openclaw/logs/fleet-gate.jsonl`), one JSON line per event (`taken`, `outcome`,
   `stopped`, `unlisted`, and the problems below), one older generation kept past 8 MiB. It
   is readable by the `lifekit` account; fleet-policy's audit reads it from there.
-- **When it cannot decide:** a missing or unreadable table, or one that is not valid
-  (`table-missing`, `table-malformed`), blocks nothing and logs the reason once a minute,
-  with a gateway warning; an unexpected error in the lookup does the same (`gate-error`).
-  `ensure-fleet-gate.sh` warns at deploy when no table is installed and fails on an invalid
-  one without replacing the installed copy. A single bad row is skipped and the rest of the
-  table applies. The host fails `before_tool_call` closed after 15 s; the plugin leaves that
-  default alone and keeps its own filing budget (9 s) inside it.
+- **When it cannot decide:** the plugin refuses to start without its table. `register()`
+  loads it once and throws on a missing or unreadable one (`table-missing`) or one that is not
+  valid (`table-malformed`), registering no hook, so the gateway never runs a gate that decides
+  on nothing (`FLEET_GATE_TABLE` overrides the path, for tests). `ensure-fleet-gate.sh` keeps
+  the order safe: with no source table and none installed it exits non-zero before it touches
+  the plugin (the one already running stays, the deploy goes red), and an invalid source
+  fails it the same way without replacing the installed copy or the plugin code. After a
+  start, a table swapped on disk that turns missing or malformed blocks nothing and logs the
+  reason once a minute, with a gateway warning, and an unexpected error in the lookup does
+  the same (`gate-error`): the last good decision is not kept. A single bad row is skipped and
+  the rest of the table applies. The host fails `before_tool_call` closed after 15 s; the
+  plugin leaves that default alone and keeps its own filing budget (9 s) inside it.
 - **What it cannot see:** the gate judges the tool call, not what the tool then does. What a
   script, `gh` or `curl` does after `exec` starts; side effects inside an MCP server; and
   command-kind cron jobs (they run no agent tool call) are all outside it. Server-side
@@ -2365,8 +2376,9 @@ Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
   the rest.
 - **Rehearse:** `scripts/rehearse-fleet-gate.sh` loads the repo's plugin in node with a
   scratch table and state dir and a recording `ssh`, plays one `A`, one `L` and one `S`
-  call, and prints what each returned and what was filed. It touches no container and no
-  production state; run it as any user before and after a change.
+  call, and prints what each returned and what was filed (a class the given table has no
+  row for, such as a table of only `S` rows, is played from its built-in sample row). It
+  touches no container and no production state; run it as any user before and after a change.
 - **Verify live:** `docker exec "$G" openclaw plugins inspect fleet-gate` shows it loaded
   with `before_tool_call` and `after_tool_call`; `tail /srv/openclaw/config/logs/fleet-gate.jsonl`
   as `lifekit` shows `taken`/`unlisted` lines as agents work. The first deploy that enables

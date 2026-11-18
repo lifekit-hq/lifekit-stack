@@ -14,8 +14,11 @@
 //                    in chat.
 //
 // A tool the table does not list is allowed and logged (P16: reversible and
-// inside the fleet's space is taken, not asked). A table that is missing or
-// unreadable blocks nothing and logs the reason (rate-limited). The host fails
+// inside the fleet's space is taken, not asked). The plugin refuses to start
+// without its table: register() loads it once and throws when it is missing or
+// malformed, registering no hook, rather than deciding on nothing (ensure-fleet-gate.sh
+// installs the plugin only once the table exists). A table swapped later that
+// turns bad blocks nothing and logs the reason (rate-limited). The host fails
 // this hook closed after 15 s; the filing budget below stays well inside it and
 // the timeout is left at the host default (docs/runbook.md, "Fleet gate").
 //
@@ -323,6 +326,12 @@ async function stop(api, row, toolName, event, ctx) {
 const pending = new Map(); // toolCallId -> { id, at }
 
 function register(api) {
+  // Refuse to start without a usable table: no hooks, no gate deciding on nothing.
+  const table = loadTable(settings().table);
+  if (table.problem) {
+    throw new Error(`fleet-gate: ${table.problem}: ${table.detail}; refusing to start without its decision table`);
+  }
+
   api.on("before_tool_call", async (event, ctx) => {
     const toolName = String(event?.toolName ?? "");
     let row;

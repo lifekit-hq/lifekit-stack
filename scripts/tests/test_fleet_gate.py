@@ -3,10 +3,10 @@
 
 The plugin is loaded in node with a fake plugin API, a P16 table written by
 the test and a fake ssh that records what it is asked to file, so these tests
-pin the table lookup (A, L, S, an unlisted tool, a malformed table, a missing
-table), that a stop is blocked and filed through the relay with the body on
-stdin and nothing through a shell, and that a gate that cannot decide blocks
-nothing it should not and says so.
+pin the table lookup (A, L, S, an unlisted tool), that registration throws and
+registers no hook on a missing or malformed table, that a stop is blocked and
+filed through the relay with the body on stdin and nothing through a shell, and
+that a table that turns bad after start blocks nothing it should not and says so.
 """
 
 from __future__ import annotations
@@ -54,19 +54,29 @@ STANDARD = table(
 )
 
 # Plays steps against the plugin and prints what each hook returned. A step is
-# [hook, event, ctx], or {"table": text} to rewrite the table file mid-run.
+# [hook, event, ctx], or {"table": text} to rewrite the table file mid-run, {"remove": true} to delete it.
+# A register() that throws is reported as {"refused": message, hooks: [...]}.
 RUNNER = r"""
 import fs from "node:fs";
 const [plugin, steps] = process.argv.slice(1);
 const mod = await import(plugin);
 const hooks = {}; const opts = {};
-mod.default.register({
-  on: (name, fn, o) => { hooks[name] = fn; opts[name] = o; },
-  logger: { warn: (m) => process.stderr.write(m + "\n") },
-});
+try {
+  mod.default.register({
+    on: (name, fn, o) => { hooks[name] = fn; opts[name] = o; },
+    logger: { warn: (m) => process.stderr.write(m + "\n") },
+  });
+} catch (err) {
+  process.stdout.write(JSON.stringify({ refused: String(err.message), hooks: Object.keys(hooks) }));
+  process.exit(0);
+}
 const results = [];
 for (const step of JSON.parse(steps)) {
-  if (!Array.isArray(step)) { fs.writeFileSync(process.env.FLEET_GATE_TABLE, step.table); results.push(null); continue; }
+  if (!Array.isArray(step)) {
+    if (step.remove) fs.rmSync(process.env.FLEET_GATE_TABLE);
+    else fs.writeFileSync(process.env.FLEET_GATE_TABLE, step.table);
+    results.push(null); continue;
+  }
   const [hook, event, ctx] = step;
   results.push((await hooks[hook](event, ctx)) ?? null);
 }
@@ -382,16 +392,11 @@ def test_the_table_can_make_ask_user_conditional_on_a_non_owner_run(box):
 
 
 @needs_node
-def test_a_missing_table_blocks_nothing_and_logs_once_a_minute(box):
-    out = play(
-        box, before("ask_user"), before("write"), before("ask_user"), table_doc=None
-    )
-    assert out["results"] == [None, None, None]
-    [line] = log_lines(box)
-    assert line["event"] == "table-missing" and line["effect"] == "allowed"
-    assert "p16-openclaw.json" in line["detail"]
-    assert "not gated" in out["stderr"]
-    assert filed(box) == []
+def test_registration_throws_and_registers_no_hook_without_a_table(box):
+    out = play(box, before("ask_user"), table_doc=None)
+    assert "table-missing" in out["refused"] and "p16-openclaw.json" in out["refused"]
+    assert out["hooks"] == []
+    assert log_lines(box) == [] and filed(box) == []
 
 
 @needs_node
@@ -410,12 +415,36 @@ def test_a_missing_table_blocks_nothing_and_logs_once_a_minute(box):
         (json.dumps({"schema": SCHEMA, "tools": {}}), "no usable row"),
     ],
 )
-def test_a_malformed_table_blocks_nothing_and_logs(box, text, why):
+def test_registration_throws_and_registers_no_hook_on_a_malformed_table(box, text, why):
     out = play(box, before("ask_user"), table_doc=text)
-    assert out["results"] == [None]
+    assert "table-malformed" in out["refused"] and why in out["refused"]
+    assert out["hooks"] == []
+    assert log_lines(box) == [] and filed(box) == []
+
+
+@needs_node
+def test_a_table_that_turns_bad_after_start_blocks_nothing_and_logs_once_a_minute(box):
+    out = play(
+        box,
+        before("ask_user"),
+        {"table": "{not json"},
+        before("ask_user"),
+        before("write"),
+    )
+    assert out["results"][0]["block"] is True
+    assert out["results"][2:] == [None, None]
+    [stopped, line] = log_lines(box)
+    assert stopped["event"] == "stopped"
+    assert line["event"] == "table-malformed" and line["effect"] == "allowed"
+    assert "not gated" in out["stderr"]
+
+
+@needs_node
+def test_a_table_removed_after_start_blocks_nothing_and_logs(box):
+    out = play(box, before("read"), {"remove": True}, before("ask_user"))
+    assert out["results"] == [None, None, None]
     [line] = log_lines(box)
-    assert line["event"] == "table-malformed" and why in line["detail"]
-    assert filed(box) == []
+    assert line["event"] == "table-missing" and "p16-openclaw.json" in line["detail"]
 
 
 @needs_node
@@ -523,6 +552,23 @@ def test_the_platform_patch_allows_and_enables_the_gate():
     package = json.loads((PLUGIN / "package.json").read_text())
     assert manifest["id"] == "fleet-gate"
     assert package["openclaw"]["extensions"] == ["./index.js"]
+    assert package["files"] == ["index.js", "openclaw.plugin.json", "p16-openclaw.json"]
+
+
+@pytest.mark.skipif(shutil.which("npm") is None, reason="npm not installed")
+def test_the_packed_plugin_lists_the_table_when_one_is_staged(tmp_path):
+    stage = tmp_path / "fleet-gate"
+    shutil.copytree(PLUGIN, stage)
+    (stage / "p16-openclaw.json").write_text(json.dumps(STANDARD))
+    r = subprocess.run(
+        ["npm", "pack", "--dry-run", "--json"],
+        cwd=stage,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    packed = {f["path"] for f in json.loads(r.stdout)[0]["files"]}
+    assert {"index.js", "openclaw.plugin.json", "p16-openclaw.json"} <= packed
 
 
 def test_the_gateway_mounts_the_oc_relay_key_read_only_in_its_own_directory():
@@ -611,11 +657,21 @@ def test_ensure_reloads_an_enabled_plugin_only_when_its_code_changed(tmp_path):
     assert json.loads((dest / "p16-openclaw.json").read_text()) == newer
 
 
-def test_ensure_without_a_table_warns_and_installs_the_plugin_anyway(tmp_path):
-    r, dest, _ = _ensure(tmp_path, live_config={})
-    assert r.returncode == 0, r.stderr
-    assert "no P16 table" in r.stderr and "table-missing" in r.stderr
-    assert (dest / "index.js").exists() and not (dest / "p16-openclaw.json").exists()
+def test_ensure_without_any_table_exits_nonzero_and_leaves_the_plugin_alone(tmp_path):
+    r, dest, docker = _ensure(tmp_path, live_config=ENABLED)
+    assert r.returncode == 1
+    assert "no P16 table" in r.stderr and "not installing" in r.stderr
+    assert not dest.exists() and "reload" not in docker
+
+
+def test_ensure_without_a_source_table_keeps_the_plugin_already_running(tmp_path):
+    old = tmp_path / "config/extensions/fleet-gate"
+    old.mkdir(parents=True)
+    (old / "index.js").write_text("// the old plugin\n")
+    r, dest, docker = _ensure(tmp_path, live_config=ENABLED)
+    assert r.returncode == 1
+    assert (dest / "index.js").read_text() == "// the old plugin\n"
+    assert not (dest / "p16-openclaw.json").exists() and "reload" not in docker
 
 
 def test_ensure_keeps_the_installed_table_when_the_source_goes_missing(tmp_path):
@@ -642,10 +698,10 @@ def test_ensure_refuses_an_invalid_table_and_leaves_the_installed_one(tmp_path, 
     assert json.loads((dest / "p16-openclaw.json").read_text()) == STANDARD
 
 
-def test_ensure_reloads_new_plugin_code_even_when_the_table_is_invalid(tmp_path):
+def test_ensure_installs_no_plugin_code_when_the_table_is_invalid(tmp_path):
     r, dest, docker = _ensure(tmp_path, live_config=ENABLED, table_doc="{nope")
     assert r.returncode == 1 and "not a valid p16-openclaw.v1 table" in r.stderr
-    assert "exec gw1 openclaw plugins reload fleet-gate" in docker
+    assert not dest.exists() and "reload" not in docker
 
 
 # --- the rehearsal ------------------------------------------------------------
@@ -667,3 +723,18 @@ def test_the_rehearsal_shows_an_a_call_untouched_and_an_s_call_blocked_and_filed
         assert r.returncode == 0, r.stdout + r.stderr
         assert "untouched" in r.stdout and "BLOCKED" in r.stdout
         assert "filed: relay note oc-" in r.stdout and "rehearsal: ok" in r.stdout
+
+
+@needs_node
+def test_the_rehearsal_plays_all_three_classes_on_a_table_of_only_s_rows(tmp_path):
+    doc = tmp_path / "table.json"
+    doc.write_text(json.dumps(table(ask_user=ASK, **{"devclaw__delete_*": ASK})))
+    r = subprocess.run(
+        ["bash", str(REPO / "scripts/rehearse-fleet-gate.sh"), str(doc)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "untouched" in r.stdout and "BLOCKED" in r.stdout
+    assert "rehearsal: ok" in r.stdout

@@ -8,7 +8,10 @@
 #   scripts/rehearse-fleet-gate.sh [<p16-openclaw.json>]
 #
 # With a table argument the three calls are the first A, L and S row of it (a
-# prefix row's `*` becomes `x`); without one a built-in sample table is used.
+# prefix row's `*` becomes `x`); without one a built-in sample table is used. A
+# class the given table has no unconditional row for (the live map can be S rows
+# only) is played from the built-in sample's row for it, added to the scratch
+# copy, so the rehearsal still shows all three.
 # Exit 0 only when A was untouched, L was logged with its outcome, and S was
 # blocked with a request filed.
 set -euo pipefail
@@ -52,12 +55,21 @@ REHEARSAL_WORK="$work" \
 import fs from "node:fs";
 const [plugin] = process.argv.slice(1);
 fs.mkdirSync(process.env.SSH_TEST_DIR, { recursive: true });
-const table = JSON.parse(fs.readFileSync(process.env.FLEET_GATE_TABLE, "utf8")).tools;
-const pick = (cls) => {
-  const key = Object.keys(table).find((k) => table[k].class === cls && !table[k].when);
-  if (!key) { console.error(`rehearsal: the table has no unconditional class ${cls} row`); process.exit(2); }
-  return key.replace(/\*$/, "x");
+const doc = JSON.parse(fs.readFileSync(process.env.FLEET_GATE_TABLE, "utf8"));
+const table = doc.tools;
+const defaults = {
+  A: ["rehearsal_read", { class: "A", id: "openclaw.own-workspace" }],
+  L: ["rehearsal_write", { class: "L", id: "openclaw.own-workspace", ruling: "agent-behavior.md#P16.1" }],
+  S: ["rehearsal_ask_user", { class: "S", id: "openclaw.ask-user", ruling: "agent-behavior.md#P16.2" }],
 };
+let filled = false;
+for (const cls of ["A", "L", "S"]) {
+  if (Object.keys(table).some((k) => table[k].class === cls && !table[k].when)) continue;
+  table[defaults[cls][0]] = defaults[cls][1];
+  filled = true;
+}
+if (filled) fs.writeFileSync(process.env.FLEET_GATE_TABLE, JSON.stringify(doc));
+const pick = (cls) => Object.keys(table).find((k) => table[k].class === cls && !table[k].when).replace(/\*$/, "x");
 const hooks = {};
 (await import(plugin)).default.register({ on: (n, f) => { hooks[n] = f; }, logger: { warn: console.error } });
 const ctx = { agentId: "rehearsal", sessionKey: "agent:rehearsal:cron:1", runId: "r1", requester: { senderIsOwner: false } };
