@@ -378,7 +378,7 @@ if live_model != model:
     sys.exit("refusing: needs-you-digest payload.model=" + repr(live_model) + ", want " + repr(model))
 ' "$job_id" "$SESSION_KEY" "$DIGEST_TOOLS" "$DIGEST_MODEL" >&2
 
-echo "cron '$READER_NAME' ($reader_id) converged: $READER_CRON @ $CRON_TZ, agent:$READER_AGENT isolated, model $DIGEST_MODEL, tools $READER_TOOLS only, no delivery (verified)${READER_GATED:+, gated}"
+echo "cron '$READER_NAME' ($reader_id) converged: $READER_CRON @ $CRON_TZ, agent:$READER_AGENT isolated, model $DIGEST_MODEL, tools $READER_TOOLS only, no delivery (verified)$([ "$READER_GATED" -eq 1 ] && echo ', gated')"
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT -> $SESSION_KEY (announce, verified in-chat only), tools $DIGEST_TOOLS, failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id   # delivery preview: announce -> current session"
 echo "        docker exec $GATEWAY openclaw cron run $reader_id --expect-final --json   # the mail section, or 'No new mail.'"

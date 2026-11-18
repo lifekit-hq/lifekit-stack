@@ -210,6 +210,39 @@ def test_scan_converts_privately_and_is_idempotent(env, capsys):
     assert "No new documents." in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("blob", [PDF, b"%PDF tiny"], ids=["same-blob", "too-small"])
+def test_a_message_whose_attachments_are_all_rejected_is_remembered(
+    env, monkeypatch, capsys, blob
+):
+    real = FakeMcp.call
+    seen: list[str] = []
+
+    def call(self, tool, **args):
+        seen.append(tool)
+        if tool == "search_gmail_messages":
+            return "Found 2 messages\nMessage ID: M1\nMessage ID: M2\n"
+        if tool == "get_gmail_attachment_content" and args["message_id"] == "M2":
+            return "x\nBase64 content (1 chars):\n" + base64.b64encode(blob).decode()
+        return real(self, tool, **args)
+
+    monkeypatch.setattr(FakeMcp, "call", call)
+    run(["scan"])
+    capsys.readouterr()
+    state = door.load_state()
+    assert [r["message_id"] for r in state["docs"].values()] == ["M1"]
+    assert state["skipped"] == ["M2"]
+    seen.clear()
+    run(["scan"])
+    assert seen == ["search_gmail_messages"]
+
+
+def test_a_message_whose_conversion_fails_is_retried(env, monkeypatch, capsys):
+    monkeypatch.setattr(door, "MARKITDOWN", "/bin/false")
+    run(["scan"])
+    assert "conversion failed" in capsys.readouterr().out
+    assert door.load_state().get("skipped", []) == []
+
+
 def test_scan_alone_calls_only_mail_reads(env):
     run(["scan"])
     assert set(FakeMcp.calls) <= {

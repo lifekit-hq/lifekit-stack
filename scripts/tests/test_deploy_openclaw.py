@@ -1554,6 +1554,7 @@ echo "openclaw-smoke $*" >> "$DOCKER_CALL_LOG"
 echo "upgrade-smoke openclaw: ${OPENCLAW_SMOKE:-PASS} version=2026.9.5"
 [ "${OPENCLAW_SMOKE:-PASS}" = PASS ] || exit 1
 """
+PATCH = "compose/openclaw-gateway/platform.patch.json"
 PINS = ("compose/openclaw-gateway/Dockerfile", "compose/openclaw-gateway/package.json")
 
 
@@ -1620,6 +1621,17 @@ for f in "${{DEPLOY_FAILURES[@]}}"; do echo "failure: $f"; done
 
 def claude_exec(calls):
     return [c for c in calls if " exec -T openclaw-gateway bash -s " in f" {c} "]
+
+
+def test_the_smoke_turn_runs_on_the_policy_model(env, smoke_repo):
+    policy = json.loads((REPO / PATCH).read_text())["agents"]["defaults"]["model"][
+        "primary"
+    ]
+    _, _, calls, _ = smoke_phase(env, smoke_repo)
+    [turn] = [c for c in calls if " openclaw agent " in f" {c} "]
+    argv = turn.split()
+    assert argv[argv.index("--model") + 1] == policy
+    assert argv[argv.index("--agent") + 1] == "kit"
 
 
 def test_smoke_runs_both_checks_when_no_complete_deploy_is_recorded(env, smoke_repo):

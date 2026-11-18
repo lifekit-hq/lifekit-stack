@@ -20,6 +20,9 @@ REPO = Path(__file__).resolve().parents[2]
 ENSURE = REPO / "scripts/ensure-reader-agent.sh"
 SHIPPED = json.loads((REPO / "defaults/agents/reader/agent.json").read_text())
 ENTRY = SHIPPED["agents"]["entries"]["reader"]
+POLICY_MODEL = json.loads(
+    (REPO / "compose/openclaw-gateway/platform.patch.json").read_text()
+)["agents"]["defaults"]["model"]["primary"]
 DOOR = "/home/node/.openclaw/agents/reader/workspace/skills/doc-door/door.py"
 
 FAKE_DOCKER = r"""#!/usr/bin/env python3
@@ -407,3 +410,17 @@ def test_a_mail_reader_row_on_another_agent_is_refused(box):
     assert done.returncode == 1
     assert "agentId='kit', want 'reader'" in done.stderr
     assert not [c for c in box.calls() if c[:2] == ["cron", "add"]]
+
+
+def test_every_declared_job_runs_on_the_policy_model(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    for name in ("ensure-doc-door.sh", "ensure-needs-you-digest.sh"):
+        done = box.script(name)
+        assert done.returncode == 0, done.stderr
+    declared = [c for c in box.calls() if c[:2] in (["cron", "add"], ["cron", "edit"])]
+    assert len(declared) >= 6  # an add and an edit each for door, reader, digest
+    for call in declared:
+        assert call[call.index("--model") + 1] == POLICY_MODEL, call
+    for name in ("doc-door", "needs-you-mail-reader", "needs-you-digest"):
+        assert box.job(name)["payload"]["model"] == POLICY_MODEL

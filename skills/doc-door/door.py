@@ -342,6 +342,7 @@ def scan(days: int, limit: int) -> int:
         try:
             msg = parse_message(mcp.call("get_gmail_message_content", message_id=mid))
             wanted = [a for a in msg["attachments"] if kind_of(a["filename"])]
+            rejected = 0
             for a in wanted:
                 if shown >= MAX_NEW:
                     break
@@ -355,9 +356,11 @@ def scan(days: int, limit: int) -> int:
                     )
                 )
                 if not MIN_BYTES <= len(blob) <= MAX_BYTES:
+                    rejected += 1
                     continue
                 doc_id = hashlib.sha256(blob).hexdigest()[:16]
                 if doc_id in docs:
+                    rejected += 1
                     continue
                 rec = {
                     "message_id": mid,
@@ -384,7 +387,7 @@ def scan(days: int, limit: int) -> int:
                 save_state(state)
                 show(doc_id, rec, text)
                 shown += 1
-            if not wanted:
+            if rejected == len(wanted):
                 state.setdefault("skipped", []).append(mid)
         except Exception as exc:  # noqa: BLE001
             print(f"message {mid[:8]}: {exc}")
