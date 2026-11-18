@@ -47,7 +47,7 @@ VALUE_FLAGS = {
     "--name", "--display-name", "--description", "--cron", "--tz", "--agent", "--session",
     "--session-key", "--message", "--model", "--tools", "--timeout-seconds",
     "--failure-alert-after", "--failure-alert-mode", "--failure-alert-channel",
-    "--failure-alert-account-id", "--failure-alert-to",
+    "--failure-alert-account-id", "--failure-alert-to", "--trigger-script",
 }
 def flags(argv):
     out, i = {}, 0
@@ -74,6 +74,10 @@ def apply(job, f):
         payload["model"] = f["--model"]
     if "--message" in f:
         payload["message"] = f["--message"]
+    if "--trigger-script" in f:
+        job["trigger"] = {"script": f["--trigger-script"]}
+    if "--clear-trigger" in f:
+        job.pop("trigger", None)
 def log_call(argv):
     with open(f"{state}/calls.jsonl", "a") as fh:
         fh.write(json.dumps(argv) + "\n")
@@ -424,3 +428,18 @@ def test_every_declared_job_runs_on_the_policy_model(box):
         assert call[call.index("--model") + 1] == POLICY_MODEL, call
     for name in ("doc-door", "needs-you-mail-reader", "needs-you-digest"):
         assert box.job(name)["payload"]["model"] == POLICY_MODEL
+
+
+def test_the_doc_door_gate_is_set_for_the_reader_and_cleared_on_the_kit_rollback(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    done = box.script("ensure-doc-door.sh")
+    assert done.returncode == 0, done.stderr
+    assert box.job("doc-door")["trigger"]["script"].endswith("scan.js")
+    box.workspace.parent.parent.joinpath("kit/workspace").mkdir(parents=True)
+    done = box.script("ensure-doc-door.sh", DOC_DOOR_AGENT="kit")
+    assert done.returncode == 0, done.stderr
+    edit = [c for c in box.calls() if c[:2] == ["cron", "edit"]][-1]
+    assert "--clear-trigger" in edit and "--trigger-script" not in edit
+    row = box.job("doc-door")
+    assert row["agentId"] == "kit" and "trigger" not in row

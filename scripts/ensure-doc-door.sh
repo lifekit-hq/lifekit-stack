@@ -163,17 +163,20 @@ if [ -z "$job_id" ]; then
   [ -n "$job_id" ] || { echo "cron add ran but no '$JOB_NAME' job is listed" >&2; exit 1; }
   echo "created cron '$JOB_NAME' ($job_id)"
 fi
-# The trigger script, set only when the stored one differs (the gate belongs to the reader).
-gate_args=()
-if [ "$AGENT" = reader ]; then
-  current_gate="$(live_jobs | python3 -c '
+# The trigger script follows the agent: set when it differs, cleared when the job runs
+# as kit (the rollback) and a reader-era gate is still stored.
+current_gate="$(live_jobs | python3 -c '
 import json, sys
 for job in json.load(sys.stdin)["jobs"]:
     if job.get("id") == sys.argv[1]:
         print(((job.get("trigger") or {}).get("script") or "").strip(), end="")
-        break' "$job_id")"
+        break' "$job_id")" || exit 1
+gate_args=()
+if [ "$AGENT" = reader ]; then
   [ "$current_gate" = "$(cat "$gate_src/scan.js")" ] \
     || gate_args=(--trigger-script /home/node/.openclaw/gates/doc-door/scan.js)
+elif [ -n "$current_gate" ]; then
+  gate_args=(--clear-trigger)
 fi
 docker exec "$GATEWAY" openclaw cron edit "$job_id" \
   --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
