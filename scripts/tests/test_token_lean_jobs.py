@@ -164,7 +164,13 @@ def fleet(**over):
             {},
         ],
         "landed": [
-            {"completion": {"date": datetime.date.today().isoformat()}},
+            # The digest runs with TZ=UTC (run_digest), so "today" is the UTC day,
+            # not the host's local day (they differ for hours around midnight).
+            {
+                "completion": {
+                    "date": datetime.datetime.now(datetime.UTC).date().isoformat()
+                }
+            },
             {"completion": {"date": "2020-01-01"}},
         ],
     }
