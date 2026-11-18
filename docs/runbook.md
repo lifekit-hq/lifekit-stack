@@ -2495,7 +2495,8 @@ last: the next deploy undoes it. To keep the jobs on Kit, retire the reader firs
    jobs wherever they are.
 2. Move the jobs back: `DOC_DOOR_AGENT=kit scripts/ensure-doc-door.sh` and
    `NEEDS_YOU_READER_AGENT=kit scripts/ensure-needs-you-digest.sh` (Kit's copy of the door skill is
-   installed by `ensure-doc-door.sh` on that run). `ensure-needs-you-digest.sh` is not run by the deploy,
+   installed by `ensure-doc-door.sh` on that run; both scripts also clear the reader-era `--trigger-script` from a
+   row that now runs as Kit, since the gate reads the reader's state). `ensure-needs-you-digest.sh` is not run by the deploy,
    so its move stays; the `doc-door` move stays only while the reader entry is absent.
 
 The env overrides alone are a one-off for testing: the next deploy puts `doc-door` back on the reader.
