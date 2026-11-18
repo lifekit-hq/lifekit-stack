@@ -71,7 +71,11 @@ def judge(out: str, cases: list, agent: dict) -> list:
     ]
     if not requests:
         return ["no model request reached the mock: the turn did not run"]
-    catalogue = {t["name"] for t in requests[0]["req"].get("tools") or [] if not is_inert_placeholder(t)}
+    catalogue = {
+        t["name"]
+        for t in requests[0]["req"].get("tools") or []
+        if not is_inert_placeholder(t)
+    }
     allow = agent["agents"]["entries"]["reader"]["tools"]["allow"]
     if catalogue != expected_catalogue(allow):
         bad.append(
