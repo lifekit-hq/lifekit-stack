@@ -151,3 +151,35 @@ def test_the_live_canary_passes_on_the_shipped_entry():
             f"LIVE CANARY NOT RUN (no docker or gateway image): {proc.stderr.strip()}; run it on the box"
         )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+PLACEHOLDER = {
+    "name": "DeferredToolPlaceholder",
+    "description": "Reserved placeholder that keeps deferred tool loading active; never call this tool.",
+    "input_schema": {"type": "object", "properties": {}},
+    "defer_loading": True,
+}
+
+
+def with_extra_tool(tmp_path, tool):
+    out = evidence(tmp_path)
+    rows = [json.loads(line) for line in (out / "mock.log").read_text().splitlines()]
+    rows[0]["req"]["tools"].append(tool)
+    write_jsonl(out / "mock.log", rows)
+    return verdict.judge(str(out), CASES, AGENT)
+
+
+def test_the_inert_deferred_placeholder_is_not_a_wider_catalogue(tmp_path):
+    assert with_extra_tool(tmp_path, PLACEHOLDER) == []
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        {**PLACEHOLDER, "defer_loading": False},
+        {**PLACEHOLDER, "input_schema": {"type": "object", "properties": {"cmd": {}}}},
+        {**PLACEHOLDER, "name": "DeferredToolPlaceholder2"},
+    ],
+)
+def test_a_lookalike_of_the_placeholder_still_fails(tmp_path, tool):
+    assert any("tool catalogue" in b for b in with_extra_tool(tmp_path, tool))

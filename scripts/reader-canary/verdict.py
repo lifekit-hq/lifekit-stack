@@ -47,6 +47,20 @@ def expected_catalogue(allow: list) -> set:
     return names
 
 
+def is_inert_placeholder(tool: dict) -> bool:
+    """Claude Code sends a stub that keeps deferred tool loading switched on: it is deferred,
+    takes no input and carries no capability. Matched on its whole shape, so a real tool that
+    reuses the name (a schema with properties, or one not deferred) still fails the check."""
+    schema = tool.get("input_schema") or {}
+    return (
+        tool.get("name") == "DeferredToolPlaceholder"
+        and tool.get("defer_loading") is True
+        and schema.get("type") == "object"
+        and not schema.get("properties")
+        and not schema.get("required")
+    )
+
+
 def judge(out: str, cases: list, agent: dict) -> list:
     """Returns the list of failures (empty = the cap held)."""
     bad = []
@@ -57,7 +71,7 @@ def judge(out: str, cases: list, agent: dict) -> list:
     ]
     if not requests:
         return ["no model request reached the mock: the turn did not run"]
-    catalogue = {t["name"] for t in requests[0]["req"].get("tools") or []}
+    catalogue = {t["name"] for t in requests[0]["req"].get("tools") or [] if not is_inert_placeholder(t)}
     allow = agent["agents"]["entries"]["reader"]["tools"]["allow"]
     if catalogue != expected_catalogue(allow):
         bad.append(
