@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # ensure-learnclaw.sh - install learnclaw's contract (defaults/agents/learnclaw/
-# workspace: AGENTS.md, SOUL.md, IDENTITY.md, skills/README.md) and its
-# learning-record skill (skills/learning-record) and LearnHarness's upstream
+# workspace: AGENTS.md, SOUL.md, IDENTITY.md, skills/README.md), its
+# learning-record skill (skills/learning-record), its leetcode-daily skill
+# (skills/leetcode-daily: the daily problem, its curated list and the weekly
+# count) and LearnHarness's upstream
 # learnharness skill into the learnclaw workspace, and report whether the
 # agent's skill allowlist carries them.
 #
@@ -53,6 +55,15 @@ install -D -m 0644 "$skill_src/SKILL.md" "$skill_dest/SKILL.md"
 install -D -m 0755 "$skill_src/record.py" "$skill_dest/record.py"
 echo "skill installed -> $skill_dest"
 
+# The daily LeetCode problem: the pick, the record calls, the curated list.
+# It writes only through learning-record's record.py, its sibling skill dir.
+lc_src="${repo_root}/skills/leetcode-daily"
+lc_dest="${workspace}/skills/leetcode-daily"
+install -D -m 0644 "$lc_src/SKILL.md" "$lc_dest/SKILL.md"
+install -D -m 0644 "$lc_src/problems.json" "$lc_dest/problems.json"
+install -D -m 0755 "$lc_src/daily.py" "$lc_dest/daily.py"
+echo "skill installed -> $lc_dest"
+
 # LearnHarness's own agent skill, adopted as it is (Denys 2026-11-09): the
 # read-only reader of the learning record LearnHarness keeps on the owner's PC,
 # synced here by scripts/learnharness-sync (docs/runbook.md, "learnclaw").
@@ -94,7 +105,7 @@ fi
 
 # Read-only: is the skill on the agent's allowlist? An agent with a `skills`
 # list sees only what the list names; an empty list is the paused state.
-for SKILL in learning-record learnharness; do
+for SKILL in learning-record leetcode-daily learnharness; do
 listed="$(docker exec -e AGENT="$AGENT" -e SKILL="$SKILL" "$GATEWAY" node -e '
 const c = require(process.env.OPENCLAW_CONFIG_PATH);
 const e = ((c.agents || {}).entries || {})[process.env.AGENT];

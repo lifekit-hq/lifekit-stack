@@ -47,6 +47,11 @@ COLUMNS = (
 )
 STATUSES = ("in progress", "done", "dropped")
 PROOF = ("applied", "post", "grilled")
+# The daily LeetCode problems (skills/leetcode-daily) share this table, one
+# `leetcode: <slug>` row per step. A problem is not an artefact: done needs only
+# the grilled cell (pattern and complexity, in the owner's words), and status
+# leaves these rows out of the artefact projections.
+PROBLEM_PREFIX = "leetcode: "
 DATE = re.compile(r"^(due )?(\d{4}-\d{2}-\d{2})$")
 
 
@@ -117,8 +122,19 @@ def parse_date(value: str) -> tuple[bool, dt.date] | None:
 
 
 def status(lines: list[str], now: dt.date) -> str:
-    record = rows(lines)
+    all_rows = rows(lines)
+    record = [r for r in all_rows if not r["topic"].startswith(PROBLEM_PREFIX)]
     out = [f"artefact record: {len(record)} row(s), today {now}"]
+    problems = {}
+    for r in all_rows:
+        if r["topic"].startswith(PROBLEM_PREFIX):
+            problems[r["topic"]] = r["status"]
+    if problems:
+        tally = [list(problems.values()).count(s) for s in STATUSES]
+        out.append(
+            f"daily problems: {tally[1]} done, {tally[2]} skipped, {tally[0]} open "
+            "(leetcode-daily status has the detail)"
+        )
     parsed = []
     for r in record:
         d = parse_date(r["date"])
@@ -192,7 +208,8 @@ def new_row(args: argparse.Namespace, now: dt.date) -> str:
             fail(f"{key} is required")
     if row["status"] not in STATUSES:
         fail(f"status: one of {', '.join(STATUSES)}")
-    lacks = [k for k in PROOF if missing(row[k])]
+    proof = ("grilled",) if row["topic"].startswith(PROBLEM_PREFIX) else PROOF
+    lacks = [k for k in proof if missing(row[k])]
     if row["status"] == "done" and lacks:
         fail(f"status done needs {', '.join(lacks)} too; record it as in progress")
     return "| " + " | ".join(row[k] for k in COLUMNS) + " |"

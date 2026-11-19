@@ -1,0 +1,593 @@
+{
+ "_comment": "Curated LeetCode list for learnclaw's daily problem (skills/leetcode-daily). Order is the pick order: patterns in Track A order (vault domains/learning.md), problems in order inside a pattern. Pure basics and problems with no clear pattern are left out.",
+ "patterns": [
+  {
+   "id": "A1",
+   "name": "Big-O",
+   "problems": [],
+   "note": "Pure basics: no LeetCode problem to send."
+  },
+  {
+   "id": "A2",
+   "name": "Hash maps",
+   "problems": [
+    {
+     "slug": "two-sum",
+     "title": "Two Sum"
+    },
+    {
+     "slug": "group-anagrams",
+     "title": "Group Anagrams"
+    },
+    {
+     "slug": "top-k-frequent-elements",
+     "title": "Top K Frequent Elements"
+    },
+    {
+     "slug": "product-of-array-except-self",
+     "title": "Product of Array Except Self"
+    },
+    {
+     "slug": "valid-sudoku",
+     "title": "Valid Sudoku"
+    },
+    {
+     "slug": "longest-consecutive-sequence",
+     "title": "Longest Consecutive Sequence"
+    },
+    {
+     "slug": "subarray-sum-equals-k",
+     "title": "Subarray Sum Equals K"
+    }
+   ]
+  },
+  {
+   "id": "A3",
+   "name": "Two pointers and sliding window",
+   "problems": [
+    {
+     "slug": "valid-palindrome",
+     "title": "Valid Palindrome"
+    },
+    {
+     "slug": "two-sum-ii-input-array-is-sorted",
+     "title": "Two Sum II - Input Array Is Sorted"
+    },
+    {
+     "slug": "3sum",
+     "title": "3Sum"
+    },
+    {
+     "slug": "container-with-most-water",
+     "title": "Container With Most Water"
+    },
+    {
+     "slug": "trapping-rain-water",
+     "title": "Trapping Rain Water"
+    },
+    {
+     "slug": "best-time-to-buy-and-sell-stock",
+     "title": "Best Time to Buy and Sell Stock"
+    },
+    {
+     "slug": "longest-substring-without-repeating-characters",
+     "title": "Longest Substring Without Repeating Characters"
+    },
+    {
+     "slug": "longest-repeating-character-replacement",
+     "title": "Longest Repeating Character Replacement"
+    },
+    {
+     "slug": "permutation-in-string",
+     "title": "Permutation in String"
+    },
+    {
+     "slug": "minimum-window-substring",
+     "title": "Minimum Window Substring"
+    },
+    {
+     "slug": "sliding-window-maximum",
+     "title": "Sliding Window Maximum"
+    }
+   ]
+  },
+  {
+   "id": "A4",
+   "name": "Stacks and monotonic stack",
+   "problems": [
+    {
+     "slug": "valid-parentheses",
+     "title": "Valid Parentheses"
+    },
+    {
+     "slug": "min-stack",
+     "title": "Min Stack"
+    },
+    {
+     "slug": "evaluate-reverse-polish-notation",
+     "title": "Evaluate Reverse Polish Notation"
+    },
+    {
+     "slug": "daily-temperatures",
+     "title": "Daily Temperatures"
+    },
+    {
+     "slug": "car-fleet",
+     "title": "Car Fleet"
+    },
+    {
+     "slug": "largest-rectangle-in-histogram",
+     "title": "Largest Rectangle in Histogram"
+    }
+   ]
+  },
+  {
+   "id": "A5",
+   "name": "Binary search",
+   "problems": [
+    {
+     "slug": "search-a-2d-matrix",
+     "title": "Search a 2D Matrix"
+    },
+    {
+     "slug": "koko-eating-bananas",
+     "title": "Koko Eating Bananas"
+    },
+    {
+     "slug": "find-minimum-in-rotated-sorted-array",
+     "title": "Find Minimum in Rotated Sorted Array"
+    },
+    {
+     "slug": "search-in-rotated-sorted-array",
+     "title": "Search in Rotated Sorted Array"
+    },
+    {
+     "slug": "time-based-key-value-store",
+     "title": "Time Based Key-Value Store"
+    },
+    {
+     "slug": "median-of-two-sorted-arrays",
+     "title": "Median of Two Sorted Arrays"
+    }
+   ]
+  },
+  {
+   "id": "A6",
+   "name": "Linked lists",
+   "problems": [
+    {
+     "slug": "reverse-linked-list",
+     "title": "Reverse Linked List"
+    },
+    {
+     "slug": "merge-two-sorted-lists",
+     "title": "Merge Two Sorted Lists"
+    },
+    {
+     "slug": "linked-list-cycle",
+     "title": "Linked List Cycle"
+    },
+    {
+     "slug": "reorder-list",
+     "title": "Reorder List"
+    },
+    {
+     "slug": "remove-nth-node-from-end-of-list",
+     "title": "Remove Nth Node From End of List"
+    },
+    {
+     "slug": "copy-list-with-random-pointer",
+     "title": "Copy List with Random Pointer"
+    },
+    {
+     "slug": "add-two-numbers",
+     "title": "Add Two Numbers"
+    },
+    {
+     "slug": "find-the-duplicate-number",
+     "title": "Find the Duplicate Number"
+    },
+    {
+     "slug": "lru-cache",
+     "title": "LRU Cache"
+    },
+    {
+     "slug": "merge-k-sorted-lists",
+     "title": "Merge k Sorted Lists"
+    },
+    {
+     "slug": "reverse-nodes-in-k-group",
+     "title": "Reverse Nodes in k-Group"
+    }
+   ]
+  },
+  {
+   "id": "A7",
+   "name": "Trees",
+   "problems": [
+    {
+     "slug": "invert-binary-tree",
+     "title": "Invert Binary Tree"
+    },
+    {
+     "slug": "maximum-depth-of-binary-tree",
+     "title": "Maximum Depth of Binary Tree"
+    },
+    {
+     "slug": "diameter-of-binary-tree",
+     "title": "Diameter of Binary Tree"
+    },
+    {
+     "slug": "balanced-binary-tree",
+     "title": "Balanced Binary Tree"
+    },
+    {
+     "slug": "same-tree",
+     "title": "Same Tree"
+    },
+    {
+     "slug": "subtree-of-another-tree",
+     "title": "Subtree of Another Tree"
+    },
+    {
+     "slug": "lowest-common-ancestor-of-a-binary-search-tree",
+     "title": "Lowest Common Ancestor of a Binary Search Tree"
+    },
+    {
+     "slug": "binary-tree-level-order-traversal",
+     "title": "Binary Tree Level Order Traversal"
+    },
+    {
+     "slug": "binary-tree-right-side-view",
+     "title": "Binary Tree Right Side View"
+    },
+    {
+     "slug": "count-good-nodes-in-binary-tree",
+     "title": "Count Good Nodes in Binary Tree"
+    },
+    {
+     "slug": "validate-binary-search-tree",
+     "title": "Validate Binary Search Tree"
+    },
+    {
+     "slug": "kth-smallest-element-in-a-bst",
+     "title": "Kth Smallest Element in a BST"
+    },
+    {
+     "slug": "construct-binary-tree-from-preorder-and-inorder-traversal",
+     "title": "Construct Binary Tree from Preorder and Inorder Traversal"
+    },
+    {
+     "slug": "binary-tree-maximum-path-sum",
+     "title": "Binary Tree Maximum Path Sum"
+    },
+    {
+     "slug": "serialize-and-deserialize-binary-tree",
+     "title": "Serialize and Deserialize Binary Tree"
+    }
+   ]
+  },
+  {
+   "id": "A8",
+   "name": "Heaps",
+   "problems": [
+    {
+     "slug": "kth-largest-element-in-a-stream",
+     "title": "Kth Largest Element in a Stream"
+    },
+    {
+     "slug": "last-stone-weight",
+     "title": "Last Stone Weight"
+    },
+    {
+     "slug": "k-closest-points-to-origin",
+     "title": "K Closest Points to Origin"
+    },
+    {
+     "slug": "kth-largest-element-in-an-array",
+     "title": "Kth Largest Element in an Array"
+    },
+    {
+     "slug": "task-scheduler",
+     "title": "Task Scheduler"
+    },
+    {
+     "slug": "design-twitter",
+     "title": "Design Twitter"
+    },
+    {
+     "slug": "find-median-from-data-stream",
+     "title": "Find Median from Data Stream"
+    }
+   ]
+  },
+  {
+   "id": "A9",
+   "name": "Graphs",
+   "problems": [
+    {
+     "slug": "number-of-islands",
+     "title": "Number of Islands"
+    },
+    {
+     "slug": "max-area-of-island",
+     "title": "Max Area of Island"
+    },
+    {
+     "slug": "clone-graph",
+     "title": "Clone Graph"
+    },
+    {
+     "slug": "pacific-atlantic-water-flow",
+     "title": "Pacific Atlantic Water Flow"
+    },
+    {
+     "slug": "surrounded-regions",
+     "title": "Surrounded Regions"
+    },
+    {
+     "slug": "rotting-oranges",
+     "title": "Rotting Oranges"
+    },
+    {
+     "slug": "course-schedule",
+     "title": "Course Schedule"
+    },
+    {
+     "slug": "course-schedule-ii",
+     "title": "Course Schedule II"
+    },
+    {
+     "slug": "word-ladder",
+     "title": "Word Ladder"
+    },
+    {
+     "slug": "network-delay-time",
+     "title": "Network Delay Time"
+    },
+    {
+     "slug": "cheapest-flights-within-k-stops",
+     "title": "Cheapest Flights Within K Stops"
+    },
+    {
+     "slug": "min-cost-to-connect-all-points",
+     "title": "Min Cost to Connect All Points"
+    },
+    {
+     "slug": "swim-in-rising-water",
+     "title": "Swim in Rising Water"
+    }
+   ]
+  },
+  {
+   "id": "A10",
+   "name": "Intervals and greedy",
+   "problems": [
+    {
+     "slug": "insert-interval",
+     "title": "Insert Interval"
+    },
+    {
+     "slug": "merge-intervals",
+     "title": "Merge Intervals"
+    },
+    {
+     "slug": "non-overlapping-intervals",
+     "title": "Non-overlapping Intervals"
+    },
+    {
+     "slug": "minimum-number-of-arrows-to-burst-balloons",
+     "title": "Minimum Number of Arrows to Burst Balloons"
+    },
+    {
+     "slug": "maximum-subarray",
+     "title": "Maximum Subarray"
+    },
+    {
+     "slug": "jump-game",
+     "title": "Jump Game"
+    },
+    {
+     "slug": "jump-game-ii",
+     "title": "Jump Game II"
+    },
+    {
+     "slug": "gas-station",
+     "title": "Gas Station"
+    },
+    {
+     "slug": "hand-of-straights",
+     "title": "Hand of Straights"
+    },
+    {
+     "slug": "merge-triplets-to-form-target-triplet",
+     "title": "Merge Triplets to Form Target Triplet"
+    },
+    {
+     "slug": "partition-labels",
+     "title": "Partition Labels"
+    },
+    {
+     "slug": "valid-parenthesis-string",
+     "title": "Valid Parenthesis String"
+    }
+   ]
+  },
+  {
+   "id": "A11",
+   "name": "Backtracking",
+   "problems": [
+    {
+     "slug": "subsets",
+     "title": "Subsets"
+    },
+    {
+     "slug": "combination-sum",
+     "title": "Combination Sum"
+    },
+    {
+     "slug": "permutations",
+     "title": "Permutations"
+    },
+    {
+     "slug": "subsets-ii",
+     "title": "Subsets II"
+    },
+    {
+     "slug": "combination-sum-ii",
+     "title": "Combination Sum II"
+    },
+    {
+     "slug": "word-search",
+     "title": "Word Search"
+    },
+    {
+     "slug": "palindrome-partitioning",
+     "title": "Palindrome Partitioning"
+    },
+    {
+     "slug": "letter-combinations-of-a-phone-number",
+     "title": "Letter Combinations of a Phone Number"
+    },
+    {
+     "slug": "generate-parentheses",
+     "title": "Generate Parentheses"
+    },
+    {
+     "slug": "n-queens",
+     "title": "N-Queens"
+    }
+   ]
+  },
+  {
+   "id": "A12a",
+   "name": "Dynamic programming, 1-D",
+   "problems": [
+    {
+     "slug": "climbing-stairs",
+     "title": "Climbing Stairs"
+    },
+    {
+     "slug": "min-cost-climbing-stairs",
+     "title": "Min Cost Climbing Stairs"
+    },
+    {
+     "slug": "house-robber",
+     "title": "House Robber"
+    },
+    {
+     "slug": "house-robber-ii",
+     "title": "House Robber II"
+    },
+    {
+     "slug": "longest-palindromic-substring",
+     "title": "Longest Palindromic Substring"
+    },
+    {
+     "slug": "palindromic-substrings",
+     "title": "Palindromic Substrings"
+    },
+    {
+     "slug": "decode-ways",
+     "title": "Decode Ways"
+    },
+    {
+     "slug": "coin-change",
+     "title": "Coin Change"
+    },
+    {
+     "slug": "maximum-product-subarray",
+     "title": "Maximum Product Subarray"
+    },
+    {
+     "slug": "word-break",
+     "title": "Word Break"
+    },
+    {
+     "slug": "longest-increasing-subsequence",
+     "title": "Longest Increasing Subsequence"
+    },
+    {
+     "slug": "partition-equal-subset-sum",
+     "title": "Partition Equal Subset Sum"
+    }
+   ]
+  },
+  {
+   "id": "A12b",
+   "name": "Dynamic programming, 2-D",
+   "problems": [
+    {
+     "slug": "unique-paths",
+     "title": "Unique Paths"
+    },
+    {
+     "slug": "longest-common-subsequence",
+     "title": "Longest Common Subsequence"
+    },
+    {
+     "slug": "best-time-to-buy-and-sell-stock-with-cooldown",
+     "title": "Best Time to Buy and Sell Stock with Cooldown"
+    },
+    {
+     "slug": "coin-change-ii",
+     "title": "Coin Change II"
+    },
+    {
+     "slug": "target-sum",
+     "title": "Target Sum"
+    },
+    {
+     "slug": "interleaving-string",
+     "title": "Interleaving String"
+    },
+    {
+     "slug": "edit-distance",
+     "title": "Edit Distance"
+    },
+    {
+     "slug": "distinct-subsequences",
+     "title": "Distinct Subsequences"
+    },
+    {
+     "slug": "burst-balloons",
+     "title": "Burst Balloons"
+    },
+    {
+     "slug": "regular-expression-matching",
+     "title": "Regular Expression Matching"
+    }
+   ]
+  },
+  {
+   "id": "A13",
+   "name": "Tries and union-find",
+   "problems": [
+    {
+     "slug": "implement-trie-prefix-tree",
+     "title": "Implement Trie (Prefix Tree)"
+    },
+    {
+     "slug": "design-add-and-search-words-data-structure",
+     "title": "Design Add and Search Words Data Structure"
+    },
+    {
+     "slug": "word-search-ii",
+     "title": "Word Search II"
+    },
+    {
+     "slug": "number-of-provinces",
+     "title": "Number of Provinces"
+    },
+    {
+     "slug": "redundant-connection",
+     "title": "Redundant Connection"
+    },
+    {
+     "slug": "accounts-merge",
+     "title": "Accounts Merge"
+    }
+   ]
+  }
+ ]
+}
