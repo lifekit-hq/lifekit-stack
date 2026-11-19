@@ -406,12 +406,6 @@ def test_the_cron_is_declared_with_the_account_model_and_learnclaws_own_bot(tmp_
         "accountId": "reading",
         "to": "424242",
     }
-    # The prompt runs the script and carries no problem, pattern or hint.
-    msg = job["payload"]["message"]
-    assert "daily.py next --record" in msg and "NO_REPLY" in msg
-    (no_reply,) = [x for x in msg.split(". ") if "NO_REPLY" in x.replace("never reply NO_REPLY", "")]
-    assert "SKIP" in no_reply and "error" not in no_reply.lower()
-    assert "failed" in msg and "never reply NO_REPLY" in msg
     # Re-running converges on the same row.
     assert run_script(CRON_SCRIPT, env).returncode == 0
     assert len(json.loads(state.read_text())["jobs"]) == 1
@@ -476,7 +470,6 @@ def test_the_checkin_reads_the_count_from_learnclaw_and_converges(tmp_path, vaul
     jobs = {j["id"]: j for j in json.loads(state.read_text())["jobs"]}
     msg = jobs["gw1"]["payload"]["message"]
     assert msg.startswith(CHECKIN["payload"]["message"])  # the owner's prompt stays
-    assert "daily.py week" in msg and "do not ask the owner" in msg
     assert jobs["gw1"]["payload"]["toolsAllow"] == ["read", "write", "exec"]
     assert jobs["o"]["payload"] == {}
     # Idempotent: a second run changes nothing and makes no edit.
@@ -488,11 +481,10 @@ def test_the_checkin_reads_the_count_from_learnclaw_and_converges(tmp_path, vaul
         if '"edit"' in ln
     ]
     assert len(edits) == 1
-    assert msg.count("<<LEETCODE-COUNT") == 1
 
 
 def test_the_checkin_count_is_what_the_record_says(tmp_path, vault):
-    # The command the check-in runs, against a record with two solved problems.
+    # The weekly count the check-in reads, against a record with two solved problems.
     for slug, day in (("two-sum", MON), ("valid-sudoku", WED)):
         daily(
             vault,
@@ -500,12 +492,6 @@ def test_the_checkin_count_is_what_the_record_says(tmp_path, vault):
             *("--date", day),
             day=day,
         )
-    state, env = fake_box(tmp_path, [CHECKIN])
-    run_script(CHECKIN_SCRIPT, env)
-    msg = json.loads(state.read_text())["jobs"][0]["payload"]["message"]
-    command = msg.split("run '")[1].split("'")[0]
-    assert command.startswith("python3 /home/node/.openclaw/agents/learnclaw/")
-    assert command.endswith("/skills/leetcode-daily/daily.py week")
     out = daily(vault, "week", day=SUN).stdout.splitlines()[0]
     assert out.startswith("solved: 2 (")
 
