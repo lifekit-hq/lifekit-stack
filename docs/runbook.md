@@ -2705,7 +2705,7 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
     It was disabled by [OpenClaw audit bundle A](#openclaw-audit-bundle-a-2026-11-lifekit-stack530)
     and is enabled again for the daily problem (see "Daily LeetCode problem"); until an operator
     has applied that, it answers through Kit and the Control UI chat. Its allowlist `agents.entries.learnclaw.skills` is
-    `["learning-record", "learnharness"]` (host state).
+    `["learning-record", "learnharness", "leetcode-daily"]` (host state).
 - **Skill:** `skills/learning-record` (`record.py`, stdlib only).
   - `record.py status` prints the projections. A row whose date is not a real calendar date is
     reported on its own line, not counted, and does not stop the report.
@@ -2721,15 +2721,15 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
   `learning-record` is on the agent's skill allowlist. A box without the workspace skips with a
   note. `install-workspace-pointers.sh` and the openclaw-config mirror include learnclaw too.
 - **How it is invoked:**
-  - The owner's own chat with learnclaw in the OpenClaw Control UI. This is the only route that
-    records a row, since a row holds the owner's own words.
+  - The owner's own chat with learnclaw: the OpenClaw Control UI, or the `reading` Telegram bot once
+    enabled. These are the only routes that record a row, since a row holds the owner's own words.
   - kit, as a subagent run, once `learnclaw` is in kit's `subagents.allowAgents`. kit relays the
     answer, and a subagent run never records. The 21:00 `evening-plan-note` run does this daily
     for the plan's learning line (see "Learning objective line from learnclaw").
   - learnclaw's one cron is `leetcode-daily` (see "Daily LeetCode problem"); apart from that and the daily kit run, nothing runs unless asked.
 - **Cost:** a run is one Sonnet 4.6 conversation turn on the gateway's subscription. Measured on
   comparable career runs, that is about 50k tokens, mostly cache reads: roughly $0.10-0.20 at list
-  prices. Only the daily plan run schedules one, so the idle cost is that one run a day.
+  prices. Only the daily plan run and the `leetcode-daily` cron (four home days a week) schedule one.
 
 **Operator steps (once, after the merge deploys).** The agent entry is host state.
 
