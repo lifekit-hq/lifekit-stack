@@ -178,7 +178,7 @@ def cmd_done(args: argparse.Namespace) -> None:
     p = known(load_list(), args.slug)
     record.append(
         row_args(
-            date=args.date,
+            date=args.date or today().isoformat(),
             topic=PREFIX + p["slug"],
             artefact=URL.format(p["slug"]),
             grilled=f"pattern: {args.pattern}; time {args.time}; space {args.space}",
@@ -193,7 +193,7 @@ def cmd_skip(args: argparse.Namespace) -> None:
     why = f" (skipped: {args.reason.strip()})" if args.reason.strip() else ""
     record.append(
         row_args(
-            date=args.date,
+            date=args.date or today().isoformat(),
             topic=PREFIX + p["slug"],
             artefact=URL.format(p["slug"]) + why,
             status="dropped",

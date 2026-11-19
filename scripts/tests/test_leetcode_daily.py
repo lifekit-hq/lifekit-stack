@@ -49,6 +49,7 @@ LINT = "#!/bin/sh\nexit 0\n"
 # 2026-11-23 is a Monday.
 MON, TUE, WED, THU, FRI, SAT, SUN = (f"2026-11-{d}" for d in range(23, 30))
 NEXT_MON = "2026-11-30"
+SUN_BEFORE = "2026-11-22"
 MODEL = "anthropic/claude-sonnet-5-5@anthropic:api-key"
 
 
@@ -248,6 +249,34 @@ def test_the_artefact_record_projections_ignore_the_problem_rows(vault):
         check=False,
     )
     assert r.returncode == 2 and "needs applied, post" in r.stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("done", "two-sum", "--pattern", "p", "--time", "t", "--space", "s"),
+        ("skip", "two-sum"),
+    ],
+)
+def test_done_and_skip_are_dated_in_dublin_not_by_the_container_clock(vault, args):
+    # Just after midnight Dublin on Monday the container (UTC) is still on Sunday.
+    r = subprocess.run(
+        [sys.executable, str(DAILY), *args],
+        env={
+            **os.environ,
+            "LEARNING_VAULT": str(vault),
+            "LEARNING_TODAY": SUN_BEFORE,
+            "LEETCODE_TODAY": MON,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    assert rows(vault)[-1].startswith(f"| {MON} |")
+    if args[0] == "done":
+        week = daily(vault, "week", day=MON).stdout.splitlines()[0]
+        assert week.startswith("solved: 1 (Monday 2026-11-23")
 
 
 # --- the weekly count (read by the check-in) ----------------------------------

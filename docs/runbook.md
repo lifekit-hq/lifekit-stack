@@ -2801,6 +2801,8 @@ Kit's Sunday 18:00 `goal-weekly-checkin` reads that count from learnclaw instead
   `SKIP office day (Tuesday)` (or the Thursday / rest-day line) and records nothing, whatever fired it. A
   second call on the same day prints `SKIP offered today`. The unattempted problem stays offered; the next
   send is the next problem.
+  The offered row is recorded when the problem is picked, before delivery, so a send that fails (or an
+  unechoed reply) skips that problem for the day and it does not come back.
 - **The record: no second store.** Each step is one `leetcode: <slug>` row in the artefact record that
   `learning-record` writes (the vault's `domains/learning.md`), through `record.py append`, so its checks and
   the vault lint apply: `in progress` = offered, `done` = solved by hand, `dropped` = skipped; the latest row
