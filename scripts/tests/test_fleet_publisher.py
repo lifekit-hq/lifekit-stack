@@ -21,6 +21,8 @@ NOW = 1_800_000_000
 # docker exec into a gateway, no host vault.
 NO_LIVE_SOURCES = {
     "FLEET_GH": "",
+    "FLEET_PROM_URL": "",
+    "FLEET_CLIP_STATS": "",
     "FLEET_SCREEN_REPOS": "",
     "FLEET_INTAKE_CMD": "",
     "FLEET_VAULT": "/nonexistent",
