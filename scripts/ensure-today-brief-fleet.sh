@@ -137,7 +137,16 @@ PREV_GOOGLE2 = GOOGLE_HEAD + GOOGLE_TAIL
 GOOGLE = GOOGLE_HEAD + GOOGLE_ARGS + GOOGLE_TAIL
 PREV_STEP = STEP + PREV_GOOGLE
 PREV_STEP2 = STEP + PREV_GOOGLE2
-STEP += GOOGLE
+PREV_STEP3 = STEP + GOOGLE
+# Decision follow-through: the publisher marks a decision delivered once and puts
+# its brief_date on the outcome, one outcome per brief day, so this prints it once.
+OUTCOME = (
+    " Decision outcome: from the same JSON, status_page.delivered, keep the item whose brief_date is today'"'"'s "
+    "date, if any, and print its three lines exactly as given, in order, as the first lines of the Fleet "
+    "section (3 lines at most, no heading, once; the brief stays within 12 lines). When none has today'"'"'s "
+    "brief_date or status_page.delivered is null or absent, print nothing for it."
+)
+STEP += GOOGLE + OUTCOME
 BEFORE = "\n\nMessage (Telegram"
 EMPTY = "If calendar, mail, deadlines-within-7-days and non-bot PRs are all empty, reply exactly NO_REPLY."
 FLEET = (
@@ -171,7 +180,7 @@ for job in json.load(sys.stdin)["jobs"]:
         break
 if STEP in msg and FLEET in msg:
     sys.exit(10)
-for prev in (PREV_STEP2, PREV_STEP):
+for prev in (PREV_STEP3, PREV_STEP2, PREV_STEP):
     if prev in msg and FLEET in msg:
         sys.stdout.write(msg.replace(prev, STEP, 1))
         sys.exit(0)

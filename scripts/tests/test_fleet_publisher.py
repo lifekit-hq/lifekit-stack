@@ -3595,3 +3595,116 @@ def test_issues_are_read_inside_the_pr_budget_and_cached_with_the_count(homes):
     (homes.tmp / "gh-issues.json").write_text("[]")
     assert homes.run(vps, **env).returncode == 0
     assert stalled_ids(status(homes))["ops"] == ["o/alpha#1"]
+
+
+# --- decision follow-through: a delivered decision posts one outcome -------
+
+
+def decisions_vault(root, items, status="accepted", extra=""):
+    folder = root / "vault/system/decisions"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "0042-demo-decision.md").write_text(
+        "---\nname: decision-0042-demo\n"
+        'summary: "Demo queues now have one owner each."\n'
+        f"status: {status}\ndate: 2026-11-16\n"
+        f"items: [{', '.join(items)}]\n{extra}---\n\n# 0042 - Demo decision\n"
+    )
+    return root / "vault"
+
+
+def issues_gh(root, closed):
+    """A gh stub: `issue view N -R repo` answers closed or open per the file."""
+    (root / "closed.txt").write_text("\n".join(closed))
+    return stub(
+        root / "gh-issues",
+        'n="$3"; state=OPEN; grep -qx "$n" "$(dirname "$0")/closed.txt" && state=CLOSED\n'
+        'printf \'{"state":"%s","title":"Item %s","url":"https://github.com/o/r/issues/%s",'
+        '"closedAt":"2026-11-17T00:00:00Z"}\' "$state" "$n" "$n"\n',
+    )
+
+
+def delivered_page(homes, tmp_path, closed, **env):
+    vps = homes.tmp / "fm-vps"
+    if not vps.exists():
+        status_home(homes.tmp, "fm-vps", [])
+    vault = decisions_vault(tmp_path, ["o/r#1", "o/r#2"])
+    gh = issues_gh(tmp_path, closed)
+    res = homes.run(
+        vps,
+        FLEET_GH=gh,
+        FLEET_VAULT=str(vault),
+        FLEET_DECISIONS_CONFIG=str(tmp_path / "none.json"),
+        **env,
+    )
+    assert res.returncode == 0, res.stderr
+    return status(homes)["delivered"]
+
+
+def test_a_decision_with_an_open_item_posts_nothing(homes, tmp_path):
+    assert delivered_page(homes, tmp_path, ["1"]) == []
+    assert not (tmp_path / "state/decisions-delivered.json").exists()
+
+
+def test_a_decision_with_every_item_closed_posts_one_outcome_once(homes, tmp_path):
+    first = delivered_page(homes, tmp_path, ["1", "2"])
+    assert len(first) == 1
+    out = first[0]
+    assert out["id"] == "0042" and out["date"] == "2027-01-15"
+    assert [ln.split(" ")[0] for ln in out["lines"]] == ["Shipped", "Changed:", "Still"]
+    assert "2 of 2 items closed" in out["lines"][0]
+    assert "Demo queues now have one owner each." in out["lines"][1]
+    assert out["brief_date"] == "2027-01-15"  # NOW is before 08:30 UTC that day
+    # a later run, even with an item reopened, never posts it again
+    second = delivered_page(homes, tmp_path, ["1"], FLEET_NOW=str(NOW + 7200))
+    assert second == first
+
+
+def test_one_brief_day_carries_one_outcome(homes, tmp_path):
+    vps = status_home(homes.tmp, "fm-vps", [])
+    vault = decisions_vault(tmp_path, ["o/r#1"])
+    folder = vault / "system/decisions"
+    (folder / "0043-second.md").write_text(
+        (folder / "0042-demo-decision.md").read_text().replace("0042", "0043")
+    )
+    gh = issues_gh(tmp_path, ["1"])
+    res = homes.run(
+        vps,
+        FLEET_GH=gh,
+        FLEET_VAULT=str(vault),
+        FLEET_DECISIONS_CONFIG=str(tmp_path / "none.json"),
+    )
+    assert res.returncode == 0, res.stderr
+    days = [d["brief_date"] for d in status(homes)["delivered"]]
+    assert len(days) == 2 and len(set(days)) == 2
+
+
+def test_a_record_that_is_not_accepted_posts_nothing(homes, tmp_path):
+    vps = status_home(homes.tmp, "fm-vps", [])
+    vault = decisions_vault(tmp_path, ["o/r#1"], status="proposed")
+    gh = issues_gh(tmp_path, ["1"])
+    homes.run(vps, FLEET_GH=gh, FLEET_VAULT=str(vault))
+    assert status(homes)["delivered"] == []
+
+
+def test_back_fill_posts_0015_and_0016_on_the_first_run(homes, tmp_path):
+    vps = status_home(homes.tmp, "fm-vps", [])
+    folder = tmp_path / "vault/system/decisions"
+    folder.mkdir(parents=True)
+    for did, slug in (("0015", "ownership-routing"), ("0016", "queue-mechanics")):
+        (folder / f"{did}-{slug}.md").write_text(
+            f'---\nname: decision-{did}-{slug}\nsummary: "S {did}."\n'
+            f"status: accepted\n---\n\n# {did} - {slug}\n"
+        )
+    every = [str(n) for n in range(1, 2000)]
+    gh = issues_gh(tmp_path, every)
+    res = homes.run(vps, FLEET_GH=gh, FLEET_VAULT=str(tmp_path / "vault"))
+    assert res.returncode == 0, res.stderr
+    page = status(homes)["delivered"]
+    assert [d["id"] for d in page] == ["0015", "0016"]
+    assert len(page[1]["items"]) == 8
+
+
+def test_an_unreadable_mark_file_posts_nothing(homes, tmp_path):
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state/decisions-delivered.json").write_text("{not json")
+    assert delivered_page(homes, tmp_path, ["1", "2"]) is None

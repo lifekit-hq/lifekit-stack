@@ -130,6 +130,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
 | `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`): `{read, reason}`; `read: false` says why a source contributed nothing, or `null` with `stalled` |
+| `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
 | `follow_ups[]` | The owner pages still to be written |
 | `errors[]` | One line per source that could not be read this run |
 
@@ -236,6 +237,34 @@ line), never a guess.
   records reachable"}`: the page says so rather than guessing.
 - **Failure** of one source empties only its own rows, sets its
   `stalled_sources` entry to `read: false` and adds an `errors[]` line.
+
+## Delivered decisions (`status_page.delivered`)
+
+When every item of an accepted decision record is closed, the publisher marks the
+decision delivered, once, and posts a 3-line outcome (no model: it is composed from
+the record and its closed items). The dashboard's fleet page reads it from
+`status_page.delivered`; the 08:30 `today-brief` carries it through
+`relay.sh status` (`scripts/ensure-today-brief-fleet.sh`).
+
+- **Records** are `FLEET_VAULT/system/decisions/NNNN-*.md` with `status: accepted`.
+  A record's items are its frontmatter `items: [owner/repo#N, ...]`; a record without
+  one takes its items from `backfill` in `fleet-decisions.json` (installed beside the
+  helper as `lifekit-fleet-decisions.json`; `FLEET_DECISIONS_CONFIG` names another
+  file), which is how 0015 and 0016 are posted on the first run. A record with no
+  items is never delivered.
+- **Closed** is `gh issue view` (`FLEET_GH`, cached in `status-decisions.json`; a
+  closed issue for good, an open one for `FLEET_PR_TTL`). An item gh cannot read
+  counts as open and adds an `errors[]` line.
+- **Once.** The mark lives in the publisher's state, `decisions-delivered.json`
+  (never the vault), with the outcome text kept verbatim. An unreadable mark file posts
+  nothing (`delivered` is `null`) rather than risk a repeat.
+- **Shape.** `delivered[]`, oldest first: `{id, title, date, delivered_epoch,
+  brief_date, lines: [shipped, changed, still open], items: [{ref, title, url,
+  closed_at}]}`. `changed` is the record's `summary`; `still open` is its optional
+  `still_open:` line, else "nothing from this decision".
+- **Brief.** `brief_date` is the one brief that carries the outcome: the first brief
+  (`brief` `at`/`tz` in the config) after delivery that no other outcome holds, so a
+  brief carries at most one outcome, three lines, and the 12-line cap holds.
 
 ## Daily fleet metrics (`OUT_DIR/metrics/daily.jsonl`)
 

@@ -83,6 +83,8 @@ install -m 755 "$HERE/fleet-publisher.sh" "$INSTALL_ROOT/usr/local/bin/lifekit-f
 install -m 755 "$HERE/fleet_status.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-status.py"
 # The stalled thresholds, the one source the status helper reads beside itself.
 install -m 644 "$HERE/fleet-stalled.json" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-stalled.json"
+# The decision follow-through config (brief time, back-filled items), read beside the helper.
+install -m 644 "$HERE/fleet-decisions.json" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-decisions.json"
 # The "Taken for you" feed helper, found the same way.
 install -m 755 "$HERE/taken_feed.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-taken.py"
 # The "Screen changes" feed helper, found the same way.
