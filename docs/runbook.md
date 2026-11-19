@@ -2914,6 +2914,39 @@ docker exec "$GW" openclaw cron run <evening-plan-note id> --expect-final --json
 for `evening-plan-note` also `--tools` with the saved `toolsAllow` list (drops the two subagent
 tools).
 
+### Answer shape in the remaining personas
+
+The 2026-11-15 "Answer shape (every reply)" rule (answer first, 75-word budget, plain short
+sentences, one idea per sentence) is in Kit, Career, Learnclaw and Ledger. The same block, with Kit's
+wording and numbered points, now also goes into the reader seed
+(`defaults/agents/reader/workspace/SOUL.md`) and into the live `SOUL.md` of `health`, `learning` and
+`social`, which live on the host only (mirrored to `lifekit-hq/openclaw-config` as
+`agents/<name>/workspace/SOUL.md` by `openclaw-config-sync`, see "openclaw-config mirror").
+
+`scripts/ensure-answer-shape.sh` reads the block from Kit's seed (so the wording cannot drift) and
+inserts it into each persona's live `SOUL.md` only when the "## Answer shape (every reply)" heading is
+absent, just before its "## Voice" section (at the end when there is none). A file that already has
+the heading stays byte-identical; nothing else in any file is rewritten, so a second run adds
+nothing. A persona with no workspace on the box (`health`, `learning` and `social` were retired
+2026-10-07) is skipped with a note. `reader` is also rewritten from the seed by
+`ensure-reader-agent.sh` on every deploy, so it carries the block either way.
+
+**Operator step after the PR merges** (as `lifekit`, from `/srv/lifekit-stack`; the deploy does not
+run it):
+
+```bash
+scripts/ensure-answer-shape.sh --dry-run   # per persona: would insert / already present / no SOUL.md; writes nothing
+scripts/ensure-answer-shape.sh             # health learning social reader
+```
+
+**Verify:** a second run prints "already present" for every persona that exists. Then confirm the
+sync mirrored it: start `openclaw-config-sync.service` (or wait up to 15 minutes for the timer), then
+`git -C /srv/openclaw-config log -1 --stat` shows an `auto: lifekit-vps openclaw sync` commit touching
+the changed `agents/<name>/workspace/SOUL.md` files, and
+`grep -c 'Answer shape (every reply)' /srv/openclaw-config/agents/<name>/workspace/SOUL.md` prints 1
+for each. **Undo:** delete the inserted section (heading through its tenth point) from the live
+`SOUL.md`; the script puts it back on the next run, so stop running it.
+
 ### Light context on `today-brief` and `ledger-opportunity`
 
 Both rows are host state (cron rows live in the gateway store, not in git) and both
