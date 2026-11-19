@@ -296,7 +296,12 @@ def test_a_fresh_insert_names_the_google_tool_arguments(tmp_path):
 
 def test_a_row_with_the_step_before_the_argument_names_is_upgraded(tmp_path):
     fresh = fresh_message(tmp_path)
-    prev_prompt = fresh.replace(CURRENT_GOOGLE_ARGS, "", 1)
+    prev_prompt = re.sub(
+        r" Decision outcome:.*?(?=\n\nMessage)",
+        "",
+        fresh.replace(CURRENT_GOOGLE_ARGS, "", 1),
+        flags=re.S,
+    )
     assert prev_prompt != fresh
     res, state = run(tmp_path, message=prev_prompt)
     assert res.returncode == 0, res.stderr
@@ -327,3 +332,22 @@ def test_a_row_with_the_step_but_no_flag_gets_only_the_flag(tmp_path):
     assert res.returncode == 0, res.stderr
     (cmd,) = edits(tmp_path)
     assert cmd == ["cron", "edit", "job1", "--light-context"]
+
+
+def test_the_outcome_sentence_is_added_and_a_row_with_the_previous_step_is_upgraded(
+    tmp_path,
+):
+    res, state = run(tmp_path)
+    assert res.returncode == 0, res.stderr
+    message = json.loads(state.read_text())["jobs"][1]["payload"]["message"]
+    assert "status_page.delivered" in message and "brief_date" in message
+    assert "3 lines at most" in message and "within 12 lines" in message
+    # the live row of the previous version: the same text without the sentence
+    start = message.index(" Decision outcome:")
+    end = message.index("\n\nMessage (Telegram")
+    old = message[:start] + message[end:]
+    tmp2 = tmp_path / "second"
+    tmp2.mkdir()
+    res2, state2 = run(tmp2, message=old)
+    assert res2.returncode == 0, res2.stderr
+    assert json.loads(state2.read_text())["jobs"][1]["payload"]["message"] == message

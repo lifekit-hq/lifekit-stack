@@ -1660,7 +1660,8 @@ and the status read is an HTTP GET Kit could always make.
   <the error line, or tools not available>." and adds no to-do. **Operator step after a
   deploy that changes the step:** as `lifekit`, from `/srv/lifekit-stack`, run
   `scripts/ensure-today-brief-fleet.sh`, then check the row with `openclaw cron show`
-  (inside the gateway). An empty
+  (inside the gateway). The step also prints the one decision outcome whose `brief_date` is
+  today (`status_page.delivered`, fleet publisher README "Delivered decisions"). An empty
   fleet part reads "No fleet calls today." there, so it never contradicts the brief's
   calendar, mail or PR sections.
 - **Kit's `AGENTS.md`** is live host state (`/srv/openclaw/config/agents/kit/workspace/`),

@@ -1,0 +1,21 @@
+{
+  "brief": {"tz": "UTC", "at": "08:30"},
+  "backfill": {
+    "0015": [
+      "lifekit-hq/lifekit-stack#540",
+      "lifekit-hq/devclaw#1023",
+      "lifekit-hq/devclaw#1024",
+      "dsdevq/memory#49"
+    ],
+    "0016": [
+      "lifekit-hq/lifekit-stack#540",
+      "lifekit-hq/devclaw#1023",
+      "lifekit-hq/devclaw#1024",
+      "lifekit-hq/lifekit-stack#542",
+      "lifekit-hq/lifekit-stack#541",
+      "lifekit-hq/lifekit-stack#543",
+      "lifekit-hq/lifekit-stack#544",
+      "lifekit-hq/lifekit-dashboard#238"
+    ]
+  }
+}

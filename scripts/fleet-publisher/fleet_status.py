@@ -50,6 +50,7 @@ import shlex
 import subprocess
 import sys
 import time
+import zoneinfo
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,9 @@ STATUS_AT_RE = re.compile(r"\[at=(\d+)\]")
 STATUS_TAIL = 65536
 A2A_CLOSED = ("completed", "failed", "canceled", "rejected")
 STALLED_CONFIG = ("fleet-stalled.json", "lifekit-fleet-stalled.json")
+DECISIONS_CONFIG = ("fleet-decisions.json", "lifekit-fleet-decisions.json")
+DECISION_FILE_RE = re.compile(r"^(\d{4})-.+\.md$")
+ITEM_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$")
 TRUNCATED = "\n... (truncated, "
 TOON_TABLE_RE = re.compile(r"^tasks\[\d+\]\{([^}]*)\}:$")
 TOON_FIELD_RE = re.compile(r"^  ([a-z_]+): (.*)$")
@@ -1068,6 +1072,219 @@ def stalled_section(
 # --- assembly --------------------------------------------------------------------
 
 
+def decisions_config(errors: list[str]) -> dict[str, Any]:
+    """The decision follow-through config (brief time zone and hour, and the
+    items of records that do not declare their own), or defaults when absent."""
+    here = Path(__file__).resolve().parent
+    named = os.environ.get("FLEET_DECISIONS_CONFIG")
+    paths = [Path(named)] if named else [here / n for n in DECISIONS_CONFIG]
+    path = next((p for p in paths if p.is_file()), None)
+    cfg: dict[str, Any] = {"brief": {"tz": "UTC", "at": "08:30"}, "backfill": {}}
+    if path is None:
+        return cfg
+    try:
+        doc = json.loads(path.read_text())
+        brief, backfill = doc["brief"], doc["backfill"]
+        dt.datetime.strptime(brief["at"], "%H:%M")
+        zoneinfo.ZoneInfo(brief["tz"])
+        assert isinstance(backfill, dict)
+        assert all(
+            isinstance(v, list) and all(ITEM_RE.match(str(i)) for i in v)
+            for v in backfill.values()
+        )
+    except (OSError, ValueError, KeyError, TypeError, AssertionError, LookupError):
+        errors.append(f"decision config {path.name} unreadable: defaults used")
+        return cfg
+    return {"brief": brief, "backfill": backfill}
+
+
+def record_fields(text: str) -> tuple[dict[str, str], str]:
+    """A decision record's frontmatter (flat `key: value` lines) and its title."""
+    fields: dict[str, str] = {}
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            key, sep, value = line.partition(":")
+            if sep:
+                fields[key.strip()] = value.strip().strip("\"'")
+    title = next(
+        (m.group(1) for ln in lines if (m := re.match(r"^# \d{4} - (.+)$", ln))), ""
+    )
+    return fields, title
+
+
+def record_items(fields: dict[str, str], backfill: list[str] | None) -> list[str]:
+    """The record's own `items: [owner/repo#N, ...]` when it declares them,
+    else the config's list; empty (never a guess) when neither has any."""
+    raw = fields.get("items", "")
+    if raw.startswith("[") and raw.endswith("]"):
+        own = [i.strip().strip("\"'") for i in raw[1:-1].split(",") if i.strip()]
+        if own and all(ITEM_RE.match(i) for i in own):
+            return own
+    return list(backfill or [])
+
+
+def issue_state(
+    ref: str, cache: dict[str, Any], now: int, errors: list[str]
+) -> dict[str, Any] | None:
+    """{state, title, url, closed_at} of one issue; a closed one is cached for
+    good, an open or unread one is looked up again after FLEET_PR_TTL seconds.
+    None when gh could not say (the item then counts as not closed)."""
+    hit = cache.get(ref)
+    ttl = int(os.environ.get("FLEET_PR_TTL") or 600)
+    if isinstance(hit, dict) and (
+        hit.get("state") == "CLOSED" or now - int(hit.get("as_of") or 0) < ttl
+    ):
+        return hit
+    gh = os.environ.get("FLEET_GH", "gh")
+    if not gh:
+        return hit if isinstance(hit, dict) else None
+    repo, _, number = ref.partition("#")
+    try:
+        out = run(
+            [
+                *shlex.split(gh),
+                "issue",
+                "view",
+                number,
+                "-R",
+                repo,
+                "--json",
+                "state,title,url,closedAt",
+            ],
+            timeout=15,
+        )
+        raw = json.loads(out)
+        got = {
+            "state": str(raw["state"]).upper(),
+            "title": one_line(raw.get("title"), TITLE_CUT) or ref,
+            "url": raw.get("url")
+            if str(raw.get("url", "")).startswith("https://")
+            else None,
+            "closed_at": raw.get("closedAt"),
+            "as_of": now,
+        }
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        errors.append(f"decision item {ref} unreadable")
+        return hit if isinstance(hit, dict) else None
+    cache[ref] = got
+    return got
+
+
+def next_brief_day(epoch: int, brief: dict[str, Any]) -> dt.date:
+    """The date of the first brief that runs after `epoch`."""
+    zone = zoneinfo.ZoneInfo(brief["tz"])
+    when = dt.datetime.fromtimestamp(epoch, zone)
+    hour, minute = (int(x) for x in brief["at"].split(":"))
+    day = when.date()
+    if (when.hour, when.minute) >= (hour, minute):
+        day += dt.timedelta(days=1)
+    return day
+
+
+def outcome_lines(
+    fields: dict[str, str], title: str, issues: list[dict[str, Any]]
+) -> list[str]:
+    """The 3-line outcome, composed from the record and its closed items only."""
+    names = [i["title"] for i in issues]
+    shown = "; ".join(names[:3]) + (
+        f"; +{len(names) - 3} more" if len(names) > 3 else ""
+    )
+    name = title or fields.get("name", "decision")
+    changed = fields.get("summary") or "the decision's chosen option is in force."
+    left = (
+        fields.get("still_open")
+        or "nothing from this decision; follow-ups are filed as their own items."
+    )
+    return [
+        one_line(
+            f"Shipped ({name}): {len(issues)} of {len(issues)} items closed - {shown}.",
+            240,
+        )
+        or "",
+        one_line(f"Changed: {changed}", 240) or "",
+        one_line(f"Still open: {left}", 240) or "",
+    ]
+
+
+def delivered(
+    state: Path, now: int, errors: list[str], vault: Path, gh_cache: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """Mark every accepted decision record whose items are all closed as
+    delivered, once, and return all delivered outcomes (oldest first).
+
+    The delivered mark lives in this publisher's state (`decisions-delivered.json`),
+    never in the vault, and an outcome is composed the run it is marked and kept
+    verbatim, so a delivered decision is never posted again and its text never
+    drifts. `brief_date` is the one daily brief that carries it: the first brief
+    after delivery with no other outcome, so a brief never holds more than one.
+    An unreadable mark file posts nothing (None) rather than risk a second post."""
+    path = state / "decisions-delivered.json"
+    try:
+        marks = json.loads(path.read_text()) if path.exists() else {}
+        assert isinstance(marks, dict)
+    except (OSError, ValueError, AssertionError):
+        errors.append("decisions-delivered.json unreadable: no outcome posted")
+        return None
+    cfg = decisions_config(errors)
+    folder = vault / "system" / "decisions"
+    try:
+        files = sorted(f for f in folder.iterdir() if DECISION_FILE_RE.match(f.name))
+    except OSError:
+        files = []
+    changed = False
+    for f in files:
+        did = f.name[:4]
+        if did in marks:
+            continue
+        try:
+            fields, title = record_fields(f.read_text())
+        except OSError:
+            continue
+        if fields.get("status") != "accepted":
+            continue
+        items = record_items(fields, cfg["backfill"].get(did))
+        if not items:
+            continue
+        got = [issue_state(i, gh_cache, now, errors) for i in items]
+        if not all(g and g["state"] == "CLOSED" for g in got):
+            continue
+        issues = [g for g in got if g]
+        taken = {m.get("brief_date") for m in marks.values()}
+        day = next_brief_day(now, cfg["brief"])
+        while day.isoformat() in taken:
+            day += dt.timedelta(days=1)
+        marks[did] = {
+            "id": did,
+            "title": title or fields.get("name", did),
+            "delivered_epoch": now,
+            "date": dt.datetime.fromtimestamp(now, dt.timezone.utc).date().isoformat(),
+            "brief_date": day.isoformat(),
+            "lines": outcome_lines(fields, title, issues),
+            "items": [
+                {
+                    "ref": r,
+                    "title": g["title"],
+                    "url": g["url"],
+                    "closed_at": g["closed_at"],
+                }
+                for r, g in zip(items, issues)
+            ],
+        }
+        changed = True
+    if changed:
+        save_cache(path, marks)
+        try:
+            marks = json.loads(path.read_text())
+        except (OSError, ValueError):
+            errors.append("decisions-delivered.json not saved: outcome may repeat")
+    return sorted(
+        marks.values(), key=lambda m: (m.get("delivered_epoch", 0), m.get("id", ""))
+    )
+
+
 def load_cache(path: Path) -> dict[str, Any]:
     try:
         doc = json.loads(path.read_text())
@@ -1173,6 +1390,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     for wid, title, page in WORKFLOWS:
         url = vault_page_url(vault, page) if page else None
         how.append({"id": wid, "title": title, "url": url})
+    decided_cache = load_cache(state / "status-decisions.json")
+    outcomes = delivered(state, args.now, errors, vault, decided_cache)
+    save_cache(state / "status-decisions.json", decided_cache)
     save_cache(state / "status-records.json", record_cache)
     save_cache(state / "status-open-prs.json", pr_cache)
     return {
@@ -1186,6 +1406,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "how_it_works": how,
         "stalled": stalled,
         "stalled_sources": sources,
+        "delivered": outcomes,
         "follow_ups": [
             f"owner page for {h['title'].lower()}" for h in how if not h["url"]
         ],
