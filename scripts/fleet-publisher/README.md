@@ -420,3 +420,13 @@ and atomically, the images first, beside `home-summary.json`. Nothing is pushed.
 - **Failure**: gh failing on the PR list, or a credential-looking item (withheld),
   never publishes a half feed: a failed run leaves the previous file and images
   and fails the unit. A missing helper script is only logged.
+
+## Activity journal and retro board (`OUT_DIR/journal/`)
+
+`activity_journal.py` (installed as `lifekit-fleet-journal.py`, `FLEET_JOURNAL` overrides) runs at the end of every publisher run. The store is `OUT_DIR/journal/activity.jsonl` (schema `fleet-activity-journal.v1`), on the box's disk under `/var/lib/lifekit-fleet`, never in the vault, so it outlives a publisher restart. The dashboard reads it from there.
+
+- **One row per finished UTC day**, written once the day has been over for `FLEET_JOURNAL_DELAY` seconds (default 7200, after the day's fleet metrics exist). A date that already has a row is never written again, so a rerun adds nothing. After downtime the missing days since the last row are appended (at most 14); the very first run writes yesterday only.
+- **Fields**, all counts or identifiers (no free text): `merged_prs_by_repo` (`{owner/name: n}` from the ledgers' `task.merged` PR URLs), `decisions_owner` (ledger `resolved` lines that carry a decision key), `decisions_taken_for_owner` (`{total, by_ruling}` from `taken-for-you.json`, which keeps the last 200 actions), `failed_tasks` (distinct ledger tasks with a `failed` status), `red_ci_runs` (failed `main` workflow runs through gh over `FLEET_JOURNAL_REPOS`, default the repos the ledger merged into in the prior 14 days), `stalled_task_hours` and `fleet_weighted_tokens` (the day's final non-partial fleet metrics row), `devclaw_sessions`, `openclaw_runs` and `openclaw_errors` (Prometheus `increase` over the day, `FLEET_PROM_URL`), and `clip_stats` (the numeric top-level fields of the JSON at `FLEET_CLIP_STATS`, a path or URL).
+- **A source that cannot be read** writes the string `"unavailable"` for its field (and a stderr line); the row is still appended. No key is ever missing.
+- **Retro board**: once 14 journal days exist after the last board (or after the first row), `OUT_DIR/journal/retro/<from>_<to>.json` and `.md` are written (`fleet-retro-board.v1`): `went_well`, `went_wrong`, `recurring_problems` (a problem on 3 or more of the 14 days: `failed-tasks`, `red-ci`, `stalled-work`, `openclaw-errors`, `unavailable:<field>`) and exactly three `proposed_changes`, each with its `basis` problem and day count, taken from the most frequent problems (padded with a keep-practice line only when fewer than three problems occurred).
+- **Failure**: a missing helper is only logged; a write failure or a credential-looking output fails the run.
