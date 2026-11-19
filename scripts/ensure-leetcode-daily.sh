@@ -8,7 +8,8 @@
 # the turn runs `daily.py next --record` and sends what it prints. The script
 # decides the day (Tuesday and Thursday are office days, Sunday is rest: it
 # prints SKIP and the turn replies NO_REPLY, so those days send nothing even if
-# the schedule were ever widened), takes the first problem in the curated list
+# the schedule were ever widened; an error or empty output fails the turn so the
+# failure alert fires, and is never answered NO_REPLY), takes the first problem in the curated list
 # (skills/leetcode-daily/problems.json) that has no row in the artefact record,
 # and appends the offered row. A problem that is done, skipped or offered never
 # comes back. The prompt carries no state: the day and the record are read by
@@ -29,8 +30,8 @@
 # chat. A row that could deliver through Kit's account fails the run instead of
 # pinging the owner from the wrong bot.
 #
-# Failure: a run that fails outright is counted by the scheduler; the failure
-# alert goes through kit's `default` Telegram account to the owner chat, the
+# Failure: a run that fails outright (including a daily.py error) is counted by
+# the scheduler; the failure alert goes through kit's `default` Telegram account to the owner chat, the
 # route the digest and the pulse use. The owner chat id is read from the host
 # env file and never written to git.
 #
@@ -98,7 +99,7 @@ GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
 [ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 
 DAILY=/home/node/.openclaw/agents/learnclaw/workspace/skills/leetcode-daily/daily.py
-MESSAGE="Daily LeetCode problem. Run exactly one command: 'python3 ${DAILY} next --record' and read what it prints. If its first line is SEND, your whole final reply is the next two lines exactly as printed, the problem name and then its link: no greeting, no hint, no pattern name, no solution, nothing before or after. In every other case (a SKIP line, an error, no output) your entire final reply is exactly NO_REPLY. Call no other tool and edit nothing."
+MESSAGE="Daily LeetCode problem. Run exactly one command: 'python3 ${DAILY} next --record' and read what it prints. If its first line is SEND, your whole final reply is the next two lines exactly as printed, the problem name and then its link: no greeting, no hint, no pattern name, no solution, nothing before or after. If its first line starts with SKIP, your entire final reply is exactly NO_REPLY. If the command errors, exits non-zero, prints a traceback or anything on stderr, or prints nothing, the run has failed: end the turn as failed, send no reply at all, and never reply NO_REPLY or any error text. Call no other tool and edit nothing."
 
 # The gateway image has no jq, and once logging.consoleStyle=json is live the
 # CLI may interleave JSON log lines with its JSON result. So: scan the output

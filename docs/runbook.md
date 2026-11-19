@@ -2822,6 +2822,9 @@ Kit's Sunday 18:00 `goal-weekly-checkin` reads that count from learnclaw instead
   row without a recorded account fails to run. The script refuses a schedule that can fire on Tuesday, Thursday
   or Sunday, and after converging it re-reads the live row and exits 1 unless the agent, model, tool list,
   schedule and delivery (Telegram `reading`, owner chat) are the declared ones.
+  Only a `SKIP` first line ends in `NO_REPLY`; a `daily.py` error (non-zero exit, traceback, empty output) fails
+  the run, the scheduler counts it and the failure alert fires through Kit's account, and no error text goes
+  into learnclaw's chat.
 - **The check-in.** `scripts/ensure-goal-checkin-solved.sh` adds one marked block to Kit's `goal-weekly-checkin`
   row (host state; it carries the owner's goal, so it is edited in place, not copied into git): run
   `daily.py week`, take the `solved:` number, never ask the owner for it. It adds `exec` to the row's tool list

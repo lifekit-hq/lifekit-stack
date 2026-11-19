@@ -409,9 +409,20 @@ def test_the_cron_is_declared_with_the_account_model_and_learnclaws_own_bot(tmp_
     # The prompt runs the script and carries no problem, pattern or hint.
     msg = job["payload"]["message"]
     assert "daily.py next --record" in msg and "NO_REPLY" in msg
+    (no_reply,) = [x for x in msg.split(". ") if "NO_REPLY" in x.replace("never reply NO_REPLY", "")]
+    assert "SKIP" in no_reply and "error" not in no_reply.lower()
+    assert "failed" in msg and "never reply NO_REPLY" in msg
     # Re-running converges on the same row.
     assert run_script(CRON_SCRIPT, env).returncode == 0
     assert len(json.loads(state.read_text())["jobs"]) == 1
+
+
+def test_an_error_run_exits_nonzero_with_no_send_line_so_the_turn_can_fail(vault):
+    (vault / "domains/learning.md").unlink()
+    r = daily(vault, "next", "--record")
+    assert r.returncode != 0
+    assert "SEND" not in r.stdout and "NO_REPLY" not in r.stdout
+    assert r.stderr.strip()
 
 
 def test_the_cron_model_value_is_the_policy_model_with_the_inference_account():
