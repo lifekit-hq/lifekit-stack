@@ -417,7 +417,7 @@ def test_the_cron_is_declared_with_the_account_model_and_learnclaws_own_bot(tmp_
     assert len(json.loads(state.read_text())["jobs"]) == 1
 
 
-def test_an_error_run_exits_nonzero_with_no_send_line_so_the_turn_can_fail(vault):
+def test_an_error_run_exits_nonzero_with_no_send_line(vault):
     (vault / "domains/learning.md").unlink()
     r = daily(vault, "next", "--record")
     assert r.returncode != 0

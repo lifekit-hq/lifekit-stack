@@ -8,8 +8,9 @@
 # the turn runs `daily.py next --record` and sends what it prints. The script
 # decides the day (Tuesday and Thursday are office days, Sunday is rest: it
 # prints SKIP and the turn replies NO_REPLY, so those days send nothing even if
-# the schedule were ever widened; an error or empty output fails the turn so the
-# failure alert fires, and is never answered NO_REPLY), takes the first problem in the curated list
+# the schedule were ever widened; the prompt tells the turn to fail on an error
+# or empty output and never answer NO_REPLY, but that is only an instruction),
+# takes the first problem in the curated list
 # (skills/leetcode-daily/problems.json) that has no row in the artefact record,
 # and appends the offered row. A problem that is done, skipped or offered never
 # comes back. The prompt carries no state: the day and the record are read by
@@ -30,10 +31,12 @@
 # chat. A row that could deliver through Kit's account fails the run instead of
 # pinging the owner from the wrong bot.
 #
-# Failure: a run that fails outright (including a daily.py error) is counted by
-# the scheduler; the failure alert goes through kit's `default` Telegram account to the owner chat, the
-# route the digest and the pulse use. The owner chat id is read from the host
-# env file and never written to git.
+# Failure: a run that fails outright is counted by the scheduler and the failure
+# alert goes through kit's `default` Telegram account to the owner chat, the
+# route the digest and the pulse use. The alert is best-effort for a daily.py
+# error: a model turn cannot fail itself, so such an error most likely shows as a
+# silent day, which the weekly solved count catches. The owner chat id is read
+# from the host env file and never written to git.
 #
 # Run on the VPS host as lifekit, from the repo checkout, after the `reading`
 # Telegram account is enabled and bound to learnclaw (docs/runbook.md, "Daily
