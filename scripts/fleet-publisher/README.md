@@ -130,6 +130,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
 | `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`): `{read, reason}`; `read: false` says why a source contributed nothing, or `null` with `stalled` |
+| `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
 | `follow_ups[]` | The owner pages still to be written |
 | `errors[]` | One line per source that could not be read this run |
 
