@@ -18,6 +18,49 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.13](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.12...v0.1.13) (2026-11-19)
+
+
+### Features
+
+* **compose:** add ops-door alert-to-GitHub-issue receiver ([#552](https://github.com/lifekit-hq/lifekit-stack/issues/552)) ([da1c6fd](https://github.com/lifekit-hq/lifekit-stack/commit/da1c6fd2e0a064462d4380f9070d7692f05fec95))
+* **edge:** let an OpenClaw node host enrol through the sign-in gate ([#563](https://github.com/lifekit-hq/lifekit-stack/issues/563)) ([43e008b](https://github.com/lifekit-hq/lifekit-stack/commit/43e008bece9f87a8e930ff4052aa4a5b0e6d910c))
+* **fleet-gate:** refuse to start without its decision table ([#582](https://github.com/lifekit-hq/lifekit-stack/issues/582)) ([#585](https://github.com/lifekit-hq/lifekit-stack/issues/585)) ([62e944b](https://github.com/lifekit-hq/lifekit-stack/commit/62e944b2d741088f24b8c2c009a3977a1af512fe))
+* **fleet-publisher:** mark stalled items over every queue by native age ([#553](https://github.com/lifekit-hq/lifekit-stack/issues/553)) ([b9eaf55](https://github.com/lifekit-hq/lifekit-stack/commit/b9eaf55007c9a074bc63bacc362d05ad36009fd7))
+* **openclaw-gateway:** apply OpenClaw audit bundle A ([#530](https://github.com/lifekit-hq/lifekit-stack/issues/530)) ([#548](https://github.com/lifekit-hq/lifekit-stack/issues/548)) ([43548f4](https://github.com/lifekit-hq/lifekit-stack/commit/43548f4e1eeba1485a7fa5040db113a07c081263))
+* **scripts:** add answer shape block to reader seed and ensure-answer-shape.sh ([#601](https://github.com/lifekit-hq/lifekit-stack/issues/601)) ([#602](https://github.com/lifekit-hq/lifekit-stack/issues/602)) ([ee29779](https://github.com/lifekit-hq/lifekit-stack/commit/ee297798c166c53ead663e0d10fd1bb94c5ab57e))
+* **scripts:** add canary-gated reader agent hosting doc-door and mail-reader crons ([#562](https://github.com/lifekit-hq/lifekit-stack/issues/562)) ([7df6483](https://github.com/lifekit-hq/lifekit-stack/commit/7df6483a321bcb03610961e40725cbf1ff104463))
+* **scripts:** add learnclaw daily LeetCode problem on home days ([#596](https://github.com/lifekit-hq/lifekit-stack/issues/596)) ([9d6b846](https://github.com/lifekit-hq/lifekit-stack/commit/9d6b84695adad9283c0a8cc27e87ed57e44094c6))
+* **scripts:** add set-secret.sh to put one secret value in place ([#566](https://github.com/lifekit-hq/lifekit-stack/issues/566)) ([c1c17ae](https://github.com/lifekit-hq/lifekit-stack/commit/c1c17ae197ff5fc6d4568768a8d4d859f5b888e1))
+* **scripts:** gate the ledger-pulse cron so empty runs cost no model turn ([#536](https://github.com/lifekit-hq/lifekit-stack/issues/536)) ([8f836b4](https://github.com/lifekit-hq/lifekit-stack/commit/8f836b4b8569fc2e0f461ab31c74105bf65c2816))
+* **scripts:** keep merged screen-changing PRs in the screen changes feed for 7 days ([#555](https://github.com/lifekit-hq/lifekit-stack/issues/555)) ([bab3607](https://github.com/lifekit-hq/lifekit-stack/commit/bab3607e8965134e0a79d590d5d62dd33e412309))
+* **scripts:** run the today-brief cron with --light-context ([#537](https://github.com/lifekit-hq/lifekit-stack/issues/537)) ([64e8b68](https://github.com/lifekit-hq/lifekit-stack/commit/64e8b68b46bfdf093b964942d0292c0afe8d6cbe))
+* **skills:** add shared A2A envelope with mandatory ack to the persona block ([#550](https://github.com/lifekit-hq/lifekit-stack/issues/550)) ([f0351fc](https://github.com/lifekit-hq/lifekit-stack/commit/f0351fc8ef1420581b9f6a3cde64ccde6ce07e00))
+* **skills:** every door carries the envelope and returns a receipt ([#551](https://github.com/lifekit-hq/lifekit-stack/issues/551)) ([08bc16c](https://github.com/lifekit-hq/lifekit-stack/commit/08bc16c87ab78fa8df054a72f4b6bf39442a3856))
+* **skills:** file dev-class problems through devclaw intake and show external holds on the fleet page ([#545](https://github.com/lifekit-hq/lifekit-stack/issues/545)) ([7516163](https://github.com/lifekit-hq/lifekit-stack/commit/751616348f64b2eedb19cf25f2a0cd7ada5e81b3))
+
+
+### Bug Fixes
+
+* **ledger-persona:** bump PIN to the shared-persona pointer commit ([#570](https://github.com/lifekit-hq/lifekit-stack/issues/570)) ([d93dd8c](https://github.com/lifekit-hq/lifekit-stack/commit/d93dd8cec67889dd3acc76708830dfc8b848fda5))
+* **reader-canary:** ignore Claude Code's inert deferred-tool placeholder ([#588](https://github.com/lifekit-hq/lifekit-stack/issues/588)) ([49d441f](https://github.com/lifekit-hq/lifekit-stack/commit/49d441fdf427679820e32a61b9c59be64d60231d))
+* **scripts:** add the API key profile with the gateway stopped ([#572](https://github.com/lifekit-hq/lifekit-stack/issues/572)) ([ed32e08](https://github.com/lifekit-hq/lifekit-stack/commit/ed32e08c19e905928fed309c6d1f3d61b9a555f7))
+* **scripts:** allow SOUL.md.bak-* persona backups in ledger-drift check ([#577](https://github.com/lifekit-hq/lifekit-stack/issues/577)) ([8a1497a](https://github.com/lifekit-hq/lifekit-stack/commit/8a1497a0a832b55ae3b4df8337d9b6f391c99ff9))
+* **scripts:** auth-mode check turns, rollback patch and reload retry ([#578](https://github.com/lifekit-hq/lifekit-stack/issues/578)) ([d1e89bc](https://github.com/lifekit-hq/lifekit-stack/commit/d1e89bca1bedc1939ffd928973602e05bbc9686f))
+* **scripts:** name manual render steps in set-secret.sh master output ([#571](https://github.com/lifekit-hq/lifekit-stack/issues/571)) ([178c539](https://github.com/lifekit-hq/lifekit-stack/commit/178c53931e394326fef303b857f5a0ca0faf98ae))
+* **scripts:** pin Kit crons and smoke tests to policy model and gate idle crons ([#591](https://github.com/lifekit-hq/lifekit-stack/issues/591)) ([813846b](https://github.com/lifekit-hq/lifekit-stack/commit/813846bcffe1556b8067b7142d79011918b14025))
+* **scripts:** skip command jobs in ensure-kit-cron-models.sh ([#554](https://github.com/lifekit-hq/lifekit-stack/issues/554)) ([8644e63](https://github.com/lifekit-hq/lifekit-stack/commit/8644e63fd8921beb1239a8445a54e9201d182f08))
+* **scripts:** treat an unset reader config path as an absent reader ([#575](https://github.com/lifekit-hq/lifekit-stack/issues/575)) ([#579](https://github.com/lifekit-hq/lifekit-stack/issues/579)) ([d99e8f1](https://github.com/lifekit-hq/lifekit-stack/commit/d99e8f1804e824908969558efee513eefedda0cc))
+* **upgrade-smoke:** check MCP servers without offline state ownership ([#580](https://github.com/lifekit-hq/lifekit-stack/issues/580)) ([33559ac](https://github.com/lifekit-hq/lifekit-stack/commit/33559ac53bd4749e40a21e9fe919dc729dce7c3e))
+
+
+### Documentation
+
+* audit recurring AI jobs for token cost ([#533](https://github.com/lifekit-hq/lifekit-stack/issues/533)) ([ddb7d09](https://github.com/lifekit-hq/lifekit-stack/commit/ddb7d09393cdb6b424498beb372dc047166e603a))
+* **openclaw:** note auth-unknown on claude-cli turns is expected; fix two script comments ([#559](https://github.com/lifekit-hq/lifekit-stack/issues/559)) ([d8b93f5](https://github.com/lifekit-hq/lifekit-stack/commit/d8b93f581180016bbcfa729a833be0f258e4c07e))
+* **runbook:** correct duckduckgo plugin package name ([#561](https://github.com/lifekit-hq/lifekit-stack/issues/561)) ([212df62](https://github.com/lifekit-hq/lifekit-stack/commit/212df62bc39d60e9134143e640843fa4ed04e943))
+* **runbook:** make fleet-agent Verify block work on sops 3.9.1 ([#539](https://github.com/lifekit-hq/lifekit-stack/issues/539)) ([68d3319](https://github.com/lifekit-hq/lifekit-stack/commit/68d3319d6c68b3bc841b2004fcca517aa7eb45ec))
+
 ## [0.1.12](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.11...v0.1.12) (2026-11-16)
 
 
