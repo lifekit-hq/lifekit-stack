@@ -206,7 +206,17 @@ def test_a_done_and_a_skipped_problem_never_come_back(vault):
 def test_done_records_the_owners_words_and_needs_all_three(vault):
     r = daily(vault, "done", "two-sum", "--pattern", "hash map", "--time", "O(n)")
     assert r.returncode == 2 and "--space is required" in r.stderr
-    r = daily(vault, "done", "no-such-problem", "--pattern", "x", "--time", "y", "--space", "z")
+    r = daily(
+        vault,
+        "done",
+        "no-such-problem",
+        "--pattern",
+        "x",
+        "--time",
+        "y",
+        "--space",
+        "z",
+    )
     assert r.returncode == 2 and "not in the problem list" in r.stderr
     assert len(rows(vault)) == 1
     r = daily(
@@ -306,7 +316,9 @@ def test_the_weekly_count_is_monday_to_sunday(vault):
         "- 2026-11-28 Top K Frequent Elements",
         "- 2026-11-29 Valid Sudoku",
     ]
-    assert daily(vault, "week", day=NEXT_MON).stdout.startswith("solved: 1 (Monday 2026-11-30")
+    assert daily(vault, "week", day=NEXT_MON).stdout.startswith(
+        "solved: 1 (Monday 2026-11-30"
+    )
     # Offered and skipped problems are not solved.
     send(vault, WED)
     daily(vault, "skip", "product-of-array-except-self", day=FRI)
@@ -434,7 +446,14 @@ def test_the_cron_model_value_is_the_policy_model_with_the_inference_account():
 
 
 @pytest.mark.parametrize(
-    "expr", ["30 17 * * 1,2,3,5,6", "30 17 * * 4", "30 17 * * 0", "30 17 * * *", "30 17 * * 1-5"]
+    "expr",
+    [
+        "30 17 * * 1,2,3,5,6",
+        "30 17 * * 4",
+        "30 17 * * 0",
+        "30 17 * * *",
+        "30 17 * * 1-5",
+    ],
 )
 def test_a_schedule_that_can_fire_on_an_office_day_or_sunday_is_refused(tmp_path, expr):
     state, env = fake_box(tmp_path, [], {"LEETCODE_DAILY_CRON": expr})
@@ -464,7 +483,9 @@ CHECKIN = {
 
 
 def test_the_checkin_reads_the_count_from_learnclaw_and_converges(tmp_path, vault):
-    state, env = fake_box(tmp_path, [CHECKIN, {"id": "o", "name": "other", "payload": {}}])
+    state, env = fake_box(
+        tmp_path, [CHECKIN, {"id": "o", "name": "other", "payload": {}}]
+    )
     r = run_script(CHECKIN_SCRIPT, env)
     assert r.returncode == 0, r.stderr
     jobs = {j["id"]: j for j in json.loads(state.read_text())["jobs"]}
@@ -511,7 +532,10 @@ def test_the_install_puts_the_skill_in_the_workspace(tmp_path):
     ws.mkdir(parents=True)
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for name, body in (("docker", "#!/bin/sh\nexit 0\n"), ("curl", "#!/bin/sh\nexit 22\n")):
+    for name, body in (
+        ("docker", "#!/bin/sh\nexit 0\n"),
+        ("curl", "#!/bin/sh\nexit 22\n"),
+    ):
         (bindir / name).write_text(body)
         (bindir / name).chmod(0o755)
     r = subprocess.run(
@@ -527,7 +551,9 @@ def test_the_install_puts_the_skill_in_the_workspace(tmp_path):
     )
     assert r.returncode == 0, r.stderr
     for f in ("SKILL.md", "problems.json", "daily.py"):
-        assert (ws / "skills/leetcode-daily" / f).read_bytes() == (SKILL / f).read_bytes()
+        assert (ws / "skills/leetcode-daily" / f).read_bytes() == (
+            SKILL / f
+        ).read_bytes()
     assert os.access(ws / "skills/leetcode-daily/daily.py", os.X_OK)
     # It sits next to learning-record, where daily.py finds record.py.
     assert (ws / "skills/learning-record/record.py").is_file()

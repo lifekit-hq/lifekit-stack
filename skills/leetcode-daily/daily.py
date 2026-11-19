@@ -48,7 +48,11 @@ HERE = Path(__file__).resolve().parent
 PREFIX = "leetcode: "
 URL = "https://leetcode.com/problems/{}/"
 # Monday=0 ... Sunday=6. Office days and the rest day get no problem.
-BLOCKED = {1: "office day (Tuesday)", 3: "office day (Thursday)", 6: "rest day (Sunday)"}
+BLOCKED = {
+    1: "office day (Tuesday)",
+    3: "office day (Thursday)",
+    6: "rest day (Sunday)",
+}
 
 
 def fail(msg: str, code: int = 2) -> None:
@@ -58,7 +62,8 @@ def fail(msg: str, code: int = 2) -> None:
 
 def load_record():
     path = Path(
-        os.environ.get("LEETCODE_RECORD_PY") or HERE.parent / "learning-record/record.py"
+        os.environ.get("LEETCODE_RECORD_PY")
+        or HERE.parent / "learning-record/record.py"
     )
     if not path.is_file():
         fail(f"no record.py at {path}")
@@ -76,7 +81,9 @@ def today() -> dt.date:
         from zoneinfo import ZoneInfo
 
         return dt.datetime.now(ZoneInfo("Europe/Dublin")).date()
-    except Exception:  # no tz database in the image: the host date is the same day at 17:30
+    except (
+        Exception
+    ):  # no tz database in the image: the host date is the same day at 17:30
         return dt.date.today()
 
 
