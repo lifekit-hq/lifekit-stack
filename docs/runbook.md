@@ -152,7 +152,7 @@ file); rotating that token means recreating `prometheus` too. Check it with
 `diagnostics-otel` plugin enables, memory-core dreaming off, `gateway.auth.rateLimit`, `memory.search`
 (`enabled` + `extraPaths`), `tools.codeMode`, `agents.defaults.heartbeat.every`, the inbound
 `hooks` block (with `defaultSessionKey`), the bootstrap limit, the 5.5 default models and the
-reading Telegram door off, and the finance agent's heartbeat - live in
+reading Telegram door (learnclaw's own bot), and the finance agent's heartbeat - live in
 `compose/openclaw-gateway/platform.patch.json`. On every OpenClaw deploy (see
 [Path-gated OpenClaw deploys](#path-gated-openclaw-deploys)) `deploy.sh`
 compares that file with the live config, applies it with
@@ -804,7 +804,7 @@ image tag and compose env changed, recreates the gateway once.
 - `agents.defaults.model`, `heartbeat.model`, `subagents.model` and `modelPolicy.allow` on
   `anthropic/claude-sonnet-5-5` (plus `anthropic/claude-opus-5-5` allowed for Kit's own chat).
   `ensure-needs-you-digest.sh` defaults to the same Sonnet.
-- `channels.telegram.accounts.reading.enabled: false`; learnclaw answers through Kit only.
+- `channels.telegram.accounts.reading.enabled: false`; learnclaw answers through Kit only. (Re-enabled on its own token by the daily LeetCode problem, #594; see "Daily LeetCode problem".)
 - Gateway env `NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache` (dir made in the image) and
   `OPENCLAW_NO_RESPAWN=1`.
 - OpenClaw 2026.10.9 -> 2026.11.3 (Dockerfile tag). The 2026.10.10 changelog has no breaking
@@ -849,7 +849,7 @@ the new `modelPolicy.allow` lists only the 5.5 models. Steps 3 onward run after 
 **Acceptance (48 h after):** no "truncating in injected context", no "[context-engine] ...
 degraded" and no duckduckgo config warning in the gateway log; one real Kit turn where
 `web_search` returns results; `openclaw models status` shows the 5.5 models; `openclaw channels
-status` shows `reading` disabled.
+status` shows `reading` disabled (until the daily LeetCode problem's operator steps enable it again).
 
 ### The career weekly cron
 
@@ -2701,9 +2701,10 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
     account: `LH_SYNC_HOST=<PC tailnet name> LH_SYNC_USER=<PC account>
     scripts/learnharness-sync/install-learnharness-sync.sh`; check with
     `systemctl status learnharness-sync.service`.
-  - learnclaw has no Telegram door: the `reading` account is disabled (`platform.patch.json`, see
-    [OpenClaw audit bundle A](#openclaw-audit-bundle-a-2026-11-lifekit-stack530)), so it answers
-    through Kit and the Control UI chat. Its allowlist `agents.entries.learnclaw.skills` is
+  - learnclaw's Telegram door is the `reading` account, its own bot (token `LEARNING_BOT_TOKEN`).
+    It was disabled by [OpenClaw audit bundle A](#openclaw-audit-bundle-a-2026-11-lifekit-stack530)
+    and is enabled again for the daily problem (see "Daily LeetCode problem"); until an operator
+    has applied that, it answers through Kit and the Control UI chat. Its allowlist `agents.entries.learnclaw.skills` is
     `["learning-record", "learnharness"]` (host state).
 - **Skill:** `skills/learning-record` (`record.py`, stdlib only).
   - `record.py status` prints the projections. A row whose date is not a real calendar date is
@@ -2725,7 +2726,7 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
   - kit, as a subagent run, once `learnclaw` is in kit's `subagents.allowAgents`. kit relays the
     answer, and a subagent run never records. The 21:00 `evening-plan-note` run does this daily
     for the plan's learning line (see "Learning objective line from learnclaw").
-  - learnclaw has no cron of its own in v0: apart from that daily kit run, nothing runs unless asked.
+  - learnclaw's one cron is `leetcode-daily` (see "Daily LeetCode problem"); apart from that and the daily kit run, nothing runs unless asked.
 - **Cost:** a run is one Sonnet 4.6 conversation turn on the gateway's subscription. Measured on
   comparable career runs, that is about 50k tokens, mostly cache reads: roughly $0.10-0.20 at list
   prices. Only the daily plan run schedules one, so the idle cost is that one run a day.
@@ -2778,6 +2779,90 @@ The 21:00 plan run then writes "Learning objective unavailable (learnclaw)". Res
 bindings). Then revert kit's `allowAgents` and the live kit "Learning" section,
 and revert the PR so the deploy stops installing the contract. Rows already on the learning page
 stay; they are the owner's record.
+
+### Daily LeetCode problem (learnclaw, #594)
+
+learnclaw sends the owner one LeetCode problem a day, chosen by pattern, in its own Telegram chat, so the
+weekly by-hand problem count (the number behind the two interview loops by 2027-02-17) has a daily prompt.
+Kit's Sunday 18:00 `goal-weekly-checkin` reads that count from learnclaw instead of asking.
+
+- **What is sent.** Name and link, two lines, nothing else: no pattern name, no hint, no solution. At most
+  one a day, on home days only: Monday, Wednesday, Friday and Saturday. Tuesday and Thursday are office
+  days and Sunday is rest: no message. The slot is the home-day 17:30 interview-problem slot, Europe/Dublin.
+- **The list.** `skills/leetcode-daily/problems.json`, curated and in git: patterns in Track A order of the
+  vault's `domains/learning.md` (A1 Big-O, which has no problems to send, then hash maps, two pointers and
+  sliding window, stacks and monotonic stack, binary search, linked lists, trees, heaps, graphs, intervals
+  and greedy, backtracking, DP 1-D then 2-D, tries and union-find), problems in order inside a pattern. Pure
+  basics and problems with no clear pattern are left out. Edit the list here, then
+  `python3 skills/leetcode-daily/daily.py check`; the deploy installs it.
+- **The pick.** `daily.py next --record` (`skills/leetcode-daily/daily.py`, stdlib only) takes the first
+  problem with no row in the record, so a done, a skipped or an already offered problem never comes back: one
+  pattern at a time, in order. It decides the day itself: on Tuesday, Thursday or Sunday it prints
+  `SKIP office day (Tuesday)` (or the Thursday / rest-day line) and records nothing, whatever fired it. A
+  second call on the same day prints `SKIP offered today`. The unattempted problem stays offered; the next
+  send is the next problem.
+- **The record: no second store.** Each step is one `leetcode: <slug>` row in the artefact record that
+  `learning-record` writes (the vault's `domains/learning.md`), through `record.py append`, so its checks and
+  the vault lint apply: `in progress` = offered, `done` = solved by hand, `dropped` = skipped; the latest row
+  is the state. A `done` row needs only the grilled cell, which holds the pattern and the time and space
+  complexity in the owner's words. These rows are left out of the artefact projections of `record.py status`
+  (one summary line instead). LearnHarness's record is read-only here and is not touched.
+- **After the attempt.** In chat (Control UI, or the `reading` bot), learnclaw helps the owner understand the
+  problem, name the pattern and state the complexity, and records `daily.py done <slug> --pattern ... --time
+  ... --space ...` or `daily.py skip <slug>` on the owner's own words. learnclaw never writes the solution.
+- **The weekly count.** `daily.py week` prints `solved: <n> (Monday <date> to Sunday <date>, by hand)` and the
+  titles: the problems whose latest row is `done` and dated Monday to Sunday of the week of the given date
+  (default today, Dublin).
+- **The cron.** `scripts/ensure-leetcode-daily.sh` declares `leetcode-daily`: agent `learnclaw`, `30 17 * * 1,3,5,6`
+  Europe/Dublin, isolated, tools `exec,read`, announce to Telegram account `reading` at the owner chat, failure
+  alert through Kit's `default` account. Its model is `anthropic/claude-sonnet-5-5@anthropic:api-key`
+  (`cron_model_account` in `scripts/lib/cron-model.sh`): the policy model plus the inference account; a cron
+  row without a recorded account fails to run. The script refuses a schedule that can fire on Tuesday, Thursday
+  or Sunday, and after converging it re-reads the live row and exits 1 unless the agent, model, tool list,
+  schedule and delivery (Telegram `reading`, owner chat) are the declared ones.
+- **The check-in.** `scripts/ensure-goal-checkin-solved.sh` adds one marked block to Kit's `goal-weekly-checkin`
+  row (host state; it carries the owner's goal, so it is edited in place, not copied into git): run
+  `daily.py week`, take the `solved:` number, never ask the owner for it. It adds `exec` to the row's tool list
+  when that list lacks it, and leaves the rest of the row alone. `DRY_RUN=1` prints the new message first.
+- **Install.** The deploy copies the skill with the rest of learnclaw (`ensure-learnclaw.sh`); the cron and the
+  check-in wiring are operator steps, and the Telegram account is a platform key.
+
+**Operator steps (once).** The `reading` account carries a token ref again, so follow "Telegram bot tokens:
+enabled accounts only", re-enabling: apply the patch first, then merge, or merge and apply straight after (a deploy
+before the patch deletes the ref again). `LEARNING_BOT_TOKEN` is already in the gateway SOPS file.
+
+```bash
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+# 1. Enable the reading account on its own token (the same keys platform.patch.json carries).
+cat > /tmp/reading.patch.json <<'JSON'
+{"channels":{"telegram":{"accounts":{"reading":{"enabled":true,"botToken":{"source":"exec","provider":"sops","id":"learning-bot-token"}}}}}}
+JSON
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/reading.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/reading.patch.json
+rm /tmp/reading.patch.json
+# 2. Bind the learning bot to learnclaw and let it see the new skill (add to its list; keep the others).
+docker exec "$G" openclaw agents bind --agent learnclaw --bind telegram:reading
+docker exec "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const s=((c.agents.entries.learnclaw||{}).skills||[]).slice();if(!s.includes("leetcode-daily"))s.push("leetcode-daily");process.stdout.write(JSON.stringify({agents:{entries:{learnclaw:{skills:s}}}}))' > /tmp/lc-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/lc-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/lc-skills.patch.json
+rm /tmp/lc-skills.patch.json
+# 3. As lifekit, after the merge deploys: the cron, then the check-in wiring.
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-leetcode-daily.sh
+sudo -u lifekit env DRY_RUN=1 /srv/lifekit-stack/scripts/ensure-goal-checkin-solved.sh
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-goal-checkin-solved.sh
+```
+
+**Verify.** `openclaw channels status` shows `reading` enabled; `openclaw skills --agent learnclaw list` shows
+`leetcode-daily` ready; in the gateway, `python3 /home/node/.openclaw/agents/learnclaw/workspace/skills/leetcode-daily/daily.py next --date <a Tuesday>` prints
+`SKIP office day (Tuesday)` and `status` prints the counts and the next problem; `daily.py week` prints `solved: <n>`.
+Then one real run: `openclaw cron run <id> --expect-final --json` on a home day sends one message in the
+learning bot's chat and appends one `in progress` row; on a Tuesday, Thursday or Sunday it answers
+`NO_REPLY` and records nothing.
+
+**Pause** (the agent, its record and the list stay): `openclaw cron disable <id>` for `leetcode-daily`; the check-in then
+reads the count of whatever the owner recorded in chat. **Retire:** `openclaw cron rm <id>`, delete the
+marked block from `goal-weekly-checkin`'s message, and revert the PR; the rows stay, they are the owner's record.
 
 ### Learning objective line from learnclaw (`evening-plan-note`, `today-brief`)
 

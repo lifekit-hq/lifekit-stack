@@ -221,7 +221,8 @@ def test_plugin_allowlist_keeps_what_the_stack_runs():
 def test_bundle_a_audit_keys():
     # lifekit-stack#530: the bootstrap limit that stops AGENTS.md truncation,
     # the web-search plugin allowed, the broken lossless-claw slot removed,
-    # a stable hook session key, the reading door off, and every default model
+    # a stable hook session key, the reading door (re-enabled for learnclaw's
+    # daily problem, #594, on its own token), and every default model
     # on 5.5 (Kit's Opus is a per-agent host-state setting, never a default).
     defaults = PATCH["agents"]["defaults"]
     assert defaults["bootstrapMaxChars"] == 24000
@@ -231,7 +232,8 @@ def test_bundle_a_audit_keys():
         assert PATCH["plugins"]["entries"][dropped] is None
     assert HOOKS["defaultSessionKey"]
     reading = PATCH["channels"]["telegram"]["accounts"]["reading"]
-    assert reading["enabled"] is False
+    assert reading["enabled"] is True
+    assert reading["botToken"]["id"] == "learning-bot-token"
     sonnet = "anthropic/claude-sonnet-5-5"
     assert defaults["model"]["primary"] == sonnet
     assert defaults["subagents"]["model"] == sonnet

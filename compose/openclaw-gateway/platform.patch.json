@@ -225,8 +225,12 @@
           }
         },
         "reading": {
-          "enabled": false,
-          "botToken": null
+          "enabled": true,
+          "botToken": {
+            "source": "exec",
+            "provider": "sops",
+            "id": "learning-bot-token"
+          }
         },
         "social": {
           "botToken": null

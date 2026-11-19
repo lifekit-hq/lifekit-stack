@@ -21,3 +21,14 @@ if model not in allow:
     sys.exit(f"cron model {model} is not in modelPolicy.allow {allow}")
 print(model)' "$_CRON_MODEL_PATCH"
 }
+
+# The same model with its inference account, provider/model@auth-profile. A cron
+# row with no recorded account fails to run, so a job that must name the account
+# takes this form (the digest and pulse jobs run on the default account and use
+# cron_model). The account is the api-key profile every agent carries
+# (docs/secrets.md).
+cron_model_account() {
+  local model
+  model="$(cron_model)" || return 1
+  printf '%s@anthropic:api-key\n' "$model"
+}
