@@ -284,7 +284,8 @@ collection is not touched.
 - **Unreadable feed.** One line `Side hustles: no data (stats feed unreadable)`, one
   `errors[]` line, and one `no_data` week row.
 - **The brief** (`scripts/ensure-today-brief-fleet.sh`) prints `lines` as given, 3 at
-  most (the publisher folds more into `+N more channels in the week sheet`), so the
+  most (the credential line is always kept; the publisher folds channel lines beyond the
+  rest into `+N more channels not shown`), so the
   12-line cap holds. The week sheet itself is drafted by firstmate in the vault from
   `week_rows`.
 

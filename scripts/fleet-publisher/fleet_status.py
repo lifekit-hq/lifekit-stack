@@ -1359,14 +1359,16 @@ def side_hustles(
             + ", ".join(consent)
             + " - owner: run `clip auth --channel <name>` on the PC; no numbers shown"
         )
-        lines.append(out["credential"])
     if not chans:
         lines = [f"Side hustles: {NO_DATA} (no channel rows in the stats feed)"]
-    if len(lines) > SIDE_LINES:
+    room = SIDE_LINES - (1 if consent else 0)
+    if len(lines) > room:
         lines = [
-            *lines[: SIDE_LINES - 1],
-            f"+{len(lines) - SIDE_LINES + 1} more channels in the week sheet",
+            *lines[: room - 1],
+            f"+{len(lines) - room + 1} more channels not shown",
         ]
+    if consent:
+        lines.append(out["credential"])
     if brief_day:
         out["lines"] = lines
     return out

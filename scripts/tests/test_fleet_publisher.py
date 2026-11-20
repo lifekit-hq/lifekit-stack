@@ -3993,7 +3993,10 @@ def test_the_brief_keeps_its_cap_with_many_channels_and_a_credential(homes):
     rows += feed_rows("e", now - 3600, status="needs_reconsent")
     side = side_world(homes, rows, now)
     assert len(side["lines"]) == fleet_status.SIDE_LINES == 3
-    assert side["lines"][-1] == "+3 more channels in the week sheet"
+    assert side["lines"][0].startswith("a: 7d views")
+    assert side["lines"][1] == "+3 more channels not shown"
+    assert side["lines"][2] == side["credential"]
+    assert "needs consent again for e" in side["lines"][2]
     assert len(side["week_rows"]) == 5  # the sheet still has every channel
 
 
