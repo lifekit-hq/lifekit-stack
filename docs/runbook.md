@@ -3497,6 +3497,17 @@ added or removed: it reinstalls the script and rewrites the unit's `FM_HOMES`.
 The `lifekit-*.timer` glob in the unit gauge picks the timer up with no further
 change. Merge deploys the Grafana rule and dashboard.
 
+**Clip stats feed (operator step).** The same run appends the daily activity
+journal (`/var/lib/lifekit-fleet/journal/`, README "Activity journal and retro
+board"). Its `clip_stats` field reads `FLEET_CLIP_STATS`, which the unit does
+not set today, so the field says `unavailable` on every row until an operator
+points the variable at the side-hustle feed: a file path or `http(s)` URL
+serving a JSON object whose numeric top-level fields are kept (everything else
+is dropped). While the variable is unset the retro board lists `clip_stats`
+once under "Not configured" and neither counts it as a recurring problem nor
+proposes a change for it; once set, a feed that fails to read counts as a
+problem like any other source.
+
 ## Reply pusher
 
 When firstmate answers one of the owner's notes sent through Kit (a `kit-` request id),

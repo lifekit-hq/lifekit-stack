@@ -72,7 +72,7 @@ def box(tmp_path):
         ],
     )
 
-    def run(now=NOW, ledgers=(), **env):
+    def run(now=NOW, ledgers=(), homes=(), **env):
         args = [
             sys.executable,
             "-I",
@@ -86,6 +86,8 @@ def box(tmp_path):
         ]
         for item in ledgers or [ledger]:
             args += ["--ledger", str(item)]
+        for home in homes:
+            args += ["--home", home]
         return subprocess.run(
             args,
             env={**os.environ, **OFF, **env},
@@ -180,6 +182,7 @@ def test_taken_feed_and_daily_metrics_feed_the_row_without_free_text(box):
         [
             {
                 "date": DAY.isoformat(),
+                "home": "h1",
                 "partial": False,
                 "stall_task_hours": 1.5,
                 "weighted_tokens": 1000,
@@ -265,3 +268,75 @@ def test_retro_board_after_14_days_has_four_parts_and_three_changes(box):
 def test_no_board_before_14_days(box):
     box.run()
     assert not (box.out / "journal/retro").exists()
+
+
+def test_a_missing_ledger_makes_every_ledger_field_unavailable(box):
+    # Invariant: a field is a number only when every source feeding it was read.
+    box.run(ledgers=[box.ledger, box.tmp / "missing.jsonl"])
+    (row,) = box.rows()
+    for field in ("merged_prs_by_repo", "decisions_owner", "failed_tasks"):
+        assert row[field] == "unavailable"
+
+
+def test_fleet_metrics_need_a_final_row_from_every_home(box):
+    def metric(home, partial, hours, tokens):
+        return {
+            "date": DAY.isoformat(),
+            "home": home,
+            "partial": partial,
+            "stall_task_hours": hours,
+            "weighted_tokens": tokens,
+        }
+
+    daily = box.out / "metrics/daily.jsonl"
+    write_jsonl(daily, [metric("a", False, 1.5, 100), metric("b", True, 9, 900)])
+    box.run(homes=["a", "b"])
+    (row,) = box.rows()
+    assert row["stalled_task_hours"] == "unavailable"
+    assert row["fleet_weighted_tokens"] == "unavailable"
+
+    (box.out / "journal/activity.jsonl").unlink()
+    write_jsonl(daily, [metric("a", False, 1.5, 100), metric("b", False, 2, 250)])
+    box.run(homes=["a", "b"])
+    (row,) = box.rows()
+    assert row["stalled_task_hours"] == 3.5
+    assert row["fleet_weighted_tokens"] == 350
+
+
+def fortnight(box, **kwargs):
+    for n in range(14):
+        assert box.run(now=NOW + n * 86400, **kwargs).returncode == 0
+    (path,) = (box.out / "journal/retro").glob("*.json")
+    return json.loads(path.read_text()), path.with_suffix(".md").read_text()
+
+
+def test_unreadable_problem_fields_do_not_make_a_clean_day(box):
+    board, _ = fortnight(box, ledgers=[box.tmp / "missing.jsonl"])
+    assert not any("no failed task" in line for line in board["went_well"])
+
+
+def test_unset_clip_feed_is_not_a_problem_but_a_failing_one_is(box):
+    board, markdown = fortnight(box)
+    assert board["not_configured"] == ["clip_stats"]
+    assert "## Not configured" in markdown
+    assert all(
+        r["problem"] != "unavailable:clip_stats" for r in board["recurring_problems"]
+    )
+    assert all(
+        c["basis"] != "unavailable:clip_stats" for c in board["proposed_changes"]
+    )
+    assert not any("clip_stats" in line for line in board["went_wrong"])
+
+
+def test_configured_clip_feed_that_fails_still_counts(box):
+    board, markdown = fortnight(
+        box, FLEET_CLIP_STATS=str(box.tmp / "no-such-feed.json")
+    )
+    assert board["not_configured"] == []
+    assert "## Not configured" not in markdown
+    assert any(
+        r["problem"] == "unavailable:clip_stats" for r in board["recurring_problems"]
+    )
+    assert any(
+        c["basis"] == "unavailable:clip_stats" for c in board["proposed_changes"]
+    )

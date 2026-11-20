@@ -9,7 +9,7 @@ journal and retro board"). The store lives under the publisher's OUT_DIR, on
 disk and never in the vault, so it survives a publisher restart.
 
 Usage: activity_journal.py --now <epoch> --out-dir <dir> [--ledger FILE ...]
-                           [--daily FILE ...]
+                           [--daily FILE ...] [--home ID ...]
 
 Rows hold counts and identifiers only (repo slugs, ruling ids, metric names):
 no task title, decision text or session content is ever copied. A source that
@@ -103,21 +103,20 @@ def jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 class Ledgers:
-    """The fleet ledgers, read once; at least one must be readable."""
+    """The fleet ledgers, read once; every listed ledger must be readable."""
 
     def __init__(self, paths: list[str]) -> None:
         self.events: list[dict[str, Any]] = []
-        self.readable = False
+        self.readable = bool(paths)
         for raw in paths:
             try:
                 self.events += jsonl(Path(raw))
-                self.readable = True
             except SourceError:
-                continue
+                self.readable = False
 
     def window(self, event: str, start: int, end: int) -> list[dict[str, Any]]:
         if not self.readable:
-            raise SourceError("no ledger readable")
+            raise SourceError("a ledger is missing or unreadable")
         return [
             e
             for e in self.events
@@ -191,9 +190,9 @@ def taken_for_owner(out_dir: Path, start: int, end: int) -> dict[str, Any]:
     }
 
 
-def daily_metric(paths: list[str], day: dt.date, field: str) -> float:
-    """The day's final fleet metric summed over homes; a partial row is not final."""
-    total, seen = 0.0, False
+def daily_metric(paths: list[str], day: dt.date, field: str, homes: list[str]) -> float:
+    """The day's final fleet metric summed over homes; every home must have one."""
+    finals: dict[str, float] = {}
     for raw in paths:
         try:
             rows = jsonl(Path(raw))
@@ -201,17 +200,21 @@ def daily_metric(paths: list[str], day: dt.date, field: str) -> float:
             continue
         for row in rows:
             value = row.get(field)
+            home = row.get("home")
             if (
                 row.get("date") == day.isoformat()
                 and row.get("partial") is False
+                and isinstance(home, str)
                 and isinstance(value, (int, float))
                 and not isinstance(value, bool)
             ):
-                total += value
-                seen = True
-    if not seen:
-        raise SourceError(f"no final daily metrics row with {field}")
-    return round(total, 2)
+                finals[home] = value
+    missing = [h for h in homes if h not in finals]
+    if not finals or missing:
+        raise SourceError(
+            f"no final daily metrics row with {field} for {' '.join(missing) or 'any home'}"
+        )
+    return round(sum(finals.values()), 2)
 
 
 def prometheus(query: str, at: int) -> float | None:
@@ -345,7 +348,9 @@ def build_row(
         "decisions_taken_for_owner": lambda: taken_for_owner(out_dir, start, end),
         "failed_tasks": lambda: failed_tasks(ledgers, start, end),
         "red_ci_runs": lambda: red_ci(ledgers, day, start, end),
-        "stalled_task_hours": lambda: daily_metric(args.daily, day, "stall_task_hours"),
+        "stalled_task_hours": lambda: daily_metric(
+            args.daily, day, "stall_task_hours", args.home
+        ),
         "devclaw_sessions": lambda: prom_count(
             "sum(increase(devclaw_sessions_total[1d]))", at, empty_is_zero=False
         ),
@@ -358,7 +363,7 @@ def build_row(
             empty_is_zero=True,
         ),
         "fleet_weighted_tokens": lambda: int(
-            daily_metric(args.daily, day, "weighted_tokens")
+            daily_metric(args.daily, day, "weighted_tokens", args.home)
         ),
         "clip_stats": clip_stats,
     }
@@ -426,7 +431,7 @@ def num(value: Any) -> float | None:
     )
 
 
-def problems_of(row: dict[str, Any]) -> list[str]:
+def problems_of(row: dict[str, Any], unconfigured: frozenset[str]) -> list[str]:
     found = []
     if (num(row.get("failed_tasks")) or 0) > 0:
         found.append("failed-tasks")
@@ -436,7 +441,11 @@ def problems_of(row: dict[str, Any]) -> list[str]:
         found.append("stalled-work")
     if (num(row.get("openclaw_errors")) or 0) > 0:
         found.append("openclaw-errors")
-    found += [f"unavailable:{f}" for f in FIELDS if row.get(f) == UNAVAILABLE]
+    found += [
+        f"unavailable:{f}"
+        for f in FIELDS
+        if row.get(f) == UNAVAILABLE and f not in unconfigured
+    ]
     return found
 
 
@@ -458,7 +467,13 @@ def change_for(problem: str, days: int) -> str:
 def retro_board(
     rows: list[dict[str, Any]], first: dt.date, last: dt.date, now: int
 ) -> dict[str, Any]:
-    per_day = {r["date"]: problems_of(r) for r in rows}
+    unconfigured = frozenset(
+        [] if os.environ.get("FLEET_CLIP_STATS") else ["clip_stats"]
+    )
+    not_configured = sorted(
+        f for f in unconfigured if any(r.get(f) == UNAVAILABLE for r in rows)
+    )
+    per_day = {r["date"]: problems_of(r, unconfigured) for r in rows}
     tally: dict[str, list[str]] = {}
     for date, found in sorted(per_day.items()):
         for problem in found:
@@ -502,7 +517,15 @@ def retro_board(
     clean = [
         r["date"]
         for r in rows
-        if not any(not p.startswith("unavailable:") for p in per_day[r["date"]])
+        if all(
+            num(r.get(f)) == 0
+            for f in (
+                "failed_tasks",
+                "red_ci_runs",
+                "stalled_task_hours",
+                "openclaw_errors",
+            )
+        )
     ]
     went_well = []
     if merged:
@@ -545,7 +568,12 @@ def retro_board(
     stalled = sum(num(r.get("stalled_task_hours")) or 0 for r in rows)
     if stalled:
         went_wrong.append(f"{stalled:.1f} stalled task-hours.")
-    gaps = sum(1 for r in rows for f in FIELDS if r.get(f) == UNAVAILABLE)
+    gaps = sum(
+        1
+        for r in rows
+        for f in FIELDS
+        if r.get(f) == UNAVAILABLE and f not in unconfigured
+    )
     if gaps:
         went_wrong.append(f"{gaps} journal fields were unavailable.")
     return {
@@ -558,6 +586,7 @@ def retro_board(
         "went_wrong": went_wrong,
         "recurring_problems": recurring,
         "proposed_changes": proposed,
+        "not_configured": not_configured,
     }
 
 
@@ -582,6 +611,12 @@ def retro_markdown(board: dict[str, Any]) -> str:
         f"- {r['problem']}: {r['days']} days ({', '.join(r['dates'])})"
         for r in board["recurring_problems"]
     ] or ["- None."]
+    if board["not_configured"]:
+        lines += ["", "## Not configured", ""]
+        lines += [
+            f"- {f}: its source is not set up, so every row says unavailable."
+            for f in board["not_configured"]
+        ]
     lines += ["", "## Proposed changes", ""]
     lines += [
         f"{i}. {c['change']} (basis: {c['basis']}, {c['days']} days)"
@@ -617,6 +652,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--ledger", action="append", default=[])
     parser.add_argument("--daily", action="append", default=[])
+    parser.add_argument("--home", action="append", default=[])
     args = parser.parse_args(argv)
     out_dir = Path(args.out_dir)
     store = out_dir / "journal" / "activity.jsonl"

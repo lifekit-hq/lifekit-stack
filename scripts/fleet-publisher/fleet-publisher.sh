@@ -510,6 +510,7 @@ for i in "${!homes[@]}"; do
     data_dir="${DATA_DIR:-$data_dir}" hold="${CAPTAIN_HOLD:-${home:+$hold}}"
     report_root="${REPORT_ROOT:-${home:-$(dirname "$data_dir")}}"
   fi
+  ledger_files+=("$ledger_file")
   if [[ -n "${problems[$i]}" ]]; then
     if [[ "${problems[$i]}" == *credential* ]]; then
       echo "fleet-publisher: $summary_file looks like it holds a credential; not publishing" >&2
@@ -521,7 +522,6 @@ for i in "${!homes[@]}"; do
     continue
   fi
   publish_home "$home" "$id" "$summary_file" "$ledger_file" "$data_dir" "$hold" "$report_root"
-  ledger_files+=("$ledger_file")
 done
 [[ -s "$work/published.jsonl" ]] || exit "$rc"
 
@@ -845,6 +845,7 @@ publish_journal() {
     return 0
   }
   for l in "${ledger_files[@]}"; do args+=(--ledger "$l"); done
+  for l in "${ids[@]}"; do args+=(--home "$l"); done
   CREDENTIAL_RE="$CREDENTIAL_RE" timeout 120 python3 -I "$helper" --now "$NOW" --out-dir "$OUT_DIR" \
     --daily "$OUT_DIR/metrics/daily.jsonl" "${args[@]}"
 }
