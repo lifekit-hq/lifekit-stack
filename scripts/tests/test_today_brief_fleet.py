@@ -370,3 +370,24 @@ def test_the_problems_sentence_prints_one_line_or_nothing_and_upgrades_the_previ
     res2, state2 = run(tmp2, message=old)
     assert res2.returncode == 0, res2.stderr
     assert json.loads(state2.read_text())["jobs"][1]["payload"]["message"] == message
+
+
+def test_the_side_hustle_sentence_prints_the_publisher_lines_and_upgrades_the_previous_step(
+    tmp_path,
+):
+    res, state = run(tmp_path)
+    assert res.returncode == 0, res.stderr
+    message = json.loads(state.read_text())["jobs"][1]["payload"]["message"]
+    assert "status_page.side_hustles" in message and "lines array" in message
+    assert "3 lines at most" in message and "within 12 lines" in message
+    assert "no placeholder" in message
+    # the live row of the previous version: the same text without the sentence
+    start = message.index(" Side hustles: from the same JSON")
+    end = message.index("\n\nMessage (Telegram")
+    old = message[:start] + message[end:]
+    assert " Problems: from the same JSON" in old
+    tmp2 = tmp_path / "second"
+    tmp2.mkdir()
+    res2, state2 = run(tmp2, message=old)
+    assert res2.returncode == 0, res2.stderr
+    assert json.loads(state2.read_text())["jobs"][1]["payload"]["message"] == message
