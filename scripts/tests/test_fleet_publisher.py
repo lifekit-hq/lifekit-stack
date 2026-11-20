@@ -3772,7 +3772,9 @@ def test_no_problems_means_no_problems_line(homes):
 
 def test_a_problem_ages_from_its_first_run_and_resets_only_when_it_clears(homes):
     vps, env = stalled_world(homes)
-    day = lambda n: {**env, "FLEET_NOW": str(NOW + n * DAY)}
+
+    def day(n):
+        return {**env, "FLEET_NOW": str(NOW + n * DAY)}
 
     assert homes.run(vps, **day(0)).returncode == 0
     assert status(homes)["problems"]["count"] == 6
