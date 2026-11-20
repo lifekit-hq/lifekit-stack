@@ -351,3 +351,22 @@ def test_the_outcome_sentence_is_added_and_a_row_with_the_previous_step_is_upgra
     res2, state2 = run(tmp2, message=old)
     assert res2.returncode == 0, res2.stderr
     assert json.loads(state2.read_text())["jobs"][1]["payload"]["message"] == message
+
+
+def test_the_problems_sentence_prints_one_line_or_nothing_and_upgrades_the_previous_step(
+    tmp_path,
+):
+    res, state = run(tmp_path)
+    assert res.returncode == 0, res.stderr
+    message = json.loads(state.read_text())["jobs"][1]["payload"]["message"]
+    assert "status_page.problems" in message and "one line" in message
+    assert "no Problems line" in message
+    # the live row of the previous version: the same text without the sentence
+    start = message.index(" Problems: from the same JSON")
+    end = message.index("\n\nMessage (Telegram")
+    old = message[:start] + message[end:]
+    tmp2 = tmp_path / "second"
+    tmp2.mkdir()
+    res2, state2 = run(tmp2, message=old)
+    assert res2.returncode == 0, res2.stderr
+    assert json.loads(state2.read_text())["jobs"][1]["payload"]["message"] == message

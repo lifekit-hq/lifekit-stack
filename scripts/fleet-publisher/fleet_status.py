@@ -21,6 +21,7 @@ sections"). Everything is read from structured sources, never from prose:
   stalled       items whose state has not changed for their queue's threshold
                 (fleet-stalled.json beside this script): GitHub issues of the
                 registered projects, backlog items, jobq jobs, A2A threads
+  problems      the three oldest stalled items by first-seen age, one brief line
 
 Usage: fleet_status.py --home <id>=<path> [--home ...] --now <epoch>
          --state-dir <dir> [--daily <jsonl> ...] [--remote <json> ...]
@@ -1069,6 +1070,102 @@ def stalled_section(
     return groups
 
 
+# --- problems --------------------------------------------------------------------
+
+PROBLEMS_SHOWN = 3
+PROBLEM_TITLE_CUT = 50
+PROBLEM_SOURCE_KEY = {
+    "backlog": "backlog",
+    "issue": "github",
+    "job": "jobq",
+    "thread": "a2a",
+}
+PROBLEM_PHRASE = {
+    "no-status-line": "silent",
+    "no-update": "no update",
+    "attempts-exhausted": "job failed",
+    "waiting": "job waiting",
+    "past-deadline": "past deadline",
+    "no-turn": "thread quiet",
+}
+
+
+def problem_line(shown: list[dict[str, Any]], more: int) -> str:
+    """The one brief line: `Problems: <what> (<owner>, <n>d); ...; +<N> more`."""
+    parts = [f"{p['label']} ({p['owner']}, {p['age_days']}d)" for p in shown]
+    if more:
+        parts.append(f"+{more} more")
+    return "Problems: " + "; ".join(parts)
+
+
+def problems(
+    rows: list[dict[str, Any]] | None,
+    sources: dict[str, Any] | None,
+    state: Path,
+    now: int,
+    errors: list[str],
+) -> dict[str, Any] | None:
+    """The problems of the day, mechanically, from the stalled rows (red CI is
+    not read by the publisher, so it is not here): `{count, shown, more, line}`
+    with the three oldest first, or None when there is none.
+
+    A problem's age counts from the first run that saw it. The first-seen mark
+    lives in this publisher's state (`problems-seen.json`) and is dropped only
+    when a run reads the problem's source and no longer finds it, so the age
+    resets only when the problem clears; a source that could not be read this
+    run keeps its marks. Unreadable stalled thresholds or mark file: None
+    (and an `errors[]` line from its own reader or here), never a guess."""
+    if rows is None:
+        return None
+    path = state / "problems-seen.json"
+    try:
+        marks = json.loads(path.read_text()) if path.exists() else {}
+        assert isinstance(marks, dict)
+    except (OSError, ValueError, AssertionError):
+        errors.append("problems-seen.json unreadable: no problems line")
+        return None
+    current = {f"{r['source']}:{r.get('home_id')}:{r['id']}": r for r in rows}
+    kept: dict[str, Any] = {}
+    for key, mark in marks.items():
+        source = key.split(":", 1)[0]
+        read = ((sources or {}).get(PROBLEM_SOURCE_KEY.get(source, ""), {})).get("read")
+        if key in current or not read:
+            kept[key] = mark
+    for key in current:
+        mark = kept.get(key)
+        if not isinstance(mark, dict) or not isinstance(mark.get("first_seen"), int):
+            kept[key] = {"first_seen": now}
+    if kept != marks:
+        save_cache(path, kept)
+    found = []
+    for key, row in current.items():
+        first = kept[key]["first_seen"]
+        title = one_line(row.get("title"), PROBLEM_TITLE_CUT) or row["id"]
+        found.append(
+            {
+                "source": row["source"],
+                "id": row["id"],
+                "home_id": row.get("home_id"),
+                "owner": row["owner"],
+                "reason": row["reason"],
+                "label": f"{title} {PROBLEM_PHRASE.get(row['reason'], 'stalled')}",
+                "url": row.get("url"),
+                "first_seen": first,
+                "age_days": max(0, now - first) // 86400,
+            }
+        )
+    if not found:
+        return None
+    found.sort(key=lambda p: (p["first_seen"], p["source"], p["id"]))
+    shown, more = found[:PROBLEMS_SHOWN], max(0, len(found) - PROBLEMS_SHOWN)
+    return {
+        "count": len(found),
+        "shown": shown,
+        "more": more,
+        "line": problem_line(shown, more),
+    }
+
+
 # --- assembly --------------------------------------------------------------------
 
 
@@ -1359,7 +1456,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             errors.append(f"{home_id}: capacity unreadable ({exc.__class__.__name__})")
     caps.extend(remote_capacity(e, errors) for e in remote_entries(args.remote, errors))
     rows = projects(records, homes, pr_cache, args.now, errors)
-    stalled, sources = None, None
+    stalled, sources, stalled_rows = None, None, None
     if cfg := stalled_config(errors):
         found = backlog_stalls(records, homes, cfg, args.now)
         issues, github = issue_stalls(
@@ -1367,7 +1464,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         )
         jobs, jobq = job_stalls(cfg, args.now, errors)
         threads, a2a = thread_stalls(cfg, args.now, errors)
-        stalled = stalled_section(found + issues + jobs + threads, cfg["owners"])
+        stalled_rows = found + issues + jobs + threads
+        stalled = stalled_section(stalled_rows, cfg["owners"])
         sources = {
             "backlog": {
                 "read": all(v is not None for v in by_home.values()),
@@ -1393,6 +1491,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     decided_cache = load_cache(state / "status-decisions.json")
     outcomes = delivered(state, args.now, errors, vault, decided_cache)
     save_cache(state / "status-decisions.json", decided_cache)
+    problem_list = problems(stalled_rows, sources, state, args.now, errors)
     save_cache(state / "status-records.json", record_cache)
     save_cache(state / "status-open-prs.json", pr_cache)
     return {
@@ -1407,6 +1506,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "stalled": stalled,
         "stalled_sources": sources,
         "delivered": outcomes,
+        "problems": problem_list,
         "follow_ups": [
             f"owner page for {h['title'].lower()}" for h in how if not h["url"]
         ],

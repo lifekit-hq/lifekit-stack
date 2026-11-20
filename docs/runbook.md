@@ -1663,7 +1663,9 @@ and the status read is an HTTP GET Kit could always make.
   (inside the gateway). The step also prints the one decision outcome whose `brief_date` is
   today (`status_page.delivered`, fleet publisher README "Delivered decisions"). An empty
   fleet part reads "No fleet calls today." there, so it never contradicts the brief's
-  calendar, mail or PR sections.
+  calendar, mail or PR sections. The step also prints the one-line "Problems: ..." from
+  `status_page.problems` (up to three oldest stalled items with owner and age in days, fleet
+  publisher README "Problems"), and nothing when there are none.
 - **Kit's `AGENTS.md`** is live host state (`/srv/openclaw/config/agents/kit/workspace/`),
   merged by hand like the "Needs you" section. Five lines move with this: the
   host-work line says host work goes to firstmate through the captain inbox, "the main
