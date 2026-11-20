@@ -3726,3 +3726,108 @@ def test_publisher_writes_the_activity_journal_once_per_day(fleet):
     assert row["date"] == "2027-01-14" and row["openclaw_runs"] == "unavailable"
     assert fleet.run(FLEET_NOW=str(NOW + 60)).returncode == 0
     assert len(store.read_text().splitlines()) == 1
+
+
+# --- the daily brief's Problems line ---------------------------------------
+
+
+def test_four_problems_show_the_three_oldest_and_count_the_rest(homes):
+    vps, env = stalled_world(homes)
+    assert homes.run(vps, **env).returncode == 0
+    seen = homes.tmp / "state/problems-seen.json"
+    marks = json.loads(seen.read_text())
+    assert len(marks) == 6
+    # age the marks by hand: the first runs saw these days ago
+    for key, days in (("quiet", 9), ("spent", 7), ("o/alpha#1", 6), ("late", 2)):
+        (hit,) = [k for k in marks if k.endswith(f":{key}")]
+        marks[hit]["first_seen"] = NOW - days * DAY
+    seen.write_text(json.dumps(marks))
+    assert homes.run(vps, **env).returncode == 0
+    problems = status(homes)["problems"]
+    assert problems["count"] == 6 and problems["more"] == 3
+    assert [p["id"] for p in problems["shown"]] == ["quiet", "spent", "o/alpha#1"]
+    assert [p["age_days"] for p in problems["shown"]] == [9, 7, 6]
+    assert [p["owner"] for p in problems["shown"]] == ["dev", "life", "ops"]
+    line = problems["line"]
+    assert line.startswith("Problems: ") and "\n" not in line
+    assert line.endswith("; +3 more") and line.count("(") == 3
+
+
+def test_exactly_four_problems_say_one_more(homes):
+    vps, env = stalled_world(homes, a2a=False)
+    env = {k: v for k, v in env.items() if k != "FLEET_A2A_CMD"}
+    # without threads the world holds spent, waiting, silent, o/alpha#1
+    assert homes.run(vps, **env).returncode == 0
+    problems = status(homes)["problems"]
+    assert problems["count"] == 4
+    assert len(problems["shown"]) == 3 and problems["more"] == 1
+    assert problems["line"].endswith("; +1 more")
+
+
+def test_no_problems_means_no_problems_line(homes):
+    vps = status_home(homes.tmp, "fm-vps", [task("fresh", created="2027-01-15")])
+    assert homes.run(vps).returncode == 0
+    assert status(homes)["problems"] is None
+
+
+def test_a_problem_ages_from_its_first_run_and_resets_only_when_it_clears(homes):
+    vps, env = stalled_world(homes)
+
+    def day(n):
+        return {**env, "FLEET_NOW": str(NOW + n * DAY)}
+
+    assert homes.run(vps, **day(0)).returncode == 0
+    assert status(homes)["problems"]["count"] == 6
+    assert homes.run(vps, **day(3)).returncode == 0
+    page = status(homes)
+    assert {p["age_days"] for p in page["problems"]["shown"]} == {3}
+    # the job clears: its mark is dropped; it returns as a new problem, age 0
+    (homes.tmp / "jobs.json").write_text(
+        json.dumps({"schema": "jobq-ages.v1", "max_attempts": 3, "jobs": []})
+    )
+    assert homes.run(vps, **day(4)).returncode == 0
+    assert "job:None:spent" not in json.loads(
+        (homes.tmp / "state/problems-seen.json").read_text()
+    )
+    (homes.tmp / "jobs.json").write_text(
+        json.dumps(
+            {
+                "schema": "jobq-ages.v1",
+                "max_attempts": 3,
+                "jobs": [
+                    {
+                        "id": "spent",
+                        "kind": "video",
+                        "status": "failed",
+                        "attempts": 3,
+                        "finished_at": NOW,
+                        "queued_at": NOW,
+                        "class": "life",
+                    }
+                ],
+            }
+        )
+    )
+    assert homes.run(vps, **day(5)).returncode == 0
+    marks = json.loads((homes.tmp / "state/problems-seen.json").read_text())
+    assert marks["job:None:spent"]["first_seen"] == NOW + 5 * DAY
+    assert marks["thread:None:quiet"]["first_seen"] == NOW  # never cleared
+
+
+def test_an_unreadable_source_keeps_its_problems_aging(homes):
+    vps, env = stalled_world(homes)
+    assert homes.run(vps, **env).returncode == 0
+    bad = {**env, "FLEET_JOBS_CMD": "false", "FLEET_NOW": str(NOW + 2 * DAY)}
+    assert homes.run(vps, **bad).returncode == 0
+    marks = json.loads((homes.tmp / "state/problems-seen.json").read_text())
+    assert marks["job:None:spent"]["first_seen"] == NOW
+
+
+def test_a_broken_mark_file_posts_no_problems_line(homes):
+    vps, env = stalled_world(homes)
+    (homes.tmp / "state").mkdir(exist_ok=True)
+    (homes.tmp / "state/problems-seen.json").write_text("{not json")
+    assert homes.run(vps, **env).returncode == 0
+    page = status(homes)
+    assert page["problems"] is None
+    assert any("problems-seen.json" in e for e in page["errors"])

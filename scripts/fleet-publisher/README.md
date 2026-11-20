@@ -130,6 +130,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
 | `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`): `{read, reason}`; `read: false` says why a source contributed nothing, or `null` with `stalled` |
+| `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
 | `follow_ups[]` | The owner pages still to be written |
 | `errors[]` | One line per source that could not be read this run |
@@ -237,6 +238,27 @@ line), never a guess.
   records reachable"}`: the page says so rather than guessing.
 - **Failure** of one source empties only its own rows, sets its
   `stalled_sources` entry to `read: false` and adds an `errors[]` line.
+
+## Problems (`status_page.problems`)
+
+What is wrong today, computed mechanically from the stalled rows above (stalled
+backlog items, issues, jobs and threads; an exhausted job is the failed
+scheduled job). No new detector: red CI on a default branch is not read by the
+publisher, so it is not a problem here until a source for it exists.
+
+- **Shape.** `count` (all problems), `shown` (the 3 oldest by first-seen, each
+  `{source, id, home_id, owner, reason, label, url, first_seen, age_days}`),
+  `more` (`count` minus 3, else 0) and `line`, the one brief line
+  `Problems: <what> (<owner>, <n>d); ...; +<N> more`. No problems: `problems`
+  is `null` and the brief prints no line.
+- **Age** is whole days since the first run that saw the problem, not the item's
+  own `since`. The first-seen mark lives in the publisher's state
+  (`problems-seen.json`) and is dropped only when a run that read the problem's
+  source no longer finds it, so the age resets only when the problem clears; a
+  source that could not be read keeps its marks. An unreadable mark file gives
+  `problems: null` and an `errors[]` line.
+- **The brief** (`scripts/ensure-today-brief-fleet.sh`) prints `line` exactly,
+  as one line of its Fleet part, so the 12-line cap holds.
 
 ## Delivered decisions (`status_page.delivered`)
 

@@ -13,7 +13,7 @@
 # is missing, because a prompt that changed under it needs a human to place the
 # step. A prompt that already carries this version of the step is left alone,
 # so re-running converges; one that carries the exact text of the previous
-# version of the step (PREV_STEP, PREV_STEP2, or OLD_STEP with OLD_FLEET, below) is
+# version of the step (PREV_STEP .. PREV_STEP4, or OLD_STEP with OLD_FLEET, below) is
 # upgraded in place.
 #
 # The step's Google rule: the brief makes the real calendar and mail calls on
@@ -146,7 +146,15 @@ OUTCOME = (
     "section (3 lines at most, no heading, once; the brief stays within 12 lines). When none has today'"'"'s "
     "brief_date or status_page.delivered is null or absent, print nothing for it."
 )
-STEP += GOOGLE + OUTCOME
+PREV_STEP4 = STEP + GOOGLE + OUTCOME
+# Problems: the publisher computes the line (status_page.problems, three oldest
+# with owner and age, "+N more"); the brief only prints it, as one line.
+PROBLEMS = (
+    " Problems: from the same JSON, when status_page.problems is an object, print its line field exactly "
+    "as given, as one line (never more than one line, never reworded or split), after the Fleet notes; when "
+    "status_page.problems is null or absent, print no Problems line and no placeholder."
+)
+STEP = PREV_STEP4 + PROBLEMS
 BEFORE = "\n\nMessage (Telegram"
 EMPTY = "If calendar, mail, deadlines-within-7-days and non-bot PRs are all empty, reply exactly NO_REPLY."
 FLEET = (
@@ -180,7 +188,7 @@ for job in json.load(sys.stdin)["jobs"]:
         break
 if STEP in msg and FLEET in msg:
     sys.exit(10)
-for prev in (PREV_STEP3, PREV_STEP2, PREV_STEP):
+for prev in (PREV_STEP4, PREV_STEP3, PREV_STEP2, PREV_STEP):
     if prev in msg and FLEET in msg:
         sys.stdout.write(msg.replace(prev, STEP, 1))
         sys.exit(0)
