@@ -3426,7 +3426,7 @@ state and last-seen time (from a fleet home's cached secondmate summary),
 per-item `started_at`, `landed_at`, `priority` and `ask` fields, and sanitised
 `metrics/quota.jsonl` / `metrics/quota-snapshot.json` (contract in the README).
 It also adds `status_page`, the living status page's sections (records,
-projects, capacity, queue, intake, how-it-works, delivered decisions; README
+projects, capacity, queue, intake, how-it-works, delivered decisions, problems; README
 "Status page sections"), built by `fleet_status.py`, installed beside the script as
 `/usr/local/bin/lifekit-fleet-status.py`. That helper reads each home's backlog
 through its `bin/fm-tasks-axi.sh` and its `bin/fm-capacity.sh --json`, asks
