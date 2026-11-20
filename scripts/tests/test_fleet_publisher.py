@@ -21,6 +21,8 @@ NOW = 1_800_000_000
 # docker exec into a gateway, no host vault.
 NO_LIVE_SOURCES = {
     "FLEET_GH": "",
+    "FLEET_PROM_URL": "",
+    "FLEET_CLIP_STATS": "",
     "FLEET_SCREEN_REPOS": "",
     "FLEET_INTAKE_CMD": "",
     "FLEET_VAULT": "/nonexistent",
@@ -173,7 +175,9 @@ def test_publishes_world_readable_copy_and_worker_counts(fleet):
     assert m[f'fleet_home_summary_generated_timestamp_seconds{{home="{home}"}}'] == (
         NOW - 30
     )
-    assert not [p for p in fleet.out.iterdir() if p.name != "home-summary.json"]
+    assert not [
+        p for p in fleet.out.iterdir() if p.name not in ("home-summary.json", "journal")
+    ]
     assert not [p for p in fleet.prom.iterdir() if p.name != "fleet.prom"]
 
 
@@ -436,7 +440,9 @@ def test_finished_reports_are_copied_and_served_by_url(fleet):
     fleet.write(summary())
     assert fleet.run().returncode == 0
     assert not (fleet.out / "reports").exists()
-    assert not [p for p in fleet.out.iterdir() if p.name != "home-summary.json"]
+    assert not [
+        p for p in fleet.out.iterdir() if p.name not in ("home-summary.json", "journal")
+    ]
 
 
 def test_republishing_reports_keeps_served_ones_in_place_and_drops_stale(fleet):
@@ -465,6 +471,7 @@ def test_republishing_reports_keeps_served_ones_in_place_and_drops_stale(fleet):
     assert sorted(p.name for p in served.iterdir()) == ["keep"]
     assert sorted(p.name for p in fleet.out.iterdir()) == [
         "home-summary.json",
+        "journal",
         "reports",
     ]
 
@@ -3708,3 +3715,14 @@ def test_an_unreadable_mark_file_posts_nothing(homes, tmp_path):
     (tmp_path / "state").mkdir()
     (tmp_path / "state/decisions-delivered.json").write_text("{not json")
     assert delivered_page(homes, tmp_path, ["1", "2"]) is None
+
+
+def test_publisher_writes_the_activity_journal_once_per_day(fleet):
+    fleet.write(summary())
+    # NOW is 2027-01-15 08:00 UTC: yesterday is a finished day, with no source to read.
+    assert fleet.run().returncode == 0
+    store = fleet.out / "journal/activity.jsonl"
+    (row,) = [json.loads(x) for x in store.read_text().splitlines()]
+    assert row["date"] == "2027-01-14" and row["openclaw_runs"] == "unavailable"
+    assert fleet.run(FLEET_NOW=str(NOW + 60)).returncode == 0
+    assert len(store.read_text().splitlines()) == 1

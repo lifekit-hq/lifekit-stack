@@ -62,6 +62,10 @@
 # the "Screen changes" feed (contract in README.md): the open or recently merged PRs that change a
 # screen-baseline image, from screen_changes.py beside this script
 # (FLEET_SCREENS overrides; installed as lifekit-fleet-screens.py).
+# Also writes OUT_DIR/journal/activity.jsonl (one row per finished UTC day, a
+# date already stored is never rewritten) and OUT_DIR/journal/retro/ (a board per
+# 14 journal days), from activity_journal.py beside this script (FLEET_JOURNAL
+# overrides; installed as lifekit-fleet-journal.py); contract in README.md.
 # The dashboard never reads Lavish or fleet-home state. Writes TEXTFILE_DIR/fleet.prom:
 #   fleet_workers{state}                          active children by state, all homes
 #   fleet_decisions_open                          open captain decisions, all homes
@@ -468,6 +472,7 @@ publish_home() {
 }
 
 rc=0
+ledger_files=()
 unpublished() { # <home id> <home dir> <exit code> <reason>
   jq -cn --arg id "$1" --arg path "$2" --arg reason "$4" \
     '{id: $id, path: (if $path == "" then null else $path end), published: false, valid: false, reason: $reason}' \
@@ -505,6 +510,7 @@ for i in "${!homes[@]}"; do
     data_dir="${DATA_DIR:-$data_dir}" hold="${CAPTAIN_HOLD:-${home:+$hold}}"
     report_root="${REPORT_ROOT:-${home:-$(dirname "$data_dir")}}"
   fi
+  ledger_files+=("$ledger_file")
   if [[ -n "${problems[$i]}" ]]; then
     if [[ "${problems[$i]}" == *credential* ]]; then
       echo "fleet-publisher: $summary_file looks like it holds a credential; not publishing" >&2
@@ -818,6 +824,33 @@ publish_screens() {
 }
 if ! publish_screens; then
   echo "fleet-publisher: the screen changes feed was not published" >&2
+  ((rc != 0)) || rc=1
+fi
+# The activity journal and the two-weekly retro board, under OUT_DIR/journal:
+# activity_journal.py beside this script (FLEET_JOURNAL overrides; installed as
+# lifekit-fleet-journal.py) appends one row per finished UTC day and writes a
+# board when 14 journal days have passed (README "Activity journal and retro
+# board"). A source it cannot read writes "unavailable" into the row, it never
+# stops the row; a missing helper is only logged, a write failure fails the run.
+publish_journal() {
+  local helper="${FLEET_JOURNAL:-}" here args=() l
+  here="$(dirname "$(realpath "$0")")"
+  if [[ -z "$helper" ]]; then
+    for helper in "$here/activity_journal.py" "$here/lifekit-fleet-journal.py" ""; do
+      [[ -z "$helper" || -r "$helper" ]] && break
+    done
+  fi
+  [[ -n "$helper" ]] || {
+    echo "fleet-publisher: no activity_journal.py; the journal is not written" >&2
+    return 0
+  }
+  for l in "${ledger_files[@]}"; do args+=(--ledger "$l"); done
+  for l in "${ids[@]}"; do args+=(--home "$l"); done
+  CREDENTIAL_RE="$CREDENTIAL_RE" timeout 120 python3 -I "$helper" --now "$NOW" --out-dir "$OUT_DIR" \
+    --daily "$OUT_DIR/metrics/daily.jsonl" "${args[@]}"
+}
+if ! publish_journal; then
+  echo "fleet-publisher: the activity journal was not written" >&2
   ((rc != 0)) || rc=1
 fi
 exit "$rc"
