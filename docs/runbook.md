@@ -3498,15 +3498,11 @@ The `lifekit-*.timer` glob in the unit gauge picks the timer up with no further
 change. Merge deploys the Grafana rule and dashboard.
 
 **Clip stats feed (operator step).** The same run appends the daily activity
-journal (`/var/lib/lifekit-fleet/journal/`, README "Activity journal and retro
-board"). Its `clip_stats` field reads `FLEET_CLIP_STATS`, which the unit does
-not set today, so the field says `unavailable` on every row until an operator
-points the variable at the side-hustle feed: a file path or `http(s)` URL
-serving a JSON object whose numeric top-level fields are kept (everything else
-is dropped). While the variable is unset the retro board lists `clip_stats`
-once under "Not configured" and neither counts it as a recurring problem nor
-proposes a change for it; once set, a feed that fails to read counts as a
-problem like any other source.
+journal under `/var/lib/lifekit-fleet/journal/`. Its `clip_stats` field reads
+`FLEET_CLIP_STATS`, which the unit does not set, so the field says `unavailable`
+until an operator points the variable (a systemd drop-in for the unit) at the
+side-hustle feed. Feed format and how the retro board treats an unset variable:
+README "Activity journal and retro board".
 
 ## Reply pusher
 
