@@ -131,6 +131,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
 | `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`): `{read, reason}`; `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
+| `side_hustles` | The side-hustle lines and week-sheet rows (below): `{channels[], lines[], week_rows[], credential, brief_day, week_of, feed_read}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
 | `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
 | `follow_ups[]` | The owner pages still to be written |
 | `errors[]` | One line per source that could not be read this run |
@@ -259,6 +260,34 @@ publisher, so it is not a problem here until a source for it exists.
   `problems: null` and an `errors[]` line.
 - **The brief** (`scripts/ensure-today-brief-fleet.sh`) prints `line` exactly,
   as one line of its Fleet part, so the 12-line cap holds.
+
+## Side hustles (`status_page.side_hustles`)
+
+Per-channel numbers for the owner's side hustles, read only from clip's stats
+feed (`stats.jsonl`, written by `clip stats`; `FLEET_CLIP_STATS_FEED` is its
+path, unset leaves the section `null`). Nothing is scraped, and clip's
+collection is not touched.
+
+- **When.** `lines` (the brief's) are filled on Monday and Thursday and empty on
+  other days; `week_rows` (the Monday week sheet's, one weekly row per channel,
+  `week_of` the Monday's date) on Monday only. The day is read in the brief's time
+  zone (`fleet-decisions.json`). `channels[]` always holds each channel's verdict.
+- **The line.** `<channel>: 7d views N · subs N · uploads N · best Short <clip> (N views)`,
+  from the channel's newest `channel` row: `days7.views`, `subscribers`, uploads
+  in the period (its `videos_recorded` less the count at the last row at least 7
+  days older) and the most-viewed Short of that run's `video` rows. A number the feed
+  does not hold is the value `no data` (never `0`; a real zero stays `0`); a channel
+  whose newest row is older than 7 days or has no Analytics window is `<channel>: no data`.
+- **Credential.** A channel whose newest row is `needs_reconsent` (or clip's
+  credentials-rejected error) shows no numbers; one shared line `Side hustles: YouTube
+  Analytics needs consent again for <channels> - owner: run clip auth ...` stands for all.
+- **Unreadable feed.** One line `Side hustles: no data (stats feed unreadable)`, one
+  `errors[]` line, and one `no_data` week row.
+- **The brief** (`scripts/ensure-today-brief-fleet.sh`) prints `lines` as given, 3 at
+  most (the credential line is always kept; the publisher folds channel lines beyond the
+  rest into `+N more channels not shown`), so the
+  12-line cap holds. The week sheet itself is drafted by firstmate in the vault from
+  `week_rows`.
 
 ## Delivered decisions (`status_page.delivered`)
 

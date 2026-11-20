@@ -22,6 +22,8 @@ sections"). Everything is read from structured sources, never from prose:
                 (fleet-stalled.json beside this script): GitHub issues of the
                 registered projects, backlog items, jobq jobs, A2A threads
   problems      the three oldest stalled items by first-seen age, one brief line
+  side_hustles  per-channel numbers from the clip stats feed (stats.jsonl), as
+                the Monday/Thursday brief lines and the Monday week-sheet rows
 
 Usage: fleet_status.py --home <id>=<path> [--home ...] --now <epoch>
          --state-dir <dir> [--daily <jsonl> ...] [--remote <json> ...]
@@ -36,7 +38,8 @@ the stalled check reads; empty skips them, unset skips them too when
 FLEET_INTAKE_CMD is set),
 FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: none reachable),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
-script). A source that fails empties its own part
+script), FLEET_CLIP_STATS_FEED (path of clip's stats.jsonl; unset: no
+side_hustles section, an unreadable file: its "no data" line). A source that fails empties its own part
 and adds a line to `errors`; the helper itself only fails on bad arguments.
 """
 
@@ -1166,6 +1169,211 @@ def problems(
     }
 
 
+# --- side hustles ----------------------------------------------------------------
+
+SIDE_SCHEMA = "fleet-side-hustles.v1"
+SIDE_BRIEF_DAYS = (0, 3)  # Monday and Thursday, in the brief's time zone
+SIDE_WEEK_SHEET_DAY = 0
+SIDE_WINDOW = 7 * 86400
+SIDE_LINES = 3  # brief lines at most: the brief keeps its 12-line cap
+NO_DATA = "no data"
+CHANNEL_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+SIDE_CLIP_CUT = 40
+
+
+def feed_epoch(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        when = dt.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return int(when.timestamp())
+
+
+def feed_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def needs_consent(row: dict[str, Any]) -> bool:
+    """The latest channel row says the YouTube Analytics scope is rejected or
+    expired: clip's own `needs_reconsent`, or its credential-rejected error."""
+    if row.get("status") == "needs_reconsent":
+        return True
+    return row.get("status") == "error" and "clip auth" in str(row.get("reason") or "")
+
+
+def side_hustle_numbers(
+    chan_rows: list[dict[str, Any]],
+    video_rows: list[dict[str, Any]],
+    now: int,
+    pattern: re.Pattern[str] | None,
+) -> dict[str, Any]:
+    """The four numbers of one channel from its rows, oldest first, or a
+    `no_data` / `needs_consent` verdict. Never a zero for a missing number."""
+    latest = chan_rows[-1]
+    at = feed_epoch(latest.get("at"))
+    if needs_consent(latest):
+        return {"status": "needs_consent"}
+    week = latest.get("days7")
+    if (
+        latest.get("status") != "ok"
+        or at is None
+        or now - at > SIDE_WINDOW
+        or not isinstance(week, dict)
+    ):
+        return {"status": "no_data"}
+    views = feed_int(week.get("views"))
+    subscribers = feed_int(latest.get("subscribers"))
+    uploads = None
+    now_count = feed_int(latest.get("videos_recorded"))
+    # Uploads in the period: the videos clip has recorded now, less the count
+    # at the last row from at least a week earlier. No such row: no data.
+    base = [
+        r
+        for r in chan_rows[:-1]
+        if (e := feed_epoch(r.get("at"))) is not None and at - e >= SIDE_WINDOW
+    ]
+    base_count = feed_int(base[-1].get("videos_recorded")) if base else None
+    if now_count is not None and base_count is not None and now_count >= base_count:
+        uploads = now_count - base_count
+    best = None
+    for r in video_rows:
+        v = feed_int(r.get("views"))
+        if r.get("at") != latest.get("at") or r.get("found") is not True or v is None:
+            continue
+        clip = one_line(r.get("clip"), SIDE_CLIP_CUT)
+        if (
+            clip
+            and not (pattern and pattern.search(clip))
+            and (best is None or v > best[1])
+        ):
+            best = (clip, v)
+    return {
+        "status": "ok",
+        "views_7d": views,
+        "subscribers": subscribers,
+        "uploads": uploads,
+        "best_short": {"clip": best[0], "views": best[1]} if best else None,
+    }
+
+
+def side_hustle_row(name: str, week_of: str, n: dict[str, Any]) -> dict[str, Any]:
+    """One weekly sheet row: the numbers, each a number or "no data"."""
+    row: dict[str, Any] = {"channel": name, "week_of": week_of, "status": n["status"]}
+    if n["status"] == "ok":
+        for k in ("views_7d", "subscribers", "uploads"):
+            row[k] = NO_DATA if n[k] is None else n[k]
+        best = n["best_short"]
+        row["best_short"] = NO_DATA if best is None else best
+    return row
+
+
+def side_hustle_cells(n: dict[str, Any]) -> list[str]:
+    def num(v: int | None) -> str:
+        return NO_DATA if v is None else f"{v:,}"
+
+    best = n["best_short"]
+    best_text = NO_DATA if best is None else f"{best['clip']} ({best['views']:,} views)"
+    return [num(n["views_7d"]), num(n["subscribers"]), num(n["uploads"]), best_text]
+
+
+def side_hustles(
+    now: int, tz: str, errors: list[str], pattern: re.Pattern[str] | None
+) -> dict[str, Any] | None:
+    """Per-channel side-hustle numbers from clip's stats feed, read-only and
+    only from that feed (`FLEET_CLIP_STATS_FEED`). None when it is not set.
+
+    `channels` always holds the verdicts; `lines` (the brief's, on Monday and
+    Thursday only) and `week_rows` (Monday only) are what the surfaces print.
+    A channel whose Analytics scope needs consent again gets no numbers: one
+    shared credential line names them. An unreadable feed gives one no-data line."""
+    feed = os.environ.get("FLEET_CLIP_STATS_FEED", "")
+    if not feed:
+        return None
+    zone = zoneinfo.ZoneInfo(tz)
+    local = dt.datetime.fromtimestamp(now, zone)
+    brief_day = local.weekday() in SIDE_BRIEF_DAYS
+    sheet_day = local.weekday() == SIDE_WEEK_SHEET_DAY
+    week_of = (local.date() - dt.timedelta(days=local.weekday())).isoformat()
+    out: dict[str, Any] = {
+        "schema": SIDE_SCHEMA,
+        "feed_read": True,
+        "brief_day": brief_day,
+        "week_of": week_of,
+        "channels": [],
+        "credential": None,
+        "lines": [],
+        "week_rows": [],
+    }
+    chans: dict[str, list[dict[str, Any]]] = {}
+    videos: dict[str, list[dict[str, Any]]] = {}
+    try:
+        text = Path(feed).read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        errors.append(f"clip stats feed unreadable ({exc.__class__.__name__})")
+        out["feed_read"] = False
+        if brief_day:
+            out["lines"] = [f"Side hustles: {NO_DATA} (stats feed unreadable)"]
+        if sheet_day:
+            out["week_rows"] = [
+                {"channel": "all channels", "week_of": week_of, "status": "no_data"}
+            ]
+        return out
+    for raw in text.splitlines():
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            continue
+        name = row.get("channel") if isinstance(row, dict) else None
+        if not isinstance(name, str) or not CHANNEL_RE.match(name):
+            continue
+        if row.get("kind") == "channel":
+            chans.setdefault(name, []).append(row)
+        elif row.get("kind") == "video":
+            videos.setdefault(name, []).append(row)
+    consent: list[str] = []
+    lines: list[str] = []
+    for name in sorted(chans):
+        n = side_hustle_numbers(chans[name], videos.get(name, []), now, pattern)
+        out["channels"].append({"channel": name, **n})
+        cells = side_hustle_cells(n) if n["status"] == "ok" else None
+        if n["status"] == "needs_consent":
+            consent.append(name)
+        elif cells is None:
+            lines.append(f"{name}: {NO_DATA}")
+        else:
+            views, subs, uploads, best = cells
+            lines.append(
+                f"{name}: 7d views {views} · subs {subs} · uploads {uploads} · best Short {best}"
+            )
+        if sheet_day:
+            out["week_rows"].append(side_hustle_row(name, week_of, n))
+    if consent:
+        out["credential"] = (
+            "Side hustles: YouTube Analytics needs consent again for "
+            + ", ".join(consent)
+            + " - owner: run `clip auth --channel <name>` on the PC; no numbers shown"
+        )
+    if not chans:
+        lines = [f"Side hustles: {NO_DATA} (no channel rows in the stats feed)"]
+    room = SIDE_LINES - (1 if consent else 0)
+    if len(lines) > room:
+        lines = [
+            *lines[: room - 1],
+            f"+{len(lines) - room + 1} more channels not shown",
+        ]
+    if consent:
+        lines.append(out["credential"])
+    if brief_day:
+        out["lines"] = lines
+    return out
+
+
 # --- assembly --------------------------------------------------------------------
 
 
@@ -1492,6 +1700,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     outcomes = delivered(state, args.now, errors, vault, decided_cache)
     save_cache(state / "status-decisions.json", decided_cache)
     problem_list = problems(stalled_rows, sources, state, args.now, errors)
+    side = side_hustles(
+        args.now, decisions_config(errors)["brief"]["tz"], errors, pattern
+    )
     save_cache(state / "status-records.json", record_cache)
     save_cache(state / "status-open-prs.json", pr_cache)
     return {
@@ -1507,6 +1718,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "stalled_sources": sources,
         "delivered": outcomes,
         "problems": problem_list,
+        "side_hustles": side,
         "follow_ups": [
             f"owner page for {h['title'].lower()}" for h in how if not h["url"]
         ],

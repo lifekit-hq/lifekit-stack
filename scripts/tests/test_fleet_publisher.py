@@ -3831,3 +3831,180 @@ def test_a_broken_mark_file_posts_no_problems_line(homes):
     page = status(homes)
     assert page["problems"] is None
     assert any("problems-seen.json" in e for e in page["errors"])
+
+
+# --- the Monday and Thursday side-hustle lines -----------------------------
+
+MONDAY = NOW + 3 * DAY  # 2027-01-18 08:00 UTC
+THURSDAY = NOW + 6 * DAY  # 2027-01-21 08:00 UTC
+
+
+def iso(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(epoch))
+
+
+def feed_rows(name, at, **over):
+    """One clip stats run for a channel: two Short rows and the channel row."""
+    stamp = iso(at)
+    videos = [
+        {"at": stamp, "kind": "video", "channel": name, "clip": f"{name}_a.mp4",
+         "video_id": "a", "found": True, "views": 120},
+        {"at": stamp, "kind": "video", "channel": name, "clip": f"{name}_b.mp4",
+         "video_id": "b", "found": True, "views": 900},
+    ]  # fmt: skip
+    channel = {
+        "at": stamp, "kind": "channel", "channel": name, "videos_recorded": 5,
+        "subscribers": 1234, "status": "ok",
+        "days7": {"views": 4321, "subscribers_gained": 7},
+    }  # fmt: skip
+    return [*videos, {**channel, **over}]
+
+
+def side_home(homes):
+    """The one empty home of the test (made on first use)."""
+    home = homes.tmp / "fm-vps"
+    return home if home.exists() else status_home(homes.tmp, "fm-vps", [])
+
+
+def side_world(homes, rows, now, name="stats.jsonl", raw=None):
+    feed = homes.tmp / name
+    feed.write_text(
+        raw if raw is not None else "".join(json.dumps(r) + "\n" for r in rows)
+    )
+    vps = side_home(homes)
+    res = homes.run(vps, FLEET_NOW=str(now), FLEET_CLIP_STATS_FEED=str(feed))
+    assert res.returncode == 0, res.stderr
+    return status(homes)["side_hustles"]
+
+
+def week_before(name, now):
+    """The same channel a week earlier, 3 uploads fewer."""
+    return feed_rows(name, now - 7 * DAY - 3600, videos_recorded=2)
+
+
+def test_monday_and_thursday_carry_one_line_per_channel_with_the_four_numbers(homes):
+    for now in (MONDAY, THURSDAY):
+        rows = [*week_before("alpha", now), *feed_rows("alpha", now - 3600)]
+        rows += [*week_before("beta", now), *feed_rows("beta", now - 3600)]
+        side = side_world(homes, rows, now)
+        assert side["brief_day"] is True and side["credential"] is None
+        assert side["lines"] == [
+            f"{c}: 7d views 4,321 · subs 1,234 · uploads 3 · best Short {c}_b.mp4 (900 views)"
+            for c in ("alpha", "beta")
+        ]
+
+
+def test_other_days_carry_no_brief_line(homes):
+    rows = [*week_before("alpha", NOW), *feed_rows("alpha", NOW - 3600)]
+    for now in (NOW, MONDAY + DAY, MONDAY + 2 * DAY, THURSDAY + DAY):
+        side = side_world(homes, rows, now)
+        assert side["brief_day"] is False and side["lines"] == []
+        assert side["week_rows"] == []
+        assert side["channels"][0]["status"] in ("ok", "no_data")
+
+
+def test_the_monday_week_sheet_has_one_weekly_row_per_channel_and_thursday_none(homes):
+    now = MONDAY
+    rows = [*week_before("alpha", now), *feed_rows("alpha", now - 3600)]
+    rows += feed_rows("beta", now - 3600)  # no row a week back: uploads unknown
+    side = side_world(homes, rows, now)
+    assert [r["channel"] for r in side["week_rows"]] == ["alpha", "beta"]
+    alpha, beta = side["week_rows"]
+    assert alpha == {
+        "channel": "alpha", "week_of": "2027-01-18", "status": "ok",
+        "views_7d": 4321, "subscribers": 1234, "uploads": 3,
+        "best_short": {"clip": "alpha_b.mp4", "views": 900},
+    }  # fmt: skip
+    assert beta["uploads"] == "no data" and beta["views_7d"] == 4321
+    thursday = side_world(homes, rows, THURSDAY)
+    assert thursday["week_rows"] == [] and len(thursday["lines"]) == 2
+
+
+def test_a_channel_with_no_data_in_the_window_says_no_data_not_zeros(homes):
+    now = MONDAY
+    stale = feed_rows("alpha", now - 9 * DAY)  # the last run is older than the window
+    empty = feed_rows("beta", now - 3600, days7=None, subscribers=None)
+    rows = [*stale, *empty, *feed_rows("gamma", now - 3600, days7={"views": 0})]
+    side = side_world(homes, rows, now)
+    assert side["lines"][0] == "alpha: no data"
+    assert side["lines"][1] == "beta: no data"
+    # a real zero is a number; what the feed does not hold is "no data"
+    gamma = side["lines"][2]
+    assert gamma.startswith("gamma: 7d views 0 · subs 1,234 · uploads no data")
+    rows_by = {r["channel"]: r for r in side["week_rows"]}
+    assert (
+        rows_by["alpha"]["status"] == "no_data" and "views_7d" not in rows_by["alpha"]
+    )
+    assert (
+        rows_by["gamma"]["views_7d"] == 0 and rows_by["gamma"]["uploads"] == "no data"
+    )
+
+
+def test_a_rejected_analytics_scope_is_one_credential_line_and_no_numbers(homes):
+    now = THURSDAY
+    consent = {"status": "needs_reconsent", "subscribers": None, "days7": None}
+    rejected = {
+        "status": "error",
+        "reason": "Google rejected the stored credentials; run `clip auth --channel b`",
+    }
+    rows = [*week_before("alpha", now), *feed_rows("alpha", now - 3600)]
+    rows += feed_rows("beta", now - 3600, **consent)
+    rows += feed_rows("gamma", now - 3600, **rejected)
+    side = side_world(homes, rows, now)
+    credential = side["credential"]
+    assert credential.startswith("Side hustles: YouTube Analytics needs consent again")
+    assert "beta, gamma" in credential and "clip auth" in credential
+    assert side["lines"] == [side["lines"][0], credential]
+    assert side["lines"][0].startswith("alpha: 7d views 4,321")
+    assert not any(c.isdigit() for c in credential)  # no number of any kind
+    by = {c["channel"]: c["status"] for c in side["channels"]}
+    assert by == {"alpha": "ok", "beta": "needs_consent", "gamma": "needs_consent"}
+
+
+def test_an_unreadable_feed_shows_the_no_data_line_and_the_same_run_with_a_valid_feed_the_numbers(
+    homes,
+):
+    now = MONDAY
+    # blocked case: the feed path is a directory, so it cannot be read
+    (homes.tmp / "gone").mkdir()
+    vps = side_home(homes)
+    res = homes.run(
+        vps, FLEET_NOW=str(now), FLEET_CLIP_STATS_FEED=str(homes.tmp / "gone")
+    )
+    assert res.returncode == 0, res.stderr
+    blocked = status(homes)
+    side = blocked["side_hustles"]
+    assert side["feed_read"] is False
+    assert side["lines"] == ["Side hustles: no data (stats feed unreadable)"]
+    assert side["week_rows"][0]["status"] == "no_data"
+    assert any("clip stats feed unreadable" in e for e in blocked["errors"])
+    # allowed case: the same run with a valid feed
+    rows = [*week_before("alpha", now), *feed_rows("alpha", now - 3600)]
+    allowed = side_world(homes, rows, now)
+    assert allowed["feed_read"] is True
+    assert allowed["lines"][0].startswith("alpha: 7d views 4,321 · subs 1,234")
+
+
+def test_the_brief_keeps_its_cap_with_many_channels_and_a_credential(homes):
+    now = MONDAY
+    rows = []
+    for name in ("a", "b", "c", "d"):
+        rows += [*week_before(name, now), *feed_rows(name, now - 3600)]
+    rows += feed_rows("e", now - 3600, status="needs_reconsent")
+    side = side_world(homes, rows, now)
+    assert len(side["lines"]) == fleet_status.SIDE_LINES == 3
+    assert side["lines"][0].startswith("a: 7d views")
+    assert side["lines"][1] == "+3 more channels not shown"
+    assert side["lines"][2] == side["credential"]
+    assert "needs consent again for e" in side["lines"][2]
+    assert len(side["week_rows"]) == 5  # the sheet still has every channel
+
+
+def test_no_feed_configured_or_an_empty_feed(homes):
+    vps = side_home(homes)
+    assert homes.run(vps, FLEET_NOW=str(MONDAY)).returncode == 0
+    assert status(homes)["side_hustles"] is None
+    side = side_world(homes, [], MONDAY, raw="not json\n")
+    assert side["lines"] == [
+        "Side hustles: no data (no channel rows in the stats feed)"
+    ]
