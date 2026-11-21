@@ -122,9 +122,9 @@ def test_the_job_is_declared_read_only_on_learnclaws_own_bot(tmp_path):
     p = job["payload"]
     assert p["kind"] == "agentTurn" and p["model"].startswith("anthropic/")
     # Read-only: no write, no subagent, no web, no send tool.
-    assert p["toolsAllow"] == ["read", "exec"]
+    assert p["toolsAllow"] == ["read"]
     msg = p["message"]
-    assert "at most 3 lines" in msg and "NO_REPLY" in msg
+    assert "at most 3 lines" in msg
     assert "mirror newest session <YYYY-MM-DD>" in msg
     assert "/home/node/memory/domains/learning.md" in msg
     assert "/home/node/.life-state/learnharness/data" in msg
@@ -200,7 +200,7 @@ def test_a_row_for_another_agent_is_repointed_or_fails_closed(tmp_path):
     assert r.returncode == 0, r.stderr
     (job,) = json.loads(state.read_text())["jobs"]
     assert job["id"] == "old1" and job["agentId"] == "learnclaw"
-    assert job["payload"]["toolsAllow"] == ["read", "exec"]
+    assert job["payload"]["toolsAllow"] == ["read"]
 
 
 def test_a_live_row_that_drifts_from_the_declaration_fails_the_run(tmp_path):
@@ -210,8 +210,22 @@ def test_a_live_row_that_drifts_from_the_declaration_fails_the_run(tmp_path):
     docker.write_text(
         docker.read_text().replace(
             'p["toolsAllow"] = flag("--tools").split(",")',
-            'p["toolsAllow"] = ["read", "write", "exec"]',
+            'p["toolsAllow"] = ["read", "exec"]',
         )
     )
     r = run_script(env)
     assert r.returncode == 1 and "payload.toolsAllow" in r.stderr
+
+
+@pytest.mark.parametrize("tz", ["UTC", None])
+def test_a_live_row_in_the_wrong_timezone_fails_the_run(tmp_path, tz):
+    # 07:15 UTC is 08:15 in Dublin in summer: the cron expression alone is not enough.
+    state, env = fake_box(tmp_path, [])
+    docker = tmp_path / "bin/docker"
+    docker.write_text(
+        docker.read_text().replace(
+            '"tz": flag("--tz")}', '"tz": ' + repr(tz) + "}"
+        )
+    )
+    r = run_script(env)
+    assert r.returncode == 1 and "schedule.tz=" + repr(tz) in r.stderr

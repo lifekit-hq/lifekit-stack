@@ -2883,18 +2883,17 @@ Europe/Dublin, Monday to Saturday, in learnclaw's own Telegram chat (account `re
 
 - **What is sent.** At most three lines: (1) today's one LearnHarness session to open, or the one goal on the
   learning page, and the gap it closes; (2) one practical output; (3) `mirror newest session <date>`, so a
-  stale mirror shows. Sunday: the turn prints exactly `NO_REPLY`, which the scheduler suppresses, so nothing is
-  sent even if the schedule were widened (the script also refuses a cron that can fire on Sunday).
-- **Read-only.** The turn reads the LearnHarness mirror (`~/.life-state/learnharness/data`, through the
-  `learnharness` skill) and the vault page `domains/learning.md`, and nothing else. The row's tool allow-list is
-  exactly `read,exec` (`exec` only to run the skill's read-only scripts); no write, no `sessions_spawn`, no web,
-  no send tool, and the message forbids any write or record row. It does not touch the `learning-record` skill.
+  stale mirror shows. Sunday is excluded by the schedule alone: the script refuses a cron that can fire on Sunday.
+- **Read-only.** The turn reads the LearnHarness mirror (the JSON files under
+  `~/.life-state/learnharness/data`) and the vault page `domains/learning.md`, and nothing else. The row's tool
+  allow-list is exactly `read`, which the script re-checks on the live row: no exec, no write, no
+  `sessions_spawn`, no web, no send tool. It does not touch the `learning-record` skill.
 - **The row.** `scripts/ensure-learnclaw-morning.sh` declares `learnclaw-morning`: agent `learnclaw`,
   `15 7 * * 1,2,3,4,5,6` Europe/Dublin, isolated, agent-turn payload on the repo's cron model
   (`scripts/lib/cron-model.sh`), `--light-context`, announce to Telegram `reading` at the owner chat, failure
   alert after one failure through Kit's `default` account. The owner chat id comes from `LIFEKIT_TELEGRAM_CHAT`
   in the host env file and is never written to git. It creates or edits the row, enables it, then re-reads the
-  live row and exits 1 (naming the field) unless the agent, schedule, message, tool list, model, isolated
+  live row and exits 1 (naming the field) unless the agent, schedule and its timezone, message, tool list, model, isolated
   session and delivery (announce, Telegram, `reading`, owner chat) are the declared ones.
   Tests: `scripts/tests/test_learnclaw_morning.py`.
 - **Cost.** One short model turn a day; the turn reads a page and a few session files.
@@ -2906,7 +2905,7 @@ bound to learnclaw, see "Daily LeetCode problem"):
 sudo -u lifekit /srv/lifekit-stack/scripts/ensure-learnclaw-morning.sh
 ```
 
-**Test run** (one real delivery, in learnclaw's chat; prints `NO_REPLY` and sends nothing on a Sunday):
+**Test run** (one real delivery, in learnclaw's chat; a manual run ignores the schedule, so it delivers on any day):
 
 ```bash
 GW=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
@@ -2920,6 +2919,10 @@ running it). Retire: `openclaw cron rm <id>` and revert the PR. The mirror, the 
 untouched either way.
 
 ### Learning objective line from learnclaw (`evening-plan-note`, `today-brief`)
+
+> **Superseded** by "Learnclaw morning learning message" above (decision 2026-11-09, #609): Kit's `today-brief`
+> and `evening-plan-note` no longer carry a learning line, so do not re-run `scripts/ensure-learning-line.sh`.
+> The text below is kept as history only.
 
 The plan's one learning objective line comes from learnclaw (decision 2026-11-13, issue 525), not
 from kit reading the learning page and the LearnHarness mirror itself. The 21:00 `evening-plan-note`

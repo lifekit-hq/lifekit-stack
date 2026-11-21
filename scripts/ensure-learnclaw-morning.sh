@@ -8,14 +8,13 @@
 #
 # The message is at most three lines: (1) today's one LearnHarness session or
 # goal and the gap it closes, (2) one practical output, (3) `mirror newest
-# session <date>`. On Sunday the turn prints exactly NO_REPLY, which the
-# scheduler suppresses, so nothing is sent even if the schedule is ever widened.
+# session <date>`. Sunday is excluded by the schedule alone: this script
+# refuses any cron expression that can fire on Sunday.
 #
 # Read-only by construction: the turn reads the LearnHarness mirror
-# (~/.life-state/learnharness/data, through the learnharness skill) and the
-# vault page domains/learning.md, and nothing else. Its tool allow-list is
-# `read,exec` (exec only to run the learnharness skill's read-only scripts);
-# there is no write, no sessions_spawn, no web, no message tool.
+# (JSON files under ~/.life-state/learnharness/data) and the vault page
+# domains/learning.md, and nothing else. Its tool allow-list is exactly `read`:
+# no exec, no write, no sessions_spawn, no web, no message tool.
 #
 # Unlike leetcode-daily this needs a model turn, so it is an agent-turn payload
 # on an isolated session. The model is the repo's cron model
@@ -27,7 +26,7 @@
 #
 # Fail closed: after converging, the live row is re-read and the script exits 1
 # (naming the field) unless the schedule is the declared one and cannot fire on
-# Sunday, the agent is learnclaw, the payload is an agent turn with exactly the
+# Sunday, the timezone is the declared one, the agent is learnclaw, the payload is an agent turn with exactly the
 # declared message, tool allow-list and model, the session is isolated, and
 # delivery is announce to Telegram account `reading` at the owner chat.
 #
@@ -56,7 +55,7 @@ MODEL="${LEARNCLAW_MORNING_MODEL:-$(cron_model)}"
 JOB_NAME=learnclaw-morning
 AGENT=learnclaw
 ACCOUNT=reading
-JOB_TOOLS="read,exec"
+JOB_TOOLS="read"
 CRON_EXPR="${LEARNCLAW_MORNING_CRON:-15 7 * * 1,2,3,4,5,6}"
 CRON_TZ="${LEARNCLAW_MORNING_TZ:-Europe/Dublin}"
 ENV_FILE="${ENV_FILE:-/srv/lifekit-secrets/stack.env}"
@@ -95,9 +94,8 @@ GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
 [ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 
-MESSAGE="Morning learning message for the owner. Read only: use the read tool for the vault page /home/node/memory/domains/learning.md, and exec only to run the learnharness skill's scripts (python3 on sessions.py or graph.py, always with --data-dir /home/node/.life-state/learnharness/data) to read the LearnHarness mirror. Read nothing else, write nothing anywhere, record no row, send nothing yourself, start no subagent, open no web page.
-First run: date +%u. If it prints 7 (Sunday), reply with exactly NO_REPLY and nothing else.
-Otherwise reply with at most 3 lines, plain text, no heading, no list marks, nothing before or after:
+MESSAGE="Morning learning message for the owner. Read only: use the read tool, and only on the vault page /home/node/memory/domains/learning.md and the JSON files of the LearnHarness mirror under /home/node/.life-state/learnharness/data (the sessions and the knowledge graph). Read nothing else, write nothing anywhere, record no row, send nothing yourself, start no subagent, open no web page, run no command.
+Reply with at most 3 lines, plain text, no heading, no list marks, nothing before or after:
 Line 1: today's one LearnHarness session to open, or the one goal on the learning page to work on, and the gap it closes (what the record shows is shaky or missing), at most 200 characters.
 Line 2: one practical output the owner makes today, a single concrete thing, at most 200 characters.
 Line 3: mirror newest session <YYYY-MM-DD>, the date of the newest session in the mirror (write: mirror unreadable, if you cannot read it).
@@ -168,7 +166,7 @@ docker exec "$GATEWAY" openclaw cron enable "$job_id" >/dev/null
 # Fail closed: re-read the live row.
 live_jobs | python3 -c '
 import json, sys
-job_id, agent, account, chat, expr, tools, model, message = sys.argv[1:9]
+job_id, agent, account, chat, expr, tz, tools, model, message = sys.argv[1:10]
 job = next((j for j in json.load(sys.stdin)["jobs"] if j.get("id") == job_id), None)
 if job is None:
     sys.exit(f"verify: job {job_id} is not listed after converging")
@@ -194,6 +192,8 @@ sched = job.get("schedule") or {}
 live_expr = sched.get("expr") or sched.get("cron") or job.get("cron")
 if live_expr != expr:
     bad.append("schedule " + repr(live_expr) + ", want " + repr(expr))
+if sched.get("tz") != tz:
+    bad.append("schedule.tz=" + repr(sched.get("tz")) + ", want " + repr(tz))
 d = job.get("delivery") or {}
 if d.get("mode") != "announce":
     bad.append("delivery.mode=" + repr(d.get("mode")) + ", want announce")
@@ -205,8 +205,8 @@ if d.get("to") != chat:
     bad.append("delivery.to is not the owner chat")
 if bad:
     sys.exit("refusing: learnclaw-morning is not the declared row: " + "; ".join(bad))
-' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$CRON_EXPR" "$JOB_TOOLS" "$MODEL" "$MESSAGE" >&2
+' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$CRON_EXPR" "$CRON_TZ" "$JOB_TOOLS" "$MODEL" "$MESSAGE" >&2
 
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, model $MODEL, tools $JOB_TOOLS only, announce -> telegram:$ACCOUNT (verified), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
-echo "test:   docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # one message in learnclaw's chat (NO_REPLY on a Sunday)"
+echo "test:   docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # one message in learnclaw's chat"
