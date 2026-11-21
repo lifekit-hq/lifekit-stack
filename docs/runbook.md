@@ -2819,16 +2819,18 @@ Kit's Sunday 18:00 `goal-weekly-checkin` reads that count from learnclaw instead
   titles: the problems whose latest row is `done` and dated Monday to Sunday of the week of the given date
   (default today, Dublin).
 - **The cron.** `scripts/ensure-leetcode-daily.sh` declares `leetcode-daily`: agent `learnclaw`, `30 17 * * 1,3,5,6`
-  Europe/Dublin, isolated, tools `exec,read`, announce to Telegram account `reading` at the owner chat, failure
-  alert through Kit's `default` account. Its model is `anthropic/claude-sonnet-5-5@anthropic:api-key`
-  (`cron_model_account` in `scripts/lib/cron-model.sh`): the policy model plus the inference account; a cron
-  row without a recorded account fails to run. The script refuses a schedule that can fire on Tuesday, Thursday
-  or Sunday, and after converging it re-reads the live row and exits 1 unless the agent, model, tool list,
-  schedule and delivery (Telegram `reading`, owner chat) are the declared ones.
-  Only a `SKIP` first line ends in `NO_REPLY`; the prompt tells the turn to fail on a `daily.py` error
-  (non-zero exit, traceback, empty output) and to send no error text into learnclaw's chat. The failure alert
-  through Kit's account is best-effort: a model turn cannot fail itself, so a `daily.py` error most likely
-  shows as a silent day, caught by the weekly solved count.
+  Europe/Dublin, isolated, announce to Telegram account `reading` at the owner chat, failure alert through
+  Kit's `default` account. It is a **command payload** (like `workout-nudge`): the row runs
+  `python3 .../daily.py next --record --push` directly, with no model turn, and announces its stdout. The script
+  refuses a schedule that can fire on Tuesday, Thursday or Sunday, replaces a row that is still the old agent
+  turn (`cron rm`, then add as a command), and after converging re-reads the live row and exits 1 unless the
+  agent, command argv, schedule and delivery (Telegram `reading`, owner chat) are the declared ones.
+  **The guarantee:** a `daily.py` error (vault page missing, lint refusing or not running, unreadable problem
+  list, any traceback) exits non-zero with nothing on stdout, so the scheduler records the run as failed, the
+  failure alert fires through Kit's account after the first one, and no text reaches learnclaw's chat; only
+  a success prints the two message lines (name, link) and a skip day prints exactly `NO_REPLY`, which the
+  scheduler suppresses. It is no longer best-effort, and a silent day is no longer how an error shows. Tests:
+  `scripts/tests/test_leetcode_daily.py` (the error-run tests drive the cron's own argv).
 - **The check-in.** `scripts/ensure-goal-checkin-solved.sh` adds one marked block to Kit's `goal-weekly-checkin`
   row (host state; it carries the owner's goal, so it is edited in place, not copied into git): run
   `daily.py week`, take the `solved:` number, never ask the owner for it. It adds `exec` to the row's tool list
@@ -2866,8 +2868,8 @@ sudo -u lifekit /srv/lifekit-stack/scripts/ensure-goal-checkin-solved.sh
 `leetcode-daily` ready; in the gateway, `python3 /home/node/.openclaw/agents/learnclaw/workspace/skills/leetcode-daily/daily.py next --date <a Tuesday>` prints
 `SKIP office day (Tuesday)` and `status` prints the counts and the next problem; `daily.py week` prints `solved: <n>`.
 Then one real run: `openclaw cron run <id> --expect-final --json` on a home day sends one message in the
-learning bot's chat and appends one `in progress` row; on a Tuesday, Thursday or Sunday it answers
-`NO_REPLY` and records nothing.
+learning bot's chat and appends one `in progress` row; on a Tuesday, Thursday or Sunday it prints
+`NO_REPLY` and records nothing. To see the failure path, run the command with `LEARNING_VAULT` pointed at an empty directory: it exits non-zero.
 
 **Pause** (the agent, its record and the list stay): `openclaw cron disable <id>` for `leetcode-daily`; the check-in then
 reads the count of whatever the owner recorded in chat. **Retire:** `openclaw cron rm <id>`, delete the

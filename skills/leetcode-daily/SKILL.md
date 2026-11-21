@@ -9,7 +9,7 @@ metadata: { "openclaw": { "requires": { "bins": ["python3"] } } }
 One LeetCode problem a day on home days (not Tuesday, Thursday or Sunday), in learnclaw's own Telegram chat, picked by pattern from `problems.json` next to this file (Track A order, one pattern at a time). Run `python3 <this skill's dir>/daily.py ...`. The state is the artefact record (`learning-record`), one `leetcode: <slug>` row per step; there is no other store.
 
 ## The scheduled send
-The `leetcode-daily` cron runs `daily.py next --record` and sends what it prints: `SEND`, then the problem name, then its link. Nothing else goes in that message: no pattern name, no hint, no solution. Any other output is `SKIP <reason>` and the run sends nothing.
+The `leetcode-daily` cron runs `daily.py next --record --push` as a command payload (no model turn) and announces what it prints: the problem name, then its link. Nothing else goes in that message: no pattern name, no hint, no solution. On a skipped day it prints `NO_REPLY` and the run sends nothing; an error exits non-zero and fails the run. (Without `--push`, `next` prints `SEND` before the two lines, or `SKIP <reason>`.)
 
 ## When the owner reports on a problem (chat)
 Only on the owner's words in this conversation. Never write the solution, not a line, not a starter; a hint is a smaller question.

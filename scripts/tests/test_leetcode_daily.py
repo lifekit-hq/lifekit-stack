@@ -347,6 +347,8 @@ def apply(job):
         p["model"] = flag("--model")
     if flag("--tools") is not None:
         p["toolsAllow"] = flag("--tools").split(",")
+    if flag("--command-argv") is not None:
+        job["payload"] = p = {"kind": "command", "argv": json.loads(flag("--command-argv"))}
     if flag("--agent") is not None:
         job["agentId"] = flag("--agent")
     if flag("--cron") is not None:
@@ -367,6 +369,9 @@ elif cmd[:2] == ["cron", "add"]:
     job = {"id": "new1", "name": flag("--name")}
     apply(job)
     data["jobs"].append(job)
+    state.write_text(json.dumps(data))
+elif cmd[:2] == ["cron", "rm"]:
+    data["jobs"] = [j for j in data["jobs"] if j["id"] != cmd[2]]
     state.write_text(json.dumps(data))
 elif cmd[:2] == ["cron", "edit"]:
     for job in data["jobs"]:
@@ -409,8 +414,17 @@ def test_the_cron_is_declared_with_the_account_model_and_learnclaws_own_bot(tmp_
     assert r.returncode == 0, r.stderr
     (job,) = json.loads(state.read_text())["jobs"]
     assert job["name"] == "leetcode-daily" and job["agentId"] == "learnclaw"
-    assert job["payload"]["model"] == MODEL
-    assert job["payload"]["toolsAllow"] == ["exec", "read"]
+    # A command payload, not an agent turn: no model, no tools, so a daily.py
+    # error is the run's own non-zero exit.
+    assert job["payload"]["kind"] == "command"
+    assert job["payload"]["argv"] == [
+        "python3",
+        "/home/node/.openclaw/agents/learnclaw/workspace/skills/leetcode-daily/daily.py",
+        "next",
+        "--record",
+        "--push",
+    ]
+    assert "model" not in job["payload"] and "message" not in job["payload"]
     assert job["schedule"] == {"expr": "30 17 * * 1,3,5,6", "tz": "Europe/Dublin"}
     assert job["delivery"] == {
         "mode": "announce",
@@ -421,6 +435,78 @@ def test_the_cron_is_declared_with_the_account_model_and_learnclaws_own_bot(tmp_
     # Re-running converges on the same row.
     assert run_script(CRON_SCRIPT, env).returncode == 0
     assert len(json.loads(state.read_text())["jobs"]) == 1
+
+
+def test_an_old_agent_turn_row_is_replaced_by_the_command(tmp_path):
+    old = {
+        "id": "old1",
+        "name": "leetcode-daily",
+        "agentId": "learnclaw",
+        "payload": {"kind": "agentTurn", "message": "x", "model": MODEL},
+    }
+    state, env = fake_box(tmp_path, [old])
+    r = run_script(CRON_SCRIPT, env)
+    assert r.returncode == 0, r.stderr
+    (job,) = json.loads(state.read_text())["jobs"]
+    assert job["id"] == "new1" and job["payload"]["kind"] == "command"
+
+
+def push(vault, day=MON):
+    return daily(vault, "next", "--record", "--push", day=day)
+
+
+def test_push_prints_only_the_message_and_records(vault):
+    r = push(vault)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.splitlines()
+    assert len(lines) == 2 and lines[1].startswith("https://leetcode.com/problems/")
+    assert "SEND" not in r.stdout
+    # The offered row was recorded, so the same day pushes nothing.
+    assert push(vault).stdout == "NO_REPLY\n"
+
+
+@pytest.mark.parametrize("day", [TUE, THU, SUN])
+def test_push_on_a_skip_day_is_no_reply_and_records_nothing(vault, day):
+    page = (vault / "domains/learning.md").read_text()
+    r = push(vault, day)
+    assert r.returncode == 0 and r.stdout == "NO_REPLY\n"
+    assert (vault / "domains/learning.md").read_text() == page
+
+
+def test_an_error_run_is_counted_as_failed_by_the_cron_command(vault):
+    # The cron runs exactly this argv; the scheduler counts a non-zero exit as
+    # a failed run (and fires the failure alert). Nothing reaches the chat.
+    (vault / "domains/learning.md").unlink()
+    r = push(vault)
+    assert r.returncode != 0
+    assert r.stdout == ""
+    assert r.stderr.strip()
+
+
+def test_a_lint_that_does_not_run_fails_the_push_and_leaves_the_page(vault):
+    (vault / "bin/lint.sh").write_text("#!/bin/sh\necho boom >&2\nexit 2\n")
+    page = (vault / "domains/learning.md").read_text()
+    r = push(vault)
+    assert r.returncode != 0 and r.stdout == ""
+    assert (vault / "domains/learning.md").read_text() == page
+
+
+def test_an_unreadable_problem_list_fails_the_push(vault, tmp_path):
+    bad = tmp_path / "problems.json"
+    bad.write_text("{not json")
+    r = subprocess.run(
+        [sys.executable, str(DAILY), "next", "--record", "--push"],
+        env={
+            **os.environ,
+            "LEARNING_VAULT": str(vault),
+            "LEETCODE_TODAY": MON,
+            "LEETCODE_PROBLEMS": str(bad),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode != 0 and r.stdout == ""
 
 
 def test_an_error_run_exits_nonzero_with_no_send_line(vault):
