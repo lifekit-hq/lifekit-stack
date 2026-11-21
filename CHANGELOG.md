@@ -18,6 +18,21 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.14](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.13...v0.1.14) (2026-11-21)
+
+
+### Features
+
+* **scripts:** add daily brief Problems line with owner and age ([#606](https://github.com/lifekit-hq/lifekit-stack/issues/606)) ([ee7cc28](https://github.com/lifekit-hq/lifekit-stack/commit/ee7cc28876ee5a902ef063b941bc7ccea5c5b68b))
+* **scripts:** daily fleet activity journal and two-weekly retro board ([#605](https://github.com/lifekit-hq/lifekit-stack/issues/605)) ([a8a52ef](https://github.com/lifekit-hq/lifekit-stack/commit/a8a52ef617f4e8645b274a70376f136aa869f858))
+* **scripts:** post decision outcome when all items of an accepted decision close ([#603](https://github.com/lifekit-hq/lifekit-stack/issues/603)) ([c30fbbc](https://github.com/lifekit-hq/lifekit-stack/commit/c30fbbc34c7bc908e3b3dfae6e59dd0a8d0c0d18))
+* **scripts:** side-hustle stats lines in Monday/Thursday brief and week sheet ([#607](https://github.com/lifekit-hq/lifekit-stack/issues/607)) ([aef0870](https://github.com/lifekit-hq/lifekit-stack/commit/aef087037c67c268dfb98a688455e42b061a51dc))
+
+
+### Bug Fixes
+
+* **leetcode-daily:** run the daily push as a command so a script error fails the run ([#608](https://github.com/lifekit-hq/lifekit-stack/issues/608)) ([f75d879](https://github.com/lifekit-hq/lifekit-stack/commit/f75d879a3e08df568b607bacff06b7eaf36f8d97))
+
 ## [0.1.13](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.12...v0.1.13) (2026-11-19)
 
 
