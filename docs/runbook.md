@@ -2727,12 +2727,13 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
   - The owner's own chat with learnclaw: the OpenClaw Control UI, or the `reading` Telegram bot once
     enabled. These are the only routes that record a row, since a row holds the owner's own words.
   - kit, as a subagent run, once `learnclaw` is in kit's `subagents.allowAgents`. kit relays the
-    answer, and a subagent run never records. The 21:00 `evening-plan-note` run does this daily
-    for the plan's learning line (see "Learning objective line from learnclaw").
-  - learnclaw's one cron is `leetcode-daily` (see "Daily LeetCode problem"); apart from that and the daily kit run, nothing runs unless asked.
+    answer, and a subagent run never records. (The daily `evening-plan-note` learning-line run is
+    superseded, see "Learning objective line from learnclaw".)
+  - learnclaw's two crons are `leetcode-daily` (see "Daily LeetCode problem") and `learnclaw-morning` (see
+    "Learnclaw morning learning message"); apart from those, nothing runs unless asked.
 - **Cost:** a run is one Sonnet 4.6 conversation turn on the gateway's subscription. Measured on
   comparable career runs, that is about 50k tokens, mostly cache reads: roughly $0.10-0.20 at list
-  prices. Only the daily plan run and the `leetcode-daily` cron (four home days a week) schedule one.
+  prices. Only the `leetcode-daily` cron (four home days a week) and the `learnclaw-morning` cron (Monday to Saturday) schedule one.
 
 **Operator steps (once, after the merge deploys).** The agent entry is host state.
 
@@ -2875,7 +2876,54 @@ learning bot's chat and appends one `in progress` row; on a Tuesday, Thursday or
 reads the count of whatever the owner recorded in chat. **Retire:** `openclaw cron rm <id>`, delete the
 marked block from `goal-weekly-checkin`'s message, and revert the PR; the rows stay, they are the owner's record.
 
+### Learnclaw morning learning message (`learnclaw-morning`, #609)
+
+Learning reaches the owner only from learnclaw (decision 2026-11-09). Kit's `today-brief` and
+`evening-plan-note` carry no learning line any more, so learnclaw sends its own: one scheduled turn at 07:15
+Europe/Dublin, Monday to Saturday, in learnclaw's own Telegram chat (account `reading`, never Kit's `default`).
+
+- **What is sent.** At most three lines: (1) today's one LearnHarness session to open, or the one goal on the
+  learning page, and the gap it closes; (2) one practical output; (3) `mirror newest session <date>`, so a
+  stale mirror shows. Sunday is excluded by the schedule alone: the script refuses a cron that can fire on Sunday.
+- **Read-only.** The turn reads the LearnHarness mirror (the JSON files under
+  `~/.life-state/learnharness/data`) and the vault page `domains/learning.md`, and nothing else. The row's tool
+  allow-list is exactly `read`, which the script re-checks on the live row: no exec, no write, no
+  `sessions_spawn`, no web, no send tool. It does not touch the `learning-record` skill.
+- **The row.** `scripts/ensure-learnclaw-morning.sh` declares `learnclaw-morning`: agent `learnclaw`,
+  `15 7 * * 1,2,3,4,5,6` Europe/Dublin, isolated, agent-turn payload on the repo's cron model
+  (`scripts/lib/cron-model.sh`), `--light-context`, announce to Telegram `reading` at the owner chat, failure
+  alert after one failure through Kit's `default` account. The owner chat id comes from `LIFEKIT_TELEGRAM_CHAT`
+  in the host env file and is never written to git. It creates or edits the row, enables it, then re-reads the
+  live row and exits 1 (naming the field) unless the agent, schedule and its timezone, message, tool list, model, isolated
+  session and delivery (announce, Telegram, `reading`, owner chat) are the declared ones.
+  Tests: `scripts/tests/test_learnclaw_morning.py`.
+- **Cost.** One short model turn a day; the turn reads a page and a few session files.
+
+**Apply** (once, after the PR merges and the deploy has run; the `reading` account must already be enabled and
+bound to learnclaw, see "Daily LeetCode problem"):
+
+```bash
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-learnclaw-morning.sh
+```
+
+**Test run** (one real delivery, in learnclaw's chat; a manual run ignores the schedule, so it delivers on any day):
+
+```bash
+GW=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)
+ID=$(docker exec "$GW" openclaw cron list --all --json | python3 -c 'import json,sys; t=sys.stdin.read(); print(next(j["id"] for j in json.JSONDecoder().raw_decode(t, t.find("{"))[0]["jobs"] if j["name"]=="learnclaw-morning"))')
+docker exec "$GW" openclaw cron run "$ID" --expect-final --json
+```
+
+**Undo.** Pause: `openclaw cron disable <id>` (the next run of the ensure script enables it again, so stop
+running it). Retire: `openclaw cron rm <id>` and revert the PR. The mirror, the learning page and the record are
+untouched either way.
+
 ### Learning objective line from learnclaw (`evening-plan-note`, `today-brief`)
+
+> **Superseded** by "Learnclaw morning learning message" above (decision 2026-11-09, #609): Kit's `today-brief`
+> and `evening-plan-note` no longer carry a learning line, so do not re-run `scripts/ensure-learning-line.sh`.
+> The text below is kept as history only.
 
 The plan's one learning objective line comes from learnclaw (decision 2026-11-13, issue 525), not
 from kit reading the learning page and the LearnHarness mirror itself. The 21:00 `evening-plan-note`
