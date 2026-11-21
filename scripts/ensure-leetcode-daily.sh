@@ -4,39 +4,36 @@
 # that sends the owner one problem, name and link only, in learnclaw's own
 # Telegram chat (account `reading`, never Kit's `default`).
 #
-# What the turn does is in skills/leetcode-daily/daily.py, not in the prompt:
-# the turn runs `daily.py next --record` and sends what it prints. The script
-# decides the day (Tuesday and Thursday are office days, Sunday is rest: it
-# prints SKIP and the turn replies NO_REPLY, so those days send nothing even if
-# the schedule were ever widened; the prompt tells the turn to fail on an error
-# or empty output and never answer NO_REPLY, but that is only an instruction),
-# takes the first problem in the curated list
-# (skills/leetcode-daily/problems.json) that has no row in the artefact record,
-# and appends the offered row. A problem that is done, skipped or offered never
-# comes back. The prompt carries no state: the day and the record are read by
-# the script at run time (docs/runbook.md, "The payload is stateless").
+# The job is a command payload, not an agent turn: it runs
+# `daily.py next --record --push` directly (as `workout-nudge` does), with no
+# model in the loop, so a daily.py error (vault page missing, lint refusing the
+# row, unreadable list) exits non-zero and the scheduler counts the run as
+# failed. The script decides the day (Tuesday and Thursday are office days,
+# Sunday is rest: it prints NO_REPLY, which the scheduler suppresses, so those
+# days send nothing even if the schedule were ever widened), takes the first
+# problem in the curated list (skills/leetcode-daily/problems.json) that has no
+# row in the artefact record, and appends the offered row. A problem that is
+# done, skipped or offered never comes back. Its stdout, the problem name and
+# link, is announced as it is. The payload carries no state: the day and the
+# record are read by the script at run time (docs/runbook.md, "The payload is
+# stateless").
 #
 # Why a script and not config: cron jobs live in the gateway's SQLite state,
 # not in openclaw.json — same split as the other ensure-*.sh scripts. This
 # script IS the git-side declaration of the job.
 #
-# The model carries its inference account (`provider/model@anthropic:api-key`,
-# scripts/lib/cron-model.sh, cron_model_account): a cron row without a recorded
-# account fails to run.
-#
 # Fail closed: after converging, the live row is re-read and the script exits 1
 # (naming the field) unless the schedule only fires on home days, the agent is
-# learnclaw, the model value is the one declared, the tool allow-list is exactly
-# TOOLS, and delivery is announce to Telegram account `reading` at the owner
-# chat. A row that could deliver through Kit's account fails the run instead of
+# learnclaw, the payload is a command with exactly the declared argv, and
+# delivery is announce to Telegram account `reading` at the owner chat. A row that could deliver through Kit's account fails the run instead of
 # pinging the owner from the wrong bot.
 #
 # Failure: a run that fails outright is counted by the scheduler and the failure
 # alert goes through kit's `default` Telegram account to the owner chat, the
-# route the digest and the pulse use. The alert is best-effort for a daily.py
-# error: a model turn cannot fail itself, so such an error most likely shows as a
-# silent day, which the weekly solved count catches. The owner chat id is read
-# from the host env file and never written to git.
+# route the digest and the pulse use. A daily.py error is such a failure: the
+# command exits non-zero, no message reaches learnclaw's chat, and the alert
+# fires. The owner chat id is read from the host env file and never written to
+# git.
 #
 # Run on the VPS host as lifekit, from the repo checkout, after the `reading`
 # Telegram account is enabled and bound to learnclaw (docs/runbook.md, "Daily
@@ -52,18 +49,11 @@
 #   ENV_FILE              host env file (default: /srv/lifekit-secrets/stack.env)
 set -euo pipefail
 
-# shellcheck source=scripts/lib/cron-model.sh
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-model.sh"
-
 JOB_NAME=leetcode-daily
 AGENT=learnclaw
 ACCOUNT=reading
 CRON_EXPR="${LEETCODE_DAILY_CRON:-30 17 * * 1,3,5,6}"
 CRON_TZ="${LEETCODE_DAILY_TZ:-Europe/Dublin}"
-# exec runs daily.py; read is there for its output files. No message, browser,
-# web or write tool: the reply itself is the delivery.
-TOOLS="exec,read"
-MODEL="$(cron_model_account)"
 ENV_FILE="${ENV_FILE:-/srv/lifekit-secrets/stack.env}"
 
 CHAT="${LEETCODE_DAILY_CHAT:-}"
@@ -102,7 +92,7 @@ GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
 [ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 
 DAILY=/home/node/.openclaw/agents/learnclaw/workspace/skills/leetcode-daily/daily.py
-MESSAGE="Daily LeetCode problem. Run exactly one command: 'python3 ${DAILY} next --record' and read what it prints. If its first line is SEND, your whole final reply is the next two lines exactly as printed, the problem name and then its link: no greeting, no hint, no pattern name, no solution, nothing before or after. If its first line starts with SKIP, your entire final reply is exactly NO_REPLY. If the command errors, exits non-zero, prints a traceback or anything on stderr, or prints nothing, the run has failed: end the turn as failed, send no reply at all, and never reply NO_REPLY or any error text. Call no other tool and edit nothing."
+ARGV="$(python3 -c 'import json, sys; print(json.dumps(["python3", sys.argv[1], "next", "--record", "--push"]))' "$DAILY")"
 
 # The gateway image has no jq, and once logging.consoleStyle=json is live the
 # CLI may interleave JSON log lines with its JSON result. So: scan the output
@@ -140,18 +130,31 @@ for job in json.load(sys.stdin)["jobs"]:
 }
 
 job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
+
+# A row that is still the old agent turn cannot fail itself, so it is removed
+# and declared again as a command payload (a run history of the old turns goes
+# with it; the record in the vault is untouched).
+if [ -n "$job_id" ]; then
+  kind="$(live_jobs | python3 -c '
+import json, sys
+job = next(j for j in json.load(sys.stdin)["jobs"] if j.get("id") == sys.argv[1])
+print((job.get("payload") or {}).get("kind", ""))' "$job_id")" || exit 1
+  if [ "$kind" != command ]; then
+    docker exec "$GATEWAY" openclaw cron rm "$job_id" >/dev/null
+    echo "removed the '$JOB_NAME' agent-turn row ($job_id); declaring it as a command"
+    job_id=""
+  fi
+fi
+
 if [ -z "$job_id" ]; then
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
     --display-name "Daily LeetCode problem" \
-    --description "One LeetCode problem (name and link) on home days at 17:30, in learnclaw's own Telegram chat; picked and recorded by skills/leetcode-daily. Declared by scripts/ensure-leetcode-daily.sh (source: lifekit-stack)." \
+    --description "One LeetCode problem (name and link) on home days at 17:30, in learnclaw's own Telegram chat; a command payload, so a daily.py error fails the run; picked and recorded by skills/leetcode-daily. Declared by scripts/ensure-leetcode-daily.sh (source: lifekit-stack)." \
     --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
     --agent "$AGENT" --session isolated \
-    --message "$MESSAGE" \
-    --model "$MODEL" \
-    --tools "$TOOLS" \
-    --light-context \
-    --timeout-seconds 300 \
+    --command-argv "$ARGV" \
+    --timeout-seconds 60 --no-output-timeout-seconds 30 --output-max-bytes 1000 \
     --announce --channel telegram --account "$ACCOUNT" --to "$CHAT" \
     --json >/dev/null
   job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
@@ -162,11 +165,8 @@ fi
 docker exec "$GATEWAY" openclaw cron edit "$job_id" \
   --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
   --agent "$AGENT" --session isolated \
-  --message "$MESSAGE" \
-  --model "$MODEL" \
-  --tools "$TOOLS" \
-  --light-context \
-  --timeout-seconds 300 \
+  --command-argv "$ARGV" \
+  --timeout-seconds 60 --no-output-timeout-seconds 30 --output-max-bytes 1000 \
   --announce --no-best-effort-deliver \
   --channel telegram --account "$ACCOUNT" --to "$CHAT" \
   --failure-alert --failure-alert-after 1 \
@@ -177,7 +177,7 @@ docker exec "$GATEWAY" openclaw cron edit "$job_id" \
 # Fail closed: re-read the live row.
 live_jobs | python3 -c '
 import json, sys
-job_id, agent, account, chat, model, tools, expr = sys.argv[1:8]
+job_id, agent, account, chat, argv, expr = sys.argv[1:7]
 job = next((j for j in json.load(sys.stdin)["jobs"] if j.get("id") == job_id), None)
 if job is None:
     sys.exit(f"verify: job {job_id} is not listed after converging")
@@ -186,11 +186,10 @@ live_agent = job.get("agentId") or job.get("agent")
 if live_agent != agent:
     bad.append("agentId=" + repr(live_agent) + ", want " + repr(agent))
 payload = job.get("payload") or {}
-if payload.get("model") != model:
-    bad.append("payload.model=" + repr(payload.get("model")) + ", want " + repr(model))
-allow = payload.get("toolsAllow")
-if not isinstance(allow, list) or sorted(allow) != sorted(tools.split(",")):
-    bad.append("payload.toolsAllow=" + repr(allow) + ", want exactly " + repr(tools))
+if payload.get("kind") != "command":
+    bad.append("payload.kind=" + repr(payload.get("kind")) + ", want command")
+if payload.get("argv") != json.loads(argv):
+    bad.append("payload.argv=" + repr(payload.get("argv")) + ", want " + argv)
 sched = job.get("schedule") or {}
 live_expr = sched.get("expr") or sched.get("cron") or job.get("cron")
 if live_expr != expr:
@@ -206,9 +205,9 @@ if d.get("to") != chat:
     bad.append("delivery.to is not the owner chat")
 if bad:
     sys.exit("refusing: leetcode-daily is not the declared row: " + "; ".join(bad))
-' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$MODEL" "$TOOLS" "$CRON_EXPR" >&2
+' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$ARGV" "$CRON_EXPR" >&2
 
-echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, model $MODEL, tools $TOOLS, announce -> telegram:$ACCOUNT (verified), failure alert after 1 via telegram:default"
+echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, command payload (no model turn), announce -> telegram:$ACCOUNT (verified), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
-echo "        docker exec $GATEWAY python3 $DAILY next --date <a Tuesday>   # SKIP office day (Tuesday), nothing recorded"
+echo "        docker exec $GATEWAY python3 $DAILY next --push --date <a Tuesday>   # NO_REPLY on an office day (Tuesday), nothing recorded"
 echo "        docker exec $GATEWAY python3 $DAILY status"

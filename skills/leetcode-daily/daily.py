@@ -26,6 +26,11 @@ office days and Sunday is rest: no problem on those days, whatever the cron
 fired. `next` without --record only looks; with --record it appends the
 offered row, and a second call the same day prints SKIP.
 
+`next --record --push` is what the cron runs, as a command payload (no model
+turn): it prints only the two message lines on a send and exactly NO_REPLY on
+a skip, and any error exits non-zero with nothing on stdout, so the run is
+recorded as failed and the failure alert fires.
+
 Env: LEARNING_VAULT, LEARNING_PAGE (as record.py), LEETCODE_TODAY (YYYY-MM-DD,
 tests only; default the date in Europe/Dublin), LEETCODE_PROBLEMS (the list;
 default problems.json next to this file), LEETCODE_RECORD_PY (default
@@ -138,20 +143,26 @@ def row_args(**kw) -> argparse.Namespace:
     return argparse.Namespace(**{**base, **kw})
 
 
+def skip(args: argparse.Namespace, reason: str) -> None:
+    # --push is the cron's command payload: its stdout is the message, and the
+    # scheduler suppresses a reply that is exactly NO_REPLY.
+    print("NO_REPLY" if args.push else f"SKIP {reason}")
+
+
 def cmd_next(args: argparse.Namespace) -> None:
     day = dt.date.fromisoformat(args.date) if args.date else today()
     if day.weekday() in BLOCKED:
-        print(f"SKIP {BLOCKED[day.weekday()]}")
+        skip(args, BLOCKED[day.weekday()])
         return
     record, problems = load_record(), load_list()
     state = read_state(record)
     already = offered_on(state, day)
     if already:
-        print(f"SKIP offered today: {already}")
+        skip(args, f"offered today: {already}")
         return
     nxt = pick(problems, state)
     if nxt is None:
-        print("SKIP list finished: every problem is done, skipped or offered")
+        skip(args, "list finished: every problem is done, skipped or offered")
         return
     if args.record:
         # record.append prints "recorded: ..."; the cron sends this script's
@@ -164,7 +175,8 @@ def cmd_next(args: argparse.Namespace) -> None:
                     artefact=URL.format(nxt["slug"]),
                 )
             )
-    print("SEND")
+    if not args.push:
+        print("SEND")
     print(nxt["title"])
     print(URL.format(nxt["slug"]))
 
@@ -268,6 +280,7 @@ def main() -> None:
     n = sub.add_parser("next")
     n.add_argument("--date", default="")
     n.add_argument("--record", action="store_true")
+    n.add_argument("--push", action="store_true")
     d = sub.add_parser("done")
     d.add_argument("slug")
     d.add_argument("--pattern", default="")
