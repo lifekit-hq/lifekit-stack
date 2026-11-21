@@ -2727,12 +2727,13 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
   - The owner's own chat with learnclaw: the OpenClaw Control UI, or the `reading` Telegram bot once
     enabled. These are the only routes that record a row, since a row holds the owner's own words.
   - kit, as a subagent run, once `learnclaw` is in kit's `subagents.allowAgents`. kit relays the
-    answer, and a subagent run never records. The 21:00 `evening-plan-note` run does this daily
-    for the plan's learning line (see "Learning objective line from learnclaw").
-  - learnclaw's one cron is `leetcode-daily` (see "Daily LeetCode problem"); apart from that and the daily kit run, nothing runs unless asked.
+    answer, and a subagent run never records. (The daily `evening-plan-note` learning-line run is
+    superseded, see "Learning objective line from learnclaw".)
+  - learnclaw's two crons are `leetcode-daily` (see "Daily LeetCode problem") and `learnclaw-morning` (see
+    "Learnclaw morning learning message"); apart from those, nothing runs unless asked.
 - **Cost:** a run is one Sonnet 4.6 conversation turn on the gateway's subscription. Measured on
   comparable career runs, that is about 50k tokens, mostly cache reads: roughly $0.10-0.20 at list
-  prices. Only the daily plan run and the `leetcode-daily` cron (four home days a week) schedule one.
+  prices. Only the `leetcode-daily` cron (four home days a week) and the `learnclaw-morning` cron (Monday to Saturday) schedule one.
 
 **Operator steps (once, after the merge deploys).** The agent entry is host state.
 
