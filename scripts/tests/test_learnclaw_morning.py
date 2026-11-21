@@ -193,7 +193,11 @@ def test_a_row_for_another_agent_is_repointed_or_fails_closed(tmp_path):
         "id": "old1",
         "name": "learnclaw-morning",
         "agentId": "kit",
-        "payload": {"kind": "agentTurn", "message": "x", "toolsAllow": ["read", "write"]},
+        "payload": {
+            "kind": "agentTurn",
+            "message": "x",
+            "toolsAllow": ["read", "write"],
+        },
     }
     state, env = fake_box(tmp_path, [stray])
     r = run_script(env)
@@ -223,9 +227,7 @@ def test_a_live_row_in_the_wrong_timezone_fails_the_run(tmp_path, tz):
     state, env = fake_box(tmp_path, [])
     docker = tmp_path / "bin/docker"
     docker.write_text(
-        docker.read_text().replace(
-            '"tz": flag("--tz")}', '"tz": ' + repr(tz) + "}"
-        )
+        docker.read_text().replace('"tz": flag("--tz")}', '"tz": ' + repr(tz) + "}")
     )
     r = run_script(env)
     assert r.returncode == 1 and "schedule.tz=" + repr(tz) in r.stderr
