@@ -8,7 +8,7 @@
 #   LH_SYNC_HOST=<PC tailnet name> LH_SYNC_USER=<PC account> \
 #     /srv/lifekit-stack/scripts/learnharness-sync/install-learnharness-sync.sh
 # It creates the sync key (first run only), renders and enables the system
-# units, and prints the one authorized_keys line to add on the PC: rrsync -ro
+# units (the pull also refreshes the workspace copy), and prints the one authorized_keys line to add on the PC: rrsync -ro
 # limited to the LearnHarness data folder, from the tailnet only. Re-running
 # converges; --print shows the rendered service only.
 set -euo pipefail
@@ -17,8 +17,11 @@ here="$(cd "$(dirname "$0")" && pwd)"
 : "${LH_SYNC_USER:?set LH_SYNC_USER to the PC account}"
 KEYDIR="${LH_SYNC_KEYDIR:-/srv/lifekit-secrets/learnharness-sync}"
 LH_DATA_ON_PC="${LH_DATA_ON_PC:-/mnt/c/Users/<windows user>/AppData/Roaming/LearnHarness/data}"
+# Read-only copy of the record inside learnclaw's workspace (the gateway sees
+# it as /home/node/.openclaw/agents/learnclaw/workspace/learnharness-mirror).
+MIRROR="${LH_MIRROR_DIR:-${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}/agents/learnclaw/workspace/learnharness-mirror}"
 render() {
-  sed -e "s#@HOST@#${LH_SYNC_HOST}#g" -e "s#@USER@#${LH_SYNC_USER}#g" \
+  sed -e "s#@MIRROR@#${MIRROR}#g" -e "s#@HOST@#${LH_SYNC_HOST}#g" -e "s#@USER@#${LH_SYNC_USER}#g" \
     -e "s#@KEYDIR@#${KEYDIR}#g" "$here/learnharness-sync.service"
 }
 if [ "${1:-}" = "--print" ]; then

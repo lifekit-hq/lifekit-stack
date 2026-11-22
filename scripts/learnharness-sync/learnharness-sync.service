@@ -1,4 +1,4 @@
-# Rendered by install-learnharness-sync.sh: @HOST@, @USER@ and @KEYDIR@ are
+# Rendered by install-learnharness-sync.sh: @HOST@, @USER@, @KEYDIR@ and @MIRROR@ are
 # filled in at install time (no host names in git).
 [Unit]
 Description=Pull the owner's LearnHarness learning record from the PC, read-only, for learnclaw
@@ -17,8 +17,15 @@ ExecStart=/usr/bin/rsync -rt --delete --chmod=D750,F640 \
   -e "ssh -i @KEYDIR@/id_ed25519 -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=@KEYDIR@/known_hosts" \
   @USER@@@HOST@:./ /var/lib/lifekit/learnharness/data/
 # 255 is ssh failing to connect: the PC is off, which is normal, not a fault.
+# Then refresh the copy inside learnclaw's workspace (@MIRROR@): learnclaw's
+# isolated morning turn has only the read tool, and read reaches the agent's
+# workspace and the vault, not ~/.life-state (#611). Same files, same modes, the
+# same record and nothing else; a leading - keeps a host without that workspace
+# (agent not created yet) from failing the unit.
+ExecStartPost=-/usr/bin/rsync -rt --delete --chmod=D750,F640 \
+  /var/lib/lifekit/learnharness/data/ @MIRROR@/
 SuccessExitStatus=255
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/lifekit/learnharness
+ReadWritePaths=/var/lib/lifekit/learnharness -@MIRROR@
 PrivateTmp=yes

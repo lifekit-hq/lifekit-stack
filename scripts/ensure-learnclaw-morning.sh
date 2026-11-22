@@ -12,8 +12,10 @@
 # refuses any cron expression that can fire on Sunday.
 #
 # Read-only by construction: the turn reads the LearnHarness mirror
-# (JSON files under ~/.life-state/learnharness/data) and the vault page
-# domains/learning.md, and nothing else. Its tool allow-list is exactly `read`:
+# (JSON files in learnclaw's workspace, learnharness-mirror/, a copy that
+# learnharness-sync refreshes from ~/.life-state/learnharness/data: the read
+# tool reaches the workspace and the vault, not ~/.life-state, #611) and the
+# vault page domains/learning.md, and nothing else. Its tool allow-list is exactly `read`:
 # no exec, no write, no sessions_spawn, no web, no message tool.
 #
 # Unlike leetcode-daily this needs a model turn, so it is an agent-turn payload
@@ -94,7 +96,7 @@ GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
 [ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 
-MESSAGE="Morning learning message for the owner. Read only: use the read tool, and only on the vault page /home/node/memory/domains/learning.md and the JSON files of the LearnHarness mirror under /home/node/.life-state/learnharness/data (the sessions and the knowledge graph). Read nothing else, write nothing anywhere, record no row, send nothing yourself, start no subagent, open no web page, run no command.
+MESSAGE="Morning learning message for the owner. Read only: use the read tool, and only on the vault page /home/node/memory/domains/learning.md and the JSON files of the LearnHarness mirror under /home/node/.openclaw/agents/learnclaw/workspace/learnharness-mirror (the sessions and the knowledge graph). Read nothing else, write nothing anywhere, record no row, send nothing yourself, start no subagent, open no web page, run no command.
 Reply with at most 3 lines, plain text, no heading, no list marks, nothing before or after:
 Line 1: today's one LearnHarness session to open, or the one goal on the learning page to work on, and the gap it closes (what the record shows is shaky or missing), at most 200 characters.
 Line 2: one practical output the owner makes today, a single concrete thing, at most 200 characters.
