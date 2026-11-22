@@ -1,0 +1,234 @@
+# wger compose project (`wger`): the self-hosted workout manager the owner's
+# phone app talks to (gym schedule, exercise technique, sets checked off), with
+# Kit setting the program through its REST API.
+#
+#   nginx  - the front door: serves /static and /media from the shared volumes
+#            and proxies the rest to `web`. The only service with a published
+#            port, and it is loopback-bound: 127.0.0.1:8480. Tailscale Serve
+#            publishes it on the host's tailnet name over HTTPS (tailnet-only,
+#            never Funnel); docs/runbook.md "Workout manager (wger)" has the
+#            command. The wger mobile app logs in against that address.
+#   web    - wger/server (Django + gunicorn). Runs migrations and collectstatic
+#            on start. Has egress (default network) because the exercise
+#            sync downloads from the upstream wger instance.
+#   db     - Postgres. Named volume; on an internal network with no egress.
+#   cache  - Redis (Django cache). On the same internal network.
+#
+# Celery (the upstream setup's worker and beat) is not deployed: the exercise
+# sync is a documented management command instead (runbook), so the
+# *_CELERY switches are off.
+#
+# Relative paths resolve from this directory (compose/wger/).
+#
+# Settings come from the host env file (scripts/lib/deploy-common.sh passes
+# --env-file); only names are here. scripts/deploy.sh brings the project up
+# only once WGER_SECRET_KEY and WGER_DB_PASSWORD are in it. An ad-hoc call:
+#   docker compose -p wger --env-file /srv/lifekit-secrets/stack.env \
+#     -f compose/wger/docker-compose.yml ps
+#
+# scripts/check-wger-compose.py is the static gate: every image carries an
+# exact version tag and the database and media stay on named volumes.
+#
+# The x-policy anchor is a copy of the platform file's (YAML anchors do not
+# cross files); keep the two in step.
+---
+name: wger
+
+x-policy:
+  policy: &policy
+    init: true
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: '50m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          pids: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+
+services:
+
+  nginx:
+    <<: *policy
+    image: nginx:1.28.3-alpine
+    # Platform contract (scripts/platform-contract.py, docs/platform-contract.md):
+    # `none`, the documented opt-out. wger is an upstream app we do not change:
+    # no /metrics, no JSON logs with trace ids. Health is the healthchecks here.
+    labels:
+      lifekit.contract: "none"  # upstream app, not a product (scripts/platform-contract.py)
+    ports:
+      - "127.0.0.1:8480:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - static:/wger/static:ro
+      - media:/wger/media:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v2/version/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      web:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    cap_add:
+      # nginx's master starts as root, then drops to its worker user.
+      - CHOWN
+      - SETUID
+      - SETGID
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          pids: 64
+    networks:
+      - default
+
+  web:
+    <<: *policy
+    image: wger/server:2.7.0
+    labels:
+      lifekit.contract: "none"  # upstream app, not a product (scripts/platform-contract.py)
+    environment:
+      SECRET_KEY: ${WGER_SECRET_KEY:-}
+      # The public URL (https://<host>.<tailnet>.ts.net:8480). deploy.sh
+      # derives it from the tailnet name unless WGER_SITE_URL is set.
+      SITE_URL: ${WGER_SITE_URL:-}
+      CSRF_TRUSTED_ORIGINS: ${WGER_SITE_URL:-}
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_DATABASE: wger
+      DJANGO_DB_USER: wger
+      DJANGO_DB_PASSWORD: ${WGER_DB_PASSWORD:-}
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: "5432"
+      DJANGO_CACHE_BACKEND: django_redis.cache.RedisCache
+      DJANGO_CACHE_LOCATION: redis://cache:6379/1
+      DJANGO_CACHE_CLIENT_CLASS: django_redis.client.DefaultClient
+      DJANGO_PERFORM_MIGRATIONS: "True"
+      DJANGO_COLLECTSTATIC_ON_STARTUP: "True"
+      DJANGO_DEBUG: "False"
+      WGER_USE_GUNICORN: "True"
+      # The owner's account is made with createsuperuser (runbook); nobody
+      # else signs up.
+      ALLOW_REGISTRATION: "False"
+      ALLOW_GUEST_USERS: "False"
+      # The exercise sync is a management command, not Celery.
+      USE_CELERY: "False"
+      SYNC_EXERCISES_CELERY: "False"
+      SYNC_EXERCISE_IMAGES_CELERY: "False"
+      SYNC_EXERCISE_VIDEOS_CELERY: "False"
+      SYNC_INGREDIENTS_CELERY: "False"
+      CACHE_API_EXERCISES_CELERY: "False"
+      WGER_INSTANCE: https://wger.de
+      # Tailscale Serve -> nginx -> gunicorn: one proxy in front of nginx.
+      NUMBER_OF_PROXIES: "2"
+      TIME_ZONE: ${OPENCLAW_TZ:-UTC}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - static:/home/wger/static
+      - media:/home/wger/media
+    expose:
+      - "8000"
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://127.0.0.1:8000/api/v2/version/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          pids: 256
+    networks:
+      - default
+      - backend
+
+  db:
+    <<: *policy
+    image: postgres:17.10-alpine3.22
+    labels:
+      lifekit.contract: "none"  # datastore, not a product (scripts/platform-contract.py)
+    # The alpine image's postgres user; the named volume inherits the image's
+    # postgres-owned data directory, so no root step is needed.
+    user: "70:70"
+    environment:
+      POSTGRES_USER: wger
+      POSTGRES_PASSWORD: ${WGER_DB_PASSWORD:-}
+      POSTGRES_DB: wger
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "wger", "-d", "wger"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    shm_size: 128m
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          pids: 256
+    networks:
+      - backend
+
+  cache:
+    <<: *policy
+    image: redis:7.4.12-alpine3.22
+    labels:
+      lifekit.contract: "none"  # datastore, not a product (scripts/platform-contract.py)
+    # A cache: losing it loses nothing, so no volume and no persistence.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    user: "999:1000"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+          pids: 64
+    networks:
+      - backend
+
+networks:
+  # web's egress (the exercise sync) and nginx's published port.
+  default: {}
+  # web <-> db and cache only. internal: no route off the box.
+  backend:
+    internal: true
+
+volumes:
+  postgres_data:
+  media:
+  static:
