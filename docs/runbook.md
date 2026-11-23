@@ -5570,7 +5570,7 @@ service: the same skill, installed by `scripts/ensure-workout-log.sh`.
   schema check is what showed that the `language` filter on exercise names did nothing
   (English is now matched on each row's `language`) and that wger's decimals are strings.
 - **When the token is revoked** (deleted or reset in wger's admin): every `wger.py` call
-  exits 3 with `wger rejected the token (HTTP 401): it is revoked or wrong`; Kit says so,
+  exits 3 with `wger rejected the token (HTTP <code>): it is revoked or wrong` (wger 2.7.0 sends 403, other versions 401); Kit says so,
   stops, and nothing is written. Rotate as above. Exit 2 (`WGER_API_TOKEN is not set`)
   means the value never reached the run: check the `apiKey` ref with
   `scripts/ensure-workout-log.sh` and that the deploy's `openclaw secrets reload` ran.
