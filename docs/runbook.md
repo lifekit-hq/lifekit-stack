@@ -6155,7 +6155,7 @@ the env key only stops new ones. `lifekit-stack migrate` copies the laptop's
 ### Off-box backup (R2)
 
 Everything above lives on the box's one disk. `lifekit-offbox-backup.timer`
-copies the five stores that had no other copy to Cloudflare R2 each night,
+copies the six stores that had no other copy to Cloudflare R2 each night,
 encrypted with `age` before they leave the box, and
 `lifekit-offbox-verify.timer` proves once a month that the newest copy
 restores. Both run `scripts/offbox-backup/offbox_backup.py` from the checkout
@@ -6268,7 +6268,7 @@ reset-failed lifekit-offbox-backup.service`.
 set (it fails when that is older than 48 hours), checks each ciphertext
 against the manifest's sha256, decrypts with the on-box key and proves each
 store restores: the gzip and the `pg_dumpall` footer of the identity dump,
-`pg_restore --list` on the backstage and basket dumps, each in a throwaway
+`pg_restore --list` on the backstage, basket and wger dumps, each in a throwaway
 `--network none` container, a tar listing of the state with `openclaw.json` in it, `PRAGMA
 quick_check` on every SQLite copy, and the secret key against the live one by
 hash only. The verdict goes to the owner through notify-relay: `good` with one
@@ -6658,7 +6658,7 @@ git reset --hard origin/main
 # OR rsync from a snapshot.
 
 # 4. Restore /srv/openclaw/secret-key/, the OpenClaw state, the identity dump
-#    and the backstage and basket databases from the newest R2 set ("Off-box backup (R2)"
+#    and the backstage, basket and wger databases from the newest R2 set ("Off-box backup (R2)"
 #    above, restoring by hand). Without the secret key, you re-pair every channel.
 ```
 

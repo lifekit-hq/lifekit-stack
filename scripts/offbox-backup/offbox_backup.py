@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Nightly encrypted off-box backup to Cloudflare R2, and its monthly restore check.
 
-Five stores have no copy off this disk (docs/runbook.md "Off-box backup (R2)"):
+Six stores have no copy off this disk (docs/runbook.md "Off-box backup (R2)"):
 the identity provider's nightly dumps, the backstage, basket and wger databases, the
 OpenClaw auth-profile secret key, and the OpenClaw runtime state. One run streams each
 one through `age` to the captain's key (plus the on-box restore-check key when
@@ -28,7 +28,7 @@ No value read from the env file is ever printed.
             oneshot; the unit gauge alerts on it.
   verify    fetch the newest complete set, check every object against the
             manifest's sha256, decrypt it with the on-box key, and prove it
-            restores: pg_restore --list on the backstage and basket dumps, the
+            restores: pg_restore --list on the backstage, basket and wger dumps, the
             dump-complete footer on the identity dump, a tar listing of the
             state, PRAGMA quick_check on every SQLite copy, and the secret key
             compared with the live one by hash only. The verdict goes to the owner through
