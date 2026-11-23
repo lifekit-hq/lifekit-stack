@@ -5414,16 +5414,13 @@ are pinned to exact versions; `scripts/check-wger-compose.py` fails the deploy
 before `up` if one is not, if the database or media leave their named volumes
 (`postgres_data`, `media`), or if a port is not loopback-bound.
 
-**Setup (operator, once).** Every merge deploys the project only after both
-secrets are in the rendered env file; until then `deploy.sh` prints a warning
-and skips it. Names only here, values never in git:
+**Setup.** Both secrets (`WGER_SECRET_KEY`, `WGER_DB_PASSWORD`) are keys in the master
+file with inventory rows in `docs/secrets.md`, so the next deploy renders them into the
+env file and brings the project up; until both are present `deploy.sh` prints a warning
+and skips it. Values never in git. To rotate one, set a fresh value and redeploy (the
+database password also needs the role changed, see the inventory row):
 
 ```bash
-# 1. add the keys WGER_SECRET_KEY and WGER_DB_PASSWORD to the master file and
-#    their rows to docs/secrets.md (set-secret.sh refuses a name that is not
-#    already a key); docs/secrets-runbook.md
-scripts/secrets/edit.sh master
-# 2. set a value for each (hidden prompt or stdin), then render and redeploy
 openssl rand -hex 32 | scripts/set-secret.sh master WGER_SECRET_KEY
 openssl rand -hex 32 | scripts/set-secret.sh master WGER_DB_PASSWORD
 ```
