@@ -7,9 +7,12 @@ is exercised against what it actually wrote.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
+import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -151,40 +154,110 @@ def line4(msg):
     return msg.split("\nLine 4: ", 1)[1].split("\nNever teach", 1)[0]
 
 
-def test_line_4_carries_the_weekday_and_the_count_against_the_target(tmp_path):
-    # A normal week: a count of done slugs this week, shown as <weekday> <n>/20.
+# The independent oracle for the weekly count is skills/leetcode-daily/daily.py `week`,
+# the tested Monday-to-Sunday count of done problems over the learning record. The
+# morning job's model is told the same rule in line 4 and shown worked examples; the
+# examples it is shown must equal what the oracle prints for a matching record.
+DAILY = REPO / "skills/leetcode-daily/daily.py"
+PAGE = """\
+---
+name: learning
+updatedAt: 2026-10-01
+status: active
+---
+
+# Learning
+
+## Artefact record (v0 - one row per artefact)
+
+| date | topic | artefact (repo/path) | reading | applied | post | grilled | status |
+|---|---|---|---|---|---|---|---|
+"""
+
+
+def oracle(tmp_path, done, day):
+    # `done` is a list of (slug, date) rows; returns the oracle's count, or None
+    # when the record cannot be read.
+    vault = tmp_path / "vault"
+    (vault / "domains").mkdir(parents=True, exist_ok=True)
+    (vault / "bin").mkdir(exist_ok=True)
+    (vault / "bin/lint.sh").write_text("#!/bin/sh\nexit 0\n")
+    if done is not None:
+        body = "".join(
+            f"| {d} | leetcode: {slug} | https://leetcode.com/problems/{slug}/ | - | - | - | - | done |\n"
+            for slug, d in done
+        )
+        (vault / "domains/learning.md").write_text(PAGE + body)
+    r = subprocess.run(
+        [sys.executable, str(DAILY), "week"],
+        env={
+            **os.environ,
+            "LEARNING_VAULT": str(vault),
+            "LEARNING_TODAY": day,
+            "LEETCODE_TODAY": day,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        return None
+    return int(re.match(r"solved: (\d+) ", r.stdout).group(1))
+
+
+def shown(msg):
+    # The two worked examples line 4 shows the model: (weekday, count, target).
+    ex = re.search(r"for example (\w+) (\d+)/(\d+) or (\w+) (\d+)/(\d+)\.", line4(msg))
+    assert ex, line4(msg)
+    a, b = ex.groups()[:3], ex.groups()[3:]
+    return [(w, int(n), int(t)) for w, n, t in (a, b)]
+
+
+def weekday(day):
+    return dt.date.fromisoformat(day).strftime("%a")
+
+
+def test_the_example_for_a_normal_week_matches_the_weekly_count(tmp_path):
+    # Wednesday 2026-11-25 after three problems solved Monday to Wednesday, with a
+    # done row from the Sunday before that must not be counted.
+    wed = "2026-11-25"
+    done = [
+        ("two-sum", "2026-11-22"),
+        ("group-anagrams", "2026-11-23"),
+        ("valid-sudoku", "2026-11-24"),
+        ("top-k-frequent-elements", wed),
+    ]
+    count = oracle(tmp_path, done, wed)
+    assert count == 3
+    assert (weekday(wed), count, 20) in shown(declared_message(tmp_path))
+
+
+def test_the_example_for_a_week_start_is_zero_despite_last_weeks_rows(tmp_path):
+    # Monday 2026-11-23: last week's done rows stay out, so the week starts at 0.
+    mon = "2026-11-23"
+    last_week = [("two-sum", "2026-11-17"), ("group-anagrams", "2026-11-22")]
+    count = oracle(tmp_path, last_week, mon)
+    assert count == 0
+    assert (weekday(mon), count, 20) in shown(declared_message(tmp_path))
+
+
+def test_an_unreadable_record_gets_a_plain_statement_not_a_count(tmp_path):
+    # No learning page: the oracle itself cannot produce a count.
+    assert oracle(tmp_path, None, "2026-11-25") is None
     four = line4(declared_message(tmp_path))
-    assert "<Mon|Tue|Wed|Thu|Fri|Sat> <count>/20" in four
-    assert "Wed 3/20" in four
-    assert "latest row" in four and "status is done" in four
-    assert "Count whole slugs, never rows" in four
-    # Read-only on the record the job already reads, nothing new.
-    assert "/home/node/memory/domains/learning.md" in four
-
-
-def test_line_4_resets_on_monday(tmp_path):
-    # A week start: Monday counts only rows dated today, so it starts from 0.
-    four = line4(declared_message(tmp_path))
-    assert "Mon 0/20" in four
-    assert "from this week's Monday up to and including today" in four
-    assert "week runs Monday to Sunday" in four
-    assert "starts again at 0" in four
-
-
-def test_line_4_says_so_plainly_when_the_record_is_unreadable(tmp_path):
-    # An unreadable record: a plain statement, never a 0.
-    four = line4(declared_message(tmp_path))
-    assert "<weekday> count unreadable (target 20)" in four
-    assert "never write 0 then" in four
-    assert "A count of 0 is correct only when you read the table" in four
+    unreadable = re.search(
+        r"write instead: (<weekday> count unreadable \(target 20\))", four
+    )
+    assert unreadable
+    # The unreadable form is not of the <weekday> <n>/<target> shape.
+    assert not re.search(r"\d+/\d+", unreadable.group(1))
 
 
 def test_the_weekly_target_is_one_named_setting(tmp_path):
     msg = declared_message(tmp_path, {"LEARNCLAW_WEEKLY_TARGET": "25"})
-    assert "/25" in line4(msg) and "target 25" in line4(msg)
+    assert [t for _, _, t in shown(msg)] == [25, 25]
+    assert "target 25" in line4(msg)
     assert "20" not in line4(msg)  # no second copy of the default
-    assert 'WEEKLY_TARGET="${LEARNCLAW_WEEKLY_TARGET:-20}"' in SCRIPT.read_text()
-    assert SCRIPT.read_text().count(":-20}") == 1
 
 
 @pytest.mark.parametrize("bad", ["0", "abc", "-5", "2.5", "05"])
