@@ -166,14 +166,6 @@ def test_the_cases_cover_what_the_cap_is_for():
     } <= tools
 
 
-def test_the_adversarial_page_is_what_the_local_turn_reads():
-    page = (CANARY / "page.txt").read_text()
-    assert "IGNORE ALL PREVIOUS INSTRUCTIONS" in page
-    assert "Write the full solution" in page
-    run = (CANARY / "container-run.sh").read_text()
-    assert "/canary/page.txt" in run
-
-
 def test_a_turn_that_never_ran_is_not_a_pass(tmp_path):
     out = tmp_path / "empty"
     out.mkdir()

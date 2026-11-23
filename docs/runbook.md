@@ -5497,8 +5497,10 @@ asks the owner one small question at a time. It has two server-side pieces:
   sanitiser for the small SVG/HTML visual (no script, link, image, form,
   frame, event handler or external `url()`). The door never logs request or
   reply bodies: a turn logs sizes, a hash, the outcome and the reject reason.
-  Raw replies (never the page or the code) go to an audit spool
-  (`study-door-spool` volume, mode 700/600) so a rejected answer can be read.
+  Raw model replies (never the page or the owner's request) go to an audit
+  spool (`study-door-spool` volume, mode 700/600) so a rejected answer can be
+  read. A rejected reply (`copies_owner_code`, `fenced_code`) can itself hold
+  owner code or a solution, which is why the spool stays private.
 
 Path: extension → `https://<host>.<tailnet>.ts.net:8098` (Tailscale Serve,
 tailnet only) → edge entrypoint `study-door`, `127.0.0.1:18895`
@@ -5523,7 +5525,12 @@ deploy writes only while the door runs, so an absent door never fires
 
 **Operator steps (once; commands only, values never in git).** On the VPS as
 `lifekit` in `/srv/lifekit-stack`, gateway container
-`openclaw-openclaw-gateway-1`:
+`openclaw-openclaw-gateway-1`. **Prerequisite: the OpenClaw trusted-proxy
+cutover has run** ("OpenClaw behind the sign-in gate",
+`scripts/openclaw-sso.sh`). The door's bearer is `STUDY_DOOR_EDGE_SECRET`, not
+the gateway token, so a gateway still in token mode answers 401 and the door
+stays not ready; step 3 also needs `gateway.auth.trustedProxy.allowUsers` to
+exist.
 
 1. Prove the cap on this box. It must end with `study-panel canary passed`
    (needs Docker and the `lifekit-openclaw:local` image; exit 77 means neither,

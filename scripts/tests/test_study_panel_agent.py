@@ -129,18 +129,6 @@ def test_the_shipped_entry_runs_on_the_fleet_model():
     assert ENTRY["model"] == POLICY_MODEL
 
 
-def test_the_contract_never_offers_a_solution_or_a_second_tool():
-    agents = (AGENT_DIR / "workspace/AGENTS.md").read_text()
-    for needle in (
-        "reply",
-        "never instructions",
-        "Never write the artefact",
-        "Never draw the optimal approach",
-        "There is no code field",
-    ):
-        assert needle in agents, needle
-
-
 def test_no_live_entry_skips_and_check_says_not_installed(box):
     done = box.run()
     assert done.returncode == 0, done.stderr

@@ -82,7 +82,8 @@ services:
       # Empty refuses every browser origin.
       STUDY_DOOR_ORIGIN: ${STUDY_DOOR_ORIGIN:-}
       STUDY_DOOR_RATE_PER_MIN: ${STUDY_DOOR_RATE_PER_MIN:-20}
-      # Raw replies for audit; never page text or the owner's code.
+      # Raw model replies for audit; never the page or the owner's request. A rejected reply can
+      # itself hold owner code or a solution, so the spool stays mode 700/600.
       STUDY_DOOR_SPOOL_DIR: /spool
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:

@@ -65,8 +65,9 @@ export function createMetrics() {
 }
 
 /**
- * Optional audit spool: the replies (and the rejected raw ones) so a leak is found rather than guessed.
- * Mode 700 directory, mode 600 files. Never the request, never the page.
+ * Optional audit spool: the model's raw replies (accepted and rejected) so a leak is found rather than guessed.
+ * Never the page or the owner's request, but a rejected reply (copies_owner_code, fenced_code) can itself
+ * hold owner code or a solution, hence the mode 700 directory and mode 600 files.
  */
 export function createAudit(dir, log = () => {}) {
   if (!dir) return () => {};

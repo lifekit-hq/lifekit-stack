@@ -38,7 +38,9 @@ const ATTRS = new Set([
 
 const MAX_ATTR = 400;
 // A value that can fetch, script or escape: never allowed in any attribute or in a style.
-const HOSTILE = /javascript:|vbscript:|data:|expression\s*\(|behavio[u]?r\s*:|-moz-binding|@import|\\|<|>|&#/i;
+// Any `&` is refused: the browser decodes named and numeric entities inside attribute values, so
+// `&lpar;`, `&bsol;` or `&colon;` would rebuild a `url(`, an escape or a scheme the checks below never saw.
+const HOSTILE = /javascript:|vbscript:|data:|expression\s*\(|behavio[u]?r\s*:|-moz-binding|@import|\\|<|>|&/i;
 
 /** url(#id) pointing inside the document is the only url() there is. */
 function onlyLocalUrls(v) {

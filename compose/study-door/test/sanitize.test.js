@@ -63,6 +63,11 @@ for (const attr of [
   'fill="url(https://evil.example/x.svg#a)"',
   'fill="javascript:alert(1)"',
   'transform="&#106;avascript:x"',
+  'style="background:url&lpar;https://evil.example/x&rpar;"',
+  'style="background:u&bsol;72l&lpar;https://evil.example/x&rpar;"',
+  'fill="url&lpar;https://evil.example/x#a&rpar;"',
+  'marker-end="url&lpar;https://evil.example/x#a&rpar;"',
+  'stroke="javascript&colon;alert(1)"',
 ]) {
   test(`drops the attribute ${attr}`, () => {
     const out = sanitizeHtml(`<div ${attr}>t</div>`);

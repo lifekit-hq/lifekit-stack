@@ -34,9 +34,11 @@
 # the OpenAI-compatible API, and the study door (a separate bearer, its own
 # STUDY_DOOR_EDGE_SECRET, so it is not finance-sentry) calls it for the
 # tool-less study-panel agent. Anything else on this entrypoint is a 404. The
-# same routes work while the gateway is still in token mode (it checks the
-# bearer itself and ignores the identity), so these clients move here before
-# the mode switch, with no gap. In both modes the gateway answers 403
+# Prometheus and finance-sentry routes work while the gateway is still in token
+# mode (it checks the gateway token itself and ignores the identity), so those
+# clients move here before the mode switch, with no gap. The study door's route
+# does not: its bearer is not the gateway token, so it works only after the
+# trusted-proxy cutover. In both modes the gateway answers 403
 # proxy_attribution_required unless gateway.trustedProxies lists the edge;
 # every deploy keeps it there (scripts/deploy-trusted-proxies.sh). This
 # entrypoint trusts no forwarded headers, so Traefik replaces a caller's
