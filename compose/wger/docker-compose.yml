@@ -135,6 +135,9 @@ services:
       WGER_INSTANCE: https://wger.de
       # Tailscale Serve -> nginx -> gunicorn: one proxy in front of nginx.
       NUMBER_OF_PROXIES: "2"
+      # Trust X-Forwarded-Proto (Tailscale Serve terminates HTTPS) so absolute
+      # URLs in API responses (exercise images, pagination) are https.
+      X_FORWARDED_PROTO_HEADER_SET: "True"
       TIME_ZONE: ${OPENCLAW_TZ:-UTC}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:

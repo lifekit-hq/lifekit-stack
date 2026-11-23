@@ -88,7 +88,19 @@ def test_every_service_declares_the_platform_contract():
         assert svc["labels"]["lifekit.contract"] == "none", name
 
 
-def test_secrets_are_env_references_only():
-    text = COMPOSE.read_text()
-    for name in ("WGER_SECRET_KEY", "WGER_DB_PASSWORD"):
-        assert "${" + name + ":-}" in text
+@pytest.mark.parametrize(
+    "service, key, ref",
+    [
+        ("web", "SECRET_KEY", "${WGER_SECRET_KEY:-}"),
+        ("web", "DJANGO_DB_PASSWORD", "${WGER_DB_PASSWORD:-}"),
+        ("db", "POSTGRES_PASSWORD", "${WGER_DB_PASSWORD:-}"),
+    ],
+)
+def test_secret_settings_are_env_references_only(service, key, ref):
+    doc = yaml.safe_load(COMPOSE.read_text())
+    assert doc["services"][service]["environment"][key] == ref
+
+
+def test_web_trusts_the_proxy_scheme_header():
+    doc = yaml.safe_load(COMPOSE.read_text())
+    assert doc["services"]["web"]["environment"]["X_FORWARDED_PROTO_HEADER_SET"] == "True"

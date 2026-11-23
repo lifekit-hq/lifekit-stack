@@ -5372,12 +5372,16 @@ secrets are in the rendered env file; until then `deploy.sh` prints a warning
 and skips it. Names only here, values never in git:
 
 ```bash
-# master secrets (docs/secrets-runbook.md): WGER_SECRET_KEY, WGER_DB_PASSWORD
-openssl rand -hex 32     # one value for each; set them with scripts/set-secret.sh, render, redeploy
+# 1. add the keys WGER_SECRET_KEY and WGER_DB_PASSWORD to the master file and
+#    their rows to docs/secrets.md (set-secret.sh refuses a name that is not
+#    already a key); docs/secrets-runbook.md
+scripts/secrets/edit.sh master
+# 2. set a value for each (hidden prompt or stdin), then render and redeploy
+openssl rand -hex 32 | scripts/set-secret.sh master WGER_SECRET_KEY
+openssl rand -hex 32 | scripts/set-secret.sh master WGER_DB_PASSWORD
 ```
 
-Add both to the inventory in `docs/secrets.md` in the PR that sets them. The
-deploy derives `WGER_SITE_URL` (`https://<host>.<tailnet>.ts.net:8480`) from the
+The deploy derives `WGER_SITE_URL` (`https://<host>.<tailnet>.ts.net:8480`) from the
 tailnet name; set `WGER_SITE_URL` in the env file to override. The database
 password is set on the first boot of an empty volume only.
 
