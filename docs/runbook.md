@@ -6942,3 +6942,50 @@ OpenClaw vault search (`memory.search.extraPaths` over the vault mount) is
 already in `compose/openclaw-gateway/platform.patch.json` (#192, see "Vault
 search for every agent"); nothing further was needed for vault decision 0013
 step 1.
+
+## Idle-lane check (host timer)
+
+`lifekit-idle-lanes.timer` runs `scripts/idle-lanes/idle_lanes.py check` every minute as the admin
+account, once per fleet home in `IDLE_LANES_HOMES` (the main home and each secondmate home). It
+only detects and escalates; it never changes how work is dispatched.
+
+A home is **idle with work** when its `bin/fm-capacity.sh` reports `free_lanes > 0` and its
+`bin/fm-tasks-axi.sh ready` lists at least one item (held items and items whose `--until` date has
+not arrived are not in that list). It is **not** idle when `fm-capacity.sh` names a host reason
+(`cpu`, `memory`, `disk`), or when the quota snapshot
+(`/var/lib/lifekit-fleet/metrics/quota-snapshot.json`) projects the weekly window to run out before
+it resets; with no snapshot, a stale one, or a projection that outlasts the reset, queued work
+counts as ready.
+
+| Time idle | What happens (once per episode) |
+| --- | --- |
+| first tick | the home's state file records `since` |
+| 15 min | `bin/fm-inbox.sh note` to that home's supervisor: lanes idle with work queued, refill |
+| 30 min | one `act` envelope to the owner through notify-relay, and the state file turns `red` |
+| either side zero | the episode clears; the next idle spell is a new episode |
+
+A probe that fails (capacity or queue unreadable) neither starts nor clears an episode and fails
+the unit for that tick; a note or push that fails is retried next tick and never repeated once it
+landed.
+
+State is one file per home, `/var/lib/lifekit-fleet/idle-lanes/<home>.json` (`idle-lanes.v1`:
+`state` `ok|idle|red`, `since`, `free_lanes`, `ready`, `note_sent_at`, `pushed_at`, `checked_at`,
+`reason`, `error`), world-readable for the dashboard.
+
+A home is only covered once it has a lane target (`config/lane-capacity`): without one,
+`fm-capacity.sh` reports `free_lanes=unknown reason=no-target`, the check never starts an episode
+for it, and `status` reports it as unmonitored.
+
+Status: `python3 /usr/local/bin/lifekit-idle-lanes.py status` prints each home as `ok`,
+`idle since T`, `red since T` or `unmonitored: no lane target` (exit 1 on red, unmonitored, an
+error, or a state file older than 5 minutes).
+
+Apply and check (root for apply; the deploy has no sudo and does not run it):
+
+```bash
+sudo IDLE_LANES_HOMES="<main fleet home> <secondmate home>" bash /srv/lifekit-stack/scripts/ensure-idle-lanes.sh
+bash /srv/lifekit-stack/scripts/ensure-idle-lanes.sh --check   # exit 0 only when installed copies match and the timer is enabled
+```
+
+Undo: `sudo systemctl disable --now lifekit-idle-lanes.timer`, then remove
+`/usr/local/bin/lifekit-idle-lanes.py` and the two units under `/etc/systemd/system/`.
