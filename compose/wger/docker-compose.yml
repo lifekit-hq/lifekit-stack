@@ -94,13 +94,14 @@ services:
         limits:
           memory: 128m
           pids: 64
-    # lifekit-shared is the route for the OpenClaw gateway: Kit's wger client calls
-    # http://wger-nginx-1:8080 (docs/runbook.md, "Kit and wger"). nginx is the only
-    # wger service on it - web, db and cache stay on their own networks - and it
-    # publishes no new port: wger stays tailnet-only through Tailscale Serve.
+    # wger-gateway is the route for the OpenClaw gateway: Kit's wger client calls
+    # http://wger-nginx-1:8080 (docs/runbook.md, "Kit and wger"). Only nginx and the
+    # gateway are on it - web, db and cache stay on their own networks, no other
+    # container joins it - and it publishes no new port: wger stays tailnet-only
+    # through Tailscale Serve.
     networks:
       - default
-      - lifekit-shared
+      - wger-gateway
 
   web:
     <<: *policy
@@ -235,8 +236,10 @@ networks:
   # web <-> db and cache only. internal: no route off the box.
   backend:
     internal: true
-  # The shared network the other projects use (the deploy creates it); nginx only.
-  lifekit-shared:
+  # nginx <-> the OpenClaw gateway only. External and internal (no route off the
+  # box): scripts/deploy.sh creates it (wger_gateway_network_ensure) before either
+  # project's `up`, and compose/openclaw/docker-compose.yml declares it too.
+  wger-gateway:
     external: true
 
 volumes:

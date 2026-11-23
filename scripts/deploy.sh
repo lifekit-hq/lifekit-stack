@@ -131,6 +131,9 @@ openclaw_phase() {
 # The gateway and the edge both declare it external, and `prepare` already
 # runs the gateway image, so it is created first, on every deploy, gated or not.
 openclaw_ingress_network_ensure
+# `wger-gateway` joins the gateway to wger's nginx (and nothing else); both projects
+# declare it external, so it exists before either `up`.
+wger_gateway_network_ensure
 openclaw_phase prepare
 
 # Grafana's frame-ancestors origin: an explicit GRAFANA_EMBED_ORIGIN wins,

@@ -413,6 +413,14 @@ def test_identity_oidc_network_is_created_before_the_platform_up(env, tmp_path):
     assert create < up
 
 
+def test_wger_gateway_network_is_ensured_before_either_up(env, tmp_path):
+    r, trace, _ = full_deploy(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    inspect = trace.index("network inspect wger-gateway")
+    first_up = next(i for i, line in enumerate(trace) if " up " in f" {line} ")
+    assert inspect < first_up
+
+
 IDENTITY_STUB = """#!/bin/sh
 echo "identity-$1" >> "$DOCKER_CALL_LOG"
 if [ "$1" = endpoints ] && [ -z "$NO_ENDPOINTS" ]; then

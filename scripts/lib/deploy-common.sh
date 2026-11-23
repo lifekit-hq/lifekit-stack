@@ -80,6 +80,15 @@ openclaw_ingress_network_ensure() {
       --subnet "${OPENCLAW_INGRESS_SUBNET}" --ip-range "${OPENCLAW_INGRESS_IP_RANGE}" \
       "${OPENCLAW_INGRESS_NETWORK}" >/dev/null
 }
+# The one network between the OpenClaw gateway and wger's nginx
+# (compose/wger/docker-compose.yml, compose/openclaw/docker-compose.yml), so Kit's
+# wger client reaches http://wger-nginx-1:8080. Internal (no route out); nothing but
+# those two containers joins it. Created once, before either project's `up`.
+WGER_GATEWAY_NETWORK="wger-gateway"
+wger_gateway_network_ensure() {
+  docker network inspect "${WGER_GATEWAY_NETWORK}" >/dev/null 2>&1 \
+    || docker network create --internal "${WGER_GATEWAY_NETWORK}" >/dev/null
+}
 # True while the project's gateway container is running. OpenClaw >= 2026.10.2
 # refuses CLI calls that read or write live gateway state from a one-shot
 # `run --rm` container ("cannot verify Gateway ownership from this process

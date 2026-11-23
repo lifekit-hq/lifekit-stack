@@ -109,21 +109,47 @@ def test_web_trusts_the_proxy_scheme_header():
     )
 
 
-def test_only_nginx_is_on_the_shared_network(real):
-    assert set(real["services"]["nginx"]["networks"]) == {"default", "lifekit-shared"}
+def test_only_nginx_is_on_the_gateway_network(real):
+    assert set(real["services"]["nginx"]["networks"]) == {"default", "wger-gateway"}
     assert gate.check(real) == []
     for other in ("web", "db", "cache"):
-        assert "lifekit-shared" not in real["services"][other]["networks"]
+        assert "wger-gateway" not in real["services"][other]["networks"]
+    for svc in real["services"].values():
+        assert "lifekit-shared" not in svc["networks"]
+
+
+def test_the_gateway_is_the_only_openclaw_service_on_the_wger_network():
+    doc = yaml.safe_load((REPO / "compose/openclaw/docker-compose.yml").read_text())
+    on_it = [
+        name
+        for name, svc in doc["services"].items()
+        if "wger-gateway" in (svc.get("networks") or {})
+    ]
+    assert on_it == ["openclaw-gateway"]
+    assert doc["networks"]["wger-gateway"] == {"external": True}
 
 
 @pytest.mark.parametrize("service", ["web", "db", "cache"])
-def test_another_service_on_the_shared_network_is_blocked(real, service):
+def test_another_service_on_the_gateway_network_is_blocked(real, service):
+    real["services"][service]["networks"]["wger-gateway"] = None
+    assert f"{service}: must not join wger-gateway (only nginx may)" in gate.check(real)
+
+
+@pytest.mark.parametrize("service", ["nginx", "web", "db", "cache"])
+def test_any_service_on_the_wide_shared_network_is_blocked(real, service):
     real["services"][service]["networks"]["lifekit-shared"] = None
-    assert f"{service}: must not join lifekit-shared (only nginx may)" in gate.check(
-        real
-    )
+    assert f"{service}: must not join lifekit-shared" in gate.check(real)
 
 
-def test_a_non_external_shared_network_is_blocked(real):
-    real["networks"]["lifekit-shared"] = {}
-    assert "network lifekit-shared must be external" in gate.check(real)
+def test_nginx_off_the_gateway_network_is_blocked(real):
+    real["services"]["nginx"]["networks"].pop("wger-gateway")
+    assert "nginx: must join wger-gateway" in gate.check(real)
+
+
+@pytest.mark.parametrize("declared", [None, {}, {"external": False}])
+def test_a_gateway_network_that_is_not_external_is_blocked(real, declared):
+    if declared is None:
+        real["networks"].pop("wger-gateway")
+    else:
+        real["networks"]["wger-gateway"] = declared
+    assert "network wger-gateway must be declared external" in gate.check(real)
