@@ -2700,7 +2700,8 @@ each open topic still lacks. Nothing stores that state separately. Other agents 
     `settings.json` or keys) every 10 minutes into `/var/lib/lifekit/learnharness/data`, the
     gateway's `~/.life-state/learnharness/data`. The PC side is one `authorized_keys` line,
     `rrsync -ro` on the LearnHarness data folder, tailnet only, which the installer prints. The PC
-    off is ssh exit 255, which the unit treats as success. Install once per host, as the admin
+    off is ssh exit 255, which the unit treats as success. After each pull it also refreshes a copy in
+    learnclaw's workspace for the morning job (see "Learnclaw morning learning message"). Install once per host, as the admin
     account: `LH_SYNC_HOST=<PC tailnet name> LH_SYNC_USER=<PC account>
     scripts/learnharness-sync/install-learnharness-sync.sh`; check with
     `systemctl status learnharness-sync.service`.
