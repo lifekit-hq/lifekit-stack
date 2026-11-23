@@ -17,6 +17,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts/ensure-learnclaw-morning.sh"
 MODEL = "anthropic/claude-sonnet-5-5"
+MIRROR = "/home/node/.openclaw/agents/learnclaw/workspace/learnharness-mirror"
 
 FAKE_DOCKER = r"""#!/usr/bin/env python3
 import json, os, pathlib, sys
@@ -127,7 +128,8 @@ def test_the_job_is_declared_read_only_on_learnclaws_own_bot(tmp_path):
     assert "at most 3 lines" in msg
     assert "mirror newest session <YYYY-MM-DD>" in msg
     assert "/home/node/memory/domains/learning.md" in msg
-    assert "/home/node/.life-state/learnharness/data" in msg
+    assert MIRROR in msg
+    assert ".life-state" not in msg  # outside what the read tool reaches
     assert "write nothing" in msg
     # Re-running converges on the same row, and enables it again.
     assert run_script(env).returncode == 0
@@ -231,3 +233,91 @@ def test_a_live_row_in_the_wrong_timezone_fails_the_run(tmp_path, tz):
     )
     r = run_script(env)
     assert r.returncode == 1 and "schedule.tz=" + repr(tz) in r.stderr
+
+
+# --- #611: the read tool reaches the workspace, so the mirror is copied there ---
+
+SYNC = REPO / "scripts/learnharness-sync"
+
+
+def render_sync(mirror):
+    r = subprocess.run(
+        ["bash", str(SYNC / "install-learnharness-sync.sh"), "--print"],
+        env={
+            **os.environ,
+            "LH_SYNC_HOST": "pc",
+            "LH_SYNC_USER": "u",
+            "LH_MIRROR_DIR": str(mirror),
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return r.stdout
+
+
+def test_the_unit_refreshes_a_workspace_copy_the_read_tool_can_reach(tmp_path):
+    unit = render_sync("/srv/x/agents/learnclaw/workspace/learnharness-mirror")
+    assert "@MIRROR@" not in unit
+    # Tolerates a host without the workspace; the sandbox may write only there.
+    assert "ExecStartPost=-/usr/bin/rsync" in unit
+    assert (
+        "ReadWritePaths=/var/lib/lifekit/learnharness -/srv/x/agents/learnclaw/workspace/learnharness-mirror"
+        in unit
+    )
+    default = subprocess.run(
+        ["bash", str(SYNC / "install-learnharness-sync.sh"), "--print"],
+        env={**os.environ, "LH_SYNC_HOST": "pc", "LH_SYNC_USER": "u"},
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert (
+        "/srv/openclaw/config/agents/learnclaw/workspace/learnharness-mirror" in default
+    )
+
+
+def test_the_copy_step_mirrors_the_record_and_removes_what_the_pc_dropped(tmp_path):
+    data = tmp_path / "data"
+    (data / "chats").mkdir(parents=True)
+    (data / "chats/a.json").write_text("{}")
+    mirror = tmp_path / "ws/learnharness-mirror"
+    mirror.mkdir(parents=True)
+    (mirror / "stale.json").write_text("{}")
+    unit = render_sync(mirror)
+    post = next(ln for ln in unit.splitlines() if ln.startswith("ExecStartPost="))
+    body = unit[unit.index(post) :].split("\n", 2)
+    cmd = (post + " " + body[1]).removeprefix("ExecStartPost=-").replace("\\", " ")
+    cmd = cmd.replace("/var/lib/lifekit/learnharness/data/", f"{data}/")
+    subprocess.run(cmd, shell=True, check=True)
+    assert (mirror / "chats/a.json").read_text() == "{}"
+    assert not (mirror / "stale.json").exists()
+    assert oct((mirror / "chats/a.json").stat().st_mode & 0o777) == "0o640"
+
+
+def test_ensure_learnclaw_creates_the_workspace_copy_dir(tmp_path):
+    ws = tmp_path / "state/agents/learnclaw/workspace"
+    ws.mkdir(parents=True)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, body in (
+        ("docker", "#!/bin/sh\nexit 0\n"),
+        ("curl", "#!/bin/sh\nexit 22\n"),
+    ):
+        (bindir / name).write_text(body)
+        (bindir / name).chmod(0o755)
+    r = subprocess.run(
+        ["bash", str(REPO / "scripts/ensure-learnclaw.sh")],
+        env={
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "OPENCLAW_CONFIG_DIR": str(tmp_path / "state"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    mirror = ws / "learnharness-mirror"
+    assert mirror.is_dir()
+    assert oct(mirror.stat().st_mode & 0o777) == "0o750"

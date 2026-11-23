@@ -47,6 +47,12 @@ for f in AGENTS.md SOUL.md IDENTITY.md skills/README.md; do
 done
 echo "contract installed -> $workspace"
 
+# The place learnharness-sync copies the LearnHarness record to, inside the
+# workspace: learnclaw-morning has only the read tool, which reaches the
+# workspace and not ~/.life-state (#611). Created here so the sync unit's
+# sandbox has a path to write; the unit fills it.
+install -d -m 0750 "$workspace/learnharness-mirror"
+
 # The shared "Development-class problems" block rides in SOUL.md between its
 # markers; the copy above just replaced that file, so put the block back.
 "${repo_root}/scripts/ensure-dev-problem-block.sh" "$AGENT"
