@@ -103,4 +103,6 @@ def test_secret_settings_are_env_references_only(service, key, ref):
 
 def test_web_trusts_the_proxy_scheme_header():
     doc = yaml.safe_load(COMPOSE.read_text())
-    assert doc["services"]["web"]["environment"]["X_FORWARDED_PROTO_HEADER_SET"] == "True"
+    assert (
+        doc["services"]["web"]["environment"]["X_FORWARDED_PROTO_HEADER_SET"] == "True"
+    )
