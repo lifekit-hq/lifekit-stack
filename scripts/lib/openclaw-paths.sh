@@ -28,7 +28,7 @@ openclaw_path_matches() {
     scripts/ensure-youtube-transcript.sh | scripts/ensure-video-eval.sh | scripts/ensure-job-queue.sh) return 0 ;;
     scripts/ensure-video-drop-door.sh | scripts/ensure-learnclaw.sh | scripts/ensure-doc-door.sh) return 0 ;;
     scripts/ensure-reader-agent.sh | scripts/lib/cron-model.sh | scripts/doc-door-gate/*) return 0 ;;
-    scripts/ensure-fleet-gate.sh | scripts/ensure-dev-problem-block.sh) return 0 ;;
+    scripts/ensure-fleet-gate.sh | scripts/ensure-dev-problem-block.sh | scripts/ensure-study-panel.sh) return 0 ;;
     scripts/openclaw-smoke-verdict.py) return 0 ;;
     secrets/lifekit-gateway.env.sops) return 0 ;;
   esac

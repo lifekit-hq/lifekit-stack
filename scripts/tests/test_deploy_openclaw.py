@@ -164,6 +164,7 @@ DEPLOY_ORDER = [
     "contract-static",
     "contract-static",
     "contract-static",
+    "contract-static",
     "openclaw:build",
     "compose-up",
     "openclaw:up",
@@ -972,7 +973,11 @@ def post_up_ytt(env, tmp_path, ensure=None, curl_fail=False):
         shutil.copy(REPO / "scripts" / name, fake / "scripts" / name)
     # The doc-door script drives the gateway container; its own tests cover it.
     # So does the reader agent's (its own tests: test_reader_agent.py).
-    for name in ("ensure-doc-door.sh", "ensure-reader-agent.sh"):
+    for name in (
+        "ensure-doc-door.sh",
+        "ensure-reader-agent.sh",
+        "ensure-study-panel.sh",
+    ):
         (fake / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
         (fake / "scripts" / name).chmod(0o755)
     script = fake / "scripts/ensure-youtube-transcript.sh"
@@ -1290,6 +1295,9 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/ensure-reader-agent.sh", True),
         ("defaults/agents/reader/agent.json", True),
         ("scripts/reader-canary/run.sh", False),
+        ("scripts/ensure-study-panel.sh", True),
+        ("defaults/agents/study-panel/agent.json", True),
+        ("scripts/study-panel-canary/run.sh", False),
         ("scripts/ensure-fleet-gate.sh", True),
         ("scripts/ensure-dev-problem-block.sh", True),
         ("compose/openclaw-gateway/plugins/video-drop-door/index.js", True),
@@ -1760,3 +1768,73 @@ def test_reminder_bot_missing_image_goes_red_without_stopping_other_projects(
     # Everything after the reminder-bot step still ran.
     assert "builder-gc" in trace
     assert "✓ deploy complete." not in r.stdout
+
+
+STUDY_DOOR_PREFIX = "compose -p study-door --env-file {env} -f {fake}/compose/study-door/docker-compose.yml "
+STUDY_DOOR_ENV = (
+    "LIFEKIT_TELEGRAM_CHAT=123\nSTUDY_DOOR_TOKEN=t\nSTUDY_DOOR_EDGE_SECRET=e\n"
+)
+
+
+def study_door_calls(env, trace, fake):
+    prefix = STUDY_DOOR_PREFIX.format(env=env["ENV_FILE"], fake=fake)
+    return [line[len(prefix) :] for line in trace if line.startswith(prefix)]
+
+
+def targets_file(tmp_path):
+    return tmp_path / "repo/compose/observability/prometheus/study-door-targets.json"
+
+
+def test_study_door_is_declared_but_not_touched_until_both_secrets_are_rendered(
+    env, tmp_path
+):
+    # A stale targets file from an earlier run goes: a target for an absent
+    # door would fire target-down.
+    targets_file(tmp_path).parent.mkdir(parents=True)
+    targets_file(tmp_path).write_text("[]")
+    r, trace, fake = full_deploy(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert study_door_calls(env, trace, fake) == ["config --format json"]
+    assert "STUDY_DOOR_TOKEN / STUDY_DOOR_EDGE_SECRET are not both in" in r.stderr
+    assert not targets_file(tmp_path).exists()
+
+
+def test_study_door_with_only_one_secret_is_still_skipped(env, tmp_path):
+    r, trace, fake = full_deploy(
+        env, tmp_path, env_text="LIFEKIT_TELEGRAM_CHAT=123\nSTUDY_DOOR_TOKEN=t\n"
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert study_door_calls(env, trace, fake) == ["config --format json"]
+
+
+def test_study_door_comes_up_and_is_scraped_once_both_secrets_are_rendered(
+    env, tmp_path
+):
+    targets_file(tmp_path).parent.mkdir(parents=True)
+    r, trace, fake = full_deploy(env, tmp_path, env_text=STUDY_DOOR_ENV)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert study_door_calls(env, trace, fake) == [
+        "config --format json",
+        "up -d --build --wait --wait-timeout 120",
+    ]
+    assert json.loads(targets_file(tmp_path).read_text()) == [
+        {"targets": ["study-door:8098"]}
+    ]
+
+
+def test_study_door_that_does_not_come_up_goes_red_and_is_not_scraped(env, tmp_path):
+    targets_file(tmp_path).parent.mkdir(parents=True)
+    targets_file(tmp_path).write_text("[]")
+    failing = {**env, "PATH": f"{tmp_path}/failbin:{env['PATH']}"}
+    (tmp_path / "failbin").mkdir()
+    docker = tmp_path / "failbin/docker"
+    docker.write_text(
+        '#!/bin/sh\ncase "$*" in *"-p study-door"*" up "*) exit 1 ;; esac\n'
+        f'exec {tmp_path}/bin/docker "$@"\n'
+    )
+    docker.chmod(0o755)
+    r, trace, fake = full_deploy(failing, tmp_path, env_text=STUDY_DOOR_ENV)
+    assert r.returncode != 0
+    assert "study-door: project study-door did not come up healthy" in r.stderr
+    assert not targets_file(tmp_path).exists()
+    assert "builder-gc" in trace

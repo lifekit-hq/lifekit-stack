@@ -819,6 +819,18 @@ say "learnclaw contract and skill -> ${OPENCLAW_CONFIG_DIR}/agents/learnclaw/wor
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-learnclaw.sh" \
   || fail_later "learnclaw contract install failed (output above)"
 
+# ─── study-panel agent ───────────────────────────────────────────────────────
+#
+# The tool-less learning agent behind the browser study panel (compose/study-door/
+# calls it through the gateway). Its persona changes only through this repo: the
+# script writes the git contract (defaults/agents/study-panel/workspace) and
+# fails closed when the live entry is not the shipped tool cap. A box where the
+# operator has not applied the entry yet skips with a note (applying it stays an
+# operator step, docs/runbook.md "Study panel and study door").
+say "study-panel agent contract -> ${OPENCLAW_CONFIG_DIR}/agents/study-panel/workspace"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-study-panel.sh" \
+  || fail_later "study-panel agent install failed (output above)"
+
 # ─── Skill CLIs (workout-claw, life-state) ───────────────────────────────────
 #
 # Nothing to install in this script: workout-claw is baked into the gateway
