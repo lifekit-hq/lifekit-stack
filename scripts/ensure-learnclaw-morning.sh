@@ -6,9 +6,10 @@
 # Learning reaches the owner only from learnclaw (decision 2026-11-09), so Kit's
 # today-brief and evening-plan-note carry no learning line.
 #
-# The message is at most three lines: (1) today's one LearnHarness session or
+# The message is at most four lines: (1) today's one LearnHarness session or
 # goal and the gap it closes, (2) one practical output, (3) `mirror newest
-# session <date>`. Sunday is excluded by the schedule alone: this script
+# session <date>`, (4) the weekly count of LeetCode problems solved by hand
+# against the weekly target, e.g. `Mon 0/20`. Sunday is excluded by the schedule alone: this script
 # refuses any cron expression that can fire on Sunday.
 #
 # Read-only by construction: the turn reads the LearnHarness mirror
@@ -44,6 +45,9 @@
 # Env overrides:
 #   LEARNCLAW_MORNING_CRON   cron expression (default: "15 7 * * 1,2,3,4,5,6";
 #                            the check below refuses any that can fire on Sunday)
+#   LEARNCLAW_WEEKLY_TARGET  problems to solve by hand per week, Monday to Sunday
+#                            (default: 20, set by the owner for the week of 2026-11-23;
+#                            the one place the target lives, line 4 reads it from here)
 #   LEARNCLAW_MORNING_TZ     IANA tz (default: Europe/Dublin)
 #   LEARNCLAW_MORNING_MODEL  the job's model (default: the repo's cron model)
 #   LEARNCLAW_MORNING_CHAT   owner Telegram chat id for delivery and the failure
@@ -60,6 +64,7 @@ ACCOUNT=reading
 JOB_TOOLS="read"
 CRON_EXPR="${LEARNCLAW_MORNING_CRON:-15 7 * * 1,2,3,4,5,6}"
 CRON_TZ="${LEARNCLAW_MORNING_TZ:-Europe/Dublin}"
+WEEKLY_TARGET="${LEARNCLAW_WEEKLY_TARGET:-20}"
 ENV_FILE="${ENV_FILE:-/srv/lifekit-secrets/stack.env}"
 
 CHAT="${LEARNCLAW_MORNING_CHAT:-}"
@@ -71,6 +76,10 @@ if [ -z "$CHAT" ]; then
   echo "no owner chat id: set LEARNCLAW_MORNING_CHAT, or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE." >&2
   exit 1
 fi
+
+case "$WEEKLY_TARGET" in
+  '' | *[!0-9]* | 0*) echo "LEARNCLAW_WEEKLY_TARGET must be a positive whole number, got '$WEEKLY_TARGET'." >&2; exit 1 ;;
+esac
 
 # Refuse a schedule that can fire on Sunday, before touching the gateway.
 # Field 5 of the expression: a list of weekdays, 0-7 (0 and 7 are Sunday).
@@ -97,10 +106,11 @@ GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
 [ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 
 MESSAGE="Morning learning message for the owner. Read only: use the read tool, and only on the vault page /home/node/memory/domains/learning.md and the JSON files of the LearnHarness mirror under /home/node/.openclaw/agents/learnclaw/workspace/learnharness-mirror (the sessions and the knowledge graph). Read nothing else, write nothing anywhere, record no row, send nothing yourself, start no subagent, open no web page, run no command.
-Reply with at most 3 lines, plain text, no heading, no list marks, nothing before or after:
+Reply with at most 4 lines, plain text, no heading, no list marks, nothing before or after:
 Line 1: today's one LearnHarness session to open, or the one goal on the learning page to work on, and the gap it closes (what the record shows is shaky or missing), at most 200 characters.
 Line 2: one practical output the owner makes today, a single concrete thing, at most 200 characters.
 Line 3: mirror newest session <YYYY-MM-DD>, the date of the newest session in the mirror (write: mirror unreadable, if you cannot read it).
+Line 4: the weekly count of problems solved by hand, in the form <Mon|Tue|Wed|Thu|Fri|Sat> <count>/${WEEKLY_TARGET}, for example Mon 0/${WEEKLY_TARGET} or Wed 3/${WEEKLY_TARGET}. The weekday is today's, from the session clock. The count is read from the record table of /home/node/memory/domains/learning.md: for each topic of the form 'leetcode: <slug>' take only its latest row, and count that slug when its status is done and its date falls from this week's Monday up to and including today (the week runs Monday to Sunday, so on a Monday only a row dated today counts and the count starts again at 0 from the previous week's total; a done row dated an earlier week, an in progress row and a dropped row count nothing). Count whole slugs, never rows. Count nothing else (no LearnHarness session, no guess). A count of 0 is correct only when you read the table and found no such row. If you cannot read the table, or cannot tell today's date or any row's date, write instead: <weekday> count unreadable (target ${WEEKLY_TARGET}), and never write 0 then.
 Never teach, explain or quiz. If you cannot read the learning page or the mirror, say so in line 1 instead of guessing."
 
 # pick_json: first JSON object carrying the key (the CLI may interleave log lines).
@@ -139,7 +149,7 @@ if [ -z "$job_id" ]; then
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
     --display-name "Learnclaw morning learning message" \
-    --description "At most 3 lines at 07:15 Monday to Saturday in learnclaw's own Telegram chat: today's LearnHarness session or goal and its gap, one practical output, the mirror's newest session date. Read-only (LearnHarness mirror and domains/learning.md). Declared by scripts/ensure-learnclaw-morning.sh (source: lifekit-stack)." \
+    --description "At most 4 lines at 07:15 Monday to Saturday in learnclaw's own Telegram chat: today's LearnHarness session or goal and its gap, one practical output, the mirror's newest session date, the week's count of problems solved by hand against the weekly target. Read-only (LearnHarness mirror and domains/learning.md). Declared by scripts/ensure-learnclaw-morning.sh (source: lifekit-stack)." \
     --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
     --agent "$AGENT" --session isolated \
     --message "$MESSAGE" --model "$MODEL" --tools "$JOB_TOOLS" --light-context \

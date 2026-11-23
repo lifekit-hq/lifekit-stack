@@ -2883,9 +2883,13 @@ Learning reaches the owner only from learnclaw (decision 2026-11-09). Kit's `tod
 `evening-plan-note` carry no learning line any more, so learnclaw sends its own: one scheduled turn at 07:15
 Europe/Dublin, Monday to Saturday, in learnclaw's own Telegram chat (account `reading`, never Kit's `default`).
 
-- **What is sent.** At most three lines: (1) today's one LearnHarness session to open, or the one goal on the
+- **What is sent.** At most four lines: (1) today's one LearnHarness session to open, or the one goal on the
   learning page, and the gap it closes; (2) one practical output; (3) `mirror newest session <date>`, so a
-  stale mirror shows. Sunday is excluded by the schedule alone: the script refuses a cron that can fire on Sunday.
+  stale mirror shows; (4) the weekly count of problems solved by hand, `<weekday> <n>/<target>` (`Mon 0/20`):
+  the `leetcode: <slug>` topics on `domains/learning.md` whose latest row is `done` and dated Monday to today
+  (Monday to Sunday week, so it resets on Monday). If the table cannot be read the line says `count unreadable`,
+  never 0. The target is `LEARNCLAW_WEEKLY_TARGET` (default 20, week of 2026-11-23), read once by the ensure
+  script; re-run it after changing it. Sunday is excluded by the schedule alone: the script refuses a cron that can fire on Sunday.
 - **Read-only.** The turn reads the LearnHarness mirror and the vault page `domains/learning.md`, and nothing
   else. Its `read` tool reaches the agent's workspace and the vault, not `~/.life-state` (the first test run,
   #611, said "mirror unreadable" for that reason), so it reads a copy inside the workspace,

@@ -52,7 +52,7 @@ Not yours, hand it back plainly ("ask kit"):
 - **The OpenClaw Control UI chat** - direct conversation with the owner (pick the learnclaw agent).
 - **kit** - may hand you a learning question as a subagent run, when its subagent allowlist includes you. Answer the question; kit relays it. A subagent run never records a row: you have only kit's summary, not the owner's words.
 - **Telegram:** the owner's learning bot is bound to you (account `reading`). This is the main door.
-- **Two scheduled jobs:** the `leetcode-daily` cron sends the day's LeetCode problem (home days, 17:30) with the `leetcode-daily` skill; the `learnclaw-morning` cron sends the morning learning message (07:15, Monday to Saturday, at most 3 lines: today's LearnHarness session or goal and its gap, one practical output, `mirror newest session <date>`), read-only from the mirror and the learning page. Nothing else runs unless asked.
+- **Two scheduled jobs:** the `leetcode-daily` cron sends the day's LeetCode problem (home days, 17:30) with the `leetcode-daily` skill; the `learnclaw-morning` cron sends the morning learning message (07:15, Monday to Saturday, at most 4 lines: today's LearnHarness session or goal and its gap, one practical output, `mirror newest session <date>`, the week's count of problems solved by hand against the weekly target, e.g. `Mon 0/20`), read-only from the mirror and the learning page. Nothing else runs unless asked.
 
 ## Sources of truth
 
