@@ -1,10 +1,9 @@
 /**
- * The only thing that talks to the OpenClaw gateway. The model, the one tool and the pinned tool_choice
- * are fixed here; nothing the panel sends reaches them. The door never sets x-openclaw-model (that needs
- * operator.admin) and holds the edge's own secret, not the gateway token.
+ * The only thing that talks to the OpenClaw gateway. The model and `tool_choice: "none"` are fixed here and
+ * the request carries no tools; nothing the panel sends reaches them. The agent answers as text (one JSON
+ * object) and schema.js parses it. The door never sets x-openclaw-model (that needs operator.admin) and
+ * holds the edge's own secret, not the gateway token.
  */
-
-import { REPLY_TOOL } from "./schema.js";
 
 export const AGENT_MODEL = "openclaw/study-panel";
 
@@ -22,25 +21,17 @@ export function turnRequest(prompt, sessionKey) {
     user: sessionKey,
     stream: false,
     messages: [{ role: "user", content: prompt }],
-    tools: [REPLY_TOOL],
-    tool_choice: { type: "function", function: { name: "reply" } },
+    tool_choice: "none",
   };
 }
 
-/** Pulls the reply call's arguments out of a chat-completions answer. */
-export function replyArguments(answer) {
+/** Pulls the model's text out of a chat-completions answer: a finished turn with no tool call. */
+export function replyText(answer) {
   const choice = answer?.choices?.[0];
-  const calls = choice?.message?.tool_calls;
-  if (choice?.finish_reason !== "tool_calls" || !Array.isArray(calls) || calls.length !== 1) {
-    throw new UpstreamError("no_tool_call");
-  }
-  const fn = calls[0]?.function;
-  if (fn?.name !== "reply" || typeof fn.arguments !== "string") throw new UpstreamError("wrong_tool");
-  try {
-    return JSON.parse(fn.arguments);
-  } catch {
-    throw new UpstreamError("arguments_not_json");
-  }
+  const message = choice?.message;
+  if (choice?.finish_reason !== "stop" || message?.tool_calls?.length) throw new UpstreamError("no_text_reply");
+  if (typeof message?.content !== "string") throw new UpstreamError("no_text_reply");
+  return message.content;
 }
 
 export function createGateway({ baseUrl, secret, fetchImpl = fetch, timeoutMs = 90_000 }) {
@@ -65,7 +56,7 @@ export function createGateway({ baseUrl, secret, fetchImpl = fetch, timeoutMs = 
       } catch {
         throw new UpstreamError("answer_not_json");
       }
-      return replyArguments(answer);
+      return replyText(answer);
     },
     /** Cheap authenticated probe: the models list answers only a caller the gateway accepts. */
     async probe() {

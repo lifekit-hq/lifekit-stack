@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# The study-panel canary: does the tool-less study-panel cap hold, and does the one
-# client function the study door sends still work with it?
+# The study-panel canary: does the tool-less study-panel cap hold, and does the
+# JSON-text request the study door sends still work with it?
 #
 # Two stages in one throwaway container from the gateway image (container-run.sh): a
 # real local turn (`openclaw agent --local --agent study-panel`) against a mock model
 # that obeys an injection-bearing page and calls every tool it can think of, and the
-# gateway's own /v1/chat/completions with the door's request (one function, `reply`,
-# pinned). The real claude binary is pointed at the mock model API. The entry applied is
+# gateway's own /v1/chat/completions with the door's request (no tools, tool_choice
+# none; the model answers one JSON object as text). The real claude binary is pointed at the mock model API. The entry applied is
 # the shipped defaults/agents/study-panel/agent.json. The container has no network, no
 # secrets and no live state. verdict.py reads back what was offered and what each call
 # got.
 #
 #   scripts/study-panel-canary/run.sh [image]     (default: lifekit-openclaw:local)
-# Exit 0 when the cap held and the reply came back as a structured call; 77 when docker
+# Exit 0 when the cap held and the reply came back as the JSON text; 77 when docker
 # or the image is missing (a skip, not a pass); 1 otherwise.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"

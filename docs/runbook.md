@@ -5484,16 +5484,3098 @@ asks the owner one small question at a time. It has two server-side pieces:
   (`defaults/agents/study-panel/`): `tools.allow` is empty and the deny list
   covers files, web, sessions, memory, messaging, nodes, agents, exec and the
   MCP servers; it has no skills and no channel. It never writes the owner's
-  code and offers no solution. Its one way to answer is a client function the
-  caller supplies, `reply`.
+  code and offers no solution. It answers with exactly one JSON object as text.
 - **The door** (`compose/study-door/`, compose project `study-door`, container
   `study-door-study-door-1`, port 8098): one `POST /v1/turn` in, one gated reply
   out. It asks the gateway's OpenAI-compatible API (`/v1/chat/completions`,
-  model `openclaw/study-panel`, a single `reply` function, `tool_choice`
-  pinned to it), then checks the answer before the panel sees it: a closed
+  model `openclaw/study-panel`, no tools, `tool_choice: "none"`), parses the
+  answer as one JSON object (prose around it, a code fence or a second object is
+  a reject), then checks it before the panel sees it: a closed
   schema (no code field, 280 characters of text, at most four tap options), a
   code gate (a fenced block, `<pre>`, a statement shape, or a 12-token run
-  copied from the owner's code becomes a fixed fallback reply), and an HTML
+  copied from the owner's code, or an answer that is not one JSON object,
+  becomes a fixed fallback reply), and an HTML
+  sanitiser for the small SVG/HTML visual (no script, link, image, form,
+  frame, event handler or external `url()`). The door never logs request or
+  reply bodies: a turn logs sizes, a hash, the outcome and the reject reason.
+  Raw model replies (never the page or the owner's request) go to an audit
+  spool (`study-door-spool` volume, mode 700/600) so a rejected answer can be
+  read. A rejected reply (`copies_owner_code`, `fenced_code`) can itself hold
+  owner code or a solution, which is why the spool stays private.
+
+Path: extension → `https://<host>.<tailnet>.ts.net:8098` (Tailscale Serve,
+tailnet only) → edge entrypoint `study-door`, `127.0.0.1:18895`
+(`compose/edge/traefik/study-door.yml`, `POST`/`OPTIONS` on `/v1/turn` only,
+every other path a 404) → the door → the edge's internal entrypoint
+(`openclaw-edge:18893`) with `STUDY_DOOR_EDGE_SECRET` as the bearer → the
+gateway, as the fixed identity `service:study-door` capped at `operator.write`.
+The door checks its own bearer (`STUDY_DOOR_TOKEN`), the extension's Origin and
+a per-minute rate limit (`STUDY_DOOR_RATE_PER_MIN`, default 20); the panel
+cannot name an agent, a model, a tool or a session.
+
+**Off until the owner turns it on.** Merging changes nothing for the door:
+`deploy.sh` brings the project up only once `STUDY_DOOR_TOKEN` and
+`STUDY_DOOR_EDGE_SECRET` are both in the rendered env file, and warns and
+skips otherwise (the wger pattern). The agent entry is host state and the
+deploy only reports it missing (`scripts/ensure-study-panel.sh`). The edge's
+new route, entrypoint and published loopback port do go live on the merge
+deploy (the edge is recreated); with the door off they answer 502 and nothing
+else changes. Prometheus scrapes the door through a `file_sd` targets file the
+deploy writes only while the door runs, so an absent door never fires
+`target-down`.
+
+**Operator steps (once; commands only, values never in git).** On the VPS as
+`lifekit` in `/srv/lifekit-stack`, gateway container
+`openclaw-openclaw-gateway-1`. **Prerequisite: the OpenClaw trusted-proxy
+cutover has run** ("OpenClaw behind the sign-in gate",
+`scripts/openclaw-sso.sh`). The door's bearer is `STUDY_DOOR_EDGE_SECRET`, not
+the gateway token, so a gateway still in token mode answers 401 and the door
+stays not ready; step 3 also needs `gateway.auth.trustedProxy.allowUsers` to
+exist.
+
+1. Prove the cap on this box. It must end with `study-panel canary passed`
+   (needs Docker and the `lifekit-openclaw:local` image; exit 77 means neither,
+   which is a skip, not a pass):
+
+   ```bash
+   CANARY_OUT=/tmp/study-panel-canary scripts/study-panel-canary/run.sh
+   ```
+
+   Stage one is a real local turn against a mock model that obeys an injected
+   page and calls every tool it knows: the model must be offered no tool and
+   every denied call must be refused with no effect. Stage two sends the door's
+   exact request (no tools, `tool_choice: "none"`) to the gateway's
+   `/v1/chat/completions`; the mock model answers one JSON object as text, and
+   the verdict requires no tool offered to the model, `finish_reason: "stop"` and
+   message content that parses to the mock's object. If it fails, read
+   `$CANARY_OUT` and do not go on.
+
+2. Apply the agent entry (host state, merged into the live config):
+   `docker exec -i openclaw-openclaw-gateway-1 openclaw config patch --stdin < defaults/agents/reader/agent.json`.
+   Read the apply hint it prints: restart the gateway only if it says the keys need it.
+3. `scripts/ensure-reader-agent.sh` (the deploy runs it too): installs the contract into
+   `/srv/openclaw/config/agents/reader/workspace`, allowlists the door script, and ends with
+   `reader agent verified` only when the live entry equals the shipped one, nothing is bound to the
+   reader, `tools.agentToAgent` is off and the reader's allowlist is exactly the door script.
+4. `scripts/ensure-doc-door.sh`: installs the skill into the reader's workspace and moves the
+   `doc-door` job to the reader. Then `scripts/ensure-needs-you-digest.sh`: moves
+   `needs-you-mail-reader` to the reader (the digest stays on Kit; it is not run by the deploy). Each
+   exits 1 if the live row's `agentId`, `toolsAllow` or delivery differs.
+5. Verify the move: `openclaw agents list --bindings` (reader, `bindings: 0`);
+   `openclaw cron list --all --json` - `doc-door` and `needs-you-mail-reader` show `agentId: reader`
+   and `payload.toolsAllow` `exec` / the two Gmail reads; `openclaw approvals get --json` - the
+   reader's allowlist is the door path and nothing else.
+6. Run both jobs once: `openclaw cron run <id> --expect-final --json`. `doc-door` ends `No new documents.`
+   or a report; `needs-you-mail-reader` replies between its markers, and `openclaw cron runs <id>
+   --limit 1 --sort desc --json` shows the reply and an `ok` status. A run that fails with a refused
+   tool (not a Google error) means the prompt asked for a tool the reader does not hold: fix the prompt, not the cap.
+
+**Rollback.** The deploy re-runs `ensure-doc-door.sh` on every OpenClaw-path merge, and it moves the job
+to the reader whenever the reader entry is applied and verified, so `DOC_DOOR_AGENT=kit` alone does not
+last: the next deploy undoes it. To keep the jobs on Kit, retire the reader first:
+
+1. `openclaw agents delete reader`, then remove its allowlist rows with
+   `openclaw approvals allowlist remove --agent reader <path>`. With no entry the deploy leaves both
+   jobs wherever they are.
+2. Move the jobs back: `DOC_DOOR_AGENT=kit scripts/ensure-doc-door.sh` and
+   `NEEDS_YOU_READER_AGENT=kit scripts/ensure-needs-you-digest.sh` (Kit's copy of the door skill is
+   installed by `ensure-doc-door.sh` on that run; both scripts also clear the reader-era `--trigger-script` from a
+   row that now runs as Kit, since the gate reads the reader's state). `ensure-needs-you-digest.sh` is not run by the deploy,
+   so its move stays; the `doc-door` move stays only while the reader entry is absent.
+
+The env overrides alone are a one-off for testing: the next deploy puts `doc-door` back on the reader.
+
+### Document door
+
+New document attachments in the owner's mailbox become one short cited report each, with no step
+for the owner. `skills/doc-door` (`door.py`, stdlib only) is run by the `doc-door` cron job
+(`scripts/ensure-doc-door.sh`, declared on every deploy; 07:20, 13:20 and 19:20 Dublin): `scan`
+speaks MCP to `google-workspace-mcp` (Kit's connector) itself for mail, and to
+`google-workspace-mcp-fleet` (the fleet's own Google identity) for Drive, and calls only `search_gmail_messages`,
+`get_gmail_message_content` and `get_gmail_attachment_content` (PDF, DOCX, XLSX and PPTX of
+4 KiB to 15 MiB, mail from the last 3 days), converts each new attachment with MarkItDown, and
+prints it with numbered lines for the reader agent to read (Kit's, until the reader is applied: "Reader agent"). The agent files the report with `door.py report`, which
+accepts it only when it has a title, a Drive subject folder, an owner vault page, a one-line page
+proposal and 3 to 5 facts, each with a quote that is on the cited line, and nothing
+identifier-shaped (number runs, IBANs, e-mail addresses, PPS numbers). It then appends one
+`bin/log.sh` line (pointer only: title, folder, page, report id) to the vault; a failed append is
+retried by the next scan. The page edit stays a proposal in the report.
+
+- **State is private and outside the vault:** `/var/lib/lifekit/doc-door/` on the host (mode
+  700): `state.json` (one record per attachment content hash, so a re-sent file and a re-run are
+  no-ops), `documents/` (the file and its converted text, a reading cache, never cited),
+  `reports/`, and `venv/` (the job's own MarkItDown, pinned in `ensure-doc-door.sh`; bump the
+  literal to upgrade).
+- **Fail-closed:** the job's tool allow-list is exactly `exec`, it runs as the `reader` agent and it delivers nothing; the
+  script exits 1 if the live row differs. A failed run alerts the owner through the `default`
+  Telegram account, like the needs-you digest.
+- **Filing into Drive.** After a report is accepted, `door.py` files the original: it finds the
+  report's subject folder under the Drive root of the fleet account, or of the folder named by
+  `DOC_DOOR_DRIVE_PARENT_ID` when the owner has shared one (`search_drive_files`), creates it if absent
+  (`create_drive_folder`), lists the folder (`list_drive_items`) and uploads the bytes with
+  `create_drive_file` (`base64_content` with the `content_mime_type` the server requires beside it,
+  plus `base64_sha256`), under the original name, or suffixed with a short content hash when that name is taken, so nothing is overwritten. The Drive file id
+  goes in the report's `Drive:` line and the private state, never in the vault log. One upload per
+  content hash. Any Drive error (token without the Drive scope, size, server) leaves
+  `Drive: pending (<short reason>)` and the next scan retries; it never fails the scan. All of these
+  calls go to `google-workspace-mcp-fleet` (`DOC_DOOR_DRIVE_MCP_URL`); Kit's connector is
+  read-only for Drive. These are the only Drive tools the door may call (`ALLOWED_TOOLS`, enforced
+  in `Mcp.call`), and the fleet connector blocks every other Drive write by name
+  (`docs/google-mcp-setup.md`, "The fleet connector"). A folder id the door cached from another
+  Drive is never reused: the cache is keyed by connector and parent. Each create logs
+  `[create_drive_file]` / `[create_drive_folder]`; the `agent-drive-created` rule
+  (`rules-agent-drive.yml`) raises a warning for it, not a page (only critical routes to the
+  phone), and `poll_alerts` does not read that file. Until the fleet account's one-time sign-in is in
+  (an owner step, `docs/google-mcp-setup.md`, "The fleet connector") every report stays
+  `Drive: pending (...)`; filing before 2026-11-08 went to the owner's Drive through Kit's
+  connector and those originals stay where they are.
+- **Report copies.** The accepted report itself is also copied into Drive, by rclone under a
+  consent of its own that holds `drive.file` only ("Report copies in Drive (rclone)" below). Off
+  until that consent is in; the fleet connector and Kit's connector are not involved.
+- **Not a queue job:** a mailbox scan and a MarkItDown conversion fit one cron tick. If either
+  proves slow, move conversion to the shared job queue then.
+- **Files handed to an agent in chat** (the second source) and a Drive `Inbox` folder (the third)
+  are not built; the video drop door's plugin shape is the model for the first.
+
+### Report copies in Drive (rclone)
+
+The document door files its cited report, not only the original, into Google Drive. A small
+rclone-based uploader (`skills/doc-door/drive_upload.py`, stdlib Python around a pinned rclone) does
+it under an OAuth consent of its own that holds the **`drive.file`** scope and nothing else. Under
+that scope Google shows the app only files it created itself, so the uploader sees one folder,
+`Document door reports` (made on first use, one subfolder per report `Folder:`), and nothing else in
+the account. The Workspace connectors stay as they are: Kit's is read-only for Drive; the fleet
+connector keeps filing originals (`docs/google-mcp-setup.md`, "The fleet connector"). Moving the
+originals onto this narrower consent as well, and then taking the fleet connector down to
+`drive:readonly`, is a separate change.
+
+- **Wiring.** `door.py` calls the uploader after a report is accepted (`report`) and again on every
+  scan for a report not yet copied (up to 5 per pass). The file is `<Title> [<8-char content
+  hash>].md` under `Document door reports/<Folder>/`, the report as stored in
+  `/var/lib/lifekit/doc-door/reports/`, so it carries the cited facts and the proposal and nothing
+  else. `report` prints `Report copy: filed in <path>` or `Report copy: pending (<reason>)`; a
+  failure never fails the scan. With no config the door prints no such line and attempts nothing.
+  Reports filed before the consent are copied by the first scans after it.
+- **rclone.** Pinned in `drive_upload.py` (the same version and sha256 as the off-box backup's;
+  bump both installers together), downloaded and checked by `scripts/ensure-doc-door.sh` on every deploy
+  into the job's state dir (`/var/lib/lifekit/doc-door/bin/`, not the image). Every call passes an
+  explicit `--config` and `--drive-scope drive.file`, a minimal environment and no `-v`
+  (debug logging prints credentials).
+- **Where the secret lives.** `/srv/lifekit-secrets/doc-door-drive/rclone.conf` on the host, mode
+  0600, in a 0700 folder owned by the gateway's uid, mounted read-write at
+  `/run/lifekit/doc-door-drive` (read-write because rclone saves the refreshed access token
+  beside the config). It holds the OAuth client id and secret and the refresh token; it is never
+  in git, a log, a PR or a chat, and `configure` and `verify` print none of it. Any process in the
+  gateway container can read it, which is why the scope is the guard: the token reaches only files
+  this client created.
+
+**One-time consent.** Run it right after the fleet account's sign-in
+(`docs/google-mcp-setup.md`, "The fleet connector", step 6), in the same browser session, so there is
+one sitting. Who takes the sign-in and the consent click, and where, is in that section; nothing here scripts either.
+
+1. **OAuth client (Google Cloud console, the fleet's project).** *Google Auth Platform → Clients →
+   Create client → Desktop app*, name `doc-door-uploader`. *Data access → Add or remove scopes*:
+   only `.../auth/drive.file`. The consent screen is already *In production* (the fleet connector
+   needs that too), so the refresh token does not expire after 7 days. Keep the client id and
+   secret to hand for step 3.
+2. **Host folder (`denys`, sudo), before or after the deploy that merged the mount:**
+
+   ```bash
+   sudo install -d -m 0700 -o lifekit -g lifekit /srv/lifekit-secrets/doc-door-drive
+   ```
+
+   If the deploy ran first, Docker made the folder root-owned; the same command fixes it in place
+   and the running container sees the change, no recreate.
+3. **Consent (the PC, in the browser signed in as the fleet account).** Needs rclone on that machine (any current release):
+
+   ```bash
+   RCLONE_DRIVE_SCOPE=drive.file rclone authorize drive "<client id>" "<client secret>" --auth-no-open-browser
+   ```
+
+   It prints one link, `http://127.0.0.1:53682/auth?state=...`. Open it in that browser. Google's
+   consent page must ask for exactly one permission, "See, edit, create, and delete only the
+   specific Google Drive files you use with this app"; if it lists anything wider, click Cancel
+   and stop. After *Allow*, rclone prints the token between `--->` and `<---End paste`. Leave that
+   terminal open for step 4; the output is a credential, so no screenshot and no chat.
+4. **Install it (the VPS, as `lifekit`).** The paths below are the reader agent's workspace; while
+   the job is still on Kit ("Reader agent"), use `agents/kit` instead.
+
+   ```bash
+   G=$(docker ps -q --filter label=com.docker.compose.project=openclaw --filter label=com.docker.compose.service=openclaw-gateway)
+   docker exec -it "$G" python3 /home/node/.openclaw/agents/reader/workspace/skills/doc-door/drive_upload.py configure
+   ```
+
+   It asks for the client id, then the client secret (hidden), then the pasted token block
+   (hidden), and writes `rclone.conf` (0600). It refuses to replace an existing config without
+   `--force`.
+5. **Verify.**
+
+   ```bash
+   docker exec "$G" python3 /home/node/.openclaw/agents/reader/workspace/skills/doc-door/drive_upload.py verify
+   ```
+
+   `VERIFY OK` means all of: the config is mode 0600 and asks for `drive.file`; **Google itself
+   reports the live token's scope as exactly `drive.file`** (tokeninfo, and that it was issued to the
+   config's client); the uploader created one test file in its own folder
+   (`Document door reports/_verify/`), read it back byte for byte and removed it; the account root
+   shows only `Document door reports` (a `drive.file` token sees nothing else); and Kit's
+   connector offers no Drive write tool (below). Any `FAIL` line names the cause; the exit code is 1.
+   `verify uploader` and `verify kit` run one half.
+6. The next scan copies the pending reports; `docker exec "$G" python3 .../drive_upload.py status`
+   shows the install, and a report's `Report copy:` line shows the result.
+
+**Drive narrowing check for Kit's connector.** `verify kit` (also part of the bare `verify`) asks
+Kit's connector, over MCP, which tools it offers: it fails if any Drive create, update, delete,
+share, copy, move or import tool (the sharing-link tool `get_drive_shareable_link` included) is
+among them, or if no Drive tool is offered at all (the level cannot then be shown). The server
+still lists `get_drive_shareable_link` at `drive:readonly`, so Kit's compose service blocks it by
+name in `WORKSPACE_MCP_DISABLED_TOOLS`. The compose file's `drive:readonly` literal is held by
+`scripts/tests/test_doc_door_drive.py`; the container log check in `docs/google-mcp-setup.md`
+("Verify Kit's connector is narrowed") is the third leg.
+
+**Rehearsal without Google.** `DOC_DOOR_RCLONE_REMOTE` swaps Drive for any rclone remote, a local
+folder for a rehearsal; the config is not needed and `verify` says plainly that it did not check
+the token's scope.
+
+```bash
+docker exec -e DOC_DOOR_RCLONE_REMOTE=':local:/tmp/doc-door-rehearsal/' "$G" \
+  python3 /home/node/.openclaw/agents/reader/workspace/skills/doc-door/drive_upload.py verify uploader
+```
+
+CI covers the door-to-uploader handoff the same way, with no Google and no secret
+(`scripts/tests/test_doc_door_drive.py`): a stub rclone maps the Drive remote to a folder and
+logs each call; the tests check the file lands in the right subfolder, that every call carries the
+config and `drive.file`, that a failure leaves the copy pending and a later scan files it once,
+and that no credential is printed. Where a real rclone is installed the same handoff also runs
+against it on a local remote.
+
+**Notes.**
+
+- `drive.file` visibility is per OAuth client. If the client is ever replaced, the new one cannot
+  see the old folder and makes a new `Document door reports`; the old files stay where they are.
+- Revoke: remove the app on the fleet account's *Third-party apps with account access* page,
+  `sudo rm /srv/lifekit-secrets/doc-door-drive/rclone.conf`, and delete the `doc-door-uploader`
+  client in the Cloud project. Reports then stay `Report copy: pending` and no scan fails. Files
+  already created stay in Drive until the owner deletes them.
+- A token that stops working (`invalid_grant`, a revoked app) shows as `pending (...)` in the
+  report line; redo steps 3 and 4 with `--force`.
+
+### learnclaw (the learning loop)
+
+learnclaw is the domain agent for the learning loop. It owns the artefact record on the vault's
+`domains/learning.md`, a table with one row per artefact step. For each topic the loop is:
+predict before reading, read, build one from-scratch artefact, apply it in a real project, post
+about it, and get grilled. learnclaw reviews the artefact and grills the owner on it, but never
+writes the artefact. "Where am I" is computed from the rows each time it is asked: the last
+artefact, checkpoints met (an artefact row dated by the checkpoint), due or missed, and what
+each open topic still lacks. Nothing stores that state separately. Other agents only read the page.
+
+- **Contract:** `defaults/agents/learnclaw/workspace/` (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`,
+  `skills/README.md`). Change the persona here; the deploy overwrites the live files.
+- **LearnHarness (adopted 2026-11-09):** the owner learns in the LearnHarness desktop app on the
+  PC, which teaches and keeps the learning record; learnclaw reads that record and never teaches.
+  - `scripts/ensure-learnclaw.sh` fetches LearnHarness's own `learnharness` skill from upstream at
+    a pinned commit (`LH_SKILL_COMMIT`), checks each file against its sha256 manifest and installs
+    it unedited into the workspace; a failed fetch or checksum keeps the installed copy.
+  - `scripts/learnharness-sync/` pulls the record (`chats/`, `graph/`, `jobs/` only, never
+    `settings.json` or keys) every 10 minutes into `/var/lib/lifekit/learnharness/data`, the
+    gateway's `~/.life-state/learnharness/data`. The PC side is one `authorized_keys` line,
+    `rrsync -ro` on the LearnHarness data folder, tailnet only, which the installer prints. The PC
+    off is ssh exit 255, which the unit treats as success. After each pull it also refreshes a copy in
+    learnclaw's workspace for the morning job (see "Learnclaw morning learning message"). Install once per host, as the admin
+    account: `LH_SYNC_HOST=<PC tailnet name> LH_SYNC_USER=<PC account>
+    scripts/learnharness-sync/install-learnharness-sync.sh`; check with
+    `systemctl status learnharness-sync.service`.
+  - learnclaw's Telegram door is the `reading` account, its own bot (token `LEARNING_BOT_TOKEN`).
+    It was disabled by [OpenClaw audit bundle A](#openclaw-audit-bundle-a-2026-11-lifekit-stack530)
+    and is enabled again for the daily problem (see "Daily LeetCode problem"); until an operator
+    has applied that, it answers through Kit and the Control UI chat. Its allowlist `agents.entries.learnclaw.skills` is
+    `["learning-record", "learnharness", "leetcode-daily"]` (host state).
+- **Skill:** `skills/learning-record` (`record.py`, stdlib only).
+  - `record.py status` prints the projections. A row whose date is not a real calendar date is
+    reported on its own line, not counted, and does not stop the report.
+  - `record.py append --topic ... --artefact ...` adds one row at the end of the table and bumps
+    the page's `updatedAt`. It then runs the vault's own `bin/lint.sh --changed --tsv`. On any
+    high or medium finding for the page it puts the page back byte for byte and exits 1.
+  - A bad row (a pipe in a cell, a date that is not a real calendar date, `done` without the
+    application, post and grilling)
+    exits 2 and writes nothing. It never commits: memory-sync does.
+  - Rows are append-only; a correction is a new row, and a topic's latest row is its state.
+- **Install:** the deploy. The post-up phase runs `scripts/ensure-learnclaw.sh`. It copies the
+  contract and the skill into the learnclaw workspace and reports, read-only, whether
+  `learning-record` is on the agent's skill allowlist. A box without the workspace skips with a
+  note. `install-workspace-pointers.sh` and the openclaw-config mirror include learnclaw too.
+- **How it is invoked:**
+  - The owner's own chat with learnclaw: the OpenClaw Control UI, or the `reading` Telegram bot once
+    enabled. These are the only routes that record a row, since a row holds the owner's own words.
+  - kit, as a subagent run, once `learnclaw` is in kit's `subagents.allowAgents`. kit relays the
+    answer, and a subagent run never records. (The daily `evening-plan-note` learning-line run is
+    superseded, see "Learning objective line from learnclaw".)
+  - learnclaw's two crons are `leetcode-daily` (see "Daily LeetCode problem") and `learnclaw-morning` (see
+    "Learnclaw morning learning message"); apart from those, nothing runs unless asked.
+- **Cost:** a run is one Sonnet 4.6 conversation turn on the gateway's subscription. Measured on
+  comparable career runs, that is about 50k tokens, mostly cache reads: roughly $0.10-0.20 at list
+  prices. Only the `leetcode-daily` cron (four home days a week) and the `learnclaw-morning` cron (Monday to Saturday) schedule one.
+
+**Operator steps (once, after the merge deploys).** The agent entry is host state.
+
+```bash
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+# 1. Create the agent (no --bind: it has no Telegram account).
+docker exec "$G" openclaw agents add learnclaw \
+  --workspace /home/node/.openclaw/agents/learnclaw/workspace \
+  --agent-dir /home/node/.openclaw/agents/learnclaw/agent \
+  --model anthropic/claude-sonnet-5-5 --non-interactive --json
+# 2. As lifekit: install the contract and the skill, drop the bootstrap stub.
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-learnclaw.sh
+sudo -u lifekit rm -f /srv/openclaw/config/agents/learnclaw/workspace/BOOTSTRAP.md
+# 3. The entry: identity, description, the skill allowlist, the coding tool profile.
+cat > /tmp/learnclaw.patch.json <<'JSON'
+{"agents":{"entries":{"learnclaw":{"name":"Learnclaw","description":"The learning loop: the artefact record on the vault's learning page, predict-read-build-apply-post, the grilling.","identity":{"name":"Learnclaw","theme":"learning familiar - exacting, patient, brief","emoji":"📚"},"skills":["learning-record"],"tools":{"profile":"coding"}}}}}
+JSON
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/learnclaw.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/learnclaw.patch.json
+# 4. Let kit hand it learning questions (the live list plus learnclaw).
+docker exec "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const a=((c.agents.entries.kit.subagents||{}).allowAgents||[]).slice();if(!a.includes("learnclaw"))a.push("learnclaw");process.stdout.write(JSON.stringify({agents:{entries:{kit:{subagents:{allowAgents:a}}}}}))' > /tmp/kit-allow.patch.json
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/kit-allow.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/kit-allow.patch.json
+rm /tmp/learnclaw.patch.json /tmp/kit-allow.patch.json
+```
+
+5. Kit's live `AGENTS.md`: hand-merge the "Learning" section from
+   `defaults/agents/kit/workspace/AGENTS.md` (kit's contract is copied by hand).
+6. **Rehearsal:** one run that appends one row the vault lint accepts. Use a row the page already
+   states as fact, for example the open topic with no artefact yet and status `in progress`:
+   `docker exec "$G" openclaw agent --agent learnclaw --message "Record this row: <the owner's
+   words>" --json`. The reply's usage block gives the run's real token cost.
+
+**Verify:** `openclaw agents list` shows `learnclaw`. `openclaw skills --agent learnclaw list`
+shows `learning-record` ready. The rehearsal printed `recorded: | <date> | ...`, and on the host
+`sh bin/lint.sh --changed` in `/srv/memory` has no high or medium finding on
+`domains/learning.md`. `ensure-learnclaw.sh` prints `allowlist: 'learning-record' is on agent
+'learnclaw''s skills list`.
+
+**Pause** (the agent and its record stay): take `learnclaw` out of kit's
+`subagents.allowAgents`, and patch `{"agents":{"entries":{"learnclaw":{"skills":[]}}}}`. The
+agent can still talk, but it can no longer read or write the record, and kit no longer reaches it.
+The 21:00 plan run then writes "Learning objective unavailable (learnclaw)". Resume by re-applying steps 3 and 4.
+
+**Retire / roll back:** `openclaw agents delete learnclaw` (it removes the entry and its
+bindings). Then revert kit's `allowAgents` and the live kit "Learning" section,
+and revert the PR so the deploy stops installing the contract. Rows already on the learning page
+stay; they are the owner's record.
+
+### Daily LeetCode problem (learnclaw, #594)
+
+learnclaw sends the owner one LeetCode problem a day, chosen by pattern, in its own Telegram chat, so the
+weekly by-hand problem count (the number behind the two interview loops by 2027-02-17) has a daily prompt.
+Kit's Sunday 18:00 `goal-weekly-checkin` reads that count from learnclaw instead of asking.
+
+- **What is sent.** Name and link, two lines, nothing else: no pattern name, no hint, no solution. At most
+  one a day, on home days only: Monday, Wednesday, Friday and Saturday. Tuesday and Thursday are office
+  days and Sunday is rest: no message. The slot is the home-day 17:30 interview-problem slot, Europe/Dublin.
+- **The list.** `skills/leetcode-daily/problems.json`, curated and in git: patterns in Track A order of the
+  vault's `domains/learning.md` (A1 Big-O, which has no problems to send, then hash maps, two pointers and
+  sliding window, stacks and monotonic stack, binary search, linked lists, trees, heaps, graphs, intervals
+  and greedy, backtracking, DP 1-D then 2-D, tries and union-find), problems in order inside a pattern. Pure
+  basics and problems with no clear pattern are left out. Edit the list here, then
+  `python3 skills/leetcode-daily/daily.py check`; the deploy installs it.
+- **The pick.** `daily.py next --record` (`skills/leetcode-daily/daily.py`, stdlib only) takes the first
+  problem with no row in the record, so a done, a skipped or an already offered problem never comes back: one
+  pattern at a time, in order. It decides the day itself: on Tuesday, Thursday or Sunday it prints
+  `SKIP office day (Tuesday)` (or the Thursday / rest-day line) and records nothing, whatever fired it. A
+  second call on the same day prints `SKIP offered today`. The unattempted problem stays offered; the next
+  send is the next problem.
+  The offered row is recorded when the problem is picked, before delivery, so a send that fails (or an
+  unechoed reply) skips that problem for the day and it does not come back.
+- **The record: no second store.** Each step is one `leetcode: <slug>` row in the artefact record that
+  `learning-record` writes (the vault's `domains/learning.md`), through `record.py append`, so its checks and
+  the vault lint apply: `in progress` = offered, `done` = solved by hand, `dropped` = skipped; the latest row
+  is the state. A `done` row needs only the grilled cell, which holds the pattern and the time and space
+  complexity in the owner's words. These rows are left out of the artefact projections of `record.py status`
+  (one summary line instead). LearnHarness's record is read-only here and is not touched.
+- **After the attempt.** In chat (Control UI, or the `reading` bot), learnclaw helps the owner understand the
+  problem, name the pattern and state the complexity, and records `daily.py done <slug> --pattern ... --time
+  ... --space ...` or `daily.py skip <slug>` on the owner's own words. learnclaw never writes the solution.
+- **The weekly count.** `daily.py week` prints `solved: <n> (Monday <date> to Sunday <date>, by hand)` and the
+  titles: the problems whose latest row is `done` and dated Monday to Sunday of the week of the given date
+  (default today, Dublin).
+- **The cron.** `scripts/ensure-leetcode-daily.sh` declares `leetcode-daily`: agent `learnclaw`, `30 17 * * 1,3,5,6`
+  Europe/Dublin, isolated, announce to Telegram account `reading` at the owner chat, failure alert through
+  Kit's `default` account. It is a **command payload** (like `workout-nudge`): the row runs
+  `python3 .../daily.py next --record --push` directly, with no model turn, and announces its stdout. The script
+  refuses a schedule that can fire on Tuesday, Thursday or Sunday, replaces a row that is still the old agent
+  turn (`cron rm`, then add as a command), and after converging re-reads the live row and exits 1 unless the
+  agent, command argv, schedule and delivery (Telegram `reading`, owner chat) are the declared ones.
+  **The guarantee:** a `daily.py` error (vault page missing, lint refusing or not running, unreadable problem
+  list, any traceback) exits non-zero with nothing on stdout, so the scheduler records the run as failed, the
+  failure alert fires through Kit's account after the first one, and no text reaches learnclaw's chat; only
+  a success prints the two message lines (name, link) and a skip day prints exactly `NO_REPLY`, which the
+  scheduler suppresses. It is no longer best-effort, and a silent day is no longer how an error shows. Tests:
+  `scripts/tests/test_leetcode_daily.py` (the error-run tests drive the cron's own argv).
+- **The check-in.** `scripts/ensure-goal-checkin-solved.sh` adds one marked block to Kit's `goal-weekly-checkin`
+  row (host state; it carries the owner's goal, so it is edited in place, not copied into git): run
+  `daily.py week`, take the `solved:` number, never ask the owner for it. It adds `exec` to the row's tool list
+  when that list lacks it, and leaves the rest of the row alone. `DRY_RUN=1` prints the new message first.
+- **Install.** The deploy copies the skill with the rest of learnclaw (`ensure-learnclaw.sh`); the cron and the
+  check-in wiring are operator steps, and the Telegram account is a platform key.
+
+**Operator steps (once).** The `reading` account carries a token ref again, so follow "Telegram bot tokens:
+enabled accounts only", re-enabling: apply the patch first, then merge, or merge and apply straight after (a deploy
+before the patch deletes the ref again). `LEARNING_BOT_TOKEN` is already in the gateway SOPS file.
+
+```bash
+G=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway)
+# 1. Enable the reading account on its own token (the same keys platform.patch.json carries).
+cat > /tmp/reading.patch.json <<'JSON'
+{"channels":{"telegram":{"accounts":{"reading":{"enabled":true,"botToken":{"source":"exec","provider":"sops","id":"learning-bot-token"}}}}}}
+JSON
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/reading.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/reading.patch.json
+rm /tmp/reading.patch.json
+# 2. Bind the learning bot to learnclaw and let it see the new skill (add to its list; keep the others).
+docker exec "$G" openclaw agents bind --agent learnclaw --bind telegram:reading
+docker exec "$G" node -e 'const c=require(process.env.OPENCLAW_CONFIG_PATH);const s=((c.agents.entries.learnclaw||{}).skills||[]).slice();if(!s.includes("leetcode-daily"))s.push("leetcode-daily");process.stdout.write(JSON.stringify({agents:{entries:{learnclaw:{skills:s}}}}))' > /tmp/lc-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin --dry-run < /tmp/lc-skills.patch.json
+docker exec -i "$G" openclaw config patch --stdin < /tmp/lc-skills.patch.json
+rm /tmp/lc-skills.patch.json
+# 3. As lifekit, after the merge deploys: the cron, then the check-in wiring.
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-leetcode-daily.sh
+sudo -u lifekit env DRY_RUN=1 /srv/lifekit-stack/scripts/ensure-goal-checkin-solved.sh
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-goal-checkin-solved.sh
+```
+
+**Verify.** `openclaw channels status` shows `reading` enabled; `openclaw skills --agent learnclaw list` shows
+`leetcode-daily` ready; in the gateway, `python3 /home/node/.openclaw/agents/learnclaw/workspace/skills/leetcode-daily/daily.py next --date <a Tuesday>` prints
+`SKIP office day (Tuesday)` and `status` prints the counts and the next problem; `daily.py week` prints `solved: <n>`.
+Then one real run: `openclaw cron run <id> --expect-final --json` on a home day sends one message in the
+learning bot's chat and appends one `in progress` row; on a Tuesday, Thursday or Sunday it prints
+`NO_REPLY` and records nothing. To see the failure path, run the command with `LEARNING_VAULT` pointed at an empty directory: it exits non-zero.
+
+**Pause** (the agent, its record and the list stay): `openclaw cron disable <id>` for `leetcode-daily`; the check-in then
+reads the count of whatever the owner recorded in chat. **Retire:** `openclaw cron rm <id>`, delete the
+marked block from `goal-weekly-checkin`'s message, and revert the PR; the rows stay, they are the owner's record.
+
+### Learnclaw morning learning message (`learnclaw-morning`, #609)
+
+Learning reaches the owner only from learnclaw (decision 2026-11-09). Kit's `today-brief` and
+`evening-plan-note` carry no learning line any more, so learnclaw sends its own: one scheduled turn at 07:15
+Europe/Dublin, Monday to Saturday, in learnclaw's own Telegram chat (account `reading`, never Kit's `default`).
+
+- **What is sent.** At most four lines: (1) today's one LearnHarness session to open, or the one goal on the
+  learning page, and the gap it closes; (2) one practical output; (3) `mirror newest session <date>`, so a
+  stale mirror shows; (4) the weekly count of problems solved by hand, `<weekday> <n>/<target>` (`Mon 0/20`):
+  the `leetcode: <slug>` topics on `domains/learning.md` whose latest row is `done` and dated Monday to today
+  (Monday to Sunday week, so it resets on Monday). If the table cannot be read the line says `count unreadable`,
+  never 0. The target is `LEARNCLAW_WEEKLY_TARGET` (default 20, week of 2026-11-23), read once by the ensure
+  script; re-run it after changing it. Sunday is excluded by the schedule alone: the script refuses a cron that can fire on Sunday.
+- **Read-only.** The turn reads the LearnHarness mirror and the vault page `domains/learning.md`, and nothing
+  else. Its `read` tool reaches the agent's workspace and the vault, not `~/.life-state` (the first test run,
+  #611, said "mirror unreadable" for that reason), so it reads a copy inside the workspace,
+  `/home/node/.openclaw/agents/learnclaw/workspace/learnharness-mirror`. `learnharness-sync.service` refreshes
+  it after each pull (`ExecStartPost`, same files and modes, `--delete`); `ensure-learnclaw.sh` creates the
+  directory. No path was added to the agent's file access. The row's tool
+  allow-list is exactly `read`, which the script re-checks on the live row: no exec, no write, no
+  `sessions_spawn`, no web, no send tool. It does not touch the `learning-record` skill.
+- **The row.** `scripts/ensure-learnclaw-morning.sh` declares `learnclaw-morning`: agent `learnclaw`,
+  `15 7 * * 1,2,3,4,5,6` Europe/Dublin, isolated, agent-turn payload on the repo's cron model
+  (`scripts/lib/cron-model.sh`), `--light-context`, announce to Telegram `reading` at the owner chat, failure
+  alert after one failure through Kit's `default` account. The owner chat id comes from `LIFEKIT_TELEGRAM_CHAT`
+  in the host env file and is never written to git. It creates or edits the row, enables it, then re-reads the
+  live row and exits 1 (naming the field) unless the agent, schedule and its timezone, message, tool list, model, isolated
+  session and delivery (announce, Telegram, `reading`, owner chat) are the declared ones.
+  Tests: `scripts/tests/test_learnclaw_morning.py`.
+- **Cost.** One short model turn a day; the turn reads a page and a few session files.
+
+**Apply** (once, after the PR merges and the deploy has run; the `reading` account must already be enabled and
+bound to learnclaw, see "Daily LeetCode problem"). The sync unit is host state, so re-render it once (#611),
+then pull and apply:
+
+```bash
+LH_SYNC_HOST=<PC tailnet name> LH_SYNC_USER=<PC account> \
+  /srv/lifekit-stack/scripts/learnharness-sync/install-learnharness-sync.sh   # as the admin account
+sudo systemctl start learnharness-sync.service                                 # fills the workspace copy now
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-learnclaw-morning.sh
+```
+
+**Blocked / allowed check.** Allowed: with the copy filled (`ls /srv/openclaw/config/agents/learnclaw/workspace/learnharness-mirror/chats`
+lists files), the test run below delivers a line 3 `mirror newest session <date>`. Blocked: empty or remove that
+directory's contents and run it again; line 3 is `mirror unreadable` and line 1 says so. Restart the sync unit
+afterwards.
+
+**Test run** (one real delivery, in learnclaw's chat; a manual run ignores the schedule, so it delivers on any day):
+
+```bash
+GW=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)
+ID=$(docker exec "$GW" openclaw cron list --all --json | python3 -c 'import json,sys; t=sys.stdin.read(); print(next(j["id"] for j in json.JSONDecoder().raw_decode(t, t.find("{"))[0]["jobs"] if j["name"]=="learnclaw-morning"))')
+docker exec "$GW" openclaw cron run "$ID" --expect-final --json
+```
+
+**Undo.** Pause: `openclaw cron disable <id>` (the next run of the ensure script enables it again, so stop
+running it). Retire: `openclaw cron rm <id>` and revert the PR. The mirror, the learning page and the record are
+untouched either way.
+
+### Learning objective line from learnclaw (`evening-plan-note`, `today-brief`)
+
+> **Superseded** by "Learnclaw morning learning message" above (decision 2026-11-09, #609): Kit's `today-brief`
+> and `evening-plan-note` no longer carry a learning line, so do not re-run `scripts/ensure-learning-line.sh`.
+> The text below is kept as history only.
+
+The plan's one learning objective line comes from learnclaw (decision 2026-11-13, issue 525), not
+from kit reading the learning page and the LearnHarness mirror itself. The 21:00 `evening-plan-note`
+run starts one learnclaw subagent run (kit's `subagents.allowAgents` already holds `learnclaw`, see
+"learnclaw (the learning loop)") and writes its single line under "## Learning objective" in
+tomorrow's daily note; the 08:30 `today-brief` copies that line into "Learn:". The line names the
+LearnHarness session to open, or the gap it addresses, and ends `mirror newest session <date>`, so a
+stale mirror shows in the plan. A subagent run never records a row, the task text forbids any
+write, and learnclaw's only write path is the `learning-record` skill; if learnclaw is unreachable
+the note says "Learning objective unavailable (learnclaw)" and nothing else fills the gap. Budget
+(architecture report, section 7 step 3): `today-brief` at most $1.50 a run and `evening-plan-note`
+at most $1.00, list prices; the learnclaw run adds about $0.10-0.20.
+
+Both rows are host state and their prompts hold the owner's personal plan, so git carries only the
+changed text: `scripts/ensure-learning-line.sh` (the same anchored pattern as
+`ensure-today-brief-fleet.sh`) holds the new step 4 and step 7 text, edits each row with one
+`openclaw cron edit`, refuses a row whose anchors moved, and leaves a row that already has the text
+alone. The `evening-plan-note` edit also adds `sessions_spawn` and `sessions_yield` to that row's
+tool allow-list (it has no subagent tool); `today-brief` already allows both. The fleet step
+`ensure-today-brief-fleet.sh` owns is untouched, so either script can run in any order.
+
+**Operator step after the PR merges** (as `lifekit`, from `/srv/lifekit-stack`):
+
+```bash
+GW=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)
+# Save both old rows first: they are the undo.
+docker exec "$GW" openclaw cron list --all --json > /tmp/cron-before-learning-line.json
+DRY_RUN=1 scripts/ensure-learning-line.sh   # prints both new messages, edits nothing
+scripts/ensure-learning-line.sh
+docker exec "$GW" openclaw cron run <evening-plan-note id> --expect-final --json   # writes the note, sends nothing
+```
+
+**Verify:** tomorrow's note has a "## Learning objective" line that names a session or a gap and ends
+`mirror newest session <date>`; the run log shows a learnclaw subagent run and
+`domains/learning.md` in `/srv/memory` is unchanged by it. After a scheduled day,
+`python3 -I scripts/ops-report/jobs.py --days 2` keeps `cron:today-brief` at or below $1.50 and
+`cron:evening-plan-note` at or below $1.00 a run.
+
+**Undo:** for each row, `openclaw cron edit <id> --message "<its message from the saved JSON>"`, and
+for `evening-plan-note` also `--tools` with the saved `toolsAllow` list (drops the two subagent
+tools).
+
+### Answer shape in the remaining personas
+
+The 2026-11-15 "Answer shape (every reply)" rule (answer first, 75-word budget, plain short
+sentences, one idea per sentence) is in Kit, Career, Learnclaw and Ledger. The same block, with Kit's
+wording and numbered points, now also goes into the reader seed
+(`defaults/agents/reader/workspace/SOUL.md`) and into the live `SOUL.md` of `health`, `learning` and
+`social`, which live on the host only (mirrored to `lifekit-hq/openclaw-config` as
+`agents/<name>/workspace/SOUL.md` by `openclaw-config-sync`, see "openclaw-config mirror").
+
+`scripts/ensure-answer-shape.sh` reads the block from Kit's seed (so the wording cannot drift) and
+inserts it into each persona's live `SOUL.md` only when the "## Answer shape (every reply)" heading is
+absent, just before its "## Voice" section (at the end when there is none). A file that already has
+the heading stays byte-identical; nothing else in any file is rewritten, so a second run adds
+nothing. A persona with no workspace on the box (`health`, `learning` and `social` were retired
+2026-10-07) is skipped with a note. `reader` is also rewritten from the seed by
+`ensure-reader-agent.sh` on every deploy, so it carries the block either way.
+
+**Operator step after the PR merges** (as `lifekit`, from `/srv/lifekit-stack`; the deploy does not
+run it):
+
+```bash
+scripts/ensure-answer-shape.sh --dry-run   # per persona: would insert / already present / no SOUL.md; writes nothing
+scripts/ensure-answer-shape.sh             # health learning social reader
+```
+
+**Verify:** a second run prints "already present" for every persona that exists. Then confirm the
+sync mirrored it: start `openclaw-config-sync.service` (or wait up to 15 minutes for the timer), then
+`git -C /srv/openclaw-config log -1 --stat` shows an `auto: lifekit-vps openclaw sync` commit touching
+the changed `agents/<name>/workspace/SOUL.md` files, and
+`grep -c 'Answer shape (every reply)' /srv/openclaw-config/agents/<name>/workspace/SOUL.md` prints 1
+for each. **Undo:** delete the inserted section (heading through its tenth point) from the live
+`SOUL.md`; the script puts it back on the next run, so stop running it.
+
+### Light context on `today-brief` and `ledger-opportunity`
+
+Both rows are host state (cron rows live in the gateway store, not in git) and both
+prompts are self-contained: every file they read is an absolute workspace path, and
+every tool call is named in the prompt. They do not need the workspace bootstrap
+(`AGENTS.md`, persona and the other injected files), which each run carried on top
+of its prompt (about 200k tokens a run in the token-diet audit). `--light-context`
+(payload `lightContext: true`) drops that bootstrap for the run. The 2026-11-03
+`jobs.py` figures are the baseline to beat: `today-brief` $0.74 a run,
+`ledger-opportunity` $0.49 a run (list-price weighting).
+
+**Operator step** (firstmate or the operator, once; the row hot-reloads, no gateway
+restart, schedule, delivery and tools untouched). Ids differ per box, so read them
+from the list first:
+
+```bash
+GW=$(docker ps -q --filter label=com.docker.compose.project=openclaw \
+  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)
+docker exec "$GW" openclaw cron list --all        # ids for today-brief, ledger-opportunity
+docker exec "$GW" openclaw cron edit <today-brief id> --light-context
+docker exec "$GW" openclaw cron edit <ledger-opportunity id> --light-context
+docker exec "$GW" openclaw cron show <id>         # payload shows lightContext: true
+```
+
+**Verify:** after both rows have run once on their schedule (`today-brief` fires 08:30 Dublin),
+`python3 -I scripts/ops-report/jobs.py --days 1` should show `cron:today-brief` and
+`cron:ledger-opportunity` per-run well below the baseline. Read the delivered brief
+that day: it should still carry the calendar, the gym line, the deadlines and the
+fleet section; `ledger-opportunity` should still end in `NO_REPLY` or one message.
+Keep watching for a week (`--days 7`); a brief that loses a section or an opportunity
+message that stops following its prompt means the prompt leaned on the bootstrap.
+
+**Rollback:** `openclaw cron edit <id> --no-light-context`. Same hot reload.
+
+`scripts/ensure-today-brief-fleet.sh` carries the flag for `today-brief`: it sets
+`--light-context` with its message edit, and on a row that already has the fleet step
+but not the flag it sets just the flag. So on the VPS host, as `lifekit`,
+`/srv/lifekit-stack/scripts/ensure-today-brief-fleet.sh` applies the `today-brief` half
+of the operator step above; `ledger-opportunity` has no ensure script, so it still
+takes the `openclaw cron edit <id> --light-context` line.
+
+## Rolling back OpenClaw
+
+### The one-rollback rule
+
+`deploy.sh` keeps exactly one fallback image, `lifekit-openclaw:prev`: the
+image that ran the previous version, retagged only on a version change (so
+later deploys of the same version do not overwrite it). When the retag
+moves `:prev` to a new image, `deploy.sh` also drops the image the old
+`:prev` pointed to, once nothing else tags or runs it - one rollback deep,
+never more. Left unchecked (pre-2026.9, `deploy.sh` also stamped an ad-hoc
+`pre-<version>` tag on every bump) these pile up at ~14 GB apiece and sit on
+the box for months; don't reintroduce a second standing tag for this. If you
+need to keep a bad build around past its rollback window - for a bug report,
+or to compare two versions by hand - tag it explicitly for that one purpose
+and untag it yourself once you're done; `deploy.sh` will not do that
+bookkeeping for you.
+
+The old image is pinned before the build, not tagged after it. Under the
+containerd image store (the VPS's) an image id is addressable only while a tag
+references it, and `docker compose build` moves `lifekit-openclaw:local` to the
+new image, so the image the gateway is still running would be unreachable by
+then (the 2026-10-07 deploy of #280 failed that way). `deploy.sh` therefore
+tags the gateway container's image `lifekit-openclaw:pin` first, promotes the
+pin to `:prev` on a version change, and removes it on every deploy. When the
+running image cannot be pinned, the deploy accepts an existing `:prev` only if
+it reports the running version; otherwise it stops before touching the gateway.
+Rebuild that version from its commit and tag it `:prev` to unblock it.
+
+If the new version misbehaves after the deploy checks passed:
+
+```bash
+ssh <your-vps-tailscale-name>
+cd /srv/lifekit-stack/compose/openclaw
+docker tag lifekit-openclaw:prev  lifekit-openclaw:local
+docker compose -p openclaw --env-file /srv/lifekit-secrets/stack.env -f docker-compose.yml \
+  up -d --no-build --force-recreate openclaw-gateway
+```
+
+Then revert the bump PR on `main` (below), or the next CI deploy rebuilds the
+bad version over your rollback. This only works when the bump did not migrate
+state. When it did (the deploy log shows "migrating state"), the old gateway
+cannot read the migrated state dir: restore the full pre-upgrade backup
+(`openclaw backup restore`, or untar the archive over `/srv/openclaw/config`
+with the gateway stopped) before starting the `:prev` image.
+
+## Path-gated OpenClaw deploys
+
+A push to `main` always deploys the platform (observability, notify-relay, the
+Grafana reloads, the contract check). The OpenClaw phases in
+`scripts/deploy-openclaw.sh` (doctor, health checks, smoke turns, gateway build
+and state migration) run only when a path listed in
+`scripts/lib/openclaw-paths.sh` changed since the last successful deploy, and
+always on `workflow_dispatch` or a manual `bash scripts/deploy.sh`
+(`LIFEKIT_DEPLOY_OPENCLAW=always`, the default; CI sets `auto` on push).
+
+- The deploy log says which: `OpenClaw phases: RUN (<why>)` or `SKIPPED (<why>)`.
+- The range is `refs/lifekit/last-deployed..HEAD` in the VPS clone; the ref moves
+  only when a deploy completes, so a failed or superseded run cannot hide an
+  OpenClaw change. No ref, a non-ancestor ref (force push) or a failed diff runs
+  the phases. Force one by hand: `git update-ref -d refs/lifekit/last-deployed`.
+- `compose/openclaw/docker-compose.yml` counts as OpenClaw-relevant; the
+  platform's `compose/docker-compose.yml` does not, since it defines no
+  OpenClaw service. `secrets/lifekit-gateway.env.sops` counts too: the
+  `secrets reload` that picks up a rotated gateway value is an OpenClaw phase.
+- On a platform-only deploy the `openclaw` compose project is not brought up:
+  the gateway, cli and google-workspace-mcp are not built, not recreated, and
+  keep running as they are. A gateway that is down stays down until an OpenClaw
+  deploy (dispatch CI or run `scripts/deploy.sh`).
+
+## Rolling back the stack
+
+If a deploy of anything else breaks something, revert on `main` and let CI
+redeploy:
+
+```bash
+# On your laptop
+git revert <bad-commit>
+git push
+# wait for CI deploy workflow to apply on the VPS
+```
+
+Only when CI itself is down, roll the VPS checkout back by hand:
+
+```bash
+ssh <your-vps-tailscale-name>
+cd /srv/lifekit-stack
+git log --oneline -n 5             # find the last-known-good commit
+git checkout <good-commit>
+bash scripts/deploy.sh
+```
+
+## The OpenClaw compose project: cutover and rollback
+
+`openclaw-gateway`, `openclaw-cli` and `google-workspace-mcp` run as their own
+compose project, `openclaw` (`compose/openclaw/docker-compose.yml`), apart from
+the platform project `compose`. The gateway container is
+`openclaw-openclaw-gateway-1`; scripts find it by its compose labels
+(`com.docker.compose.project=openclaw`, `com.docker.compose.service=openclaw-gateway`).
+
+**Cutover.** The first deploy after the move does it by itself, once:
+`openclaw_phase_up` in `scripts/deploy-openclaw.sh` stops and removes the three
+services' containers still labelled with the platform project, then brings up
+the `openclaw` project. That recreates the gateway once. Old and new never run
+together. Later deploys find no old containers and skip the step. Before the new
+gateway starts, the deploy appends the `openclaw_default` network's gateway
+address to `gateway.trustedProxies`. It keeps the old `compose_default` address
+there, so a rollback needs no config change.
+
+**Verify** after the cutover, as `lifekit` on the box:
+
+```bash
+GW=openclaw-openclaw-gateway-1
+docker inspect --format '{{.State.Health.Status}}' "$GW"     # healthy
+docker exec "$GW" node -e "fetch('http://127.0.0.1:18789/healthz').then((r)=>r.text()).then(console.log)"   # {"ok":true,...}; the host port exists only in token mode
+docker exec "$GW" openclaw channels status                  # all 6 Telegram accounts connected
+docker exec "$GW" openclaw mcp status                       # configured servers; `mcp probe` needs the gateway stopped since 2026.11.4 (scripts/upgrade-smoke/openclaw.sh checks reachability)
+curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=up{job="openclaw"}'   # value "1"
+docker ps -a --filter label=com.docker.compose.project=compose \
+  --filter label=com.docker.compose.service=openclaw-gateway -q          # empty
+```
+
+**Rollback** if any check fails. Rollback means redeploying the commit before
+the move. Stop the `openclaw` project first: the old layout publishes the same
+host port and polls the same Telegram bots, so the two gateways must never run
+together.
+
+```bash
+ssh <your-vps-tailscale-name>
+sudo -u lifekit -H bash
+cd /srv/lifekit-stack
+ids="$(docker ps -a -q --filter label=com.docker.compose.project=openclaw)"
+[ -z "$ids" ] || { docker stop $ids && docker rm $ids; }
+# deploy.sh hard-resets the checkout to DEPLOY_REF (default: origin/main), so
+# pin it to the commit before the move rather than checking that commit out.
+DEPLOY_REF="$(git rev-parse '<merge-commit>^')" bash scripts/deploy.sh
+```
+
+That brings the three services back in project `compose`.
+
+Then revert the move on `main`, or the next CI deploy moves them again. Verify the
+same way, with `GW=compose-openclaw-gateway-1`, and check that
+`docker ps -a -q --filter label=com.docker.compose.project=openclaw` prints nothing.
+
+**Gateway stop time.** `openclaw-gateway` has `stop_grace_period: 330s`, OpenClaw's
+own stop policy for a non-systemd supervisor. A recreate, `compose stop` or
+`docker stop` of the gateway can therefore take up to about 5.5 minutes when work
+is in flight: it drains active sessions, then releases its owner lease. With
+Docker's 10s default a draining gateway was killed with the lease still live, and
+the next container (new hostname) could not start for 300s. Idle, the stop is
+still seconds. Compose applies the grace period stored on the *old* container
+when it recreates, so the deploy that first adds it stops the old gateway with
+10s; merge that one when no session is in `processing` state
+(`openclaw_session_queue_depth{state="processing"}` is 0).
+
+## Applying the Docker builder cache cap (daemon.json)
+
+`scripts/docker-builder-gc.sh` owns the repository's half of
+`/etc/docker/daemon.json`: `builder.gc` (reserved and max used space at 50GB,
+which dockerd reads as 50 GiB) and `live-restore: true`. `deploy.sh` runs it
+with `--check` after every `up` and prints a red, report-only line while the
+running daemon's ceiling is not that cap, live-restore is off, or the file is
+missing (a yellow "undetermined" line when it cannot read the live policy at
+all) - the deploy account has no sudo and dockerd reads `builder.*` at startup
+only, so the deploy can see the drift but never close it. Closing it is one
+operator sequence as `denys`, in this order:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/docker-builder-gc.sh    # writes the file only
+sudo systemctl reload docker                                  # SIGHUP: picks up live-restore, nothing else
+docker info --format '{{.LiveRestoreEnabled}}'                # must print true - do not go on until it does
+sudo systemctl restart docker                                 # applies the cap; running containers stay up
+bash /srv/lifekit-stack/scripts/docker-builder-gc.sh --check  # exit 0: Max Used Space 50GiB, live-restore true
+```
+
+`bash /srv/lifekit-stack/scripts/docker-builder-gc.sh --check` is read-only and
+can be run at any later time to confirm the cap still holds.
+
+Why the order matters: `live-restore` is on dockerd's SIGHUP reload list and
+`builder.*` is not. A restart before live-restore reads `true` stops every
+container on the box (this stack's `restart: on-failure` services do not come
+back on their own; finance-sentry, devclaw, the dashboard and xui
+go down with them). With live-restore active first, the restart is a no-op
+for running containers.
+
+What was proven (2026-09-20, throwaway `docker:29.5.2-dind` container on this
+box - same engine version, swarm inactive, containerd image store, nothing
+touched on the host daemon): a daemon started without live-restore picked it
+up from the file on SIGHUP; a container started after that survived the
+daemon's SIGTERM and restart with the same pid and start time and stayed
+exec-able; the restarted daemon showed `Max Used Space: 50GiB` and
+`Reserved Space: 50GiB` on the `All: true` rule, where the disk-scaled default
+had shown 375.3GiB. Inferred, not proven: the same on this host's external
+containerd (a systemd unit that never stops, the more favourable case than
+dind's child containerd, which exited and still left the container running).
+A `defaultKeepStorage`-only setting would have reported `Reserved Space:
+50GiB` next to `Max Used Space: 375.3GiB` - a record that looks applied while
+capping nothing, which is exactly what `--check` compares the ceiling for.
+
+## Scheduled Docker image and build-cache prune
+
+`scripts/docker-prune-policy.sh` installs `lifekit-docker-prune.timer`, which
+runs nightly (03:30 with up to 30 minutes of random delay; `Persistent=true`
+catches up a missed run) as root:
+
+```bash
+docker image prune -af --filter "until=336h"
+docker builder prune -af --filter "until=336h"
+```
+
+Each prune prints its own `Total reclaimed space` line, tagged `[image]` or
+`[builder]`; read them with `journalctl -u lifekit-docker-prune.service`. The
+unit fails if either prune fails, after attempting both.
+
+How it fits with the cache cap above: the cap is a size ceiling, this is an age
+floor. `until=336h` only touches build-cache records idle for two weeks
+(BuildKit refreshes the last-used time on every cache hit), so it cannot evict
+the working set the cap's rationale protects; it reclaims the long tail the cap
+would otherwise hold until the ceiling is reached. Two consequences to expect:
+`until` on images is the image's creation time, so an image older than 14 days
+that no container (running or stopped) references is removed and pulled or
+rebuilt on next use - for instance the image of a profile-gated service
+while its container does not exist; and a build stage nobody has run in two
+weeks re-runs.
+
+`bootstrap-vps.sh` installs it (root): the script writes a root-owned copy to
+`/usr/local/bin/lifekit-docker-prune.sh`, two units, and enables the timer. It
+never prunes while installing and never touches `daemon.json` or dockerd.
+`deploy.sh` runs `--check` after every `up` and prints a red, report-only line
+until the box has converged; the deploy account has no sudo, so a change to the
+script or units reaches the timer only on the next root apply:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/docker-prune-policy.sh           # install/refresh units, enable timer
+bash /srv/lifekit-stack/scripts/docker-prune-policy.sh --check         # read-only; exit 0 once converged
+sudo bash /srv/lifekit-stack/scripts/docker-prune-policy.sh --prune    # run both prunes now
+```
+
+To undo: `sudo systemctl disable --now lifekit-docker-prune.timer`, remove the
+copy and the two unit files (paths printed by `--check`), then `sudo systemctl
+daemon-reload`.
+
+## Weekly Docker image and anonymous-volume prune
+
+`scripts/docker-weekly-prune/` holds `lifekit-docker-weekly-prune.timer`
+(Sundays 04:15 with up to 30 minutes of random delay; `Persistent=true` catches
+up a missed run), run as root, same shape as the other host timers. It runs:
+
+```bash
+docker image prune -a -f --filter "label!=lifekit.keep=rollback"
+docker volume prune -f
+```
+
+It never touches build cache (the nightly prune and the cache cap above own
+that), networks or named volumes (`volume prune` without `--all` removes
+anonymous volumes only), and it restarts neither dockerd nor a container. Read
+what each half reclaimed with `journalctl -u lifekit-docker-weekly-prune.service`
+(lines tagged `[image]` / `[volume]`).
+
+**Rollback images.** `image prune -a` removes every image no container uses,
+which includes `lifekit-openclaw:prev` (the [one-rollback
+rule](#the-one-rollback-rule)). The gateway Dockerfile stamps
+`LABEL lifekit.keep="rollback"` and `:prev` is a retag of the image that ran
+the previous version, so the filter skips it. An image built before the label
+existed does not carry it, and a label cannot be added to an existing image:
+if any `*:prev` image lacks the label the script skips the image prune, still
+runs the volume prune and fails the unit with the image names on stderr. The
+label reaches `:prev` on the first version bump after it merges; until then
+the unit stays red rather than delete the rollback image. To clear it sooner,
+rebuild the running version from its commit (with the label) and tag it
+`:prev`. The nightly `lifekit-docker-prune` above filters by age, not by
+label, and does not honour the keep label.
+
+**Operator step (install).** Merging does not install it, and
+`bootstrap-vps.sh` does not call the installer; run on the box when asked to
+enable it:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/docker-weekly-prune/install-docker-weekly-prune.sh
+systemctl list-timers 'lifekit-docker-weekly-prune*'
+```
+
+Once installed, the host unit gauge covers the timer (`lifekit-*.timer`). To
+undo: `sudo systemctl disable --now lifekit-docker-weekly-prune.timer`, remove
+`/usr/local/bin/lifekit-docker-weekly-prune.sh` and the two unit files under
+`/etc/systemd/system`, then `sudo systemctl daemon-reload`.
+
+## Moving /tmp off RAM (agent scratch)
+
+`scripts/tmp-scratch-policy.sh` owns the repository's half of getting
+build/session scratch off a RAM-backed `/tmp` and onto disk, and retiring
+scratch that finished tasks leave behind instead of letting it accumulate
+until it breaks something:
+
+- it masks the distro's default tmpfs-on-`/tmp` mount unit (`tmp.mount`), so
+  `/tmp` is an ordinary directory on the root filesystem;
+- an `/etc/tmpfiles.d` drop-in turns off `systemd-tmpfiles`' age-only
+  cleanup of `/tmp`, which cannot tell whether a running task still uses an
+  entry;
+- `lifekit-tmp-scratch-sweep.timer` runs the script's `--sweep` daily, as
+  root, from a root-owned copy the script installs in `/usr/local/bin` when
+  applied as root - never from the deploy account's checkout, so a change to
+  the sweep reaches the timer only on the next root apply (`--check` reports
+  the copy stale until then). It removes a top-level `/tmp` entry only when no running process has a file
+  under it open, as its working directory, or as its executable, and it holds
+  no socket; an age backstop (a week without writes) narrows the candidates
+  but never decides alone. If it cannot read every process's open files it
+  removes nothing.
+
+What this covers and what it does not: this repository controls where
+scratch lives and can safely reclaim abandoned scratch, but it does not know
+when an agent task ends - that signal belongs to the supervisor that starts
+and ends tasks, not to host policy. Retiring a task's scratch the moment the
+task ends is follow-up work owned by that supervisor; the sweep here is the
+backstop for whatever it leaves behind.
+
+`deploy.sh` runs the script with `--check` after every `up` and prints a red,
+report-only line while the box has not converged - including while `/tmp` is
+still live on tmpfs, which is the incident state even with the unit masked.
+The deploy account has no sudo, so it can see the drift but never close it.
+
+`bootstrap-vps.sh` applies the policy unattended: it writes the drop-in, the
+sweep copy and units, enables the timer, and masks `tmp.mount`. Masking only prevents
+future mounts - an already-mounted tmpfs `/tmp` stays on RAM until the next
+boot. Moving it now is a deliberate operator sequence, because **stopping
+`tmp.mount` discards everything on the tmpfs, including scratch that running
+tasks are still using**. Finish or stop active agent work first:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh   # drop-in + sweep timer, masks tmp.mount
+sudo systemctl stop tmp.mount                                 # unmounts the tmpfs; its contents are gone
+bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh --check  # exit 0 only once /tmp is no longer tmpfs
+```
+
+If the stop is refused because the target is busy, something still has files
+open under `/tmp`: list the holders with `sudo fuser -vm /tmp`, finish or stop
+that work, and retry. Do not force it with a lazy unmount - that hides files
+still in use instead of freeing them. Rebooting also completes the move, since
+the masked unit keeps `/tmp` off tmpfs at the next boot.
+
+`bash /srv/lifekit-stack/scripts/tmp-scratch-policy.sh --check` is read-only
+and can be run at any later time; `sudo bash
+/srv/lifekit-stack/scripts/tmp-scratch-policy.sh --sweep` runs the sweep on
+demand and prints what it removed or kept.
+
+To undo: `sudo systemctl unmask tmp.mount && sudo systemctl start tmp.mount`
+puts `/tmp` back on tmpfs; `sudo systemctl disable --now
+lifekit-tmp-scratch-sweep.timer` stops the sweep; removing the drop-in, the
+sweep copy and the two unit files (paths printed by `--check`) followed by `sudo systemctl
+daemon-reload` restores the distro defaults.
+
+## /tmp usage alert
+
+`scripts/tmp-gauge/tmp-usage-gauge.sh` publishes `/tmp`'s size and available
+bytes as node-exporter textfile metrics every 5 minutes, the same shape as
+`scripts/quota-gauge/claude-quota-gauge.sh`. It exists because `/tmp` is
+tmpfs (RAM-backed) and node-exporter's own filesystem collector excludes
+tmpfs (`compose/docker-compose.yml` node-exporter
+`fs-types-exclude`), so nothing else on the box reported it before this -
+the gap behind the 2026-09-29 incident, where `/tmp` filled to 100% and
+every Claude session on the box lost its tool output. The `box` rule group's
+*`/tmp` is nearly full* (`rules.yml`, `tmp-filesystem-nearly-full`) fires
+warning when free space drops under 20% for 5 minutes; the existing
+*textfile metrics are stale* rule covers this gauge's file too, since its
+query reads every file in the textfile directory generically.
+
+**What the alert means:** `/tmp` is filling up. On this box the response is
+the host cleanup job (a user crontab, outside this repo) that removes stale
+scratch leftovers hourly - it reports root-owned leftovers it cannot remove
+rather than deleting them, so a firing alert can mean genuine growth outdoing
+that job's hourly pace, not only its absence. `df -h /tmp` and `du -sh
+/tmp/* 2>/dev/null | sort -rh | head` on the box show what is filling it.
+
+The gauge is a bootstrap-installed systemd timer (`tmp-usage-gauge.timer`,
+every 5 minutes, running as the admin account that owns the textfile
+directory), installed next to the quota and host-group gauges by
+`scripts/bootstrap-vps.sh` (which runs `scripts/host-gauge/install-host-gauges.sh`).
+To install or update it on the box, run that install script with sudo (it needs
+no Tailscale variables and touches nothing else), then remove the old operator
+crontab line so two writers do not share the file:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/host-gauge/install-host-gauges.sh
+systemctl list-timers 'tmp-usage-gauge*' 'host-group-gauge*'
+crontab -e   # delete: */5 * * * * bash .../scripts/tmp-gauge/tmp-usage-gauge.sh ...
+```
+
+The metric names (`tmp_filesystem_size_bytes`, `tmp_filesystem_avail_bytes`)
+and the 5-minute cadence are unchanged, so the alert and the staleness rule
+need nothing.
+
+## Host group memory gauge
+
+`scripts/host-gauge/host-group-gauge.sh` writes `host_group_memory_bytes` and
+`host_group_memory_swap_bytes` per `group` (`operator`, `runners`, `os`) every 5
+minutes from `host-group-gauge.timer`, installed by the same install script
+as above, plus `host_vmstat_pswpin_pages_total` (the swap-in counter the pressure
+alert rates). Groups and their budgets are in `docs/resource-budget.md`; the
+*host memory is under pressure* alert reads them (it lists the top three groups).
+`cat /var/lib/node_exporter/textfile/host_group.prom` shows the current values;
+`systemd-cgtop -m` and `ps --sort=-rss` show who inside a group is growing.
+
+## Fleet publisher
+
+`scripts/fleet-publisher/fleet-publisher.sh` runs every minute from
+`lifekit-fleet-publisher.timer`, as the admin account that owns the fleet homes
+and the Lavish state. The unit's `FM_HOMES` lists the fleet homes (a unit that
+still sets only `FM_HOME` publishes that one home). For each home it reads
+`state/home-summary.json` (task names, states and reasons only; the script
+refuses to publish a home whose summary ever matches a credential pattern),
+joins each open decision to the URL of the open Lavish session that home's
+captain-hold binding feeds it (`board_url`; else the session whose file lives
+under the home's `data/<decision id>/`; else `null`), and copies finished
+reports to `/var/lib/lifekit-fleet/reports/` (`report_url` on each landed item).
+It merges the homes into one summary, tagging every task, hold and decision
+with its `home_id` and listing the homes in `homes[]` (output contract in
+`scripts/fleet-publisher/README.md`), and writes it atomically to
+`/var/lib/lifekit-fleet/home-summary.json`, world-readable, for the dashboard
+to bind-mount read-only. It also writes `fleet.prom` into the textfile
+directory, totals over every home: `fleet_workers{state}`,
+`fleet_decisions_open`, `fleet_oldest_decision_age_seconds` (from the home
+ledger's `needs-decision` line for the decision, else its hold age),
+`fleet_usage_limit_events_1h` (ledger lines naming a usage limit),
+`fleet_summary_valid` (every home valid), `fleet_summary_generated_timestamp_seconds`
+(the oldest home's), and per home `fleet_home_summary_valid{home}` and
+`fleet_home_summary_generated_timestamp_seconds{home}`, plus
+`fleet_publisher_last_success_timestamp_seconds`. Grafana's `box` dashboard has
+a Fleet row for them. It also copies each home's validated
+`data/fleet-metrics/daily.jsonl` rows into
+`/var/lib/lifekit-fleet/metrics/daily.jsonl`, one row per (date, home) with the
+last row winning (contract in `scripts/fleet-publisher/README.md`). Invalid rows
+are logged to the unit's journal and skipped. The same run publishes the PC's
+state and last-seen time (from a fleet home's cached secondmate summary),
+per-item `started_at`, `landed_at`, `priority` and `ask` fields, and sanitised
+`metrics/quota.jsonl` / `metrics/quota-snapshot.json` (contract in the README).
+It also adds `status_page`, the living status page's sections (records,
+projects, capacity, queue, intake, how-it-works, delivered decisions, problems; README
+"Status page sections"), built by `fleet_status.py`, installed beside the script as
+`/usr/local/bin/lifekit-fleet-status.py`. That helper reads each home's backlog
+through its `bin/fm-tasks-axi.sh` and its `bin/fm-capacity.sh --json`, asks
+`gh` for open PRs (cached ten minutes in the publisher's state directory), and
+runs `jobq.py depth` in the gateway container (the admin account's `docker`
+group); a source it cannot read leaves a line in `status_page.errors`, never a
+failed run. The new output appears only once the
+installed script is refreshed: re-run the install command below (it
+re-installs the script, the helper and the units, idempotent). The unit's
+environment gains `FLEET_PLAN_MAP` only when the installer is given one
+(`FLEET_PLAN_MAP="<repo>=<project> ..."` beside `FM_HOMES`; README "One row per
+project"): the alias list that folds a repo spelling naming no project, such as
+the vault's, into its project's row. It is host config, so a re-install without
+it drops the line.
+Stalled items (`status_page.stalled`, README "Stalled items") are marked by one
+mechanical age check over every queue; the thresholds are the one
+`scripts/fleet-publisher/fleet-stalled.json` (installed beside the helper), so
+changing a number is a PR to that file and a re-install, never a code change.
+The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
+publisher can reach exists; the page says so.
+
+The same run writes `/var/lib/lifekit-fleet/taken-for-you.json`, the dashboard's
+"Taken for you" feed: the last 200 actions the fleet took under a standing
+ruling (P16) instead of asking, newest first, one line each with a stable `id`
+(contract in the README "Taken for you feed"). Its sources are two host logs
+read-only, in the admin account's `~/.local/state/fleet-policy/` (the unit
+runs as that account; `FLEET_POLICY_DIR` overrides): `p16.jsonl`, the
+permission engine's audit log, and `self-calls.jsonl`, the calls the fleet
+answered itself. Only the subject line, ruling, outcome, time and id leave the
+host - a self-answered call's answer text never does. Lines that do not parse
+are skipped and counted in the file's `sources.<log>.skipped`, so a nonzero
+count there is the place to look when the writer's format drifts; a log that
+does not exist yet shows `read: false`, and with neither log present the
+previous file stays. The new file and `lifekit-fleet-taken.py` appear only
+after the install command below is re-run (no sudo is needed beyond that, and
+no container is touched).
+
+The same run writes `/var/lib/lifekit-fleet/screen-changes.json` and the images
+under `screen-changes/`, the dashboard's "Screen changes" feed: each open pull
+request, or one merged in the last 7 days, in `FLEET_SCREEN_REPOS` (default `lifekit-hq/lifekit-dashboard`) that
+changes a `*-linux.png` baseline, with its before and after images (contract in
+the README "Screen changes feed"). It reads GitHub through the admin account's
+`gh`, read-only, so that account's `gh auth` must reach the repo. The helper
+`lifekit-fleet-screens.py` appears only after the install command below is
+re-run. To add an app, set `FLEET_SCREEN_REPOS` in a systemd drop-in for the unit
+(space-separated `owner/name`); an empty value turns the feed off. A failed run
+keeps the previous feed and turns *host systemd unit is down or failed* red.
+
+**Alerts:** *fleet summary is stale* fires when the oldest home summary's
+`generated_epoch` is over 15 minutes old (that home's watch loop died; the
+per-home series names it); *textfile metrics are stale* covers a dead publisher
+(`fleet.prom` not rewritten). A home whose summary is malformed or
+credential-bearing is left out and listed unpublished, the rest still publish,
+and the run exits nonzero, so *host systemd unit is down or failed* fires for
+`lifekit-fleet-publisher.service`. When no home is readable it keeps the
+previous files, so both stale rules fire rather than an empty fleet showing.
+
+**Install** (operator; needs sudo, installs the script and units like the other gauges):
+
+```bash
+sudo FM_HOMES="<fleet home> [<fleet home> ...]" bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
+systemctl list-timers 'lifekit-fleet-publisher*'
+cat /var/lib/node_exporter/textfile/fleet.prom
+```
+
+`bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
+set and skips it otherwise (it passes no `FLEET_PLAN_MAP`, so re-run the
+installer by hand to restore one). Re-running the installer is how a home is
+added or removed: it reinstalls the script and rewrites the unit's `FM_HOMES`.
+The `lifekit-*.timer` glob in the unit gauge picks the timer up with no further
+change. Merge deploys the Grafana rule and dashboard.
+
+**Clip stats feed (operator step).** The same run appends the daily activity
+journal under `/var/lib/lifekit-fleet/journal/`. Its `clip_stats` field reads
+`FLEET_CLIP_STATS`, which the unit does not set, so the field says `unavailable`
+until an operator points the variable (a systemd drop-in for the unit) at the
+side-hustle feed. Feed format and how the retro board treats an unset variable:
+README "Activity journal and retro board".
+
+## Reply pusher
+
+When firstmate answers one of the owner's notes sent through Kit (a `kit-` request id),
+Kit says that reply in the owner's chat at once. `scripts/reply-pusher/` is the host
+unit behind it: `lifekit-reply-pusher.path` watches each pinned home's reply drop
+(`<home>/state/inbox/.replies`) and starts the oneshot `lifekit-reply-pusher.service`,
+which runs `reply_pusher.py`. The pusher reads a home only through
+`fm-inbox.sh receipts` (never inside the home), keeps its own cursor and an outbox under
+`/var/lib/lifekit-reply-pusher/<home>/`, and POSTs `<hook path>/firstmate-reply` with
+`{home, noteId, cursor}` - identifiers only, never a note or reply body - and
+`Idempotency-Key: <home>:<cursor>`. Kit's turn (the "Firstmate reply" paragraph of the
+`secondmate-relay` skill) reads the reply back with `relay.sh replies <home>` and says it.
+Only `kit-` replies push; `dash-`, `fs-`, `oc-`, `fleet-`, `term-`, any other prefix and no prefix are
+skipped (the cursor still moves past them).
+
+A failed POST keeps its outbox entry; the unit exits 1 and systemd retries it with a
+growing back-off (5 s up to 5 min, no start limit), so a gateway restart loses nothing and
+a retry carries the same key (the gateway answers a duplicate from its cache, no second
+turn). The gateway keeps no durable queue, which is why the pusher owns the outbox.
+Exit 78 (no cursor, or the two secrets missing or malformed) is not retried: run the
+installer, or fix `stack.env`.
+
+**Route.** The pusher POSTs to `REPLY_PUSHER_GATEWAY`, default `http://127.0.0.1:18894`:
+the edge's `openclaw-hook` entrypoint (`compose/edge/traefik/openclaw.yml`), bound to
+loopback. In trusted-proxy mode the gateway's own `127.0.0.1:18789` is not published and the
+edge's `:18892` puts every path behind the sign-in, so this route is the host's way in. It
+passes exactly one request shape, `POST <OPENCLAW_HOOK_PATH>/firstmate-reply`; any other
+method or path answers 404 from Traefik and never reaches the gateway. It strips the
+identity headers and adds none, so the hook token (checked by the gateway) is the only
+authentication. Traefik reads `OPENCLAW_HOOK_PATH` once at start from the rendered env
+file (slashes around the value are trimmed, as the pusher does), so a rotation of the
+path needs the edge recreated by the next deploy. To remove the route, delete the `openclaw-reply-hook` router, the
+`openclaw-hook` entrypoint and the `127.0.0.1:18894` port; the pusher then fails with a
+transport error and keeps its outbox. A quick check from the host (a 404 with no token,
+never a gateway page): `curl -si -X POST http://127.0.0.1:18894/nothing | head -1`.
+
+The pusher reads exactly two keys, `OPENCLAW_HOOK_TOKEN` and `OPENCLAW_HOOK_PATH`, from
+`/srv/lifekit-secrets/stack.env` on each run, held in memory only (secrets inventory rows,
+boundary rule). A rotation of the hook token or path therefore needs no pusher step; a push
+that lands between the render and the gateway recreate answers 401 and retries.
+
+**Install and cutover (operator step, never automatic).** The merge deploy lands the
+`firstmate-reply` mapping and `allowedAgentIds` through the platform patch; it does not
+install the units. On the VPS, as the admin account:
+
+```bash
+sudo FM_HOMES="<home> [<home> ...]" ADMIN_USER=<admin account> \
+  bash /srv/lifekit-stack/scripts/reply-pusher/install-reply-pusher.sh
+```
+
+The installer copies the script, renders the units for the pinned homes, **baselines each
+cursor at the home's newest existing reply (so no history replays)**, then enables the
+service (boot catch-up) and `--now` the path unit. `bootstrap-vps.sh` runs it when `FM_HOMES`
+(or `FM_HOME`) is set. Re-running is how a home is added or removed.
+
+Rehearse before trusting it:
+
+1. Send a synthetic note through Kit (the owner's own note, `kit-` id) and have the home
+   answer it with `fm-inbox.sh reply <id>`.
+2. `journalctl -u lifekit-reply-pusher -n 20` shows a clean run; no body, URL or token is
+   ever logged. `ls /var/lib/lifekit-reply-pusher/<home>/outbox` is empty and `cursor` has
+   advanced.
+3. An identifiers-only hook turn runs in an isolated Kit session and the owner's Kit DM gets one
+   message with the reply.
+4. **Check the delivery route.** The hook mapping runs kit in an isolated session and
+   delivers with an explicit `channel: "telegram"` and `to: ${OPENCLAW_KIT_CHAT}`, so it
+   no longer depends on a last route. (The owner's Telegram DM runs in its own per-peer
+   session, `session.dmScope = per-channel-peer`, which is why `agent:kit:main` never had
+   one: the earlier `channel: "last"` mapping ended in `Delivering to Telegram requires
+   target <chatId>`.) `OPENCLAW_KIT_CHAT` (a master setting) falls back to
+   `LIFEKIT_TELEGRAM_CHAT`, the owner's personal Telegram id, like `OPENCLAW_FINANCE_CHAT`,
+   so a host that already has that one needs no new setting; set `OPENCLAW_KIT_CHAT`
+   through the secrets runbook only to deliver to a different chat. While both are unset
+   or empty the deploy's dry run rejects the patch, the gateway keeps the old mapping and
+   the deploy ends red. Do not widen the mapping by hand.
+5. Retry check: with the gateway unreachable (a maintenance window, never a forced
+   restart for this), answer another note: `outbox/` keeps one entry and the unit retries;
+   once the gateway is back exactly one hook turn arrives.
+
+A stuck outbox shows as `lifekit-reply-pusher.service` failed: `systemctl status
+lifekit-reply-pusher` and the journal name the cause (`transport error`, an HTTP status, a
+home's `fm-inbox receipts` exit). The host unit gauge tracks the `.path` unit (the oneshot is
+inactive by design) and the service's result.
+
+**Rollback:** `sudo systemctl disable --now lifekit-reply-pusher.path
+lifekit-reply-pusher.service`. Nothing else depends on it; the mapping can stay (it only
+answers an authorized caller) or be removed through the platform patch.
+
+## Vault door
+
+ChatGPT reads and writes the memory vault and nothing else (GitHub is the transport, no MCP
+door, the captain inbox is the one door). `scripts/vault-door/` gives it a way to put proposals
+on the Monday list through the vault, with no new credential or service. One host timer runs
+`vault_door.py bridge` as the admin account:
+
+- `lifekit-vault-door-bridge.timer` (every 5 minutes) reads the vault `inbox.md`. A line
+  `- YYYY-MM-DD - chatgpt: <text>` (indented lines continue it) becomes one captain-inbox note
+  `proposal: <text>` in the main firstmate home (`fm-inbox.sh note --request-id gpt-<hash>`),
+  and the line gets ` [forwarded: <note id>]`. A held `proposal:` note is reviewed with the
+  Monday list, never dispatched.
+
+**Install (operator, `denys`):**
+
+```bash
+sudo FM_HOME=<main fleet home> bash /srv/lifekit-stack/scripts/vault-door/install-vault-door.sh
+```
+
+`bootstrap-vps.sh` runs the same installer when `FM_HOME` is set. `FM_HOME` is the one home
+that receives the notes (the main firstmate home, not the other fleet homes). The `lifekit-*.timer`
+glob in the unit gauge picks the timer up with no further change.
+
+**Rehearsal (before trusting it):**
+
+1. Add `- <today> - chatgpt: bridge rehearsal` to `/srv/memory/inbox.md`, then
+   `systemctl start lifekit-vault-door-bridge.service`. The line gains `[forwarded: <id>]` and
+   `FM_HOME=<home> <home>/bin/fm-inbox.sh list` shows the note as `proposal: bridge rehearsal`.
+   Acknowledge it as usual and delete the vault line.
+2. Run the bridge again: no second note (`journalctl -u lifekit-vault-door-bridge -n 5` says
+   nothing was sent).
+
+**Reading a failure.** The bridge unit fails (exit 1) when `fm-inbox.sh` fails or the vault
+cannot be written; the affected lines stay unmarked and the next run retries under the same
+request id, so a note is never lost or doubled. Exit 78 means `VAULT_DOOR_FM_HOME` is missing
+from the unit: rerun the installer with `FM_HOME`. A marker edit to `inbox.md` can race a
+ChatGPT append on the outbox branch; `memory-sync` then fails that tick on the rebase and the
+next tick resolves it, and the marker is re-applied by the bridge (the request id replays) if
+the merge dropped it.
+
+**Retiring the old snapshot units.** Earlier installs also put a daily
+`lifekit-vault-door-snapshot.timer` on the host, which wrote the vault page
+`system/fleet-snapshot.md`. Nothing reads that page any more and the code is gone; on a host
+that still has the units:
+
+```bash
+sudo systemctl disable --now lifekit-vault-door-snapshot.timer
+sudo rm /etc/systemd/system/lifekit-vault-door-snapshot.{service,timer} && sudo systemctl daemon-reload
+```
+
+Rerun the installer afterwards so the installed `vault_door.py` is the bridge-only one. Then,
+in the vault, delete `system/fleet-snapshot.md` (and its line in `index.md` on the next index
+build).
+
+**Undo:**
+
+```bash
+# stop the job (nothing else depends on it)
+sudo systemctl disable --now lifekit-vault-door-bridge.timer
+sudo rm /etc/systemd/system/lifekit-vault-door-bridge.{service,timer} && sudo systemctl daemon-reload
+sudo rm -r /usr/local/libexec/lifekit-vault-door
+```
+
+Notes already forwarded stay in the captain inbox like any other note; acknowledge or delete
+them there. `[forwarded: ...]` markers in `inbox.md` are inert and age out through the normal
+30-day rotation.
+
+## Intake to vault
+
+The software half of "take the knowledge from a judged video as reference" (no model turn):
+`scripts/intake-to-vault/` files each accepted video-eval report into the memory vault, in
+the vault README's shape for raw evidence and through its `bin/` gates.
+`lifekit-intake-to-vault.timer` (hourly, as `lifekit`) runs `intake_to_vault.py`, which for
+each report under `/var/lib/lifekit/intake/reports/` whose `Verdict:` is `accept` writes:
+
+- one immutable source page `sources/<judged date>-video-<key>-v<rubric>.md`: clipper
+  frontmatter (`title`, `url`, `author`, `captured`, `type: other`, `summary`), then the report
+  and the transcript, both verbatim in fences. `bin/lint.sh --changed` must report no high or
+  medium finding on it, else the page is removed and the unit fails;
+- its index line, by `bin/index.sh`;
+- one line through `bin/log.sh` linking the page: on `projects/<p>/log.md` when the report's
+  `Project:` line names that project (the whole value, or its start followed by a non-name
+  character), else on the root `log.md` as kind `intake`. The link also keeps the page out of
+  the unreferenced-source rotation.
+
+A `park` or `drop` is not filed: the vault keeps only what the owner accepts (vault `CORE.md`),
+and the intake index already records every judgment. Every step is checked first, so a rerun
+writes nothing and a half-done run is finished by the next one. memory-sync commits the page
+and the index; `bin/log.sh` commits its own line as `Kit (lifekit-vps)`. The run skips while
+`/srv/memory/.model-pass` is under an hour old. Details: `scripts/intake-to-vault/README.md`.
+
+**Install (operator, `denys`):**
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/intake-to-vault/install-intake-to-vault.sh
+```
+
+`bootstrap-vps.sh` runs the same installer. The unit is skipped while `/srv/memory` has no
+clone, and the `lifekit-*.timer` glob in the unit gauge picks the timer up.
+
+**Rehearsal (before trusting it):**
+
+1. `sudo systemctl start lifekit-intake-to-vault.service`, then
+   `journalctl -u lifekit-intake-to-vault -n 20`: one `wrote sources/...` and one `logged on
+   ...` line per accepted report, and a closing count with `0 failed`.
+2. Read one new page under `/srv/memory/sources/` and its line at the end of the project's
+   `log.md` (or the root `log.md`); `sh /srv/memory/bin/index.sh --check` says up to date.
+3. Start the service again: the journal shows no `wrote` or `logged` line.
+
+The next `memory-sync` tick commits the pages and the index; `/srv/memory/.lint-failed` must
+not name them.
+
+**Reading a failure.** Exit 1: a report could not be filed; the journal names it and why (an
+unreadable report, a lint refusal with its findings, `bin/index.sh` or `bin/log.sh` refusing).
+The other reports are still filed and the next run retries. Exit 78: the vault has no `bin/`
+harness (`lint.sh`, `index.sh`, `log.sh`).
+
+**Undo:**
+
+```bash
+sudo systemctl disable --now lifekit-intake-to-vault.timer
+sudo rm /etc/systemd/system/lifekit-intake-to-vault.{service,timer} && sudo systemctl daemon-reload
+sudo rm -r /usr/local/libexec/lifekit-intake-to-vault
+```
+
+Pages already filed stay: they are vault sources like any other and rotate under its rules.
+
+## Host unit gauge
+
+`scripts/unit-gauge/unit-gauge.sh` writes `host_unit_active{unit}` and
+`host_unit_failed{unit}` every 5 minutes from `unit-gauge.timer` into the
+textfile directory (`host_unit.prom`). Units: every `actions.runner.*`
+service, `tailscaled`, `docker`, `containerd`, `cron`, `unattended-upgrades`,
+the service of every `lifekit-*.timer`, the services of three timers named
+before that convention (`memory-sync`, `openclaw-config-sync` and
+`memory-rotate`), and `lifekit-reply-pusher` (a `.path` unit, not a timer). For a
+timer or the path unit, `active` tracks the
+`.timer`/`.path` (its oneshot service is inactive between runs by design) and `failed`
+is the service's last `Result` not being `success`. A unit not installed on
+the host is skipped, and so is one that is not enabled and not running unless it
+has failed. If `systemctl` itself errors the script exits nonzero without
+rewriting `host_unit.prom`, so `unit-gauge.service` goes failed and the
+*textfile metrics are stale* alert fires. node-exporter's systemd collector
+stays off.
+
+The *host systemd unit is down or failed* alert (`host-unit-down-or-failed`,
+`rules.yml`) fires warning when any unit is inactive or failed for 10 minutes.
+`systemctl status <unit>` and `journalctl -u <unit> -n 50` show why. A failed
+timer run stays reported until the next successful run; after fixing the cause,
+`sudo systemctl reset-failed <unit>.service` clears it. A failed `memory-sync`
+has its own response in "Memory-vault sync".
+
+Adding a unit or a timer outside the `lifekit-*` naming means editing the
+allowlists at the top of the script. A new `lifekit-*.timer` is picked up
+automatically.
+
+**Operator step (live install):** the installer writes `/etc/systemd/system`,
+so a merge does not install it. Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/host-gauge/install-host-gauges.sh
+systemctl list-timers 'unit-gauge*'
+cat /var/lib/node_exporter/textfile/host_unit.prom
+```
+
+The merge's deploy reloads Grafana provisioning, which loads the alert rule;
+until the timer is installed the rule sees no data and stays quiet.
+
+## Weekly release gauge
+
+Each lifekit-hq repo's `.github/workflows/weekly-release.yml` (finance-sentry, lifekit-stack,
+lifekit-dashboard, devclaw; cron Mondays 00:07 UTC plus `workflow_dispatch`) merges the open
+`autorelease: pending` Release Please PR after `gh pr checks --watch --fail-fast`. A failing or
+missing check ends the run red with the PR still open; no pending PR is a green no-op. Those runs
+are on GitHub-hosted runners that cannot reach the box, so the box reads GitHub instead.
+
+`scripts/release-gauge/lifekit-release-gauge.sh` runs every 5 minutes from
+`lifekit-release-gauge.timer` as the admin account, on that account's existing `gh` login
+(read-only; no new token). Per repo it reads the latest completed Weekly Release run and, when that
+run did not succeed, the open pending release PR, and writes
+`weekly_release_blocked{repo,pr_url,run_url}` into the textfile directory
+(`weekly_release.prom`): 1 when the run did not succeed and the PR it should have merged (one
+created before the run started) is still open, else 0 with empty URLs. `RELEASE_REPOS` overrides
+the repo list. Any read failure (an expired `gh` login, GitHub down) exits nonzero without
+rewriting the file, so *host systemd unit is down or failed* and then *textfile metrics are
+stale* report it instead of a blocked release reading as healthy.
+
+The *Weekly Release stopped without merging* alert (`weekly-release-not-merged`, `rules.yml`)
+fires warning per repo while the gauge reads 1 (muted off the phone; it reaches the fleet inbox through `alert-inbox`); the message names the repo, the release PR and the
+run. Fix the PR's checks (the run log names the cause), then
+`gh workflow run weekly-release.yml -R <owner/repo>`; the alert resolves once a run succeeds or the
+PR is merged. The default notification policy repeats a still-firing alert every 4h.
+
+**Operator step (live install):** the installer writes `/etc/systemd/system`, so a merge does not
+install the timer. Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/host-gauge/install-host-gauges.sh
+systemctl list-timers 'lifekit-release-gauge*'
+cat /var/lib/node_exporter/textfile/weekly_release.prom
+```
+
+The merge's deploy reloads Grafana provisioning, which loads the alert rule; until the timer is
+installed the rule sees no data and stays quiet.
+
+## Runner restart drop-ins
+
+`svc.sh` installs every `actions.runner.*` unit with `Restart=no`, so a crashed
+runner stays down until someone notices (the *host systemd unit is down or
+failed* alert is the backstop). `scripts/runner-restart/install-runner-restart.sh`
+(called by `scripts/bootstrap-vps.sh`) writes
+`/etc/systemd/system/<unit>.d/restart.conf` for each installed runner unit with
+`Restart=on-failure` and `RestartSec=10`, then runs `daemon-reload`. It is
+idempotent and does not restart a running runner; the setting applies from the
+next start.
+
+**Operator step (live install):** the drop-in lives in `/etc/systemd/system`,
+so a merge does not install it. Run on the box, as the admin account:
+
+```bash
+sudo bash /srv/lifekit-stack/scripts/runner-restart/install-runner-restart.sh
+systemctl show 'actions.runner.*' -p Id -p Restart
+```
+
+Needs no other setup variables. Every runner unit should report
+`Restart=on-failure`.
+
+## Host firewall (nftables)
+
+`scripts/host-firewall.sh` owns one nftables table, `inet lifekit`
+(ruleset: `scripts/firewall/lifekit-firewall.nft`), loaded at boot by
+`lifekit-firewall.service`:
+
+- **Host input:** policy drop. Open: loopback, established/related flows,
+  everything arriving on `tailscale0` or a Docker bridge (`docker0`, `br-*`,
+  `lifekit-edge`), Tailscale's WireGuard port (udp/41641), tcp/80 and tcp/443
+  for the public edge, rate-limited ping, and the ICMP/ICMPv6
+  traffic the network needs. SSH is tailnet-only; the provider's web console is
+  the break-glass.
+- **Published container ports:** a forward-hook chain admits new flows into
+  containers only from loopback, the tailnet, a Docker bridge, or - for
+  connections dialled to host port 80 or 443 - the `lifekit-edge` bridge. It
+  plays the part of a `DOCKER-USER` rule, but in its own table: rules written
+  into Docker's iptables-nft chains with `nft` break `iptables` there, are lost
+  on every reboot, and that chain does not exist in Docker's nftables mode.
+
+It composes with Docker's and tailscaled's chains rather than replacing them:
+every base chain on a hook runs, an accept in one does not skip the others,
+and a drop in any one is final
+([Docker with nftables](https://docs.docker.com/engine/network/firewall-nftables/)).
+The script never runs `nft flush ruleset`, and nothing else on this box may
+either. Debian's `nftables.service` does, in stock `/etc/nftables.conf` and in
+its `ExecStop`, and that drops Docker's NAT until dockerd restarts. Keep
+`nftables.service` disabled and `ufw` masked; `--check` (a report-only line in
+every deploy) flags either one. A compose network given a custom bridge name
+other than `lifekit-edge` (`com.docker.network.bridge.name`) needs a line in
+the ruleset's `inside` chain.
+
+`scripts/tests/test_host_firewall.py` loads the ruleset into a throwaway
+user + network namespace beside a Docker-like table and probes it with real
+traffic.
+
+**Operator step (live cutover).** A merge does not apply it (`/etc`, root).
+Run on the box as the admin account, **from an SSH session over the tailnet**
+(`ssh <user>@<tailnet-name>`), never over the public address; `--trial`
+refuses a session that is not from the tailnet. Keep a second way in at hand:
+the provider's web console.
+
+```bash
+cd /srv/lifekit-stack            # after the merge has deployed
+
+# 1. For the record (the trial also saves both under
+#    /var/lib/lifekit/firewall/baseline-<UTC time>/):
+sudo nft list ruleset; sudo iptables -S
+
+# 2. Load the ruleset live with a 5-minute automatic rollback. Nothing is
+#    persisted yet; a reboot also undoes it.
+sudo bash scripts/host-firewall.sh --trial 300
+```
+
+3. Keep that session open. **Open a new SSH session over the tailnet** - that
+   one getting in is the real test - and check, inside the window:
+
+   ```bash
+   sudo nft list table inet lifekit                        # the table is loaded
+   systemctl list-timers lifekit-firewall-rollback.timer   # rollback still armed
+   tailscale status                                        # peers still listed
+   docker ps --format '{{.Names}} {{.Status}}'             # containers still up
+   ```
+
+   From a laptop on the tailnet, open a tailnet-served page (Grafana, the
+   dashboard). From a device **off** the tailnet (a phone on mobile data with
+   Tailscale off), confirm public SSH is gone: `nc -vz -w5 <public-ip> 22`
+   must time out, and so must `nc -6 -vz -w5 <public-ipv6> 22`.
+
+4. All good - persist it. This cancels the rollback, installs
+   `/etc/lifekit/firewall.nft` and the unit, and enables it for boot:
+
+   ```bash
+   sudo bash scripts/host-firewall.sh --confirm
+   bash scripts/host-firewall.sh --check       # exit 0: matches, enabled, active
+   ```
+
+   Anything wrong - roll back at once with
+   `sudo bash scripts/host-firewall.sh --rollback`, or do nothing: the timer
+   restores the previous state when the window ends. A confirm after the
+   window has lapsed refuses; run the trial again.
+
+**Break-glass (locked out).** From the provider's web console,
+`sudo nft delete table inet lifekit` opens the box until the next boot, and
+`sudo systemctl disable --now lifekit-firewall.service` keeps it off across
+reboots too. Docker's and Tailscale's tables are untouched either way.
+
+**Later ruleset changes** go through the same trial and confirm. A plain
+`sudo bash scripts/host-firewall.sh` installs and reloads with no rollback;
+it is meant for the fresh box `bootstrap-vps.sh` sets up.
+
+## Identity provider (Logto)
+
+Compose project `identity` (`compose/identity/`) is the org sign-in: Logto
+1.44 as the OIDC provider, with its own Postgres 17. Every app on the box
+(lifekit dashboard, devclaw, finance-sentry, Grafana) signs in against it:
+the dashboard and the devclaw console through the
+[tailnet sign-in gate](#tailnet-sign-in-gate), Grafana as its own client
+([Grafana sign-in through Logto](#grafana-sign-in-through-logto)), and
+finance-sentry as its own client in a separate change.
+`deploy.sh` brings the project up once `LOGTO_DB_PASSWORD` is in the rendered
+env file, and until then skips it with a yellow warning.
+
+| | URL | Reach |
+| --- | --- | --- |
+| Sign-in pages, OIDC (issuer `https://<name>:3001/oidc`) | `https://<name>:3001` | tailnet |
+| Admin console | `https://<name>:3002` | tailnet |
+
+`<name>` is this host's tailnet name (`<host>.<tailnet>.ts.net`). Both ports
+bind to loopback; Tailscale Serve terminates HTTPS on the tailnet name and
+proxies to them. `deploy.sh` derives both URLs from `tailscale status`, so an
+explicit `IDENTITY_ENDPOINT` / `IDENTITY_ADMIN_ENDPOINT` in the master file is
+only for moving the issuer.
+
+**Why dedicated Serve ports, not a path on 443.** Port 443 on this node
+carries a Funnel (the public edge), so anything served there is on the public
+internet; the identity provider stays tailnet-only until a public domain is
+decided. Ports 8443 and 10000 are avoided too: they are the other
+Funnel-capable ports, one `--funnel` away from public. Logto also expects to
+own its origin (it does not run cleanly under a path prefix), and its issuer
+URL is baked into every token and client registration. When the public domain
+lands the issuer moves once, and every client registers again against it.
+
+**Operator steps, once** (admin account; the deploy account cannot run them):
+
+```bash
+# 1. After merge, render the committed LOGTO_DB_PASSWORD into the env file,
+#    then redeploy:
+sudo bash scripts/secrets/render-stack-env.sh
+# 2. Publish both ports on the tailnet. Serve only - never `tailscale funnel`
+#    for these ports:
+sudo tailscale serve --bg --https=3001 http://127.0.0.1:3001
+sudo tailscale serve --bg --https=3002 http://127.0.0.1:3002
+tailscale serve status        # both listed as "(tailnet only)"
+# 3. The nightly dump timer (bootstrap-vps.sh installs it on a new box):
+sudo LIFEKIT_USER=lifekit bash /srv/lifekit-stack/scripts/identity-backup/install-identity-backup.sh
+```
+
+`LOGTO_DB_PASSWORD` is already in `secrets/lifekit.env.sops`. Only a rebuild
+from scratch creates it again, with `sops set --input-type dotenv
+--output-type dotenv secrets/lifekit.env.sops '["LOGTO_DB_PASSWORD"]'
+"\"$(openssl rand -hex 32)\""` (captain's age key).
+
+Every deploy then prints a report-only "identity provider (host facts)"
+block (`scripts/deploy-identity.sh check`): each Serve port published
+tailnet-only, and the sign-in mode `SignIn`. A red `✗` there means a step
+here is not done yet. A Funnel on either port is called out by name.
+
+**First boot, in the admin console** (`https://<name>:3002`). Do it as soon
+as the project first turns healthy: until the admin exists, anyone on the
+tailnet who opens the console can create it.
+
+1. Create the admin account. Logto closes admin sign-up after the first one.
+   Keep the password in KeePassXC.
+2. **Sign-in mode.** *Sign-in experience > Sign-up and sign-in*: turn user
+   registration off, so the mode is `SignIn` (members are created by the
+   admin, below). The deploy's report line checks it.
+3. **Google.** In Google Cloud, create an OAuth client of type *Web
+   application*. Then *Connectors > Social connectors > Add > Google*: paste
+   its client id and secret. Copy the connector's redirect URI,
+   `https://<name>:3001/callback/<connectorId>`, into the Google client's
+   *Authorized redirect URIs*. Add Google to the sign-in page. Under *Social
+   sign-in* turn on automatic account linking, so a member's first Google
+   sign-in attaches to the user created for that address instead of
+   prompting.
+4. **Passkeys.** *Sign-in experience > Sign-up and sign-in > Passkey
+   sign-in*: on, with the passkey button and autofill. A member adds a
+   passkey after their first sign-in. Passkeys are bound to the host name,
+   so they need registering again after the issuer moves.
+5. **Email: leave it off** until the captain has made a Google app password
+   ([Email sign-in (Gmail SMTP)](#email-sign-in-gmail-smtp)). With a verified
+   sending domain instead, use Resend: create an API key, then *Connectors >
+   Email and SMS > SMTP*: host `smtp.resend.com`, port `465`, `secure` on,
+   username `resend`, password the API key, `fromEmail` an address on the
+   verified domain. Send the test email from the connector page. Finally add
+   *Email address* (verification code) as a sign-in identifier. The API key
+   lives in Logto's database, not in the secrets files; rotate it in the
+   connector page.
+
+**Creating a member.** *User management > Add user*. Use the same email as
+the finance-sentry invite, so the two accounts meet on one address. Hand the
+generated password over out of band, or leave it unused and let them sign in
+with Google.
+
+**Registering an OIDC client** (finance-sentry, oauth2-proxy, Grafana, each
+in its own change). A Traditional web app with a name and the app's redirect
+URI(s), for example `https://<name>:3000/login/generic_oauth` for Grafana
+(the sign-in gate's own values are in its section below), created with
+`logto-admin.py ensure-app` ([Logto admin through the Management
+API](#logto-admin-through-the-management-api)) or in the console under
+*Applications > Create application > Traditional web*. The app then needs:
+
+- issuer `https://<name>:3001/oidc`; discovery is at
+  `https://<name>:3001/oidc/.well-known/openid-configuration`;
+- the application's client id and secret (the secret into the app's secrets
+  boundary, inventoried like any other);
+- scopes `openid profile email`.
+
+**Upgrading Logto.** Bump the image tag in `compose/identity/docker-compose.yml`
+through a PR. Take a dump first (`sudo systemctl start
+lifekit-identity-backup.service`). On start the container applies the schema
+alterations up to the new version, so a rollback to the old tag needs the
+pre-upgrade dump restored, not just the old tag.
+
+**Backup and restore.** `lifekit-identity-backup.timer` dumps the whole
+cluster nightly at 02:45 (`pg_dumpall`: Logto's per-tenant roles as well as
+its data). The dump goes to
+`/srv/openclaw/backups/identity/identity-<UTC stamp>.sql.gz`, 0600, newest 14
+kept. A failed run turns the oneshot failed, and the host unit gauge reports
+it. To restore, as the deploy account, from `/srv/lifekit-stack`:
+
+```bash
+docker stop identity-logto-1
+docker rm -f identity-postgres-1 && docker volume rm identity_postgres_data
+docker compose -p identity --env-file /srv/lifekit-secrets/stack.env \
+  -f compose/identity/docker-compose.yml up -d --wait postgres
+gunzip -c /srv/openclaw/backups/identity/identity-<stamp>.sql.gz \
+  | docker exec -i identity-postgres-1 psql -q -U logto -d postgres
+bash scripts/deploy.sh      # brings logto back; its log says "Seeding skipped"
+```
+
+The restore prints `role "logto" already exists` and `database "logto"
+already exists`: the fresh volume created both, and those lines are expected.
+Wait for `up --wait` to return before restoring. A restore into a Postgres
+still starting fails.
+
+## Email sign-in (Gmail SMTP)
+
+Members sign in with a code mailed to their address, sent through Logto's SMTP
+connector over `smtp.gmail.com`. Gmail needs no verified sending domain, which
+is why it is the first path; a domain and Resend replace it later (the
+connector is one object, re-pointed then). Mail is only for members who
+already exist: the sign-in mode stays `SignIn`, so nobody registers by email.
+
+**The one input: a Google app password.** From the sending Google Account, with
+2-Step Verification on: *Security > 2-Step Verification > App passwords*,
+name it for this stack, copy the 16 letters (Google shows them in four groups;
+the spaces are dropped). Put it in the master file's reserved slot
+`PARKED_LOGTO_SMTP_APP_PASSWORD` (the slot exists, empty):
+
+```bash
+scripts/secrets/edit.sh master    # fill PARKED_LOGTO_SMTP_APP_PASSWORD, save
+```
+
+Merge that change; nothing needs a render or a redeploy: no service
+interpolates it, and the `PARKED_` prefix keeps the render from writing it
+out. Gmail sends as the account's own address (a different `--from-email` is
+rewritten unless it is a verified "Send mail as" alias of that account), and a
+Gmail account has a daily sending limit, plenty for sign-in codes.
+
+**Apply** (admin account, Management API credentials as in the next section;
+`<m2m>.sops` is the operator's M2M file, `<address>` the Gmail address):
+
+```bash
+# 1. The connector, from the master file's slot:
+LOGTO_SMTP_PASSWORD="$(sops decrypt --extract '["PARKED_LOGTO_SMTP_APP_PASSWORD"]' \
+    --input-type dotenv --output-type dotenv secrets/lifekit.env.sops)" \
+  sops exec-env <m2m>.sops 'python3 scripts/identity/logto-admin.py \
+    set-email-connector --user <address> --from-name "<sender name>"'
+# 2. A real message through the stored connector - the proof the path works:
+sops exec-env <m2m>.sops 'python3 scripts/identity/logto-admin.py \
+  send-test-email <address>'
+# 3. Only after the test mail arrives: turn email-code sign-in on, keeping
+#    each member's password (and username) sign-in as it is:
+sops exec-env <m2m>.sops 'python3 scripts/identity/logto-admin.py \
+  set-sign-in-exp --sign-in-identifiers email username --code-sign-in-identifiers email'
+```
+
+Adjust step 3 to the methods in force: `--sign-in-identifiers` and
+`--code-sign-in-identifiers` together replace the whole methods list (`email`
+in both means password or code for email). Logto refuses step 3 while no email
+connector exists. `set-email-connector` is idempotent and reports changed
+fields by name only; a changed password re-applies the same way, and it
+reports `already set` when nothing differs. The connector is always
+`smtp.gmail.com:465` over TLS.
+
+**Verify.** `send-test-email` succeeds and the message arrives (look in spam
+the first time); then sign in on the sign-in page with *Email address*,
+receive the code, and finish. A failed send names the SMTP error: `Invalid
+login` is a wrong or revoked app password, `ENOTFOUND` a wrong host, a timeout
+no route from the Logto container to `smtp.gmail.com:465`.
+
+**Reverse.** `logto-admin.py undo` takes the newest change back: the
+sign-in methods, then the connector (a create is undone by deleting it). An
+update of an existing connector has no undo, because the previous config holds
+the previous password: run the command again with the old values.
+
+**Rehearsal.** `scripts/identity/rehearse-logto-admin.sh` runs this against a
+throwaway Logto with an unreachable SMTP host (`smtp.invalid`, through the
+script's test-only `LOGTO_ADMIN_TEST_ONLY_SMTP_HOST`): connector
+create, update and no-op, Logto's refusal of email-code sign-in without a
+connector, the sign-in methods as stored, the test-send route, and the undo.
+A real send needs the real password, so it is the operator step above.
+
+## Logto admin through the Management API
+
+The admin-console steps below (roles, role assignments, OIDC clients and
+their redirect URIs) are scripted: `scripts/identity/logto-admin.py` calls
+Logto's Management API as the machine-to-machine app `firstmate-ops`, so they
+need no console session. Every command is idempotent (it reads first and
+changes only what differs) and never prints a secret.
+
+**Bootstrap, once** (admin account, docker group, from a checkout). The app
+is inserted straight into Logto's database, in tenant `default`, holding the
+seeded role "Logto Management API access" (scope `all` on
+`https://default.logto.app/api`). One transaction; re-running changes
+nothing:
+
+```bash
+sudo systemctl start lifekit-identity-backup.service    # a dump first
+bash scripts/identity/logto-m2m-bootstrap.sh apply --env-out ~/m2m.env
+bash scripts/identity/logto-m2m-bootstrap.sh status
+```
+
+`--env-out` writes `LOGTO_M2M_APP_ID` and `LOGTO_M2M_APP_SECRET` to a new
+0600 file, straight from Postgres. It is operator tooling, kept out of every
+git repo: encrypt it to the operator's own SOPS file and delete the plain
+copy (`sops encrypt --input-type dotenv --output-type dotenv ~/m2m.env >
+<file>.sops && shred -u ~/m2m.env`). Logto needs no restart: the app works
+as soon as the transaction commits.
+
+**Use.** Credentials come from the environment; `LOGTO_ENDPOINT` defaults to
+`http://127.0.0.1:3001`, Logto's loopback port:
+
+```bash
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py token-check'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-role admin'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py assign-role <email> admin'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py create-user <email> [--name <text>]'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py role-users admin'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py ensure-app "<name>" \
+  --redirect-uri <uri> --post-logout-uri <uri> --secret-file ~/<name>.secret'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-redirects <app> \
+  --redirect-uri <uri> --post-logout-uri <uri>'
+sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-sign-in-exp \
+  --sign-in-identifiers email username --primary-color <#hex> --logo-url <url>'
+```
+
+`assign-role` takes a user id, primary email or username. `role-users` prints
+the primary email of each user holding the role, one per line, and changes
+nothing. `create-user` makes
+a passwordless user with that primary email (it signs in with Google or an
+emailed code), only when no user has the email. `ensure-app`
+creates a Traditional web app, or brings an existing one's URIs to the given
+lists. `set-redirects` replaces the list it is given and keeps the other.
+`--secret-file` writes the app's client secret to a new 0600 file for
+`sops set` to read (`"\"$(cat ~/<name>.secret)\""`), then `shred -u` it.
+`set-sign-in-exp` changes only the fields given (logo,
+dark logo, favicon, dark favicon, colors, `--sign-in-identifiers`,
+`--sign-up-identifiers`); the image options take an http(s) URL or an inline
+`data:image/svg+xml;base64,...` URI, which needs no hosting.
+`email username` signs in with either, by password;
+`--code-sign-in-identifiers email` adds the emailed code
+([Email sign-in (Gmail SMTP)](#email-sign-in-gmail-smtp), with
+`set-email-connector` and `send-test-email`). It never sends the sign-in mode
+or the social sign-in settings.
+`--clear-terms-links` empties its Terms/Privacy links. `set-app-sign-in-exp <app>` sets one
+application's own name, logo and colors ([Sign-in page branding](#sign-in-page-branding)).
+
+**Reversing a change.** Each change appends a line to the ledger
+(`~/.local/state/lifekit/logto-admin.ledger.jsonl`, or `LOGTO_ADMIN_LEDGER`):
+the ids it created or touched, and the inverse request. `logto-admin.py
+ledger` lists it; `logto-admin.py undo [N]` sends entry N's inverse (default:
+the newest not yet undone): delete the user, role or app it created, take the role
+back, restore the previous redirect URIs, or restore the previous
+sign-in experience objects (tenant or per application), or delete the email
+connector it created.
+
+**Removing the app** ends the delegation:
+
+```bash
+bash scripts/identity/logto-m2m-bootstrap.sh remove
+```
+
+New tokens stop at once. A token already issued stays valid until it
+expires, at most an hour, so a suspected leak also waits that hour out (or
+restarts Logto, which does not end it either: the token is a signed JWT).
+
+**Rehearsal.** `bash scripts/identity/rehearse-logto-admin.sh` runs the
+bootstrap, every admin command, `undo` and the removal against a throwaway
+Logto (its own compose project, `logto-rehearsal`, with its own database,
+the same images as `compose/identity/`, loopback ports 13001/13002), then
+tears it down. It never touches the `identity` project. Run it after a Logto
+upgrade, before the bootstrap or the script is used against the new
+version: the bootstrap writes Logto's tables directly.
+
+### Fleet identity (`fleet-agent`)
+
+One narrow Logto identity for the fleet's routine calls to the owner's own
+apps, so none of them borrows `firstmate-ops` (Management API power, far too
+broad). It is a machine-to-machine app `fleet-agent` that gets a token for one
+API resource, `https://fleet.lifekit.internal/api` (override with
+`FLEET_RESOURCE`; it is only an audience name, nothing resolves it), carrying
+only the scopes its role holds. `scripts/identity/fleet-agent.sh` does it all
+through `logto-admin.py` as `firstmate-ops`; every step is idempotent and
+nothing restarts Logto or any container.
+
+| Scope | Action class | Accepted by |
+| --- | --- | --- |
+| `fleet:read` | reads of fleet and health data | lifekit-dashboard edge, finance-sentry |
+| `fleet:recategorise` | reversible recategorisation | finance-sentry |
+| `basket:price-ingest` | price ingest | basket machine endpoints |
+| `basket:catalog-read` | product catalog read | basket machine endpoints |
+| `basket:catalog-add` | product catalog add | basket machine endpoints |
+
+Writes that change money, accounts or ownership have no scope here, so no
+token can carry them. An app accepts a token by checking issuer (Logto's
+`/oidc`), audience (the resource indicator) and the scope its endpoint needs.
+The apps themselves are separate work: lifekit-dashboard#217,
+finance-sentry#1355 and basket#62.
+
+**Issue** (admin account, a checkout, firstmate's age key; re-running changes
+nothing):
+
+```bash
+bash scripts/identity/fleet-agent.sh issue     # resource, scopes, app, role, grant, secret store
+bash scripts/identity/fleet-agent.sh status    # what Logto holds; whether the store matches
+bash scripts/identity/fleet-agent.sh verify    # a token from the stored credentials; fails if any scope is missing
+```
+
+The client secret is created once by Logto and written only to the host
+secret store, `~/.config/firstmate/fleet-agent.env.sops` (0600, a SOPS dotenv
+with `FLEET_AGENT_CLIENT_ID`, `FLEET_AGENT_CLIENT_SECRET`,
+`FLEET_AGENT_RESOURCE`, encrypted to the same recipients as
+`logto-m2m.env.sops`, [docs/secrets.md](./secrets.md) "Not in these files").
+It never reaches argv, a log, the ledger, the repo or a PR. The only
+consumer is the fleet on this host: no app holds the secret, so no app file
+gets a new secret. Unlike the `firstmate-ops` file, do not read it with
+`sops exec-env`: sops 3.9.1 reads a store without a `.env` extension as JSON,
+and `exec-env` has no `--input-type`. Decrypt with explicit dotenv types, as
+`scripts/identity/fleet-agent.sh` does, and source the values in a subshell:
+
+```bash
+( set -a; . <(sops decrypt --input-type dotenv --output-type dotenv ~/.config/firstmate/fleet-agent.env.sops)
+  curl -s -u "$FLEET_AGENT_CLIENT_ID:$FLEET_AGENT_CLIENT_SECRET" \
+    -d grant_type=client_credentials --data-urlencode "resource=$FLEET_AGENT_RESOURCE" \
+    -d scope=fleet:read http://127.0.0.1:3001/oidc/token )
+```
+
+Ask for the scopes the call needs; Logto grants the intersection with the
+role. A scope the role lacks is not an error: the token simply comes back
+without it, and a token with no scope is refused by every app.
+
+A run that died after Logto created the app and before the store was written
+recovers by running `issue` again (the secret is read back from Logto). A
+store whose client id is not the live app's (the app was deleted and made
+again) is replaced by the next `issue`.
+
+**Rotate** (on exposure, or yearly with the secrets review): adds a new secret,
+writes it to the store, then deletes the older ones in Logto. The old secret
+answers HTTP 401 at once; a token it already minted lives out its hour. The
+fleet is the only holder, so nothing else changes:
+
+```bash
+bash scripts/identity/fleet-agent.sh rotate && bash scripts/identity/fleet-agent.sh verify
+```
+
+**Revoke.** Two levels; both leave a token already issued valid until it
+expires, at most an hour (the resource's token lifetime):
+
+```bash
+bash scripts/identity/fleet-agent.sh revoke            # take the role away
+bash scripts/identity/fleet-agent.sh revoke --delete   # delete the app and the stored secret
+```
+
+`revoke` is the pause: Logto has no per-application disable, so the app
+keeps its credentials but its role (and with it every scope) is gone. It
+still gets a token, one that carries no scope, and a scope-checking app
+refuses it (`verify` then fails, naming the missing scopes). `logto-admin.py undo` puts the role back. `revoke --delete` is
+retirement: the app is gone, no token is issued at all, and `issue` later
+makes a new app with a new client id and secret. For a leaked secret, run
+`rotate` first (the leaked one stops at once), then decide.
+
+**Per-agent identities (optional).** For an audit trail per agent, give each
+its own app with the same or a narrower scope list, through the generic
+commands (the role is named after the app, so each app's scopes are its own):
+
+```bash
+sops exec-env ~/.config/firstmate/logto-m2m.env.sops 'python3 scripts/identity/logto-admin.py \
+  ensure-m2m-app oc-kit --resource https://fleet.lifekit.internal/api \
+  --scope fleet:read --secret-file ~/oc-kit.secret'
+```
+
+`ensure-m2m-app` makes the app's role hold exactly the scopes given (extras
+are taken away), `rotate-secret` and `revoke-app` take the app name, and
+`app-status` prints an M2M app's roles and scopes (a sign-in app's redirect URIs
+instead) and the live-secret count without a value.
+Each is also in the ledger for `logto-admin.py undo`, except a secret
+rotation and an app deletion, which cannot be taken back. The secret file
+goes into its own SOPS file the same way as above, then is shredded.
+
+The rehearsal covers all of it (resource, scopes, the app, idempotence, the
+scope intersection, rotation, both revocations) against a throwaway Logto;
+`scripts/tests/test_logto_admin.py` covers the request shapes and the
+store handling.
+
+### Inviting a person: `people invite` / `people status`
+
+`scripts/people/people.py` is the owner-facing wrapper over the commands
+above (the Logto half; the tailnet half and the mail are the next sections). `invite`
+ensures the Logto user (primary email, no password: they sign in with Google,
+or an emailed code once the connector is live), ensures and assigns one role
+per right, and prints the invite email for you to send. It sends mail only
+with `--send` or `--resend` ([Sending the invite email](#sending-the-invite-email)).
+Rights live in `scripts/people/rights.json` (the role name is the Logto role;
+`PEOPLE_RIGHTS` points at another catalog). It is idempotent, an unknown right
+is refused before any write, and every write lands in the `logto-admin.py`
+ledger, so `logto-admin.py undo` reverses it (role grant, then role, then user).
+It uses the same M2M credentials and ledger as `logto-admin.py`; the `all`
+scope on the Management API covers creating users.
+
+```bash
+sops exec-env <m2m>.sops 'python3 scripts/people/people.py invite <email> \
+  --right backstage [--right finance-sentry] --host <host> [--invite-url <link>]'
+sops exec-env <m2m>.sops 'python3 scripts/people/people.py status [<email>]'
+```
+
+`--host` (or `PEOPLE_HOST`) is the tailnet DNS name the products are served on;
+it is not stored in the repo. Without `--invite-url` the email carries a marked
+placeholder where the Tailscale invite link goes. `status` lists each user's
+roles and suspended flag, and flags drift: a user with no product role (the
+`admin` platform role is exempt), or a suspended user who still holds one.
+The rehearsal script runs `invite` and `status` on the throwaway Logto too.
+
+### People: the tailnet half
+
+`people.py invite` and the new `people.py sync` also drive the tailnet policy,
+so a person reaches exactly the products they hold a right for. The Logto roles
+are the source of truth; the policy's tailnet groups are a projection of them,
+one `group:<right id>` per catalog right. The tool edits **only** the lines
+between a `BEGIN`/`END people-managed` marker pair inside `groups` (every other
+byte of the hand-written policy, comments included, stays), validates the
+result, and writes it with `If-Match` (a concurrent edit gets one re-read and
+retry). It also refuses to write while a policy grant lets a managed group reach
+a `never_ports` port of `scripts/people/rights.json` (the admin surfaces), and
+`status` reports the same.
+
+```bash
+sops exec-env <people>.sops 'python3 scripts/people/people.py sync [--dry-run]'
+sops exec-env <people>.sops 'python3 scripts/people/people.py invite <email> \
+  --right backstage --host <host>'
+```
+
+`<people>.sops` stands for whatever SOPS file holds the `LOGTO_M2M_*` and the
+`TAILSCALE_*` variables below; they are read from the environment only and
+never printed.
+
+- `invite` adds the email to `group:<right>`; if the email is not yet a tailnet
+  member it creates a user invite (no email field, so Tailscale sends nothing)
+  and puts the link in the email draft. With no user token, or one Tailscale
+  rejects, it prints "create an invite link in the admin console and paste it":
+  create the link there (Users > Invite), then re-run with `--invite-url <link>`
+  to render the email with it. Re-running for a non-member creates another
+  invite, since invites carry no email to match.
+- `sync` rebuilds every catalog group from the Logto roles (a suspended user is
+  in none) and writes only when something differs. Groups in the block that the
+  catalog does not know are left alone and reported. Run it after any role
+  change made by hand in the Logto console, or on a timer.
+- `status` adds each person's tailnet membership (devices, last seen) and
+  groups, and drift: a role without its group, a group without its role, a
+  right with no grant for its port or the sign-in port, a policy with no
+  `tests`, and a tailnet member no Logto user matches. Tailscale does not say
+  which login accepted an invite, so a person who accepts under another account
+  than the invited email shows up as unmatched: the email tells them to sign in
+  with the invited address.
+- Without the OAuth client every tailnet step prints "tailnet: not configured"
+  and is skipped; `invite --no-tailnet` skips it on purpose. `revoke` instead
+  exits non-zero (the Logto half still runs): the network is not cut until the
+  client is set and `revoke` is run again.
+
+**One-time operator step (owner, live: changes who can reach what).** Do it in
+the admin console policy editor (Access controls) with *Preview* before saving.
+`<host>` is the box's MagicDNS name and `<ip>` its tailnet address
+(`tailscale ip -4` on the box).
+
+1. A `hosts` alias, so grants and tests read well: `"hosts": { "lifekit-vps": "<ip>" },`
+2. The marker pair inside `groups`, exactly these comment lines (the group
+   lines between them are written by the tool; start them empty):
+
+   ```hujson
+   "groups": {
+     // BEGIN people-managed: written by `people sync`, hand edits are overwritten
+     "group:finance-sentry": [],
+     "group:backstage": [],
+     "group:basket": [],
+     // END people-managed
+   },
+   ```
+
+3. One static grant per right, from its group to the alias on the right's port
+   plus every `always_ports` entry (the Logto sign-in the browser is
+   redirected to). Never one on a `never_ports` port:
+
+   ```hujson
+   { "src": ["group:backstage"], "dst": ["lifekit-vps"], "ip": ["tcp:<right port>", "tcp:<always port>"] },
+   ```
+
+4. A `tests` block, so a bad edit cannot save: per group accept the right's
+   port and deny every `never_ports` port (a test takes one port per entry):
+
+   ```hujson
+   "tests": [
+     { "src": "group:backstage", "accept": ["lifekit-vps:<right port>"],
+       "deny": ["lifekit-vps:<never port>", "lifekit-vps:<another never port>"] },
+   ],
+   ```
+
+5. Save, then check with the credentials below: `people.py status` should show
+   no `no grant` / `no tests block` drift, and `sync --dry-run` no error.
+
+**The credentials** (both ride in a SOPS file the people tool alone reads, never
+in OpenClaw or agent env; the first live use is the owner's step, nothing here is
+placed by the repo):
+
+- *OAuth client* (`TAILSCALE_OAUTH_CLIENT_ID`, `TAILSCALE_OAUTH_CLIENT_SECRET`):
+  admin console > Settings > OAuth clients > Generate, scopes **Policy File**
+  (`policy_file`), **Users** read (`users:read`) and **Devices Core** read
+  (`devices:core:read`), no tags. It does not expire and mints one-hour tokens.
+  It runs `sync`, `status`, `revoke` and the policy half of `invite`.
+- *User token* (`TAILSCALE_USER_TOKEN`), optional: only a user-owned API token
+  can create invites (an OAuth client cannot). Settings > Keys > Generate
+  access token, the shortest expiry that covers the invite (1 day is plenty),
+  from an Owner or Admin login. It carries that user's full power, so put it in
+  place only for the invite and remove it after; the tool falls back to the
+  paste-a-link step when it is absent or expired.
+- `TAILSCALE_TAILNET` (default `-`, the credential's own tailnet) and
+  `TAILSCALE_API_URL` (default `https://api.tailscale.com`) are overrides for
+  rehearsals; leave them unset on the box.
+
+Tests: `scripts/tests/test_people_tailnet.py` against fake Logto and Tailscale
+APIs (ETag conflict, idempotent sync, the never-ports refusal, the missing
+token path). The live API is not part of any test or CI step.
+
+### People: revoke and drift alerts
+
+`people.py revoke <email> [--right <id>]... [--dry-run] [--suspend-tailnet-user]`
+takes access away. The tailnet half runs first, because it is the network cut:
+the email leaves `group:<right>` for each right (every right without `--right`)
+through the same marker-block, validate and `If-Match` path as `sync`. Then the
+Logto role for each right is removed, and the Logto user is **suspended** when no
+product role remains and no platform role (`admin`) is held. Each Logto write
+lands in the `logto-admin.py` ledger with undo data, plus a closing
+`people-revoke` entry. Re-running finds nothing to do; `--dry-run` prints
+`would ...` lines and writes nothing. A tailnet failure does not stop the Logto
+half; revoke then exits 1 with "run revoke again", and the re-run finishes it.
+A policy with a never-grant drift never blocks a revoke. Inviting a revoked
+person again unsuspends them, but only when the ledger shows `people revoke`
+made the suspension; a user suspended any other way is refused (exit 1, nothing
+written) until someone unsuspends them in Logto.
+
+```bash
+sops exec-env <people>.sops 'python3 scripts/people/people.py revoke <email> --dry-run'
+sops exec-env <people>.sops 'python3 scripts/people/people.py revoke <email>'
+```
+
+The Tailscale user and devices are never deleted. `--suspend-tailnet-user` (all
+rights only) also suspends the Tailscale user, which stops their devices; it is
+reversible in the admin console and needs the OAuth client's `users` write
+scope (the client in [People: the tailnet half](#people-the-tailnet-half) has
+read only), so add that scope before using the flag. Without it the network cut
+is the group removal alone, which also takes the person off every product port.
+
+`people.py status --notify` posts what `status` finds to notify-relay
+(`docs/message-format.md`), so drift reaches the owner without anyone running
+`status`:
+
+- one `act` envelope (source `people`, subject `drift`) listing every drift line:
+  a Logto user with no product role, a role without its group or the reverse, a
+  right with no grant, a policy with no `tests`, a tailnet member no Logto user
+  matches. No drift, no message.
+- one `wait` envelope (subject `tailnet-token`) when `TAILSCALE_USER_TOKEN`
+  expires within 14 days, has expired, is revoked, or its expiry cannot be read.
+  The expiry comes from the token's own key record (`GET .../keys/<id>` with the
+  token itself), so a tailnet with no token set checks nothing. Fix: generate a
+  new token for `<people>.sops`, or remove the line when no invite is pending.
+
+It posts through `scripts/ledger-persona/drift-alert.py`'s transport (`docker
+exec` into the notify-relay container), so it must run as the account that can
+use docker on the box. A relay that refuses the envelope exits 1. A timer
+re-reports unresolved drift on every run. **Operator step, not installed by the
+repo**: schedule it, for example a daily systemd timer whose service runs
+
+```text
+sops exec-env <people>.sops 'python3 /srv/lifekit-stack/scripts/people/people.py status --notify'
+```
+
+then check one run with `systemctl start` and the journal. Confirm live, before
+relying on the token warning, that a user-owned API token can read its own key
+record; if Tailscale answers 403 the warning reads "cannot check
+TAILSCALE_USER_TOKEN" instead of a date. Tests:
+`scripts/tests/test_people_revoke.py` against fake Logto, Tailscale and
+notify-relay (a docker stand-in); nothing runs against the live services.
+
+### Sending the invite email
+
+`people.py invite <email> --right <id> --send` mails the one invite email
+(`scripts/people/invite-email.txt`, rendered only for the chosen rights: install
+Tailscale, accept the invite with the invited address, turn on "Use Tailscale
+DNS", each product's URL and hint, sign in with Google, troubleshooting). It goes
+through Gmail SMTP (`scripts/people/mailer.py`, stdlib `smtplib`, STARTTLS on
+`smtp.gmail.com:587`) from the owner's own address. The tool mails the invitee
+only; Tailscale's own invite email is avoided because the invite is created
+without an `email` and its link is embedded in ours.
+
+- `--send` does the whole invite and then mails. `--resend` is for someone
+  already invited: it writes nothing to Logto or the policy, requires the Logto
+  user to hold each given right, mints a fresh tailnet invite link if the email
+  is not yet a tailnet member (or takes `--invite-url`), and mails it.
+- **No app password set** (today): `--send` prints the draft and a `mail not
+  configured` line and exits 0, so the invite itself never fails on mail. The
+  same happens, with a `not sent` line, when the email would still carry the
+  invite-link placeholder (no `TAILSCALE_USER_TOKEN` and no `--invite-url`).
+- A failed send exits 1 after the invite is done; re-run with `--resend`.
+
+**The one-time owner step** (not done by the repo): the same Google app
+password as [Email sign-in (Gmail SMTP)](#email-sign-in-gmail-smtp). From the
+sending Google Account turn on 2-Step Verification, then *Security > 2-Step
+Verification > App passwords*, name it for this stack, and put the 16 letters in
+the master file's slot `PARKED_LOGTO_SMTP_APP_PASSWORD` (`scripts/secrets/edit.sh
+master`). The people tool reads it from the environment of its SOPS file, so
+add to `<people>.sops`:
+
+```text
+PEOPLE_SMTP_USER=<sending Gmail address>
+PEOPLE_SMTP_PASSWORD=<the app password>
+PEOPLE_SMTP_FROM_NAME=<optional display name>   # optional
+```
+
+Confirm Google still offers app passwords on the account before relying on it.
+`PEOPLE_SMTP_HOST`, `PEOPLE_SMTP_PORT` and `PEOPLE_SMTP_CA_FILE` exist only for
+rehearsals against a local server. Tests:
+`scripts/tests/test_people.py` against a socket fake SMTP server with STARTTLS.
+
+### People serve
+
+`scripts/people/serve.py` is the people tool as a small JSON API, for the
+lifekit-dashboard People page (the page is built in that repo). The dashboard
+holds no Logto, Tailscale or SMTP secret: it calls this service, which runs the
+same functions as `people.py` (so Logto, tailnet and mail behave exactly as on
+the CLI) and holds the credentials. It is compose service `people-serve`
+(`compose/docker-compose.yml`, `compose/people-serve/`), contract `none`, on the
+internal network `lifekit-people` (no egress, no host port) plus `default` for
+its own egress. The dashboard reaches it at `http://people-serve:8095`.
+
+**It is off.** The service sits behind the compose profile `people`, so the
+merge deploy's `up -d` neither builds nor starts it, and `deploy.sh` only
+checks its contract label. Turning it on needs the owner's word (it puts real
+secrets in place and widens who can change sign-in):
+
+1. Choose the shared secret (32+ random characters) and put it, with the
+   people tool's credentials, in the stack env file the compose project reads:
+   `PEOPLE_SERVE_SECRET`, `PEOPLE_HOST` (the tailnet DNS name the products are
+   served on), `PEOPLE_LOGTO_ENDPOINT` (a Logto URL the container can reach:
+   Logto binds loopback, so the tailnet URL or the identity network),
+   `LOGTO_M2M_APP_ID` / `LOGTO_M2M_APP_SECRET`, `PEOPLE_SERVE_ACTORS` (the
+   owner's email; comma-separated emails allowed to act, required: the service
+   refuses to start without it), the tailnet credentials
+   (["People: the tailnet half"](#people-the-tailnet-half)) and the mail ones
+   (["Sending the invite email"](#sending-the-invite-email)). An unset tailnet
+   or mail block just skips that step, as on the CLI.
+2. On the VPS: `docker compose -p compose --env-file /srv/lifekit-secrets/stack.env
+   -f compose/docker-compose.yml --profile people up -d --build people-serve`.
+   This creates the `lifekit-people` network.
+3. In the dashboard's compose project, declare `lifekit-people` as an external
+   network, attach the dashboard to it, and give it the same secret
+   (`PEOPLE_SERVE_SECRET`) as an env var. Nothing else.
+
+To turn it off: `docker compose -p compose ... --profile people stop people-serve`
+(or `rm -sf`), and detach the dashboard. A later merge deploy does not restart it.
+
+**Endpoint contract.** All bodies and responses are JSON. Every route but
+`/healthz` needs both headers, else `401` and nothing runs:
+
+| Header | Value |
+| --- | --- |
+| `X-People-Secret` | the shared secret (constant-time compare) |
+| `X-Auth-Request-Email` | the signed-in owner's email (the header the gate already forwards); recorded as the actor |
+
+Each invite and resend adds one line to the Logto admin ledger
+(`logto-admin.py ledger`, the `people-state` volume): `action: people-request`,
+`actor`, `request` (`invite` / `resend`), `email`, `rights`, `send`, `result`
+(`ok` / `error`), next to the invite's own undoable writes. Entries without
+`undo` data are skipped by `logto-admin.py undo`. A request refused before it runs
+(401, 403, 400) is not recorded.
+
+| Route | Request | Response (200) |
+| --- | --- | --- |
+| `GET /healthz` | no headers | `{"ok": true}` |
+| `GET /v1/rights` | | `{"rights": [{"id", "name", "port"}]}`: the catalog, for the checkboxes |
+| `GET /v1/people[?email=]` | | `{"people": [{"email", "name", "roles", "rights", "suspended", "tailnet", "drift"}], "tailnet_configured", "tailnet_notes", "drift"}`; `rights` are catalog ids held, `tailnet` is a one-line membership and groups summary or `null`, `drift` lists per-person problems, the top-level `drift` the tailnet-wide ones |
+| `POST /v1/people/invite` | `{"email", "rights": [id...], "send"?: bool, "invite_url"?: "https://..."}` | `{"ok": true, "email", "output": [line...]}`; `output` is the CLI's progress and, without `send`, the draft email |
+| `POST /v1/people/resend` | `{"email", "rights": [id...], "invite_url"?}` | as invite; writes nothing to Logto or the policy, requires the user to hold each right, and mails |
+
+Invite is idempotent. `send` mails only with the mail settings and a tailnet
+invite link in place; otherwise the response carries the draft and a `not sent`
+line in `output`, with status 200, as on the CLI. The host in the email is the
+service's `PEOPLE_HOST`, never the request's.
+
+Errors are `{"ok": false, "error": {"code", "message", "output"?}}`:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `bad_request`, `unknown_right` | bad email, rights, `send` or `invite_url`; nothing was written |
+| 401 | `unauthorized` | missing or wrong secret, or no valid owner email |
+| 403 | `forbidden` | the email is not in `PEOPLE_SERVE_ACTORS` |
+| 404 / 405 | `not_found`, `method_not_allowed` | |
+| 413 | `too_large` | body over 8 KiB |
+| 502 | `failed` | a Logto, tailnet or mail step failed (or the user was not found); `output` shows what completed first, and a failed send after a finished invite is retried with resend |
+| 500 | `internal` | an unexpected error (the detail is in the container log, not the response); an invite or resend that died this way is still recorded in the ledger with `result: error` |
+| 503 | `not_configured` | `PEOPLE_HOST` is not set on the service |
+
+Revoke is not served yet: it follows `people revoke` (a separate slice). Its
+seam is `route_table` in `serve.py`: add the route and one handler beside resend.
+
+Tests: `scripts/tests/test_people_serve.py` (auth rejections, every route, the
+ledger actor, and that a deploy render does not include the service) against
+fake Logto, Tailscale and SMTP servers.
+
+### Fleet agent on the dashboard and basket
+
+The fleet-agent identity (above) is accepted by two of the owner's apps, each
+dormant until its issuer setting is present. The apps live in their own
+repos and deploy from them; this repo owns the edge route and the host
+settings. Owner decision 2026-11-08 is the authority; lifekit-stack#491 is
+the tracking issue. What each switch is, in the order to turn them on (each
+is harmless alone, because an app with no issuer refuses every bearer):
+
+1. **Edge route (this repo).** `dashboard-machine` in
+   `compose/edge/traefik/dynamic.yml`: a `GET` with an `Authorization: Bearer`
+   header on exactly `/api/fleet`, `/api/fleet/metrics` and `/api/fleet/quota`
+   skips the sign-in check and goes to the dashboard, with
+   `X-Lifekit-Edge-Proof` and `X-Auth-Request-Email` removed. The edge
+   checks nothing about the token. Any other request, a bearer on another
+   path or a non-`GET` included, stays on the `dashboard` router and the
+   sign-in check. Traefik watches the directory, so the merge deploy applies
+   it live with no container restart. Before the dashboard is switched on, a
+   bearer through this route is answered `401` by the dashboard.
+2. **Dashboard.** `FLEET_AGENT_ISSUER=<IDENTITY_ENDPOINT>/oidc` in
+   `/srv/dashboard/.env` (not a secret; the value `deploy.sh` prints on its
+   `identity: issuer` line, the same as the edge's
+   `OAUTH2_PROXY_OIDC_ISSUER_URL`), passed through by the dashboard repo's
+   `deploy/docker-compose.dashboard.yml`, plus the container joining the
+   external `identity-oidc` network so it reads Logto's keys at
+   `http://logto:3001/oidc/jwks` (its defaults for audience and key URL
+   stay). The dashboard repo's `docs/MACHINE-ACCESS.md` has the detail. The
+   change recreates the dashboard container, which needs an explicit routed
+   instruction naming the dashboard container before it is merged or deployed
+   (a general merge word does not cover it).
+3. **Basket.** In `~/.config/basket/env`:
+   `FLEET_AGENT_AUTHORITY=<IDENTITY_ENDPOINT>/oidc` (the issuer it pins) and
+   `FLEET_AGENT_BACKCHANNEL_AUTHORITY=http://logto:3001/oidc` (where it
+   fetches discovery and keys), with the `basket-app` container joined to
+   `identity-oidc` by basket's compose. Basket's `docs/decisions.md` "Fleet
+   identity" has the detail. The change recreates `basket-app` only, not its
+   database, and needs an explicit routed instruction naming the `basket-app`
+   container before it is merged or deployed (a general merge word does not
+   cover it). The Funnel that makes basket public is untouched: the machine
+   endpoints are reachable as before, and a fleet token is only accepted on
+   the three it names.
+4. **finance-sentry.** The same issuer setting when its change lands (its
+   own repo; not part of this activation until then).
+
+No secret is set anywhere: the apps verify a signature against Logto's
+published keys, and the fleet's client secret stays in
+`~/.config/firstmate/fleet-agent.env.sops`.
+
+**Verify** after the deploys (a token read from the store, never printed;
+the dashboard through the edge's loopback entrypoint, basket on its
+loopback port):
+
+```bash
+tok() { ( set -a; . <(sops decrypt --input-type dotenv --output-type dotenv ~/.config/firstmate/fleet-agent.env.sops)
+  curl -s -u "$FLEET_AGENT_CLIENT_ID:$FLEET_AGENT_CLIENT_SECRET" \
+   -d grant_type=client_credentials --data-urlencode "resource=$FLEET_AGENT_RESOURCE" \
+   -d "scope=$1" http://127.0.0.1:3001/oidc/token ) \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'; }
+T=$(tok fleet:read)
+for p in /api/fleet /api/fleet/metrics /api/fleet/quota; do
+  curl -s -o /dev/null -w "$p %{http_code}\n" -H "Authorization: Bearer $T" http://127.0.0.1:18890$p   # 200
+  curl -s -o /dev/null -w "$p no token %{http_code}\n" http://127.0.0.1:18890$p                       # sign-in redirect, not 200
+done
+P=$(tok basket:catalog-read)
+curl -s -o /dev/null -w "catalog read %{http_code}\n" -H "Authorization: Bearer $P" http://127.0.0.1:3310/api/products       # 200
+curl -s -o /dev/null -w "catalog, wrong scope %{http_code}\n" -H "Authorization: Bearer $T" http://127.0.0.1:3310/api/products   # 403
+```
+
+A token with the wrong scope is `403`, a missing, malformed, expired or
+wrong-issuer token is `401`. Sign-in is checked by opening the dashboard in a
+browser: it must still send an unsigned-in visit to Logto and back.
+
+**Rollback**, quickest first; each leaves people's sign-in as it is:
+
+- **Stop the dashboard's machine reads at the edge:** remove the
+  `dashboard-machine` router (and its `dashboard-machine-headers`
+  middleware) from `compose/edge/traefik/dynamic.yml` and merge. Traefik
+  reloads it live; no container restarts. A bearer then meets the sign-in
+  check and is refused.
+- **Stop an app accepting the token:** empty `FLEET_AGENT_ISSUER` in
+  `/srv/dashboard/.env` and redeploy the dashboard; empty
+  `FLEET_AGENT_AUTHORITY` (and the backchannel) in `~/.config/basket/env`
+  and redeploy basket. Every bearer is then refused (`401`). Each redeploy
+  recreates that one container.
+- **Stop the identity itself:** Logto has no disable. `fleet-agent.sh revoke`
+  makes tokens scopeless (every app answers `403`); `revoke --delete` stops
+  issuing; both leave a token already issued valid for up to an hour (see
+  "Fleet identity"). The `identity-oidc` membership can stay; it only lets
+  the app read public keys.
+
+## Sign-in page branding
+
+The Logto sign-in page shows each application's own mark and primary color:
+the lifekit mark in Indigo `#4f46e5` for the sign-in gate (dashboard and devclaw
+console share that one Logto client), the fs mark in Petrol `#175a6d` for
+finance-sentry's client, the bk mark in Violet `#7c3aed` for basket's client
+(no dark primary picked yet), the tenant default (lifekit mark, Indigo) for
+anything else. Logto's per-application sign-in experience carries the logo and color;
+the tenant's Terms/Privacy links are cleared, because lifekit publishes no such
+pages. `scripts/identity/branding/README.md` has the seeds and where the marks
+come from. Operator step, with the M2M credentials; it changes the live
+sign-in page, so run it at go time:
+
+```bash
+sops exec-env <file>.sops 'bash scripts/identity/apply-branding.sh'
+```
+
+Idempotent; an application it cannot find by name is reported and skipped
+(override with `GATE_APP`, `FS_APP`, `BK_APP`, `GRAFANA_APP`). Reverse each change with
+`logto-admin.py undo`. Logto 1.44 stores an app display name but does not draw
+it on the sign-in page. No restart is needed. Re-add Terms/Privacy links once
+real pages exist, in the console or by extending `set-sign-in-exp`.
+
+## Grafana sign-in through Logto
+
+Grafana's `generic_oauth` against the identity provider above: a "Sign in with
+lifekit" button next to the password form. Off by default; the compose
+settings are `GF_AUTH_GENERIC_OAUTH_*` on the `grafana` service, driven by
+`GRAFANA_OIDC_*` in the master file (`.env.example`). Roles: a Logto user with
+the role `admin` is a Grafana **Admin**; every other member is **refused**
+(`role_attribute_path` reads the `roles` claim and yields no role for a
+non-admin, and `role_attribute_strict` turns that into a denied sign-in;
+`roles` is in the requested scopes). Nobody becomes a Grafana server admin through it.
+
+How the pieces connect: the browser goes to the tailnet issuer
+(`https://<name>:3001/oidc/auth`). Grafana's own token and userinfo calls go to
+`http://logto:3001/oidc/...` over `identity-oidc`, an external network only
+Logto and its on-box OIDC clients join (the host firewall does not reliably let
+a container reach the host's own tailnet address; `lifekit-shared` carries the
+agent runtime and stays off Logto). `deploy.sh` creates `identity-oidc`
+idempotently before the platform `up`; both compose projects reference it as
+external. Logto signs the id_token with the tailnet issuer whichever
+name answered, so it matches the issuer `deploy.sh` derives
+(`scripts/deploy-grafana-oidc.sh`, an explicit `IDENTITY_ENDPOINT` wins).
+Grafana's `root_url` (`GRAFANA_ROOT_URL`) must stay the tailnet HTTPS address:
+it builds the redirect URI.
+
+**Logto side**, with `scripts/identity/logto-admin.py` ([Logto admin
+through the Management API](#logto-admin-through-the-management-api); each
+command under `sops exec-env` as shown there):
+
+1. The role `admin` (a User role, no API permissions), assigned to the
+   owner. Members without it are refused at Grafana sign-in.
+
+   ```bash
+   python3 scripts/identity/logto-admin.py ensure-role admin
+   python3 scripts/identity/logto-admin.py assign-role <owner email> admin
+   ```
+
+2. The Traditional web app `Grafana`. Redirect URI
+   `https://<name>:3000/login/generic_oauth` (the same value as
+   `GRAFANA_ROOT_URL` plus `/login/generic_oauth`); post sign-out redirect
+   `https://<name>:3000/login`. It prints the client id; the secret goes to
+   the file:
+
+   ```bash
+   python3 scripts/identity/logto-admin.py ensure-app Grafana \
+     --redirect-uri https://<name>:3000/login/generic_oauth \
+     --post-logout-uri https://<name>:3000/login --secret-file ~/grafana.secret
+   ```
+
+   On an existing `Grafana` app this sets the two URIs instead
+   (`set-redirects Grafana` does only that).
+
+In the admin console (`https://<name>:3002`) the same is *Roles > Create
+role*, then *User management > the user > Roles*, then *Applications >
+Create application > Traditional web*.
+
+**Enable** (operator, captain's age key for the secret):
+
+```bash
+# 1. Add the secret to the master file; nothing prints it:
+sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+  '["GRAFANA_OIDC_CLIENT_SECRET"]' "\"$(cat ~/grafana.secret)\""
+shred -u ~/grafana.secret
+sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+  '["GRAFANA_OIDC_CLIENT_ID"]' "\"<client id>\""
+sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+  '["GRAFANA_OIDC_ENABLED"]' '"true"'
+# 2. Commit the file through a PR, then render and redeploy:
+sudo bash scripts/secrets/render-stack-env.sh
+```
+
+The deploy then recreates Grafana (and, once, Logto: it joined
+`identity-oidc`). It turns red and leaves sign-in off if the client id,
+secret or issuer is missing. Sign in with the button as the owner and check
+the role under *Administration > Users and access*.
+
+**Password form off.** The local admin (`GRAFANA_ADMIN_USER`) is the
+break-glass until then. After one member has signed in, set
+`GRAFANA_OIDC_ONLY` to `true` the same way: Grafana then redirects straight
+to Logto and hides the form. The admin password still works against the API
+(`curl -u`) for a fix; the way back is unsetting `GRAFANA_OIDC_ONLY` and
+redeploying.
+
+**Rotating or moving.** A new client secret is `sops set` plus render and
+redeploy. When the issuer moves (a public domain), register the application
+again against the new issuer and update `IDENTITY_ENDPOINT` / the redirect
+URI.
+
+## Tailnet sign-in gate
+
+Compose project `edge` (`compose/edge/`) puts one Logto sign-in in front of
+the lifekit dashboard and the devclaw console (and the OpenClaw dashboard
+once [its cutover](#openclaw-behind-the-sign-in-gate) has run). Once signed
+in on either, the other opens without asking again. Two services:
+
+- `traefik`, the forward-auth proxy, with one loopback entrypoint per
+  surface: `127.0.0.1:18890` for the dashboard and `127.0.0.1:18891` for
+  devclaw. Routes are in `compose/edge/traefik/dynamic.yml`, mounted as a
+  directory and watched, so a route change merged to `main` applies live.
+- `oauth2-proxy`, a confidential OIDC client of Logto. It answers Traefik's
+  check for every request from its session cookie. With no session, it sends
+  the browser to Logto and back.
+
+The surfaces keep their URLs, `https://<name>:18790` and `https://<name>:18791`.
+The cutover only points Tailscale Serve's two ports at the gate instead of at
+the apps, so rolling back is pointing them back.
+
+| | Value |
+| --- | --- |
+| Who gets in | Logto users with the role `admin` (others get 403), the role that also makes a Grafana Admin |
+| Session | cookie `_lifekit_edge`, 30 days, refreshed against Logto at most hourly, so a removed role or a deleted user is out within the hour. Host-only, so it covers every port of the tailnet name: one sign-in for both surfaces |
+| Dashboard `/api/*` with no session | 401, not a redirect (a `fetch()` cannot follow the sign-in page) |
+| devclaw machine clients | unchanged: a request with an `Authorization` header or a `?token=` query, and `/mcp`, `/webhooks/`, `/health`, `/metrics`, go straight to devclaw, which checks them itself |
+| Dashboard machine clients | one door: a `GET` with a bearer on `/api/fleet`, `/api/fleet/metrics` or `/api/fleet/quota` goes straight to the dashboard, which checks the fleet-agent token itself ([Fleet agent on the dashboard and basket](#fleet-agent-on-the-dashboard-and-basket)) |
+| devclaw console | after sign-in, the gate adds devclaw's bearer (`DEVCLAW_MCP_TOKEN`), so no token is asked for |
+| Dashboard relay proof | after sign-in, the dashboard route adds `X-Lifekit-Edge-Proof` (`RELAY_EDGE_PROOF`) and the signed-in `X-Auth-Request-Email`; the dashboard's relay endpoint requires both, so a container on `lifekit-shared` that calls the dashboard directly is refused. The dashboard's own env carries the same `RELAY_EDGE_PROOF` (`docs/secrets-runbook.md`) |
+| Not behind it | finance-sentry (its own Logto client), Grafana, Logto itself. The OpenClaw gateway goes behind it with its own cutover: [OpenClaw behind the sign-in gate](#openclaw-behind-the-sign-in-gate) |
+
+**Why Traefik and oauth2-proxy.** Tailscale Serve cannot ask anyone before
+proxying, so a proxy has to sit between it and the apps. Traefik is the
+proxy the platform contract already names for the public edge
+(`docs/platform-contract.md`, `ingress`), so the public routers join this
+one later instead of a second proxy product arriving. oauth2-proxy is the
+usual forward-auth OIDC client. It keeps the session in an encrypted cookie
+(no session store to run) and re-checks it with Logto on refresh. Here
+Traefik reads its routes from a file, not from container labels; the
+contract's `edge` item stays a check for the public edge.
+
+**Operator steps, once** (admin account; the Logto steps with
+`scripts/identity/logto-admin.py`, [Logto admin through the Management
+API](#logto-admin-through-the-management-api), or the admin console):
+
+1. **Logto application.** A Traditional web app, named for example
+   `lifekit sign-in gate`, with both surfaces' callback and sign-out URIs.
+   It prints the client id; the secret goes to the file for step 3:
+
+   ```bash
+   python3 scripts/identity/logto-admin.py ensure-app "lifekit sign-in gate" \
+     --redirect-uri https://<name>:18790/oauth2/callback \
+     --redirect-uri https://<name>:18791/oauth2/callback \
+     --post-logout-uri https://<name>:18790/ \
+     --post-logout-uri https://<name>:18791/ --secret-file ~/gate.secret
+   ```
+
+2. **Role.** The gate lets in only Logto users with the role `admin`. If
+   Grafana sign-in already created it, both commands report it is there:
+
+   ```bash
+   python3 scripts/identity/logto-admin.py ensure-role admin
+   python3 scripts/identity/logto-admin.py assign-role <owner email> admin
+   ```
+
+   The owner's Logto account also needs an email address (a member created
+   as above has one): oauth2-proxy refuses a sign-in whose token carries
+   none with a 500 on `/oauth2/callback`.
+3. **Secrets** (captain's age key). Add the client id, the client secret
+   and a new cookie secret to the master file; nothing prints them:
+
+   ```bash
+   sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+     '["EDGE_OIDC_CLIENT_ID"]' "\"<client id>\""
+   sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+     '["EDGE_OIDC_CLIENT_SECRET"]' "\"$(cat ~/gate.secret)\""
+   shred -u ~/gate.secret
+   sops set --input-type dotenv --output-type dotenv secrets/lifekit.env.sops \
+     '["EDGE_COOKIE_SECRET"]' "\"$(openssl rand -hex 16)\""
+   ```
+
+   Commit the file through a PR; the three secrets' rows are already in the
+   master inventory of `docs/secrets.md` (the inventory test requires a row
+   for every secret in the file). After merge, render, then redeploy (CI `workflow_dispatch`, or
+   `scripts/deploy.sh` as the deploy account):
+
+   ```bash
+   sudo bash scripts/secrets/render-stack-env.sh
+   ```
+
+   That deploy brings the project up, but nothing reaches it yet. Its
+   report-only "sign-in gate (host facts)" block shows red until step 4.
+4. **Cutover.** Check the gate before moving anything: from the box,
+   `curl -sI http://127.0.0.1:18890/` answers `302` to
+   `https://<name>:3001/oidc/auth`. Then point the two Serve ports at the
+   gate (Serve only, never `tailscale funnel`):
+
+   ```bash
+   sudo tailscale serve --bg --https=18790 http://127.0.0.1:18890
+   sudo tailscale serve --bg --https=18791 http://127.0.0.1:18891
+   tailscale serve status        # 18790 -> :18890, 18791 -> :18891, tailnet only
+   ```
+
+   Open `https://<name>:18791/` (the devclaw console): Logto's sign-in, then
+   the console. Then open `https://<name>:18790/`: the dashboard, with no
+   second sign-in. If the dashboard still shows its old page, see the
+   service-worker note below.
+
+**Rollback** (restores direct access to both apps; the project can stay up):
+
+```bash
+sudo tailscale serve --bg --https=18790 http://127.0.0.1:18790
+sudo tailscale serve --bg --https=18791 http://127.0.0.1:18791
+```
+
+**Signing out.** `https://<name>:18791/oauth2/sign_out` ends the gate's
+session on both surfaces. Logto stays signed in, so the next visit comes back
+without a prompt. To end the Logto session too, add `rd` with Logto's
+end-session URL, URL-encoded:
+
+```
+https://<name>:18791/oauth2/sign_out?rd=https%3A%2F%2F<name>%3A3001%2Foidc%2Fsession%2Fend%3Fclient_id%3D<client id>%26post_logout_redirect_uri%3Dhttps%253A%252F%252F<name>%253A18791%252F
+```
+
+**The dashboard's service worker.** The dashboard is an installable app. Its
+service worker answers every page navigation from its cache, `/oauth2/...`
+included. So on a device that already has it installed, sign-in and
+sign-out on the dashboard's port never reach the gate. Sign in or out on
+the devclaw port instead: the cookie is shared. Or clear the dashboard's site
+data (or hard-reload) once after the cutover. The fix belongs to the
+dashboard repository: exclude `/oauth2/` from the service worker's
+navigation fallback, and send the browser to `/oauth2/start?rd=<page>` when
+`/api` answers 401.
+
+**Logs.** Neither service writes an access log: devclaw's old `?token=`
+links would put its bearer into Loki. Sign-in failures appear in
+`docker logs edge-oauth2-proxy-1`. Traefik logs only warnings and errors.
+
+## OpenClaw behind the sign-in gate
+
+The OpenClaw dashboard (Control UI) moves behind the same Logto sign-in as the
+lifekit dashboard and the devclaw console, so nobody pastes the gateway token
+into a browser. The gateway switches to `gateway.auth.mode` `trusted-proxy`:
+it takes the signed-in email that the edge's Traefik sends and grants the
+owner's email `operator.admin` (`gateway.auth.identityScopes`). The URL stays
+`https://<name>:18789`. Its Serve port points at the edge's `openclaw`
+entrypoint instead of the gateway, and the gateway's own `127.0.0.1:18789` is
+no longer published.
+
+The OpenClaw phone app keeps working through the cutover and after it. Its
+pairing, device token and WebSocket skip the sign-in, and the gateway's own
+device auth checks them exactly as it does today. A throwaway replica proved
+this before the change merged.
+
+**Routes** (`compose/edge/traefik/openclaw.yml`):
+
+| Entrypoint | Request | Goes to | The gateway sees |
+| --- | --- | --- | --- |
+| `openclaw`, `127.0.0.1:18892` (Serve's `:18789`) | `/oauth2/*` | oauth2-proxy (sign-in callback, sign-out) | - |
+| | the phone app: User-Agent `OpenClaw/...` (native) or an iPhone/iPad WKWebView without `Safari/` (its dashboard tab) | the gateway | no identity (any client-sent copy is removed); its device token or pairing code, as today |
+| | a node host (`openclaw connect`): `GET /j/<22-char code>`, or a WebSocket upgrade with no `Origin` and no `Cookie` on `/` or on `/__openclaw__/worker` | the gateway | no identity (any client-sent copy is removed); the join code, then the node's bootstrap or device token, checked by the gateway |
+| | anything else: every browser, Mobile Safari included | the `sso` check, then the gateway | `X-Auth-Request-Email`, the signed-in Logto email, on HTTP and the WebSocket upgrade |
+| `openclaw-internal`, `openclaw-edge:18893` (`lifekit-shared` only, not published) | `/api/diagnostics/prometheus` with the gateway-token bearer | the gateway | `service:prometheus`, capped at `operator.read` |
+| | `/v1/*` with the gateway-token bearer | the gateway | `service:finance-sentry`, capped at `operator.write` |
+| | `/v1/*` with the study door's own bearer (`STUDY_DOOR_EDGE_SECRET`) | the gateway | `service:study-door`, capped at `operator.write` |
+| | anything else | 404 | - |
+| `study-door`, `127.0.0.1:18895` (published on loopback only; Serve's `:8098`) | `POST` or `OPTIONS` `/v1/turn` | the study door (not the gateway) | - (the door checks its own bearer and Origin) |
+| | any other method or path | 404 | - |
+| `openclaw-hook`, `127.0.0.1:18894` (published on loopback only) | `POST <hook path>/firstmate-reply` | the gateway | no identity (any client-sent copy is removed); the hook token, checked by the gateway |
+| | any other method or path | 404 | - |
+
+The User-Agent match is not access control: requests on the app route carry
+no identity, so the gateway's device auth is their only gate, as it is today.
+Unchanged and direct: finance-sentry's companion hook trigger
+(`openclaw-gateway:18789`, its `OPENCLAW_HOOK_TOKEN` on the hooks path, which
+`gateway.auth` does not govern), and the in-container CLI over loopback.
+Kit's channels and cron run inside the gateway and do not change.
+
+**Who gets in.** `gateway.auth.trustedProxy.allowUsers` holds exactly the
+owner's Logto email plus the service identities above (`service:prometheus`,
+`service:finance-sentry` and, once the study door is turned on, `service:study-door`). The gate already
+admits only Logto's `admin` role, and the gateway narrows that to one email.
+A browser that signs in pairs as a device with OpenClaw's default scopes
+(`deviceAutoApprove`), and the owner's email adds `operator.admin`.
+
+**What reaches the gateway.** Every request through the edge comes from
+`10.231.78.2`, Traefik's pinned address on `openclaw-ingress`, with forwarded
+headers. The gateway answers such a request `403 proxy_attribution_required`
+in either auth mode unless `gateway.trustedProxies` lists that address, so
+every deploy keeps it listed (`scripts/deploy-trusted-proxies.sh`). In token
+mode it sits next to the host's bridge addresses and only attributes the
+client: the gateway still checks the bearer and ignores the identity header.
+After the cutover, `gateway.trustedProxies` is exactly `10.231.78.2`.
+`openclaw-ingress` is internal and holds only Traefik and the gateway (`scripts/lib/deploy-common.sh`
+`OPENCLAW_EDGE_IP`). `127.0.0.1:18789` is no longer published (the
+`compose/openclaw/trusted-proxy.yml` overlay). The gateway stays on
+`lifekit-shared` for its own outbound calls (finance-sentry-mcp,
+notify-relay, otel-collector), so a container there can still open a TCP
+connection to it. That container holds no identity, though: the gateway takes
+an identity only from `10.231.78.2` and no longer accepts the token. So "only
+from the proxy" holds for authentication, not for TCP.
+
+**Why the service clients go through the edge.** In trusted-proxy mode the
+gateway accepts no bearer. Its documentation says the password configured
+next to trusted-proxy mode is honoured only for local-direct callers
+(loopback, no forwarded headers), so it cannot carry Prometheus' scrape or
+finance-sentry's calls across the network. The replica confirmed this. Those
+clients therefore keep the bearer they already hold, and the edge's internal
+entrypoint swaps it for a service identity. `OPENCLAW_GATEWAY_PASSWORD`
+serves only the in-container CLI (`docs/secrets.md`). That includes the
+deploy's `exec` calls: running inside the gateway does not authenticate them,
+and without the password a 2026.10.2 replica refused `health`, `cron list`
+and `channels status` (`trusted_proxy_untrusted_source`). The internal routes
+work in token mode too, once the deploy has listed the edge in
+`gateway.trustedProxies`, so the clients move first, with no gap.
+
+**Deploys after the cutover.** `openclaw_compose` reads the mode from
+`openclaw.json` and adds the overlay in trusted-proxy mode, so every deploy,
+one-shot run and rollback follows what the cutover left. Each deploy also
+keeps `gateway.trustedProxies` at exactly the edge in trusted-proxy mode, and
+in token mode lists the edge next to the host's bridge address
+(`scripts/deploy-trusted-proxies.sh`). The auth keys are host state, never in
+`platform.patch.json`.
+
+**Rehearsal.** CI's tests job runs the whole cutover and rollback against
+stubbed docker, tailscale and curl (`scripts/tests/test_openclaw_sso.py`):
+the order of every step, the exact config before and after, a refused dry
+run, a failed check rolling back by itself, a failing rollback that keeps its
+saved state, and no secret value in any output. Its Prometheus stub reports
+the scrape up only while `trustedProxies` lists the edge, as the gateway
+does. `test_edge_routes.py` pins the routes and the User-Agent match.
+
+### Node host enrolment through the gateway edge
+
+A headless node host (`openclaw connect`, the desktop browser node "Kit gets
+hands" needs) cannot pass the sign-in, and the gateway in trusted-proxy mode
+takes no shared token, so the edge gives it three narrow routes with no
+identity (`openclaw-node-join`, `openclaw-node-socket`, `openclaw-node-worker`
+in `compose/edge/traefik/openclaw.yml`; the table above):
+
+- **Join:** `GET /j/<code>` only, with exactly the gateway's 22-character
+  URL-safe code. The gateway redeems it once (about 10 minutes, rate limited
+  per client IP, an opaque 404 on any miss).
+- **Main socket and worker socket:** a WebSocket upgrade on `/` and on
+  `/__openclaw__/worker` that carries neither `Origin` nor `Cookie`. A browser
+  always sends `Origin` on a WebSocket, so it can never take these routes and
+  keeps signing in. The node authenticates inside the socket (bootstrap token,
+  then its device token), so the gateway's own device auth is the only gate,
+  exactly as on the phone app's route. The User-Agent is not used: the node's
+  WebSocket client sends none.
+
+The cloud-worker artifact routes (`/__openclaw__/worker-bootstrap`, `-bundle`,
+`-transfer`) are not opened: a browser-only node host does not use them.
+
+**The alternative, weighed.** Keeping trusted-proxy and using the gateway's
+`gateway.auth.password` is not possible across the network: it is honoured
+only for clean loopback/direct callers (see "Why the service clients go
+through the edge"), and the node host is another machine. Switching to token
+mode would undo the sign-in gate for the dashboard. So the node host gets
+routes that bypass the identity check and lean on the gateway's own device
+auth, as the phone app already does.
+
+**The doctor finding stays.** `core/doctor/node-hosting-preconditions`
+`machine-client-auth` at `gateway.auth` is a config-only check, so it cannot
+clear while `gateway.auth` has no token/password and the mode is
+trusted-proxy; `scripts/rehearse-openclaw-bump.sh` keeps tolerating exactly
+that finding. A node host enrolling through these routes is the proof that the
+path works.
+
+**Enrolling a node (operator, after the routes are deployed).** The machine
+that hosts the node is chosen separately.
+
+1. On the gateway: `openclaw devices join-code` (admin credentials). Use the
+   `https://<name>:18789/j/<code>` URL it prints (the Serve origin).
+2. On the node machine: `openclaw connect <join-url> --service --commands
+   browser.proxy`. `--commands` restricts the advertised surface to the
+   browser proxy (no `system.run`); without it the node declares the full
+   default surface and bootstrap enrolment approves it.
+3. `openclaw nodes list` shows the node connected, advertising `browser.proxy`
+   only. Later command or capability expansion still needs `openclaw nodes
+   approve`.
+4. Route browser calls to it: `gateway.nodes.browser.node` (the node's id from
+   `nodes list`) in `compose/openclaw-gateway/platform.patch.json`, in the PR
+   that follows once the machine exists.
+
+**Rehearsal on a throwaway replica** (`docs/runbook.md` "OpenClaw behind the
+sign-in gate" shape: a copy of live state, never the live gateway): mint a
+join code on the replica; enrol a throwaway node through the edge routes with
+`--commands browser.proxy`; check `nodes list`; then check refusals through the
+same routes: a join code replayed (404), a wrong code (404), a WebSocket with no
+token (refused by the gateway's connect), and a plain browser request to `/`
+(sign-in redirect). `test_edge_routes.py` evaluates the real `openclaw.yml`
+rules against sample requests (node join, both sockets, browser look-alikes
+with `Origin` or `Cookie`, other methods and paths, the worker-artifact paths,
+the phone app, the sign-in callback) and asserts which router wins each. It
+evaluates the rules in Python, so it does not replace a throwaway Traefik with
+the real file for a change to the rule grammar.
+
+### Before the cutover
+
+Run these from the deployed checkout (`/srv/lifekit-stack`) after this
+change's merge deploy. That deploy creates `openclaw-ingress`, starts the
+edge's two OpenClaw entrypoints, and moves Prometheus' scrape onto the edge
+while the gateway is still in token mode.
+
+1. **The scrape.** `curl -s --data-urlencode 'query=up{job="openclaw"}'
+   http://127.0.0.1:9090/api/v1/query` shows value `"1"`. A `0` with the
+   target's error `403 Forbidden` means `gateway.trustedProxies` does not
+   list the edge (`10.231.78.2`): run a deploy, which adds it. The cutover's
+   preflight refuses in that state.
+2. **The password.** It is already in the master file. Render it into the
+   env file; nothing restarts:
+
+   ```bash
+   sudo bash scripts/secrets/render-stack-env.sh
+   ```
+
+3. **Logto callback.** Give the gate's application the third port's callback
+   and sign-out URIs. `set-redirects` replaces each list, so name all three
+   ports:
+
+   ```bash
+   sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py set-redirects "lifekit sign-in gate" \
+     --redirect-uri https://<name>:18790/oauth2/callback \
+     --redirect-uri https://<name>:18791/oauth2/callback \
+     --redirect-uri https://<name>:18789/oauth2/callback \
+     --post-logout-uri https://<name>:18790/ --post-logout-uri https://<name>:18791/ \
+     --post-logout-uri https://<name>:18789/'
+   ```
+
+4. **finance-sentry** (operator step in that repository, no code change). Its
+   agent calls OpenClaw's OpenAI-compatible API, and that must now go
+   through the edge. In finance-sentry's `docker/.env.sops`, set
+   `OPENCLAW_GATEWAY_URL` to `http://openclaw-edge:18893`, keep its
+   `OPENCLAW_GATEWAY_TOKEN` as it is, and redeploy finance-sentry. The
+   cutover's preflight checks it: it reads only that one variable,
+   `Agent__OpenClaw__BaseUrl`, from the `finance-sentry-api` container,
+   and refuses while it points anywhere but `openclaw-edge:18893` (a box
+   without finance-sentry passes). The companion hook
+   trigger (`Companion__AgentTriggerUrl`, `http://openclaw-gateway:18789`)
+   stays as it is.
+5. **lifekit-dashboard.** Nothing: it does not call the gateway.
+6. **The owner's email.** List the emails the gate admits and pick the
+   owner's:
+
+   ```bash
+   sops exec-env <file>.sops 'python3 scripts/identity/logto-admin.py role-users admin'
+   ```
+
+### Cutover
+
+One command. It checks everything above before it changes anything: the
+password and token are in the env file, the edge answers a browser with the
+sign-in redirect and the phone app's dashboard tab with the gateway,
+`gateway.trustedProxies` lists the edge, Prometheus scrapes through the edge, finance-sentry calls through it, and
+Serve publishes `:18789` without Funnel. Then it:
+
+- saves `gateway.auth`, `gateway.trustedProxies`,
+  `gateway.controlUi.allowedOrigins` and Serve's `:18789` target to
+  `/srv/lifekit-secrets/openclaw-sso-rollback.json` (0600);
+- dry-runs the config patch inside the running gateway;
+- stops the gateway and patches `gateway.auth` to trusted-proxy (owner's
+  email only), `trustedProxies` to exactly the edge, and adds
+  `https://<name>:18789` to `allowedOrigins`;
+- starts the gateway without its published port and points Serve's `:18789`
+  at `127.0.0.1:18892`;
+- checks the result (CLI health, the browser redirect, the app route, Serve,
+  and the scrape) and rolls back on its own if anything is off.
+
+The gateway restarts once, as on any deploy that recreates it.
+
+```bash
+cd /srv/lifekit-stack
+sudo bash scripts/openclaw-sso.sh cutover --operator-email <owner email>
+```
+
+**Live check, phone first.** Open the OpenClaw app. It shows the gateway
+connected, the dashboard tab loads, and a message to the agent is answered.
+Then open `https://<name>:18789/` in a browser: Logto's sign-in (or none if
+already signed in on another surface: the cookie is shared), then the
+dashboard, with no token asked for. `sudo bash scripts/openclaw-sso.sh check`
+reports the mode and Serve target any time. If the phone does not connect,
+roll back.
+
+### Rollback
+
+```bash
+sudo bash scripts/openclaw-sso.sh rollback
+```
+
+The rollback restores exactly what the cutover saved: `gateway.auth`,
+`trustedProxies`, `allowedOrigins` and Serve's `:18789` target. The gateway
+comes back in token mode with `127.0.0.1:18789` published, which is today's
+routing. If one of its steps fails, it keeps the saved file and says so; fix
+the cause and run it again. Without a saved file, it restores token mode with
+the gateway token's env reference, re-derives `trustedProxies` and points
+Serve at `127.0.0.1:18789`.
+
+Leave Prometheus, finance-sentry and the extra Logto URIs as they are: the
+internal routes work in token mode too. The restored `trustedProxies` holds
+the edge (the deploy keeps it there in token mode); without a saved file the
+rollback adds it back with the host's bridge address.
+
+**Rotating.** The password: `sops set` plus render, then a deploy (it
+recreates the gateway). The gateway token: also restart the edge's Traefik
+(`docker restart edge-traefik-1`), because it reads the token
+once at start (`docs/secrets.md`).
+
+## Container console logs in Loki
+
+The OTel collector tails every container's Docker json-file log (read-only) and
+ships it to Loki's OTLP endpoint, so a container's last stdout/stderr lines
+survive the container being recreated. Retention is Loki's 14 days; only lines
+written after the collector started are captured (`start_at: end`).
+
+Crash forensics: dockerd's exit line (`journalctl -u docker`) gives the container
+id; query it in Grafana Explore (Loki):
+
+```
+{service_name="docker"} | container_id=~"<id prefix>.*"
+```
+
+`container_id` and `log_iostream` (`stdout`/`stderr`) are structured metadata,
+not labels. The log line does not carry a name; map id to name with
+`docker ps -a --no-trunc --format '{{.ID}} {{.Names}}'` (live containers) or the
+dockerd journal for containers already gone.
+
+The collector's own Loki export errors are not shipped (they would feed back
+into the pipeline while Loki is down); they stay visible via `docker logs`.
+
+## Reminder bot
+
+Compose project `reminder-bot` (`compose/reminder-bot/`): one Telegram
+long-polling reminder bot (Python, python-telegram-bot, SQLite). It publishes
+no port and takes no inbound traffic; the database is the `reminder_data` named
+volume at `/data`, `TZ` is `Europe/Dublin`, and the container is
+`reminder-bot-reminder-bot-1`. Its log ships to Loki like every container's
+([Container console logs in Loki](#container-console-logs-in-loki)).
+
+The bot's source repo is private and publishes no image, and the deploy account
+cannot read it, so the image is built by an operator account that can (its
+existing `gh` login, read-only), from the commit in
+`scripts/reminder-bot/PIN`:
+
+```bash
+bash scripts/reminder-bot/build-image.sh            # builds reminder-bot:<short sha>; skips if it exists
+bash scripts/reminder-bot/build-image.sh --check    # exit 1 if the tag is absent
+```
+
+**Build before the merge that adds or bumps the pin**, then deploy. A pin bump
+is a PR that edits `PIN`; the new tag is a different image, so the old one stays
+for rollback until a prune. `deploy.sh` runs the `--check` before it brings the
+project up: with the image absent it prints a red failure naming the build
+command, leaves the other projects as they were, and goes red at the end. It
+skips the project with a yellow warning while `REMINDER_BOT_TOKEN` is not yet in
+the rendered env file (`docs/secrets.md`).
+
+First bring-up, after the token is in the master file: merge, `sudo bash
+scripts/secrets/render-stack-env.sh`, then a deploy (CI on the next merge, or
+`workflow_dispatch` on CI).
+
+Verify, read-only:
+
+```bash
+docker logs --tail 20 reminder-bot-reminder-bot-1     # the polling log line, no error
+docker exec reminder-bot-reminder-bot-1 python -c "import asyncio, os; from telegram import Bot; print(asyncio.run(Bot(os.environ['BOT_TOKEN']).get_me()).username)"   # getMe
+```
+
+The platform contract label is `none`: the bot has no HTTP surface to declare
+health or metrics on, so liveness is the container's state and its log. The
+database is on the volume only; there is no backup yet.
+
+## Workout manager (wger)
+
+Compose project `wger` (`compose/wger/`): [wger](https://github.com/wger-project/wger),
+the self-hosted workout manager behind the owner's phone app (gym schedule,
+exercise technique, sets checked off), with Kit setting the program through
+its REST API. Four containers, all `lifekit.contract: none` (an upstream app):
+`wger-nginx-1` (static, media and the proxy), `wger-web-1` (Django + gunicorn),
+`wger-db-1` (Postgres) and `wger-cache-1` (Redis, nothing to back up). Images
+are pinned to exact versions; `scripts/check-wger-compose.py` fails the deploy
+before `up` if one is not, if the database or media leave their named volumes
+(`postgres_data`, `media`), or if a port is not loopback-bound.
+
+**Setup (operator, once).** Every merge deploys the project only after both
+secrets are in the rendered env file; until then `deploy.sh` prints a warning
+and skips it. Names only here, values never in git:
+
+```bash
+# 1. add the keys WGER_SECRET_KEY and WGER_DB_PASSWORD to the master file and
+#    their rows to docs/secrets.md (set-secret.sh refuses a name that is not
+#    already a key); docs/secrets-runbook.md
+scripts/secrets/edit.sh master
+# 2. set a value for each (hidden prompt or stdin), then render and redeploy
+openssl rand -hex 32 | scripts/set-secret.sh master WGER_SECRET_KEY
+openssl rand -hex 32 | scripts/set-secret.sh master WGER_DB_PASSWORD
+```
+
+The deploy derives `WGER_SITE_URL` (`https://<host>.<tailnet>.ts.net:8480`) from the
+tailnet name; set `WGER_SITE_URL` in the env file to override. The database
+password is set on the first boot of an empty volume only.
+
+**Phone access.** nginx binds `127.0.0.1:8480` and nothing else; Tailscale Serve
+publishes it on the tailnet name, tailnet-only, never Funnel (the same pattern
+as the identity ports). The sign-in gate (`edge`) is not in front of it: the
+wger mobile app cannot follow a browser sign-in, so wger's own login is the
+gate and `ALLOW_REGISTRATION` is `False`.
+
+```bash
+sudo tailscale serve --bg --https=8480 http://127.0.0.1:8480
+tailscale serve status        # 8480 -> 127.0.0.1:8480, "(tailnet only)"
+```
+
+In the wger mobile app, set the server address to
+`https://<host>.<tailnet>.ts.net:8480` and log in with the owner account.
+
+**Owner account and API token (operator; run by hand, values stay on the host).**
+
+```bash
+docker exec -it wger-web-1 python3 manage.py createsuperuser    # prompts for username and password
+docker exec wger-web-1 python3 manage.py drf_create_token <username>    # prints the API token once
+```
+
+Store the token the way every other secret is stored (`docs/secrets.md`); it
+never goes in git or a PR. Revoke by deleting the user's token in the Django
+admin (`/admin/authtoken/tokenproxy/`) and run `drf_create_token` again.
+
+**Exercise sync (first start, then whenever the catalogue should refresh).**
+The exercise database, images and videos come from the upstream instance
+(`https://wger.de`); the web container has egress for it. Wait until
+`docker compose -p wger ps` shows `web` healthy (first start runs migrations
+and takes minutes), then:
+
+```bash
+docker exec wger-web-1 python3 manage.py sync-exercises
+docker exec wger-web-1 python3 manage.py download-exercise-images
+docker exec wger-web-1 python3 manage.py download-exercise-videos
+docker exec wger-web-1 python3 manage.py warmup-exercise-api-cache
+```
+
+The first run downloads a few GB into the `media` volume; it is safe to
+re-run (it updates in place).
+
+**REST API (what Kit calls).** Base path `https://<host>.<tailnet>.ts.net:8480/api/v2/`
+(tailnet only), header `Authorization: Token <token>`. `GET /api/v2/version/`
+needs no credentials and is the health probe.
+
+**Update.** Change the pinned tags in `compose/wger/docker-compose.yml` in a
+PR (wger first; read its release notes, minor bumps run migrations on start),
+take a database dump first (below), merge; the deploy recreates the project.
+Roll back by reverting the tag; a migration that already ran needs the dump
+restored too.
+
+**Backup and restore.** The Postgres database (accounts, routines, logged
+sets) goes off-box nightly with the other databases: `wger.dump.age`
+([Off-box backup (R2)](#off-box-backup-r2)). Media is not in that set: the
+catalogue images and videos re-download with the exercise sync, and the
+owner's uploads are not used. A manual dump and restore:
+
+```bash
+docker exec wger-db-1 sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > wger-$(date -u +%Y%m%d).dump
+docker stop wger-nginx-1 wger-web-1
+docker exec -i wger-db-1 sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' < wger-<date>.dump
+docker start wger-web-1 wger-nginx-1
+```
+
+From an off-box set, replace the redirect with `age -d -i $K set/wger.dump.age |`
+as in the Off-box backup restore steps. Then run the exercise sync again if the
+`media` volume is empty.
+
+## Study panel and study door
+
+The browser study panel sits beside a problem page (LeetCode and the like) and
+asks the owner one small question at a time. It has two server-side pieces:
+
+- **`study-panel`**, an OpenClaw agent with no tool at all
+  (`defaults/agents/study-panel/`): `tools.allow` is empty and the deny list
+  covers files, web, sessions, memory, messaging, nodes, agents, exec and the
+  MCP servers; it has no skills and no channel. It never writes the owner's
+  code and offers no solution. It answers with exactly one JSON object as text.
+- **The door** (`compose/study-door/`, compose project `study-door`, container
+  `study-door-study-door-1`, port 8098): one `POST /v1/turn` in, one gated reply
+  out. It asks the gateway's OpenAI-compatible API (`/v1/chat/completions`,
+  model `openclaw/study-panel`, no tools, `tool_choice: "none"`), parses the
+  answer as one JSON object (prose around it, a code fence or a second object is
+  a reject), then checks it before the panel sees it: a closed
+  schema (no code field, 280 characters of text, at most four tap options), a
+  code gate (a fenced block, `<pre>`, a statement shape, or a 12-token run
+  copied from the owner's code, or an answer that is not one JSON object,
+  becomes a fixed fallback reply), and an HTML
   sanitiser for the small SVG/HTML visual (no script, link, image, form,
   frame, event handler or external `url()`). The door never logs request or
   reply bodies: a turn logs sizes, a hash, the outcome and the reject reason.

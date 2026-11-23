@@ -9,9 +9,10 @@ Two stages, both must pass (see container-run.sh):
          the shipped allow-list grants (nothing: the entry is tool-less), and every call
          the mock model made, on the instruction of an injection-bearing page, must have
          come back refused with nothing left on the filesystem.
-  http   The catalogue offered on the gateway's chat-completions request must be exactly
-         the one client function, `reply`, and the answer must come back as a structured
-         `reply` tool call carrying the arguments the model gave.
+  http   The door's request (no tools, tool_choice "none") must reach the model with an
+         empty tool catalogue, and the answer must come back as a finished text message
+         (finish_reason stop, no tool call) whose content parses to the reply object the
+         model gave.
 
 A run that made no model request, lost a result or never reached the HTTP endpoint
 fails: a canary that could not run must never read as a pass.
@@ -112,15 +113,15 @@ def judge_local(out: str, cases: list, agent: dict) -> list:
 
 
 def judge_http(out: str, reply: dict) -> list:
-    """Failures of the HTTP stage (empty = the one client function, and nothing else)."""
+    """Failures of the HTTP stage (empty = the JSON text came back and no tool was offered)."""
     requests = model_requests(os.path.join(out, "mock-http.log"))
     if not requests:
         return ["no model request reached the mock: the HTTP stage did not run"]
     bad = []
-    names = {n.split("__")[-1] for n in offered(requests[0])}
-    if names != {"reply"} or len(offered(requests[0])) != 1:
+    catalogue = offered(requests[0])
+    if catalogue:
         bad.append(
-            f"tool catalogue offered on the chat-completions request is {sorted(offered(requests[0]))}, want exactly the one client function `reply`"
+            f"tool catalogue offered on the chat-completions request is {sorted(catalogue)}, want none"
         )
     try:
         with open(os.path.join(out, "http-response.json")) as f:
@@ -130,21 +131,20 @@ def judge_http(out: str, reply: dict) -> list:
     if resp.get("status") != 200 or not isinstance(resp.get("body"), dict):
         return bad + [f"the endpoint answered {resp.get('status')}: {str(resp.get('body'))[:200]}"]
     choice = (resp["body"].get("choices") or [{}])[0]
-    calls = (choice.get("message") or {}).get("tool_calls") or []
-    if choice.get("finish_reason") != "tool_calls" or len(calls) != 1:
+    message = choice.get("message") or {}
+    if choice.get("finish_reason") != "stop" or message.get("tool_calls"):
         bad.append(
-            f"the reply did not come back as one structured tool call (finish_reason={choice.get('finish_reason')}, calls={len(calls)})"
+            f"the reply did not come back as a finished text answer (finish_reason={choice.get('finish_reason')}, tool_calls={len(message.get('tool_calls') or [])})"
         )
-    else:
-        fn = calls[0].get("function") or {}
-        try:
-            args = json.loads(fn.get("arguments") or "")
-        except ValueError:
-            args = None
-        if fn.get("name") != "reply" or args != reply:
-            bad.append(
-                f"the tool call is {fn.get('name')!r} with {str(fn.get('arguments'))[:120]!r}, want `reply` with the model's arguments"
-            )
+        return bad
+    try:
+        got = json.loads(message.get("content") or "")
+    except ValueError:
+        got = None
+    if got != reply:
+        bad.append(
+            f"the message content is {str(message.get('content'))[:120]!r}, want the JSON text of the model's reply object"
+        )
     return bad
 
 
@@ -167,7 +167,7 @@ def main() -> int:
         return 1
     print(
         "study-panel canary passed: no tool offered on a local turn, every denied call refused, "
-        "the HTTP request offered exactly `reply` and got it back as a structured call"
+        "the HTTP request offered no tool and got the reply back as JSON text"
     )
     return 0
 

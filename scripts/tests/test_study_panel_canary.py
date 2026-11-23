@@ -1,9 +1,9 @@
 """The study-panel canary (scripts/study-panel-canary): does the tool-less study-panel
-cap hold, and does the door's one client function, `reply`, still come back?
+cap hold, and does the door's JSON-text request (no tools) still come back?
 
 Two layers, as for the reader canary. The verdict logic is tested on synthetic
 evidence, so CI proves the canary can fail (a leaked write, a turn that never ran, a
-lost result, a wider catalogue, a reply that is not a structured call) without Docker.
+lost result, a wider catalogue, a reply that is not the JSON text) without Docker.
 The live test runs the real thing - a local turn plus the gateway's chat-completions
 endpoint in a throwaway network-less container from the gateway image, against a mock
 model API - and so needs Docker and the `lifekit-openclaw:local` image: it skips with a
@@ -51,19 +51,8 @@ def http_response(**over) -> dict:
         "body": {
             "choices": [
                 {
-                    "finish_reason": "tool_calls",
-                    "message": {
-                        "tool_calls": [
-                            {
-                                "id": "call_1",
-                                "type": "function",
-                                "function": {
-                                    "name": "reply",
-                                    "arguments": json.dumps(REPLY),
-                                },
-                            }
-                        ]
-                    },
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": json.dumps(REPLY)},
                 }
             ]
         },
@@ -112,7 +101,7 @@ def evidence(
             },
         ],
     )
-    over_http = [{"name": "mcp__openclaw__reply"}] if http_tools is None else http_tools
+    over_http = [] if http_tools is None else http_tools
     write_jsonl(
         out / "mock-http.log",
         [{"path": "/v1/messages", "req": {"tools": over_http, "messages": []}}],
@@ -220,36 +209,54 @@ def test_a_lookalike_of_the_placeholder_still_fails(tmp_path, tool):
 @pytest.mark.parametrize(
     "tools",
     [
-        [],
+        [{"name": "reply"}],
         [{"name": "mcp__openclaw__reply"}, {"name": "mcp__openclaw__exec"}],
         [{"name": "mcp__openclaw__exec"}],
     ],
 )
-def test_the_http_catalogue_must_be_exactly_reply(tmp_path, tools):
+def test_the_http_request_must_offer_no_tool(tmp_path, tools):
     bad = judge(evidence(tmp_path, http_tools=tools))
-    assert any("exactly the one client function" in b for b in bad)
+    assert any("chat-completions request" in b and "want none" in b for b in bad)
 
 
-@pytest.mark.parametrize("name", ["reply", "mcp__openclaw__reply"])
-def test_the_bare_and_prefixed_reply_names_both_count(tmp_path, name):
-    assert judge(evidence(tmp_path, http_tools=[{"name": name}])) == []
+def test_the_inert_placeholder_is_not_a_tool_on_the_http_request(tmp_path):
+    assert judge(evidence(tmp_path, http_tools=[PLACEHOLDER])) == []
 
 
-def test_a_reply_that_is_not_a_structured_call_fails(tmp_path):
-    prose = http_response()
-    prose["body"]["choices"][0] = {
-        "finish_reason": "stop",
-        "message": {"content": "def solve(): pass"},
+def test_whitespace_around_the_json_text_is_fine(tmp_path):
+    padded = http_response()
+    padded["body"]["choices"][0]["message"]["content"] = f"\n {json.dumps(REPLY)} \n"
+    assert judge(evidence(tmp_path, response=padded)) == []
+
+
+def test_a_reply_that_is_a_tool_call_fails(tmp_path):
+    call = http_response()
+    call["body"]["choices"][0] = {
+        "finish_reason": "tool_calls",
+        "message": {
+            "tool_calls": [
+                {"id": "c", "type": "function", "function": {"name": "reply", "arguments": json.dumps(REPLY)}}
+            ]
+        },
     }
-    assert any("structured tool call" in b for b in judge(evidence(tmp_path, response=prose)))
+    assert any("finished text answer" in b for b in judge(evidence(tmp_path, response=call)))
 
 
-def test_a_changed_argument_fails(tmp_path):
-    other = http_response()
-    other["body"]["choices"][0]["message"]["tool_calls"][0]["function"][
-        "arguments"
-    ] = json.dumps({**REPLY, "text": "something else"})
-    assert any("want `reply` with" in b for b in judge(evidence(tmp_path, response=other)))
+@pytest.mark.parametrize(
+    "content",
+    [
+        "def solve(): pass",
+        "Sure! " + json.dumps(REPLY),
+        "```json\n" + json.dumps(REPLY) + "\n```",
+        json.dumps(REPLY) + json.dumps(REPLY),
+        json.dumps({**REPLY, "text": "something else"}),
+        None,
+    ],
+)
+def test_content_that_is_not_exactly_the_reply_object_fails(tmp_path, content):
+    wrong = http_response()
+    wrong["body"]["choices"][0]["message"]["content"] = content
+    assert any("want the JSON text" in b for b in judge(evidence(tmp_path, response=wrong)))
 
 
 def test_an_endpoint_error_fails(tmp_path):

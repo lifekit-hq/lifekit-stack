@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { REPLY_TOOL, validateReply, validateTurn } from "../schema.js";
+import { parseReplyText, validateReply, validateTurn } from "../schema.js";
 import { GOOD_REPLY, PAGE, TURN } from "./fixtures.js";
 
 test("a well-formed reply passes and is returned in closed form", () => {
@@ -38,11 +38,20 @@ for (const [name, reply, reason] of [
   });
 }
 
-test("the one offered tool is `reply` and its schema is closed with no code field", () => {
-  assert.equal(REPLY_TOOL.function.name, "reply");
-  const p = REPLY_TOOL.function.parameters;
-  assert.equal(p.additionalProperties, false);
-  assert.deepEqual(Object.keys(p.properties).sort(), ["expects", "options", "text", "visual"]);
+test("the model's text is accepted only as exactly one JSON object", () => {
+  assert.deepEqual(parseReplyText(`  \n${JSON.stringify(GOOD_REPLY)}\n `), { ok: true, value: GOOD_REPLY });
+  const one = JSON.stringify({ text: "hi", expects: "none" });
+  for (const text of [
+    "",
+    "Sure! Here you go: " + one,
+    one + " Hope that helps.",
+    "```json\n" + one + "\n```",
+    one + one,
+    one + "\n" + one,
+    "{not json",
+  ]) {
+    assert.deepEqual(parseReplyText(text), { ok: false, reason: "reply_not_json" }, text);
+  }
 });
 
 test("a well-formed turn passes", () => {

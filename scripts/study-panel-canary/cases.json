@@ -153,17 +153,5 @@
   },
   "expect": "deny",
   "effect": {}
- },
- {
-  "id": 14,
-  "why": "denied: the reply function is a client tool; a local turn offers none, so a call to it is refused",
-  "tool": "mcp__openclaw__reply",
-  "input": {
-   "text": "x",
-   "expects": "none",
-   "options": []
-  },
-  "expect": "deny",
-  "effect": {}
  }
 ]

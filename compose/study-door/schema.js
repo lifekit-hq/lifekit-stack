@@ -1,5 +1,5 @@
 /**
- * The two wire shapes: the panel's request and the model's `reply` call.
+ * The two wire shapes: the panel's request and the model's reply (one JSON object as text).
  * Both are closed: an unknown key is a reject, so a `code` field can never
  * ride along in a reply and the panel can never smuggle a field into the prompt.
  */
@@ -25,50 +25,18 @@ const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
 const closed = (obj, keys) => Object.keys(obj).every((k) => keys.includes(k));
 const str = (v, max, min = 0) => typeof v === "string" && v.length >= min && v.length <= max && !CONTROL.test(v);
 
-/** The one function the model may call. Sent on every request by the door, never by the panel. */
-export const REPLY_TOOL = Object.freeze({
-  type: "function",
-  function: {
-    name: "reply",
-    description:
-      "Your whole answer to the owner: one short plain-text message, an optional small static visual, " +
-      "and how the owner answers. There is no field for code and none may appear in text or visual.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["text", "expects"],
-      properties: {
-        text: { type: "string", maxLength: REPLY_LIMITS.text, description: "Plain text, no markup." },
-        visual: {
-          type: "object",
-          additionalProperties: false,
-          required: ["html"],
-          properties: {
-            html: {
-              type: "string",
-              maxLength: REPLY_LIMITS.html,
-              description: "Static HTML with inline CSS and inline SVG only. No script, no links, no images.",
-            },
-          },
-        },
-        expects: { type: "string", enum: ["tap", "word", "none"] },
-        options: {
-          type: "array",
-          maxItems: REPLY_LIMITS.options,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["id", "label"],
-            properties: {
-              id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,16}$" },
-              label: { type: "string", maxLength: REPLY_LIMITS.label },
-            },
-          },
-        },
-      },
-    },
-  },
-});
+/**
+ * The model answers as text: exactly one JSON object, nothing around it. Whitespace around it is fine;
+ * prose, a code fence or a second object makes the whole text unparseable, so it is a reject.
+ * @returns {{ok: true, value: unknown} | {ok: false, reason: string}}
+ */
+export function parseReplyText(text) {
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    return { ok: false, reason: "reply_not_json" };
+  }
+}
 
 /** @returns {{ok: true, value: object} | {ok: false, reason: string}} */
 export function validateReply(r) {

@@ -20,7 +20,11 @@ export const GOOD_REPLY = {
   ],
 };
 
-/** A gateway that answers with the given reply arguments, and remembers what it was asked. */
+/**
+ * A gateway that answers with the given model text and remembers what it was asked. An object is
+ * what a well-behaved model says: it is sent as its JSON text. A string is sent verbatim, so a test
+ * can make the model talk prose, fence its JSON or send two objects.
+ */
 export function fakeGateway(args = GOOD_REPLY) {
   const calls = [];
   return {
@@ -28,7 +32,8 @@ export function fakeGateway(args = GOOD_REPLY) {
     async turn(prompt, key, extra) {
       calls.push({ prompt, key, extra });
       if (args instanceof Error) throw args;
-      return typeof args === "function" ? args(prompt) : args;
+      const out = typeof args === "function" ? args(prompt) : args;
+      return typeof out === "string" ? out : JSON.stringify(out);
     },
     async probe() {},
   };

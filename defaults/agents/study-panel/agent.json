@@ -3,7 +3,7 @@
     "entries": {
       "study-panel": {
         "name": "Study panel",
-        "description": "Answers the browser study panel through one forced reply function; holds no tool of its own and never writes the owner's code.",
+        "description": "Answers the browser study panel with one JSON object as text; holds no tool of its own and never writes the owner's code.",
         "workspace": "/home/node/.openclaw/agents/study-panel/workspace",
         "model": "anthropic/claude-sonnet-5-5",
         "sandbox": { "mode": "off" },

@@ -2,9 +2,9 @@
  * study-door core: one panel turn in, one gated reply out. No HTTP in here (http.js) and
  * no environment (server.js), so everything below is tested with a fake gateway.
  *
- * The pipeline per turn: validate the request, ask the study-panel agent for its one `reply`
- * call, validate that call's shape, run the code-in-reply gates on it, sanitise its visual. A
- * reply that fails any step of the last three becomes the fixed fallback, and the reject reason
+ * The pipeline per turn: validate the request, ask the study-panel agent for its reply (one JSON
+ * object as text), parse it, validate its shape, run the code-in-reply gates on it, sanitise its visual. A
+ * reply that fails any step of the last four becomes the fixed fallback, and the reject reason
  * is logged. Nothing here ever logs or returns the request or the rejected reply: the log carries
  * sizes, hashes and reasons only; the optional audit spool is the one place replies are kept.
  */
@@ -17,7 +17,7 @@ import { codeInReply } from "./gates.js";
 import { UpstreamError } from "./gateway.js";
 import { buildPrompt } from "./prompt.js";
 import { sanitizeHtml } from "./sanitize.js";
-import { validateReply, validateTurn } from "./schema.js";
+import { parseReplyText, validateReply, validateTurn } from "./schema.js";
 
 /** The reply the owner sees when the model's own reply does not pass. It asks for nothing the page could abuse. */
 export const FALLBACK_REPLY = Object.freeze({
@@ -97,10 +97,10 @@ export function createApp({ gateway, sessions, metrics = createMetrics(), audit 
     const session = sessions(page);
     const base = { trace_id: traceId, session: sha(session.key, 8), turn: session.turn, input: input.kind, req_bytes: bytes };
 
-    let args;
+    let raw;
     const t0 = clock();
     try {
-      args = await gateway.turn(buildPrompt(input, page), session.key, { traceparent: `00-${traceId}-${randomBytes(8).toString("hex")}-01` });
+      raw = await gateway.turn(buildPrompt(input, page), session.key, { traceparent: `00-${traceId}-${randomBytes(8).toString("hex")}-01` });
     } catch (err) {
       const reason = err instanceof UpstreamError ? err.reason : "internal";
       metrics.observe((clock() - t0) / 1000);
@@ -113,7 +113,8 @@ export function createApp({ gateway, sessions, metrics = createMetrics(), audit 
     let reject = null;
     let reply = null;
     let removed = 0;
-    const shape = validateReply(args);
+    const json = parseReplyText(raw);
+    const shape = json.ok ? validateReply(json.value) : json;
     if (!shape.ok) reject = shape.reason;
     else {
       reject = codeInReply(shape.value, page.code);
@@ -150,7 +151,7 @@ export function createApp({ gateway, sessions, metrics = createMetrics(), audit 
       turn: session.turn,
       outcome: fallback ? "fallback" : "ok",
       reject,
-      reply: fallback ? args : reply,
+      reply: fallback ? raw : reply,
     });
     return { status: 200, body: { v: 1, fallback, turn: session.turn, reply: out } };
   }

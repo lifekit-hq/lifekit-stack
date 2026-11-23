@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ensure-study-panel.sh - converge the `study-panel` agent: the tool-less learning
 # agent behind the browser study panel (compose/study-door/ calls it through the
-# gateway's /v1/chat/completions, with one forced client function, `reply`).
+# gateway's /v1/chat/completions, as text: one JSON object, no tool offered).
 #
 # What the repo owns, and this script installs or checks:
 #   - the contract (defaults/agents/study-panel/workspace: AGENTS.md, SOUL.md,

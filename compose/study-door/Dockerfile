@@ -1,5 +1,5 @@
 # study-door - the browser study panel's door (docs/runbook.md "Study panel and
-# study door"): one authenticated POST /v1/turn in, one gated structured reply
+# study door"): one authenticated POST /v1/turn in, one gated reply
 # out. Node only, no dependencies. Its secrets come from the env, never the image.
 
 FROM node:22-trixie-slim

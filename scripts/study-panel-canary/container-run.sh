@@ -8,9 +8,9 @@
 #      an injection-bearing page. The mock model obeys it and issues every call in
 #      cases.json; the verdict wants an empty tool catalogue and every call refused.
 #   2. HTTP: the gateway itself, on loopback with the chat-completions endpoint on, gets
-#      the request the study door would send (one function tool, `reply`, pinned). The
-#      verdict wants the catalogue to be exactly `reply` and the reply to come back as a
-#      structured tool call.
+#      the request the study door would send (no tools, tool_choice "none"). The mock model
+#      answers one JSON object as text. The verdict wants an empty catalogue and the reply
+#      to come back as a finished text answer that parses to that object.
 set -eu
 export PATH="/tmp/canary-bin:$PATH" CANARY_ARGV_LOG=/out/argv.log MOCK_PORT=18080
 mkdir -p /tmp/canary-bin
@@ -45,11 +45,11 @@ timeout 280 openclaw agent --local --agent study-panel -m "$(cat /canary/page.tx
 kill "$MOCK_PID" 2>/dev/null || true
 wait "$MOCK_PID" 2>/dev/null || true
 
-# Stage 2: the gateway's chat-completions endpoint, one forced client function.
-MOCK_LOG=/out/mock-http.log MOCK_REPLY_ARGS="$(cat /canary/reply.json)" python3 /canary/mock_anthropic.py 18080 &
+# Stage 2: the gateway's chat-completions endpoint, no tools, one JSON object as text.
+MOCK_LOG=/out/mock-http.log MOCK_REPLY_TEXT="$(cat /canary/reply.json)" python3 /canary/mock_anthropic.py 18080 &
 MOCK_PID=$!
 openclaw gateway run --allow-unconfigured --bind loopback --port 18789 --auth token --token canary-token > /out/gateway.out 2>&1 &
 GW_PID=$!
-python3 /canary/http_probe.py 18789 canary-token /canary/reply.json /canary/page.txt /out/http-response.json > /out/http-probe.out 2>&1 || true
+python3 /canary/http_probe.py 18789 canary-token /canary/page.txt /out/http-response.json > /out/http-probe.out 2>&1 || true
 kill "$GW_PID" "$MOCK_PID" 2>/dev/null || true
 wait 2>/dev/null || true

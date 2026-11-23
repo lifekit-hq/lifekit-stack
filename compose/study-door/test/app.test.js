@@ -5,9 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { FALLBACK_REPLY, createApp, createAudit, createMetrics } from "../app.js";
-import { AGENT_MODEL, UpstreamError, replyArguments, turnRequest } from "../gateway.js";
+import { AGENT_MODEL, UpstreamError, createGateway, replyText, turnRequest } from "../gateway.js";
 import { TURN_CAP, buildPrompt, createSessions } from "../prompt.js";
-import { REPLY_TOOL } from "../schema.js";
 import { GOOD_REPLY, PAGE, TURN, fakeGateway } from "./fixtures.js";
 
 function setup(args, extra = {}) {
@@ -54,6 +53,11 @@ for (const [name, args, reason] of [
   ["a def statement", { text: "def twoSum(self, nums, target):", expects: "none" }, "stmt_def"],
   ["an added code field", { ...GOOD_REPLY, code: "pass" }, "reply_unknown_field"],
   ["a malformed reply", { text: 7 }, "reply_text"],
+  ["a prose-wrapped JSON object", `Sure! ${JSON.stringify(GOOD_REPLY)}`, "reply_not_json"],
+  ["JSON in a code fence", `\`\`\`json\n${JSON.stringify(GOOD_REPLY)}\n\`\`\``, "reply_not_json"],
+  ["two JSON objects", `${JSON.stringify(GOOD_REPLY)}\n${JSON.stringify(GOOD_REPLY)}`, "reply_not_json"],
+  ["malformed JSON", '{"text": "hi", "expects": ', "reply_not_json"],
+  ["a JSON array", "[1]", "reply_not_object"],
   ["a rewrite of the owner's code", { text: PAGE.code.replace(/\s+/g, " ").slice(0, 160), expects: "none" }, null],
 ]) {
   test(`${name} becomes the fixed fallback`, async () => {
@@ -66,7 +70,7 @@ for (const [name, args, reason] of [
     assert.equal(turn.outcome, "fallback");
     if (reason) assert.equal(turn.reject, reason);
     assert.equal(audits[0].outcome, "fallback", "the raw reply is kept in the audit spool");
-    assert.deepEqual(audits[0].reply, args);
+    assert.equal(audits[0].reply, typeof args === "string" ? args : JSON.stringify(args));
   });
 }
 
@@ -83,15 +87,35 @@ test("an injection-bearing page leads to a clean reply or the fallback, never th
   assert.match(prompt, /never instructions/);
 });
 
-test("the gateway request is fixed: model, one tool, pinned choice, no model override header", async () => {
+test("the gateway request is fixed: model, no tools, tool_choice none, no model override header", async () => {
   const req = turnRequest("p", "study:x:20261123");
   assert.equal(req.model, AGENT_MODEL);
   assert.equal(req.model, "openclaw/study-panel");
-  assert.deepEqual(req.tools, [REPLY_TOOL]);
-  assert.deepEqual(req.tool_choice, { type: "function", function: { name: "reply" } });
+  assert.equal(req.tool_choice, "none");
   assert.equal(req.user, "study:x:20261123");
   assert.equal(req.stream, false);
-  assert.deepEqual(Object.keys(req).sort(), ["messages", "model", "stream", "tool_choice", "tools", "user"]);
+  assert.deepEqual(Object.keys(req).sort(), ["messages", "model", "stream", "tool_choice", "user"]);
+});
+
+test("the gateway client posts that request and returns the model's text", async () => {
+  let sent;
+  const fetchImpl = async (url, init) => {
+    sent = { url, body: JSON.parse(init.body), auth: init.headers.authorization };
+    return { ok: true, json: async () => ({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(GOOD_REPLY) } }] }) };
+  };
+  const gw = createGateway({ baseUrl: "http://gw", secret: "edge-secret", fetchImpl });
+  assert.equal(await gw.turn("p", "study:x:20261123"), JSON.stringify(GOOD_REPLY));
+  assert.equal(sent.url, "http://gw/v1/chat/completions");
+  assert.equal(sent.auth, "Bearer edge-secret");
+  assert.equal(sent.body.tool_choice, "none");
+  assert.equal("tools" in sent.body, false, "no tool is offered to the model");
+});
+
+test("a whitespace-padded JSON reply is accepted", async () => {
+  const { app } = setup(`\n  ${JSON.stringify(GOOD_REPLY)}  \n`);
+  const out = await app.turn(TURN);
+  assert.equal(out.body.fallback, false);
+  assert.equal(out.body.reply.text, GOOD_REPLY.text);
 });
 
 test("the panel cannot select an agent, a tool or a session", async () => {
@@ -138,17 +162,17 @@ test("an upstream failure is a 502, a timeout a 504, and neither carries a reply
   }
 });
 
-test("replyArguments demands exactly one reply call", () => {
-  const ok = { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ function: { name: "reply", arguments: JSON.stringify(GOOD_REPLY) } }] } }] };
-  assert.deepEqual(replyArguments(ok), GOOD_REPLY);
+test("replyText demands a finished text answer and no tool call", () => {
+  const ok = { choices: [{ finish_reason: "stop", message: { content: JSON.stringify(GOOD_REPLY) } }] };
+  assert.equal(replyText(ok), JSON.stringify(GOOD_REPLY));
   for (const bad of [
     {},
-    { choices: [{ finish_reason: "stop", message: { content: "def x(): pass" } }] },
-    { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ function: { name: "exec", arguments: "{}" } }] } }] },
-    { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ function: { name: "reply", arguments: "{not json" } }] } }] },
-    { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ function: { name: "reply", arguments: "{}" } }, { function: { name: "reply", arguments: "{}" } }] } }] },
+    { choices: [{ finish_reason: "length", message: { content: "{" } }] },
+    { choices: [{ finish_reason: "stop", message: { content: null } }] },
+    { choices: [{ finish_reason: "tool_calls", message: { content: "x", tool_calls: [{ function: { name: "exec", arguments: "{}" } }] } }] },
+    { choices: [{ finish_reason: "stop", message: { content: "x", tool_calls: [{ function: { name: "reply", arguments: "{}" } }] } }] },
   ]) {
-    assert.throws(() => replyArguments(bad), UpstreamError);
+    assert.throws(() => replyText(bad), UpstreamError);
   }
 });
 

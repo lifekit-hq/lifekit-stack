@@ -7,10 +7,9 @@ the follow-up request, which carries the tool_results, is logged and answered
 with plain text. Every request is appended to $MOCK_LOG, so the canary reads
 back what the model was offered (the tool catalogue) and what each call got.
 
-With $MOCK_REPLY_ARGS (a JSON object) set, the first request instead calls the one
-offered tool whose name is `reply` (or ends in `__reply`) with those arguments, and
-calls nothing when no such tool is offered: this is the HTTP stage, where the model
-answers the way the door asks it to.
+With $MOCK_REPLY_TEXT set, every request is answered with that text and no tool call:
+this is the HTTP stage, where the model answers the way the door asks it to (one JSON
+object as text).
 """
 
 import json
@@ -20,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG = os.environ.get("MOCK_LOG", "/tmp/mock.log")
 CALLS = json.loads(os.environ.get("MOCK_TOOL_CALLS", "[]"))
-REPLY_ARGS = json.loads(os.environ["MOCK_REPLY_ARGS"]) if os.environ.get("MOCK_REPLY_ARGS") else None
+REPLY_TEXT = os.environ.get("MOCK_REPLY_TEXT")
 
 
 def sse(events: list) -> bytes:
@@ -35,14 +34,6 @@ def has_tool_result(messages: list) -> bool:
         and any(c.get("type") == "tool_result" for c in m["content"])
         for m in messages
     )
-
-
-def reply_call(tools: list) -> list:
-    for t in tools or []:
-        name = t.get("name", "")
-        if name == "reply" or name.endswith("__reply"):
-            return [{"type": "tool_use", "id": "toolu_canary_reply", "name": name, "input": REPLY_ARGS}]
-    return []
 
 
 def stream_events(blocks: list, stop: str, model: str) -> list:
@@ -122,19 +113,17 @@ class Handler(BaseHTTPRequestHandler):
                 json.dumps({"input_tokens": 10}).encode(), "application/json"
             )
         blocks = []
-        if (
+        if REPLY_TEXT is not None:
+            blocks = [{"type": "text", "text": REPLY_TEXT}]
+        elif (
             not has_tool_result(req.get("messages", []))
             and req.get("tools") is not None
         ):
-            blocks = (
-                reply_call(req.get("tools"))
-                if REPLY_ARGS is not None
-                else [
-                    {"type": "tool_use", "id": f"toolu_canary{i}", "name": n, "input": inp}
-                    for i, (n, inp) in enumerate(CALLS)
-                ]
-            )
-        stop = "tool_use" if blocks else "end_turn"
+            blocks = [
+                {"type": "tool_use", "id": f"toolu_canary{i}", "name": n, "input": inp}
+                for i, (n, inp) in enumerate(CALLS)
+            ]
+        stop = "tool_use" if blocks and REPLY_TEXT is None else "end_turn"
         blocks = blocks or [{"type": "text", "text": "canary done"}]
         model = req.get("model", "m")
         if req.get("stream"):
