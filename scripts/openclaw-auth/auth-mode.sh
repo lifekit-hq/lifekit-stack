@@ -38,7 +38,9 @@
 # the gateway. Runbook: docs/runbook.md "OpenClaw auth mode".
 #
 # Env: DOCKER (docker), AUTH_CHECK_AGENTS (kit), AUTH_MODE_HEALTH_WAIT (300 s),
-#      AUTH_MODE_SLEEP (5 s poll), SPEND_GUARD (path of spend_guard.py).
+#      AUTH_MODE_SLEEP (5 s poll), SPEND_GUARD (path of spend_guard.py),
+#      AUTH_MODE_READ_TRIES (3), AUTH_MODE_READ_TIMEOUT (120 s per attempt),
+#      AUTH_MODE_READ_RETRY_SLEEP (5 s) - the bounded retry of each live config read.
 # Exit: 0 done, 1 failed or rolled back, 2 cannot run or refused.
 set -euo pipefail
 
@@ -48,6 +50,9 @@ SPEND_GUARD="${SPEND_GUARD:-$HERE/spend_guard.py}"
 CHECK_AGENTS="${AUTH_CHECK_AGENTS:-kit}"
 HEALTH_WAIT="${AUTH_MODE_HEALTH_WAIT:-300}"
 POLL="${AUTH_MODE_SLEEP:-5}"
+READ_TRIES="${AUTH_MODE_READ_TRIES:-3}"
+READ_TIMEOUT="${AUTH_MODE_READ_TIMEOUT:-120}"
+READ_RETRY_SLEEP="${AUTH_MODE_READ_RETRY_SLEEP:-5}"
 PROFILE="anthropic:api-key"
 KEY_REF="anthropic-api-key"
 
@@ -87,17 +92,36 @@ trap 'rm -rf "$work"' EXIT
 # ── live state ────────────────────────────────────────────────────────────────
 
 # Every openclaw CLI call costs ~20 s (CLI start-up against a busy gateway), so
-# independent reads run side by side.
+# independent reads run side by side. A busy gateway also fails a read now and
+# then (slow SQLite transactions), so each read is retried a bounded number of
+# times, each attempt under a timeout, and the last error is kept for the message.
 #
+# read_config KEY -> $work/KEY.json; on failure $work/KEY.err holds the last error
+read_config() {
+  local key="$1" try=1 rc=0
+  while :; do
+    timeout "$READ_TIMEOUT" "$DOCKER" exec -i "$cid" openclaw config get "$key" \
+      > "$work/$key.json" 2> "$work/$key.err" && return 0
+    rc=$?
+    ((rc != 124)) || echo "timed out after ${READ_TIMEOUT}s" >> "$work/$key.err"
+    ((try < READ_TRIES)) || return 1
+    sleep "$READ_RETRY_SLEEP"
+    try=$((try + 1))
+  done
+}
+
+# last_error KEY -> the last non-empty line of the read's stderr, one line
+last_error() { grep -v '^[[:space:]]*$' "$work/$1.err" 2> /dev/null | tail -n 1 | cut -c1-300 || true; }
+
 # live_config -> the agents + auth halves of the live config, as one JSON object
 live_config() {
   local pa pb
-  oc config get agents > "$work/agents.json" 2> /dev/null &
+  read_config agents &
   pa=$!
-  oc config get auth > "$work/auth.json" 2> /dev/null &
+  read_config auth &
   pb=$!
-  wait "$pa" || die "cannot read the live agents config through the gateway"
-  wait "$pb" || die "cannot read the live auth config through the gateway"
+  wait "$pa" || die "cannot read the live agents config through the gateway (after $READ_TRIES tries): $(last_error agents)"
+  wait "$pb" || die "cannot read the live auth config through the gateway (after $READ_TRIES tries): $(last_error auth)"
   jq -n -c --slurpfile agents "$work/agents.json" --slurpfile auth "$work/auth.json" \
     'if ($agents[0] | type) == "object" and ($auth[0] | type) == "object"
      then {agents: $agents[0], auth: $auth[0]} else error("not objects") end' ||

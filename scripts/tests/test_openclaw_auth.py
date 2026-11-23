@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -122,6 +123,10 @@ elif args[0] == "exec":
             cmd[:2] == ["models", "status"] and flag("_status_fails")
         ):
             print("gateway busy", file=sys.stderr)
+            sys.exit(1)
+        if cmd[:2] == ["config", "get"] and flag("_reads_fail_once") and not flag("_failed_" + cmd[2]):
+            open(f"{state}/_failed_{cmd[2]}", "w").close()
+            print("slow SQLite transaction", file=sys.stderr)
             sys.exit(1)
         if cmd[:2] == ["config", "get"]:
             print(json.dumps(config[cmd[2]]))
@@ -248,6 +253,7 @@ def box(tmp_path):
         "STATE_DIR": str(state),
         "AUTH_MODE_SLEEP": "0",
         "AUTH_MODE_HEALTH_WAIT": "0",
+        "AUTH_MODE_READ_RETRY_SLEEP": "0",
         "AUTH_CHECK_AGENTS": "kit,finance",
         "OPENCLAW_SPEND_STATE_DIR": str(spend),
         "OPENCLAW_COMPOSE_AUTH_MODE": "token",
@@ -723,9 +729,37 @@ def test_a_failed_config_read_aborts_instead_of_patching_from_nothing(box):
     box.flag("_reads_fail")
     proc = box.auth("subscription", expect=2)
     assert "cannot read the live" in proc.stderr
+    assert "(after 3 tries): gateway busy" in proc.stderr  # the underlying error, kept
     box.auth("mode", expect=2)
     assert box.config() == before
     assert not any("config patch" in c for c in box.calls()[seen:])
+
+
+def test_a_transient_config_read_failure_is_retried(box):
+    box.flag("_reads_fail_once")  # each read fails once, then succeeds
+    proc = box.auth("mode")
+    assert proc.stdout.strip() == "subscription"
+    gets = [c for c in box.calls() if "config get" in c]
+    assert len(gets) == 4  # agents and auth, two attempts each
+
+
+def test_a_hung_config_read_times_out_and_names_it(box, tmp_path):
+    hang = tmp_path / "hang"
+    hang.mkdir()
+    (hang / "docker").write_text(
+        '#!/bin/sh\n[ "$1" = ps ] && { echo cid123; exit 0; }\nsleep 30\n'
+    )
+    (hang / "docker").chmod(0o755)
+    proc = box.auth(
+        "mode",
+        expect=2,
+        env_extra={
+            "PATH": f"{hang}:{box.env['PATH']}",
+            "AUTH_MODE_READ_TIMEOUT": "1",
+            "AUTH_MODE_READ_TRIES": "2",
+        },
+    )
+    assert "(after 2 tries): timed out after 1s" in proc.stderr
 
 
 def test_a_failed_key_status_read_does_not_pass_for_a_present_profile(box):
@@ -854,7 +888,7 @@ def test_guard_without_an_estimate_leaves_a_healthy_api_box_alone_but_fails(box)
     assert not any(ln.startswith("openclaw_api_spend_usd") for ln in prom)
 
 
-def test_guard_keeps_the_previous_file_when_the_gateway_is_down(box):
+def test_guard_exports_a_mode_unreadable_sample_when_the_gateway_is_down(box):
     (box.out / "openclaw_api_spend.prom").write_text("old 1\n")
     env = {**box.env, "DOCKER": "false"}
     proc = subprocess.run(
@@ -862,7 +896,53 @@ def test_guard_keeps_the_previous_file_when_the_gateway_is_down(box):
         env=env, capture_output=True, text=True, check=False,
     )  # fmt: skip
     assert proc.returncode == 2
-    assert (box.out / "openclaw_api_spend.prom").read_text() == "old 1\n"
+    assert "mode unreadable" in proc.stderr
+    prom = box.prom()  # fresh, not the old file
+    assert 'openclaw_api_auth_mode{mode="unreadable"} 1' in prom
+    assert 'openclaw_api_auth_mode{mode="api"} 0' in prom
+    assert not any(ln.startswith("openclaw_api_key_billing_disabled") for ln in prom)
+
+
+def test_guard_keeps_exporting_when_only_the_mode_read_keeps_failing(box):
+    box.put("usage", [usage_record(1, ts=NOW_MS - DAY_MS, out=1_000_000)])
+    box.flag("_reads_fail")
+    proc = box.run_guard(expect=2)
+    assert "cannot read the live agents config" in proc.stderr
+    assert "gateway busy" in proc.stderr
+    prom = box.prom()
+    assert 'openclaw_api_auth_mode{mode="unreadable"} 1' in prom
+    assert 'openclaw_api_spend_usd{window="since_topup"} 15.0' in prom
+    assert not any("config patch" in c and "--dry-run" not in c for c in box.calls())
+
+
+def test_guard_survives_a_transient_mode_read_failure(box):
+    box.flag("_reads_fail_once")
+    box.run_guard()
+    assert 'openclaw_api_auth_mode{mode="subscription"} 1' in box.prom()
+
+
+def test_usage_extract_treats_a_missing_agents_directory_as_no_usage(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    script = DIR / "usage-extract.mjs"
+
+    def run(root):
+        return subprocess.run(
+            [node, "--input-type=module", "-"],
+            input=script.read_text(),
+            env={**os.environ, "OPENCLAW_AGENTS_DIR": str(root), "SINCE_MS": "0"},
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=tmp_path,
+        )
+
+    proc = run(tmp_path / "no-such-agents-dir")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""
+    (tmp_path / "agents").write_text("a file, not a directory")  # ENOTDIR still fails
+    assert run(tmp_path / "agents").returncode != 0
 
 
 def test_guard_ledger_keeps_spend_after_openclaw_prunes_the_sessions(box):

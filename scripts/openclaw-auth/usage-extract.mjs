@@ -17,7 +17,16 @@ const ROOT = process.env.OPENCLAW_AGENTS_DIR || "/home/node/.openclaw/agents";
 const since = Number(process.env.SINCE_MS || 0);
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
-for (const agent of readdirSync(ROOT)) {
+// No agents directory yet (a fresh or just-restarted state dir) is "no usage yet",
+// not a failed extraction; any other read error still fails loudly.
+let agents = [];
+try {
+  agents = readdirSync(ROOT);
+} catch (err) {
+  if (err?.code !== "ENOENT") throw err;
+}
+
+for (const agent of agents) {
   const file = `${ROOT}/${agent}/agent/openclaw-agent.sqlite`;
   if (!existsSync(file)) continue;
   const db = new DatabaseSync(file, { readOnly: true });

@@ -22,13 +22,16 @@ When the usage extraction fails the pass still checks the mode, the billing
 state and the key probe (the signals that do not need the estimate), skips the
 spend rule and the spend metrics, and exits 2 afterwards.
 Exit 0 on a completed pass, 1 when a needed flip failed, 2 when an input cannot
-be read (without the mode the previous textfile is left in place).
+be read. When only the mode cannot be read (auth-mode.sh retries its reads
+first) the pass still writes a fresh textfile - openclaw_api_auth_mode{mode=
+"unreadable"} 1, no billing sample, the spend metrics when the estimate worked -
+so the metric is not stale, and exits 2. A broken config file writes nothing.
 
 Metrics (openclaw_api_spend.prom):
   openclaw_api_spend_usd{window="since_topup|month"}   estimated dollars
   openclaw_api_credit_usd                              credit.json credit_usd
   openclaw_api_credit_used_percent                     since_topup / credit * 100
-  openclaw_api_auth_mode{mode="api|subscription|mixed"} 1 for the current mode
+  openclaw_api_auth_mode{mode="api|subscription|mixed|unreadable"} 1 for the current mode
   openclaw_api_key_billing_disabled                    1 when a profile is disabled for billing
   openclaw_api_key_probe_ok                            1 ok, 0 refused (api mode only)
   openclaw_api_fallback_active{reason}                 1 while the guard's fallback stands
@@ -52,6 +55,7 @@ DEFAULT_STATE_DIR = "/var/lib/lifekit-openclaw-spend"
 PROM_NAME = "openclaw_api_spend.prom"
 DAY_MS = 86_400_000
 MODES = ("api", "subscription", "mixed")
+UNREADABLE = "unreadable"
 
 
 class InputError(Exception):
@@ -316,14 +320,20 @@ def render_prom(
         (
             "openclaw_api_auth_mode|1 for the mode OpenClaw's anthropic models run in.",
             "gauge",
-            [(f'{{mode="{m}"}}', int(state["mode"] == m)) for m in MODES],
-        ),
-        (
-            "openclaw_api_key_billing_disabled|1 when OpenClaw disabled an anthropic:api-key profile for billing.",
-            "gauge",
-            [("", int(bool(state.get("billingDisabled"))))],
+            [
+                (f'{{mode="{m}"}}', int(state["mode"] == m))
+                for m in (*MODES, UNREADABLE)
+            ],
         ),
     ]
+    if state["mode"] != UNREADABLE:  # no state read, no billing claim
+        metrics.append(
+            (
+                "openclaw_api_key_billing_disabled|1 when OpenClaw disabled an anthropic:api-key profile for billing.",
+                "gauge",
+                [("", int(bool(state.get("billingDisabled"))))],
+            )
+        )
     if probe is not None:
         metrics.append(
             (
@@ -369,7 +379,14 @@ def run_pass(args, credit: dict, prices: dict, now_ms: int) -> int:
             f"spend guard: {err}; carrying on without the spend estimate",
             file=sys.stderr,
         )
-    state = current_state(args)
+    mode_error = None
+    try:
+        state = current_state(args)
+    except InputError as err:
+        # export an explicit "mode unreadable" sample instead of going stale
+        mode_error = err
+        state = {"mode": UNREADABLE, "billingDisabled": False}
+        print(f"spend guard: {err}", file=sys.stderr)
     marker_path = Path(args.state_dir) / "fallback.json"
     marker = None
     if marker_path.exists():
@@ -408,7 +425,7 @@ def run_pass(args, credit: dict, prices: dict, now_ms: int) -> int:
         write_atomic(
             Path(args.textfile) / PROM_NAME, render_prom(est, state, probe, marker)
         )
-    return code or (2 if est is None else 0)
+    return code or (2 if est is None or mode_error else 0)
 
 
 def main(argv: list[str] | None = None) -> int:

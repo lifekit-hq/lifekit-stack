@@ -5973,8 +5973,10 @@ old sessions.
   checkout.
 - **Metrics** (`openclaw_api_spend.prom`): `openclaw_api_spend_usd{window}`
   (`since_topup`, `month`), `openclaw_api_credit_usd`,
-  `openclaw_api_credit_used_percent`, `openclaw_api_auth_mode{mode}`,
-  `openclaw_api_key_billing_disabled`, `openclaw_api_key_probe_ok` (api mode
+  `openclaw_api_credit_used_percent`, `openclaw_api_auth_mode{mode}` (`mode="unreadable"`
+  when the live config could not be read after `auth-mode.sh`'s bounded retries:
+  the file stays fresh and the unit exits 2),
+  `openclaw_api_key_billing_disabled` (absent then), `openclaw_api_key_probe_ok` (api mode
   only), `openclaw_api_fallback_active{reason}`,
   `openclaw_api_spend_unpriced_tokens`.
 - **Alerts** (Grafana group `openclaw`, existing Telegram contact point; only
