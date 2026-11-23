@@ -235,11 +235,17 @@ def test_a_reply_that_is_a_tool_call_fails(tmp_path):
         "finish_reason": "tool_calls",
         "message": {
             "tool_calls": [
-                {"id": "c", "type": "function", "function": {"name": "reply", "arguments": json.dumps(REPLY)}}
+                {
+                    "id": "c",
+                    "type": "function",
+                    "function": {"name": "reply", "arguments": json.dumps(REPLY)},
+                }
             ]
         },
     }
-    assert any("finished text answer" in b for b in judge(evidence(tmp_path, response=call)))
+    assert any(
+        "finished text answer" in b for b in judge(evidence(tmp_path, response=call))
+    )
 
 
 @pytest.mark.parametrize(
@@ -256,7 +262,9 @@ def test_a_reply_that_is_a_tool_call_fails(tmp_path):
 def test_content_that_is_not_exactly_the_reply_object_fails(tmp_path, content):
     wrong = http_response()
     wrong["body"]["choices"][0]["message"]["content"] = content
-    assert any("want the JSON text" in b for b in judge(evidence(tmp_path, response=wrong)))
+    assert any(
+        "want the JSON text" in b for b in judge(evidence(tmp_path, response=wrong))
+    )
 
 
 def test_an_endpoint_error_fails(tmp_path):

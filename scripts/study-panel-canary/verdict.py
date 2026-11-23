@@ -129,7 +129,9 @@ def judge_http(out: str, reply: dict) -> list:
     except (FileNotFoundError, ValueError):
         return bad + ["no response came back from the chat-completions endpoint"]
     if resp.get("status") != 200 or not isinstance(resp.get("body"), dict):
-        return bad + [f"the endpoint answered {resp.get('status')}: {str(resp.get('body'))[:200]}"]
+        return bad + [
+            f"the endpoint answered {resp.get('status')}: {str(resp.get('body'))[:200]}"
+        ]
     choice = (resp["body"].get("choices") or [{}])[0]
     message = choice.get("message") or {}
     if choice.get("finish_reason") != "stop" or message.get("tool_calls"):

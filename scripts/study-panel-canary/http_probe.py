@@ -18,7 +18,9 @@ auth = {"authorization": f"Bearer {token}"}
 
 for _ in range(90):
     try:
-        urllib.request.urlopen(urllib.request.Request(base + "/v1/models", headers=auth), timeout=3).read()
+        urllib.request.urlopen(
+            urllib.request.Request(base + "/v1/models", headers=auth), timeout=3
+        ).read()
         break
     except Exception:
         time.sleep(2)
