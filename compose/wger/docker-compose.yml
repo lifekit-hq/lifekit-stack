@@ -94,8 +94,13 @@ services:
         limits:
           memory: 128m
           pids: 64
+    # lifekit-shared is the route for the OpenClaw gateway: Kit's wger client calls
+    # http://wger-nginx-1:8080 (docs/runbook.md, "Kit and wger"). nginx is the only
+    # wger service on it - web, db and cache stay on their own networks - and it
+    # publishes no new port: wger stays tailnet-only through Tailscale Serve.
     networks:
       - default
+      - lifekit-shared
 
   web:
     <<: *policy
@@ -230,6 +235,9 @@ networks:
   # web <-> db and cache only. internal: no route off the box.
   backend:
     internal: true
+  # The shared network the other projects use (the deploy creates it); nginx only.
+  lifekit-shared:
+    external: true
 
 volumes:
   postgres_data:

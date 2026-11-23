@@ -10,6 +10,8 @@ workspace) into wger as a routine: one wger day per program day, one slot per ex
 slot entry per slot with its sets, rep range and weight. `logs` reads the workout logs back:
 date, exercise, sets, reps and weight, grouped the way the skill replies.
 
+Unknown fields in gym.json (steps, notes, deload rules, anything else) are ignored.
+
 Environment (set by OpenClaw for the skill's run, never by hand):
     WGER_API_TOKEN  the wger token, injected from the gateway secrets file through the
                     skill's `apiKey` SecretRef (primaryEnv in SKILL.md). Sent only as
@@ -56,7 +58,11 @@ class Wger:
         self._token = token
 
     def call(self, method: str, path: str, body: dict | None = None) -> object:
-        url = path if path.startswith("http") else f"{self.base}/api/v2/{path.lstrip('/')}"
+        url = (
+            path
+            if path.startswith("http")
+            else f"{self.base}/api/v2/{path.lstrip('/')}"
+        )
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Accept", "application/json")
@@ -75,7 +81,9 @@ class Wger:
                     3,
                 ) from None
             detail = err.read(300).decode("utf-8", "replace").strip()
-            raise Fail(f"wger answered HTTP {err.code} for {method} {path}: {detail}", 4) from None
+            raise Fail(
+                f"wger answered HTTP {err.code} for {method} {path}: {detail}", 4
+            ) from None
         except (urllib.error.URLError, TimeoutError, OSError) as err:
             reason = getattr(err, "reason", err)
             raise Fail(f"wger is unreachable at {self.base}: {reason}", 4) from None
@@ -141,7 +149,9 @@ def resolve_exercise(w: Wger, ex: dict, cache: dict[str, int]) -> int:
         for cand in name_candidates(name):
             if cand in cache:
                 return cache[cand]
-            rows = w.pages("exercise-translation/", {"name": cand, "language": str(LANGUAGE_EN)})
+            rows = w.pages(
+                "exercise-translation/", {"name": cand, "language": str(LANGUAGE_EN)}
+            )
             hit = [r for r in rows if slug(r.get("name", "")) == slug(cand)]
             if hit:
                 cache[cand] = hit[0]["exercise"]
@@ -155,7 +165,10 @@ def resolve_exercise(w: Wger, ex: dict, cache: dict[str, int]) -> int:
 
 def exercise_name(w: Wger, ex_id: int, cache: dict[int, str]) -> str:
     if ex_id not in cache:
-        rows = w.pages("exercise-translation/", {"exercise": str(ex_id), "language": str(LANGUAGE_EN)})
+        rows = w.pages(
+            "exercise-translation/",
+            {"exercise": str(ex_id), "language": str(LANGUAGE_EN)},
+        )
         cache[ex_id] = slug(rows[0]["name"]) if rows else f"exercise-{ex_id}"
     return cache[ex_id]
 
@@ -164,7 +177,14 @@ def exercise_name(w: Wger, ex_id: int, cache: dict[int, str]) -> str:
 
 
 def parse_reps(ex: dict) -> tuple[int, int]:
-    raw = ex.get("reps", ex.get("rep_range", ex.get("rep_min")))
+    raw = next(
+        (
+            ex[k]
+            for k in ("reps", "rep_range", "range", "rep_min")
+            if ex.get(k) is not None
+        ),
+        None,
+    )
     if ex.get("rep_min") is not None and ex.get("rep_max") is not None:
         raw = [ex["rep_min"], ex["rep_max"]]
     try:
@@ -182,7 +202,9 @@ def parse_reps(ex: dict) -> tuple[int, int]:
         return nums[0], nums[0]
     if len(nums) == 2 and 0 < nums[0] <= nums[1]:
         return nums[0], nums[1]
-    raise Fail(f"exercise {ex.get('name')!r}: reps must be a number or a range like 8-12", 1)
+    raise Fail(
+        f"exercise {ex.get('name')!r}: reps must be a number or a range like 8-12", 1
+    )
 
 
 def load_program(path: str) -> tuple[str, list[dict]]:
@@ -193,34 +215,58 @@ def load_program(path: str) -> tuple[str, list[dict]]:
         raise Fail(f"cannot read {path}: {err.strerror}", 1) from None
     except json.JSONDecodeError as err:
         raise Fail(f"{path} is not valid JSON: {err}", 1) from None
-    days_raw = doc.get("days", doc.get("split")) if isinstance(doc, dict) else None
+    days_raw = next(
+        (
+            doc[k]
+            for k in ("days", "split", "program", "schedule")
+            if isinstance(doc, dict) and doc.get(k)
+        ),
+        None,
+    )
     if isinstance(days_raw, dict):
         days_raw = [{"day": k, **v} for k, v in days_raw.items() if isinstance(v, dict)]
     if not isinstance(days_raw, list) or not days_raw:
-        raise Fail(f"{path} has no days: expected a \"days\" list of {{day, name, exercises}}", 1)
+        raise Fail(
+            f'{path} has no days: expected a "days" list of {{day, name, exercises}}', 1
+        )
     days = []
     for d in days_raw:
-        exercises = d.get("exercises") if isinstance(d, dict) else None
+        exercises = (
+            (d.get("exercises") or d.get("lifts")) if isinstance(d, dict) else None
+        )
         if not exercises:
-            raise Fail(f"day {d.get('day') if isinstance(d, dict) else d!r} has no exercises", 1)
+            raise Fail(
+                f"day {d.get('day') if isinstance(d, dict) else d!r} has no exercises",
+                1,
+            )
         parsed = []
         for ex in exercises:
             if not isinstance(ex, dict) or not isinstance(ex.get("name"), str):
-                raise Fail("every exercise needs a \"name\"", 1)
+                raise Fail('every exercise needs a "name"', 1)
             lo, hi = parse_reps(ex)
-            sets = ex.get("sets")
+            sets = ex.get("sets", ex.get("set_count"))
             if not isinstance(sets, int) or isinstance(sets, bool) or sets < 1:
                 raise Fail(f"exercise {ex['name']!r}: sets must be a whole number", 1)
-            weight = ex.get("weight", ex.get("start_weight"))
-            if weight is not None and (isinstance(weight, bool) or not isinstance(weight, int | float)):
+            weight = ex.get("weight", ex.get("start_weight", ex.get("start_kg")))
+            if weight is not None and (
+                isinstance(weight, bool) or not isinstance(weight, int | float)
+            ):
                 raise Fail(f"exercise {ex['name']!r}: weight must be a number in kg", 1)
-            parsed.append({**ex, "sets": sets, "rep_lo": lo, "rep_hi": hi, "weight": weight})
+            parsed.append(
+                {**ex, "sets": sets, "rep_lo": lo, "rep_hi": hi, "weight": weight}
+            )
         label = str(d.get("day", "")).strip()
         label = WEEKDAYS.get(label.lower(), label)
-        title = " - ".join(p for p in (label, str(d.get("name", "")).strip()) if p) or "Day"
+        title = (
+            " - ".join(p for p in (label, str(d.get("name", "")).strip()) if p) or "Day"
+        )
         parsed_day = {"title": title, "exercises": parsed}
         days.append(parsed_day)
-    name = doc.get("name") if isinstance(doc.get("name"), str) and doc["name"].strip() else "Gym"
+    name = (
+        doc.get("name")
+        if isinstance(doc.get("name"), str) and doc["name"].strip()
+        else "Gym"
+    )
     return name.strip(), days
 
 
@@ -255,7 +301,9 @@ def cmd_routine(args: argparse.Namespace) -> int:
                 missing.append(ex["name"])
     if missing:
         raise Fail(
-            "no wger exercise for: " + ", ".join(missing) + " - add \"wger_exercise\": <id> "
+            "no wger exercise for: "
+            + ", ".join(missing)
+            + ' - add "wger_exercise": <id> '
             "to each in gym.json (nothing was written)",
             1,
         )
@@ -271,19 +319,41 @@ def cmd_routine(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(f"dry-run: routine {name!r} {start}..{end}, {len(days)} days")
         for day in days:
-            print(f"  {day['title']}: " + ", ".join(f"{e['name']} {e['sets']}x{e['rep_lo']}-{e['rep_hi']}" for e in day["exercises"]))
+            print(
+                f"  {day['title']}: "
+                + ", ".join(
+                    f"{e['name']} {e['sets']}x{e['rep_lo']}-{e['rep_hi']}"
+                    for e in day["exercises"]
+                )
+            )
         return 0
     for old in existing:
         w.call("DELETE", f"routine/{old['id']}/")
     routine = w.call(
         "POST",
         "routine/",
-        {"name": name, "description": "Written by Kit from gym.json", "start": str(start), "end": str(end), "fit_in_week": False},
+        {
+            "name": name,
+            "description": "Written by Kit from gym.json",
+            "start": str(start),
+            "end": str(end),
+            "fit_in_week": False,
+        },
     )
     rid = routine["id"]  # type: ignore[index]
     n_ex = 0
     for d_order, day in enumerate(days, 1):
-        d = w.call("POST", "day/", {"routine": rid, "name": day["title"], "order": d_order, "is_rest": False, "type": "custom"})
+        d = w.call(
+            "POST",
+            "day/",
+            {
+                "routine": rid,
+                "name": day["title"],
+                "order": d_order,
+                "is_rest": False,
+                "type": "custom",
+            },
+        )
         for s_order, ex in enumerate(day["exercises"], 1):
             slot = w.call("POST", "slot/", {"day": d["id"], "order": s_order})  # type: ignore[index]
             entry = w.call(
@@ -298,15 +368,25 @@ def cmd_routine(args: argparse.Namespace) -> int:
                     "order": 1,
                 },
             )
-            cfg = {"slot_entry": entry["id"], "iteration": 1, "operation": "r", "step": "na", "repeat": False}  # type: ignore[index]
+            cfg = {
+                "slot_entry": entry["id"],
+                "iteration": 1,
+                "operation": "r",
+                "step": "na",
+                "repeat": False,
+            }  # type: ignore[index]
             w.call("POST", "sets-config/", {**cfg, "value": ex["sets"]})
             w.call("POST", "repetitions-config/", {**cfg, "value": ex["rep_lo"]})
             if ex["rep_hi"] != ex["rep_lo"]:
-                w.call("POST", "max-repetitions-config/", {**cfg, "value": ex["rep_hi"]})
+                w.call(
+                    "POST", "max-repetitions-config/", {**cfg, "value": ex["rep_hi"]}
+                )
             if ex["weight"] is not None:
                 w.call("POST", "weight-config/", {**cfg, "value": ex["weight"]})
             n_ex += 1
-    print(f"routine {name!r} written to wger: id {rid}, {len(days)} days, {n_ex} exercises, {start}..{end}")
+    print(
+        f"routine {name!r} written to wger: id {rid}, {len(days)} days, {n_ex} exercises, {start}..{end}"
+    )
     return 0
 
 
@@ -324,7 +404,11 @@ def cmd_logs(args: argparse.Namespace) -> int:
     if args.date_from > args.date_to:
         raise Fail("--from is after --to", 1)
     w = client()
-    params = {"date__gte": args.date_from, "date__lte": args.date_to + "T23:59:59", "ordering": "date"}
+    params = {
+        "date__gte": args.date_from,
+        "date__lte": args.date_to + "T23:59:59",
+        "ordering": "date",
+    }
     names: dict[int, str] = {}
     want: int | None = None
     if args.exercise:
@@ -334,7 +418,9 @@ def cmd_logs(args: argparse.Namespace) -> int:
     for r in w.pages("workoutlog/", params):
         day = str(r.get("date", ""))[:10]
         # The server's filters are best effort; the range and the exercise are enforced here too.
-        if not (args.date_from <= day <= args.date_to) or (want is not None and r.get("exercise") != want):
+        if not (args.date_from <= day <= args.date_to) or (
+            want is not None and r.get("exercise") != want
+        ):
             continue
         rows.append(
             {
@@ -342,7 +428,9 @@ def cmd_logs(args: argparse.Namespace) -> int:
                 "exercise": exercise_name(w, r["exercise"], names),
                 "reps": r.get("repetitions"),
                 "weight": r.get("weight"),
-                "unit": WEIGHT_UNITS.get(r.get("weight_unit") or 1, f"u{r.get('weight_unit')}"),
+                "unit": WEIGHT_UNITS.get(
+                    r.get("weight_unit") or 1, f"u{r.get('weight_unit')}"
+                ),
             }
         )
     rows.sort(key=lambda r: (r["date"], r["exercise"]))
@@ -351,7 +439,16 @@ def cmd_logs(args: argparse.Namespace) -> int:
         grouped.setdefault((r["date"], r["exercise"]), []).append(r)
     out = []
     for (day, ex), sets in grouped.items():
-        out.append({"date": day, "exercise": ex, "sets": [{"reps": s["reps"], "weight": s["weight"], "unit": s["unit"]} for s in sets]})
+        out.append(
+            {
+                "date": day,
+                "exercise": ex,
+                "sets": [
+                    {"reps": s["reps"], "weight": s["weight"], "unit": s["unit"]}
+                    for s in sets
+                ],
+            }
+        )
     if args.json:
         print(json.dumps(out, indent=2))
         return 0
@@ -360,7 +457,9 @@ def cmd_logs(args: argparse.Namespace) -> int:
         return 0
     for g in out:
         sets = g["sets"]
-        reps = ",".join(fmt_num(s["reps"]) if s["reps"] is not None else "?" for s in sets)
+        reps = ",".join(
+            fmt_num(s["reps"]) if s["reps"] is not None else "?" for s in sets
+        )
         weights = {(s["weight"], s["unit"]) for s in sets}
         if len(weights) == 1:
             wt, unit = next(iter(weights))
@@ -368,7 +467,8 @@ def cmd_logs(args: argparse.Namespace) -> int:
             line = f"{reps}{tail}"
         else:
             line = ", ".join(
-                f"{fmt_num(s['reps']) if s['reps'] is not None else '?'}@{fmt_num(s['weight'])}{s['unit']}" for s in sets
+                f"{fmt_num(s['reps']) if s['reps'] is not None else '?'}@{fmt_num(s['weight'])}{s['unit']}"
+                for s in sets
             )
         print(f"{g['date']} {g['exercise']}: {line}")
     return 0

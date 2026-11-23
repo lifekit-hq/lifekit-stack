@@ -59,7 +59,15 @@ class FakeWger(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length)) if length else None
         auth = self.headers.get("Authorization")
-        type(self).log.append({"method": method, "path": url.path, "query": query, "body": body, "auth": auth})
+        type(self).log.append(
+            {
+                "method": method,
+                "path": url.path,
+                "query": query,
+                "body": body,
+                "auth": auth,
+            }
+        )
         path = url.path.removeprefix("/api/v2/").strip("/")
         if path == "version":
             return self._send(200, "2.7.0")
@@ -79,7 +87,9 @@ class FakeWger(BaseHTTPRequestHandler):
             rows = type(self).routines
             return self._send(200, {"count": len(rows), "next": None, "results": rows})
         if path.startswith("routine/") and method == "DELETE":
-            type(self).routines = [r for r in type(self).routines if str(r["id"]) != path.split("/")[1]]
+            type(self).routines = [
+                r for r in type(self).routines if str(r["id"]) != path.split("/")[1]
+            ]
             return self._send(204, None)
         if method == "POST":
             type(self).next_id += 1
@@ -89,7 +99,14 @@ class FakeWger(BaseHTTPRequestHandler):
             return self._send(201, created)
         if path == "workoutlog":
             rows = [
-                {"id": i, "exercise": e, "date": d, "repetitions": r, "weight": w, "weight_unit": u}
+                {
+                    "id": i,
+                    "exercise": e,
+                    "date": d,
+                    "repetitions": r,
+                    "weight": w,
+                    "weight_unit": u,
+                }
                 for (i, e, d, r, w, u) in LOGS
             ]
             if "exercise" in query:
@@ -98,7 +115,11 @@ class FakeWger(BaseHTTPRequestHandler):
             offset = int(query.get("offset", 0))
             page = rows[offset : offset + 4]
             more = offset + 4 < len(rows)
-            nxt = f"http://127.0.0.1:{self.server.server_port}/api/v2/workoutlog/?{url.query.split('&offset')[0]}&offset={offset + 4}" if more else None
+            nxt = (
+                f"http://127.0.0.1:{self.server.server_port}/api/v2/workoutlog/?{url.query.split('&offset')[0]}&offset={offset + 4}"
+                if more
+                else None
+            )
             return self._send(200, {"count": len(rows), "next": nxt, "results": page})
         return self._send(404, {"detail": "Not found."})
 
@@ -117,7 +138,12 @@ class FakeWger(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def wger():
-    FakeWger.log, FakeWger.mode, FakeWger.routines, FakeWger.next_id = [], "ok", [], 1000
+    FakeWger.log, FakeWger.mode, FakeWger.routines, FakeWger.next_id = (
+        [],
+        "ok",
+        [],
+        1000,
+    )
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeWger)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_port}"
@@ -127,7 +153,11 @@ def wger():
         if token is not None:
             env["WGER_API_TOKEN"] = token
         return subprocess.run(
-            [sys.executable, str(WGER), *args], env=env, capture_output=True, text=True, check=False
+            [sys.executable, str(WGER), *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
     yield run
@@ -142,8 +172,30 @@ def gym(tmp_path):
             {
                 "name": "Gym",
                 "days": [
-                    {"day": "mon", "name": "back", "exercises": [{"name": "barbell-row", "sets": 3, "reps": "8-12", "weight": 60}]},
-                    {"day": "wed", "name": "legs", "exercises": [{"name": "squat", "aliases": ["squats"], "sets": 5, "reps": 5}]},
+                    {
+                        "day": "mon",
+                        "name": "back",
+                        "exercises": [
+                            {
+                                "name": "barbell-row",
+                                "sets": 3,
+                                "reps": "8-12",
+                                "weight": 60,
+                            }
+                        ],
+                    },
+                    {
+                        "day": "wed",
+                        "name": "legs",
+                        "exercises": [
+                            {
+                                "name": "squat",
+                                "aliases": ["squats"],
+                                "sets": 5,
+                                "reps": 5,
+                            }
+                        ],
+                    },
                 ],
             }
         )
@@ -161,21 +213,38 @@ def writes():
 def test_routine_is_written_with_days_slots_entries_and_configs(wger, gym):
     r = wger("routine", str(gym), "--start", "2026-11-23", "--weeks", "8")
     assert r.returncode == 0, r.stderr
-    assert "routine 'Gym' written to wger" in r.stdout and "2 days, 2 exercises" in r.stdout
+    assert (
+        "routine 'Gym' written to wger" in r.stdout
+        and "2 days, 2 exercises" in r.stdout
+    )
     posts = [(w["path"].removeprefix("/api/v2/"), w["body"]) for w in writes()]
     by = {}
     for path, body in posts:
         by.setdefault(path.strip("/"), []).append(body)
     assert by["routine"][0]["name"] == "Gym"
-    assert (by["routine"][0]["start"], by["routine"][0]["end"]) == ("2026-11-23", "2027-01-18")
+    assert (by["routine"][0]["start"], by["routine"][0]["end"]) == (
+        "2026-11-23",
+        "2027-01-18",
+    )
     assert [d["name"] for d in by["day"]] == ["Mon - back", "Wed - legs"]
     assert [d["order"] for d in by["day"]] == [1, 2]
-    assert [e["exercise"] for e in by["slot-entry"]] == [101, 615]  # name and alias resolved
+    assert [e["exercise"] for e in by["slot-entry"]] == [
+        101,
+        615,
+    ]  # name and alias resolved
     assert {c["value"] for c in by["sets-config"]} == {3, 5}
     assert [c["value"] for c in by["repetitions-config"]] == [8, 5]
-    assert [c["value"] for c in by["max-repetitions-config"]] == [12]  # only the range has a max
-    assert [c["value"] for c in by["weight-config"]] == [60]  # only the weighted exercise
-    assert all(w["auth"] == f"Token {TOKEN}" for w in FakeWger.log if w["path"] != "/api/v2/version/")
+    assert [c["value"] for c in by["max-repetitions-config"]] == [
+        12
+    ]  # only the range has a max
+    assert [c["value"] for c in by["weight-config"]] == [
+        60
+    ]  # only the weighted exercise
+    assert all(
+        w["auth"] == f"Token {TOKEN}"
+        for w in FakeWger.log
+        if w["path"] != "/api/v2/version/"
+    )
 
 
 def test_routine_dry_run_writes_nothing(wger, gym):
@@ -198,7 +267,20 @@ def test_routine_refuses_an_existing_name_unless_replaced(wger, gym):
 
 def test_routine_with_an_unknown_exercise_writes_nothing(wger, tmp_path):
     p = tmp_path / "gym.json"
-    p.write_text(json.dumps({"days": [{"day": "Fri", "exercises": [{"name": "cable-fly", "sets": 3, "reps": "10-15"}]}]}))
+    p.write_text(
+        json.dumps(
+            {
+                "days": [
+                    {
+                        "day": "Fri",
+                        "exercises": [
+                            {"name": "cable-fly", "sets": 3, "reps": "10-15"}
+                        ],
+                    }
+                ]
+            }
+        )
+    )
     r = wger("routine", str(p))
     assert r.returncode == 1
     assert "cable-fly" in r.stderr and "wger_exercise" in r.stderr
@@ -207,9 +289,63 @@ def test_routine_with_an_unknown_exercise_writes_nothing(wger, tmp_path):
 
 def test_routine_takes_an_explicit_wger_exercise_id(wger, tmp_path):
     p = tmp_path / "gym.json"
-    p.write_text(json.dumps({"days": [{"day": "Fri", "exercises": [{"name": "cable-fly", "wger_exercise": 77, "sets": 3, "reps": [10, 15]}]}]}))
+    p.write_text(
+        json.dumps(
+            {
+                "days": [
+                    {
+                        "day": "Fri",
+                        "exercises": [
+                            {
+                                "name": "cable-fly",
+                                "wger_exercise": 77,
+                                "sets": 3,
+                                "reps": [10, 15],
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
     assert wger("routine", str(p)).returncode == 0
-    assert [w["body"]["exercise"] for w in writes() if w["path"].endswith("/slot-entry/")] == [77]
+    assert [
+        w["body"]["exercise"] for w in writes() if w["path"].endswith("/slot-entry/")
+    ] == [77]
+
+
+def test_routine_ignores_fields_it_does_not_know(wger, tmp_path):
+    p = tmp_path / "gym.json"
+    p.write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "deload": {"after": 3, "factor": 0.9},
+                "cardio": {"name": "incline-walk"},
+                "days": {
+                    "Mon": {
+                        "name": "back",
+                        "muscle": "back",
+                        "exercises": [
+                            {
+                                "name": "barbell-row",
+                                "sets": 3,
+                                "reps": [8, 12],
+                                "step": 2.5,
+                                "progression": "double",
+                                "note": "x",
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+    )
+    r = wger("routine", str(p))
+    assert r.returncode == 0, r.stderr
+    assert [w["body"]["name"] for w in writes() if w["path"].endswith("/day/")] == [
+        "Mon - back"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -217,7 +353,14 @@ def test_routine_takes_an_explicit_wger_exercise_id(wger, tmp_path):
     [
         ({"days": []}, "no days"),
         ({"days": [{"day": "Mon", "exercises": [{"name": "x", "sets": 3}]}]}, "reps"),
-        ({"days": [{"day": "Mon", "exercises": [{"name": "x", "sets": 0, "reps": 5}]}]}, "sets"),
+        (
+            {
+                "days": [
+                    {"day": "Mon", "exercises": [{"name": "x", "sets": 0, "reps": 5}]}
+                ]
+            },
+            "sets",
+        ),
     ],
 )
 def test_routine_rejects_a_malformed_program(wger, tmp_path, doc, needle):
@@ -243,9 +386,20 @@ def test_logs_group_sets_by_day_and_exercise_within_the_range(wger):
 
 
 def test_logs_filter_by_exercise(wger):
-    r = wger("logs", "--from", "2026-10-01", "--to", "2026-11-30", "--exercise", "bench press")
+    r = wger(
+        "logs",
+        "--from",
+        "2026-10-01",
+        "--to",
+        "2026-11-30",
+        "--exercise",
+        "bench press",
+    )
     assert r.returncode == 0, r.stderr
-    assert r.stdout.splitlines() == ["2026-10-01 bench-press: 10@50kg", "2026-11-10 bench-press: 8,8,6@60kg"]
+    assert r.stdout.splitlines() == [
+        "2026-10-01 bench-press: 10@50kg",
+        "2026-11-10 bench-press: 8,8,6@60kg",
+    ]
 
 
 def test_logs_json_carries_reps_weight_and_unit(wger):
@@ -274,7 +428,11 @@ def test_logs_reject_bad_dates(wger):
 
 @pytest.mark.parametrize("token", [None, "", "   "])
 def test_a_missing_token_stops_before_any_call(wger, gym, token):
-    for args in (("logs", "--from", "2026-11-01", "--to", "2026-11-30"), ("routine", str(gym)), ("check",)):
+    for args in (
+        ("logs", "--from", "2026-11-01", "--to", "2026-11-30"),
+        ("routine", str(gym)),
+        ("check",),
+    ):
         r = wger(*args, token=token)
         assert r.returncode == 2, args
         assert "WGER_API_TOKEN is not set" in r.stderr
@@ -283,7 +441,11 @@ def test_a_missing_token_stops_before_any_call(wger, gym, token):
 
 def test_a_revoked_token_is_named_and_writes_nothing(wger, gym):
     FakeWger.mode = "revoked"
-    for args in (("logs", "--from", "2026-11-01", "--to", "2026-11-30"), ("routine", str(gym)), ("check",)):
+    for args in (
+        ("logs", "--from", "2026-11-01", "--to", "2026-11-30"),
+        ("routine", str(gym)),
+        ("check",),
+    ):
         r = wger(*args)
         assert r.returncode == 3, args
         assert "rejected the token" in r.stderr and "revoked" in r.stderr
@@ -298,7 +460,11 @@ def test_a_wrong_token_is_rejected_the_same_way(wger):
 def test_the_token_never_appears_in_output(wger, gym):
     FakeWger.mode = "ok"
     outs = []
-    for args in (("check",), ("routine", str(gym)), ("logs", "--from", "2026-11-01", "--to", "2026-11-30")):
+    for args in (
+        ("check",),
+        ("routine", str(gym)),
+        ("logs", "--from", "2026-11-01", "--to", "2026-11-30"),
+    ):
         r = wger(*args)
         outs += [r.stdout, r.stderr]
     FakeWger.mode = "revoked"
@@ -311,15 +477,33 @@ def test_check_reads_the_version_then_the_profile(wger):
     r = wger("check")
     assert r.returncode == 0, r.stderr
     assert "wger 2.7.0" in r.stdout and "token: accepted" in r.stdout
-    assert [x["path"] for x in FakeWger.log] == ["/api/v2/version/", "/api/v2/userprofile/"]
+    assert [x["path"] for x in FakeWger.log] == [
+        "/api/v2/version/",
+        "/api/v2/userprofile/",
+    ]
     assert FakeWger.log[0]["auth"] is None  # the version probe is anonymous
 
 
 def test_an_unreachable_wger_is_exit_4(tmp_path):
-    env = {"PATH": os.environ["PATH"], "WGER_API_TOKEN": TOKEN, "WGER_BASE_URL": "http://127.0.0.1:9"}
+    env = {
+        "PATH": os.environ["PATH"],
+        "WGER_API_TOKEN": TOKEN,
+        "WGER_BASE_URL": "http://127.0.0.1:9",
+    }
     r = subprocess.run(
-        [sys.executable, str(WGER), "logs", "--from", "2026-11-01", "--to", "2026-11-30"],
-        env=env, capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(WGER),
+            "logs",
+            "--from",
+            "2026-11-01",
+            "--to",
+            "2026-11-30",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert r.returncode == 4 and "unreachable" in r.stderr
 
@@ -328,7 +512,11 @@ def test_an_unreachable_wger_is_exit_4(tmp_path):
 
 
 def test_the_platform_patch_wires_the_token_as_the_skills_api_key():
-    patch = json.loads((WGER.parents[2] / "compose/openclaw-gateway/platform.patch.json").read_text())
+    patch = json.loads(
+        (WGER.parents[2] / "compose/openclaw-gateway/platform.patch.json").read_text()
+    )
     ref = patch["skills"]["entries"]["workout-log"]["apiKey"]
     assert ref == {"source": "exec", "provider": "sops", "id": "wger-api-token"}
-    assert "WGER_API_TOKEN" in (WGER.parent / "SKILL.md").read_text().split("---")[1]  # primaryEnv
+    assert (
+        "WGER_API_TOKEN" in (WGER.parent / "SKILL.md").read_text().split("---")[1]
+    )  # primaryEnv

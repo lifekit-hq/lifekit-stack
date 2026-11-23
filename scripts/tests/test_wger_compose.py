@@ -41,6 +41,7 @@ def normalise(doc: dict) -> dict:
             parts = p.split(":")
             ports.append({"host_ip": parts[0] if len(parts) == 3 else None})
         svc["ports"] = ports
+        svc["networks"] = {n: None for n in svc.get("networks") or []}
     return out
 
 
@@ -106,3 +107,23 @@ def test_web_trusts_the_proxy_scheme_header():
     assert (
         doc["services"]["web"]["environment"]["X_FORWARDED_PROTO_HEADER_SET"] == "True"
     )
+
+
+def test_only_nginx_is_on_the_shared_network(real):
+    assert set(real["services"]["nginx"]["networks"]) == {"default", "lifekit-shared"}
+    assert gate.check(real) == []
+    for other in ("web", "db", "cache"):
+        assert "lifekit-shared" not in real["services"][other]["networks"]
+
+
+@pytest.mark.parametrize("service", ["web", "db", "cache"])
+def test_another_service_on_the_shared_network_is_blocked(real, service):
+    real["services"][service]["networks"]["lifekit-shared"] = None
+    assert f"{service}: must not join lifekit-shared (only nginx may)" in gate.check(
+        real
+    )
+
+
+def test_a_non_external_shared_network_is_blocked(real):
+    real["networks"]["lifekit-shared"] = {}
+    assert "network lifekit-shared must be external" in gate.check(real)

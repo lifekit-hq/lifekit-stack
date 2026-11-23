@@ -5505,14 +5505,25 @@ writes Kit's `routines/gym.json` into wger as a routine, `logs` reads the workou
 service: the same skill, installed by `scripts/ensure-workout-log.sh`.
 
 - **Base URL.** `WGER_BASE_URL` for the skill's run; the script's default is
-  `http://wger-nginx-1:8080`, wger's nginx on its compose network. The owner's browser
-  and phone use `https://<host>.<tailnet>.ts.net:8480`, the tailnet-only Tailscale Serve
-  front (above). That URL is not reachable from inside the gateway container (checked
-  2026-11-23: connection refused), and wger's nginx is on no network the gateway shares,
-  so Kit needs that nginx joined to `lifekit-shared` before it can call wger. That is a
-  change to the wger deploy and is not part of this section; until it lands `wger.py`
-  exits 4 (`wger is unreachable`). From the host,
-  `WGER_BASE_URL=https://<host>.<tailnet>.ts.net:8480` works and proves a token.
+  `http://wger-nginx-1:8080`, wger's nginx on the shared network. The owner's browser and
+  phone use `https://<host>.<tailnet>.ts.net:8480`, the tailnet-only Tailscale Serve front
+  (above); that URL is not reachable from inside the gateway container (checked
+  2026-11-23: connection refused). So `compose/wger/docker-compose.yml` puts nginx, and
+  only nginx, on the external `lifekit-shared` network the gateway is on: no new
+  published port, wger stays tailnet-only, `web`, `db` and `cache` stay on their own
+  networks. `scripts/check-wger-compose.py` (run by the deploy before `up`) fails the
+  deploy if any other wger service joins it or the network stops being external. wger
+  answers the `wger-nginx-1:8080` host name. From the host,
+  `WGER_BASE_URL=https://<host>.<tailnet>.ts.net:8480` also works and proves a token.
+- **What was inferred about `routines/gym.json`.** The live file is host state this repo
+  never held, so `wger.py routine` reads the shape from the notes about it, not from the
+  file: `days` (a list, or an object keyed by weekday; `split`, `program`, `schedule` are
+  accepted names) of `{day, name, exercises}`; each exercise `{name, sets, reps, weight}`
+  with `reps` a number, `"8-12"` or `[8, 12]`, `weight` in kg and optional, and optional
+  `aliases` and `wger_exercise` (a wger exercise id). Every other field (steps,
+  progression and deload rules, cardio, notes) is ignored. If the real file differs in a
+  way that matters (for instance exercises under another key), `routine` fails before
+  writing anything and says what it did not find; adjust `load_program` in `wger.py`.
 - **Where the token lives.** `WGER_API_TOKEN` is a key of the gateway secrets file
   `secrets/lifekit-gateway.env.sops` (inventory row in `docs/secrets.md`). The platform
   patch gives the skill an `apiKey` SecretRef to it (`skills.entries.workout-log.apiKey`,
