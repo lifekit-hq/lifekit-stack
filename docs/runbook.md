@@ -5412,7 +5412,8 @@ its REST API. Four containers, all `lifekit.contract: none` (an upstream app):
 `wger-db-1` (Postgres) and `wger-cache-1` (Redis, nothing to back up). Images
 are pinned to exact versions; `scripts/check-wger-compose.py` fails the deploy
 before `up` if one is not, if the database or media leave their named volumes
-(`postgres_data`, `media`), or if a port is not loopback-bound.
+(`postgres_data`, `media`), if a port is not loopback-bound, or if the network rules for
+Kit's route to wger break ("Kit and wger" below).
 
 **Setup.** Both secrets (`WGER_SECRET_KEY`, `WGER_DB_PASSWORD`) are keys in the master
 file with inventory rows in `docs/secrets.md`, so the next deploy renders them into the
