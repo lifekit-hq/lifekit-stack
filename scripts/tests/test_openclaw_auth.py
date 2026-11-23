@@ -926,12 +926,18 @@ def test_usage_extract_treats_a_missing_agents_directory_as_no_usage(tmp_path):
     if node is None:
         pytest.skip("node not installed")
     script = DIR / "usage-extract.mjs"
-    run = lambda root: subprocess.run(
-        [node, "--input-type=module", "-"],
-        input=script.read_text(),
-        env={**os.environ, "OPENCLAW_AGENTS_DIR": str(root), "SINCE_MS": "0"},
-        capture_output=True, text=True, check=False, cwd=tmp_path,
-    )  # fmt: skip
+
+    def run(root):
+        return subprocess.run(
+            [node, "--input-type=module", "-"],
+            input=script.read_text(),
+            env={**os.environ, "OPENCLAW_AGENTS_DIR": str(root), "SINCE_MS": "0"},
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=tmp_path,
+        )
+
     proc = run(tmp_path / "no-such-agents-dir")
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == ""
