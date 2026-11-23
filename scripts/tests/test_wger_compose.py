@@ -94,6 +94,8 @@ def test_every_service_declares_the_platform_contract():
     [
         ("web", "SECRET_KEY", "${WGER_SECRET_KEY:-}"),
         ("web", "DJANGO_DB_PASSWORD", "${WGER_DB_PASSWORD:-}"),
+        ("web", "JWT_PRIVATE_KEY", "${WGER_JWT_PRIVATE_KEY:-}"),
+        ("web", "JWT_PUBLIC_KEY", "${WGER_JWT_PUBLIC_KEY:-}"),
         ("db", "POSTGRES_PASSWORD", "${WGER_DB_PASSWORD:-}"),
     ],
 )
@@ -153,3 +155,108 @@ def test_a_gateway_network_that_is_not_external_is_blocked(real, declared):
     else:
         real["networks"]["wger-gateway"] = declared
     assert "network wger-gateway must be declared external" in gate.check(real)
+
+
+# --- the app sign-in keypair -------------------------------------------------
+
+SECRETS = {
+    "SECRET_KEY": "s",
+    "DJANGO_DB_PASSWORD": "p",
+    "JWT_PRIVATE_KEY": "a",
+    "JWT_PUBLIC_KEY": "b",
+}
+
+
+def test_secrets_set_passes_the_required_check(real):
+    real["services"]["web"]["environment"].update(SECRETS)
+    assert gate.check(real, require_secrets=True) == []
+
+
+@pytest.mark.parametrize("key", ["JWT_PRIVATE_KEY", "JWT_PUBLIC_KEY"])
+def test_missing_jwt_key_fails_the_required_check(real, key):
+    env = real["services"]["web"]["environment"]
+    env.update(SECRETS)
+    env[key] = ""  # what compose resolves an unset ${WGER_JWT_...:-} to
+    assert f"web: {key} is empty (docs/secrets.md, WGER_ rows)" in gate.check(
+        real, require_secrets=True
+    )
+
+
+def test_secrets_are_not_required_by_default(real):
+    assert gate.check(real) == []
+
+
+def test_every_wger_secret_has_an_inventory_row():
+    inventory = (REPO / "docs/secrets.md").read_text()
+    for name in ("WGER_JWT_PRIVATE_KEY", "WGER_JWT_PUBLIC_KEY"):
+        assert f"| `{name}` | master |" in inventory
+
+
+def _jwk_pair():
+    """A keypair shaped like `manage.py generate-jwt-keys` prints (wger 2.7.0):
+    each half a single-line base64url JSON JWK."""
+    import json
+    from base64 import urlsafe_b64encode
+
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv = json.loads(RSAAlgorithm.to_jwk(key))
+    priv.update(alg="RS256", kid="wger")
+    pub = {k: priv[k] for k in ("kty", "n", "e", "alg", "kid")}
+
+    def enc(d):
+        return urlsafe_b64encode(json.dumps(d).encode()).decode()
+
+    return enc(priv), enc(pub)
+
+
+def _jwk_b64_to_pem(value: str) -> bytes:
+    """What wger's settings do with the env value (jwk_b64_to_pem)."""
+    import json
+    from base64 import urlsafe_b64decode
+
+    from cryptography.hazmat.primitives import serialization
+    from jwt.algorithms import RSAAlgorithm
+
+    key = RSAAlgorithm.from_jwk(json.loads(urlsafe_b64decode(value)))
+    if hasattr(key, "private_numbers"):
+        return key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    return key.public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+
+def test_rendered_keypair_loads_as_pem_and_round_trips(tmp_path):
+    pytest.importorskip("jwt")
+    pytest.importorskip("cryptography")
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+
+    priv, pub = _jwk_pair()
+    # The render writes `NAME=value` lines (sops dotenv -> stack.env); compose
+    # reads them back as one line each with no quoting.
+    env_file = tmp_path / "stack.env"
+    env_file.write_text(f"WGER_JWT_PRIVATE_KEY={priv}\nWGER_JWT_PUBLIC_KEY={pub}\n")
+    rendered = dict(
+        line.split("=", 1) for line in env_file.read_text().splitlines() if line
+    )
+    assert all("\n" not in v and v == v.strip() for v in rendered.values())
+
+    private_pem = _jwk_b64_to_pem(rendered["WGER_JWT_PRIVATE_KEY"])
+    public_pem = _jwk_b64_to_pem(rendered["WGER_JWT_PUBLIC_KEY"])
+    assert private_pem.startswith(b"-----BEGIN PRIVATE KEY-----")
+    assert public_pem.startswith(b"-----BEGIN PUBLIC KEY-----")
+    serialization.load_pem_private_key(private_pem, password=None)
+    serialization.load_pem_public_key(public_pem)
+
+    token = jwt.encode({"sub": "owner"}, private_pem, algorithm="RS256")
+    assert jwt.decode(token, public_pem, algorithms=["RS256"])["sub"] == "owner"
+    other_pub = _jwk_b64_to_pem(_jwk_pair()[1])
+    with pytest.raises(jwt.InvalidSignatureError):
+        jwt.decode(token, other_pub, algorithms=["RS256"])
