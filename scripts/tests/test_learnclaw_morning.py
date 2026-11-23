@@ -125,7 +125,7 @@ def test_the_job_is_declared_read_only_on_learnclaws_own_bot(tmp_path):
     # Read-only: no write, no subagent, no web, no send tool.
     assert p["toolsAllow"] == ["read"]
     msg = p["message"]
-    assert "at most 3 lines" in msg
+    assert "at most 4 lines" in msg
     assert "mirror newest session <YYYY-MM-DD>" in msg
     assert "/home/node/memory/domains/learning.md" in msg
     assert MIRROR in msg
@@ -137,6 +137,62 @@ def test_the_job_is_declared_read_only_on_learnclaws_own_bot(tmp_path):
     calls = (tmp_path / "calls.jsonl").read_text()
     assert '"cron", "enable"' in calls
     assert json.loads(state.read_text())["jobs"][0]["enabled"] is True
+
+
+def declared_message(tmp_path, extra=None):
+    state, env = fake_box(tmp_path, [], extra)
+    r = run_script(env)
+    assert r.returncode == 0, r.stderr
+    (job,) = json.loads(state.read_text())["jobs"]
+    return job["payload"]["message"]
+
+
+def line4(msg):
+    return msg.split("\nLine 4: ", 1)[1].split("\nNever teach", 1)[0]
+
+
+def test_line_4_carries_the_weekday_and_the_count_against_the_target(tmp_path):
+    # A normal week: a count of done slugs this week, shown as <weekday> <n>/20.
+    four = line4(declared_message(tmp_path))
+    assert "<Mon|Tue|Wed|Thu|Fri|Sat> <count>/20" in four
+    assert "Wed 3/20" in four
+    assert "latest row" in four and "status is done" in four
+    assert "Count whole slugs, never rows" in four
+    # Read-only on the record the job already reads, nothing new.
+    assert "/home/node/memory/domains/learning.md" in four
+
+
+def test_line_4_resets_on_monday(tmp_path):
+    # A week start: Monday counts only rows dated today, so it starts from 0.
+    four = line4(declared_message(tmp_path))
+    assert "Mon 0/20" in four
+    assert "from this week's Monday up to and including today" in four
+    assert "week runs Monday to Sunday" in four
+    assert "starts again at 0" in four
+
+
+def test_line_4_says_so_plainly_when_the_record_is_unreadable(tmp_path):
+    # An unreadable record: a plain statement, never a 0.
+    four = line4(declared_message(tmp_path))
+    assert "<weekday> count unreadable (target 20)" in four
+    assert "never write 0 then" in four
+    assert "A count of 0 is correct only when you read the table" in four
+
+
+def test_the_weekly_target_is_one_named_setting(tmp_path):
+    msg = declared_message(tmp_path, {"LEARNCLAW_WEEKLY_TARGET": "25"})
+    assert "/25" in line4(msg) and "target 25" in line4(msg)
+    assert "20" not in line4(msg)  # no second copy of the default
+    assert 'WEEKLY_TARGET="${LEARNCLAW_WEEKLY_TARGET:-20}"' in SCRIPT.read_text()
+    assert SCRIPT.read_text().count(":-20}") == 1
+
+
+@pytest.mark.parametrize("bad", ["0", "abc", "-5", "2.5", "05"])
+def test_a_bad_weekly_target_is_refused(tmp_path, bad):
+    state, env = fake_box(tmp_path, [], {"LEARNCLAW_WEEKLY_TARGET": bad})
+    r = run_script(env)
+    assert r.returncode == 1 and "LEARNCLAW_WEEKLY_TARGET" in r.stderr
+    assert json.loads(state.read_text())["jobs"] == []
 
 
 def test_the_owner_chat_is_not_in_the_message(tmp_path):
