@@ -8,7 +8,7 @@ Every request it receives is checked against wger 2.7.0's own OpenAPI schema
 uses): a write body with an unknown field, a missing required field, a value outside its enum,
 type, length or range, or a query parameter the endpoint does not declare is answered 400 and
 fails the test. The same writer was also rehearsed against a throwaway wger/server:2.7.0
-(docs/runbook.md, "Kit and wger"). The token below is a made-up 40-hex string.
+(docs/runbook.md, "Kit and wger"). The token below is a made-up placeholder.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ SKILL_MD = WGER.parent / "SKILL.md"
 SPEC = json.loads(
     (Path(__file__).parent / "fixtures/wger-openapi-2.7.0.json").read_text()
 )
-TOKEN = "0123456789abcdef0123456789abcdef01234567"
+TOKEN = "fake-wger-token-for-tests"
 TOKEN_ENV = (
     "WGER_API_TOKEN"  # SKILL.md's primaryEnv; the client reads the token from it
 )
