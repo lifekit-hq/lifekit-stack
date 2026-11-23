@@ -5094,7 +5094,7 @@ this before the change merged.
 | | anything else: every browser, Mobile Safari included | the `sso` check, then the gateway | `X-Auth-Request-Email`, the signed-in Logto email, on HTTP and the WebSocket upgrade |
 | `openclaw-internal`, `openclaw-edge:18893` (`lifekit-shared` only, not published) | `/api/diagnostics/prometheus` with the gateway-token bearer | the gateway | `service:prometheus`, capped at `operator.read` |
 | | `/v1/*` with the gateway-token bearer | the gateway | `service:finance-sentry`, capped at `operator.write` |
-| | `/v1/*` with the study door's own bearer (`STUDY_DOOR_EDGE_SECRET`) | the gateway | `service:study-door`, capped at `operator.write` |
+| | `/v1/*` with the study door's own bearer (`STUDY_DOOR_EDGE_SECRET`; the route matches nothing while that secret is empty) | the gateway | `service:study-door`, capped at `operator.write` |
 | | anything else | 404 | - |
 | `study-door`, `127.0.0.1:18895` (published on loopback only; Serve's `:8098`) | `POST` or `OPTIONS` `/v1/turn` | the study door (not the gateway) | - (the door checks its own bearer and Origin) |
 | | any other method or path | 404 | - |
