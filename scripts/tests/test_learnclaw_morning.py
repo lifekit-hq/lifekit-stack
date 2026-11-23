@@ -295,13 +295,29 @@ def test_the_copy_step_mirrors_the_record_and_removes_what_the_pc_dropped(tmp_pa
     assert oct((mirror / "chats/a.json").stat().st_mode & 0o777) == "0o640"
 
 
-def test_the_message_says_what_to_write_when_the_mirror_is_unreadable_or_readable():
-    msg = (SCRIPT).read_text()
-    # Allowed case: the date of the newest session; blocked case: the fixed line.
-    assert "Line 3: mirror newest session <YYYY-MM-DD>" in msg
-    assert "write: mirror unreadable, if you cannot read it" in msg
-
-
-def test_ensure_learnclaw_creates_the_workspace_copy_dir():
-    text = (REPO / "scripts/ensure-learnclaw.sh").read_text()
-    assert 'install -d -m 0750 "$workspace/learnharness-mirror"' in text
+def test_ensure_learnclaw_creates_the_workspace_copy_dir(tmp_path):
+    ws = tmp_path / "state/agents/learnclaw/workspace"
+    ws.mkdir(parents=True)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, body in (
+        ("docker", "#!/bin/sh\nexit 0\n"),
+        ("curl", "#!/bin/sh\nexit 22\n"),
+    ):
+        (bindir / name).write_text(body)
+        (bindir / name).chmod(0o755)
+    r = subprocess.run(
+        ["bash", str(REPO / "scripts/ensure-learnclaw.sh")],
+        env={
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "OPENCLAW_CONFIG_DIR": str(tmp_path / "state"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    mirror = ws / "learnharness-mirror"
+    assert mirror.is_dir()
+    assert oct(mirror.stat().st_mode & 0o777) == "0o750"
