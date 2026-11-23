@@ -5483,7 +5483,8 @@ asks the owner one small question at a time. It has two server-side pieces:
 - **`study-panel`**, an OpenClaw agent with no tool at all
   (`defaults/agents/study-panel/`): `tools.allow` is empty and the deny list
   covers files, web, sessions, memory, messaging, nodes, agents, exec and the
-  MCP servers; it has no skills and no channel. It never writes the owner's
+  MCP servers, and ends in a `*` deny (an empty allow-list alone still leaves the
+  gateway's own `openclaw` MCP tools on a local turn); it has no skills and no channel. It never writes the owner's
   code and offers no solution. It answers with exactly one JSON object as text.
 - **The door** (`compose/study-door/`, compose project `study-door`, container
   `study-door-study-door-1`, port 8098): one `POST /v1/turn` in, one gated reply

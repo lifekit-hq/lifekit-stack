@@ -26,7 +26,8 @@
             "google-workspace__*",
             "google-workspace-fleet__*",
             "devclaw__*",
-            "finance-sentry__*"
+            "finance-sentry__*",
+            "*"
           ],
           "exec": { "mode": "allowlist" },
           "agentToAgent": { "send": [] }
