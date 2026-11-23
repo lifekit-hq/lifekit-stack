@@ -293,6 +293,8 @@ wger_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 # Pinned images, persistent database and media, loopback-only ports.
 wger_compose config --format json | python3 "${REPO_DIR}/scripts/check-wger-compose.py" -
+study_door_compose config --format json \
+  | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -451,6 +453,30 @@ else
   fi
 fi
 
+# ─── Study door: compose project `study-door`, up -d ────────────────────────
+#
+# The browser study panel's door (compose/study-door/, docs/runbook.md "Study
+# panel and study door"). Skipped with a warning until STUDY_DOOR_TOKEN and
+# STUDY_DOOR_EDGE_SECRET are both rendered into the env file, so merging its
+# files starts and changes nothing. While it is skipped its Prometheus targets
+# file is removed (a target for an absent door would fire target-down); once
+# it is up the file is rendered, and file_sd picks it up without a reload.
+# Publishing it on the tailnet (`tailscale serve`), the gateway's allowUsers
+# and the panel token are operator steps in the runbook; the deploy never
+# runs them.
+say "study door (compose project ${STUDY_DOOR_PROJECT})"
+if ! grep -qE '^[[:space:]]*STUDY_DOOR_TOKEN=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}" \
+  || ! grep -qE '^[[:space:]]*STUDY_DOOR_EDGE_SECRET=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}"; then
+  warn "study-door: STUDY_DOOR_TOKEN / STUDY_DOOR_EDGE_SECRET are not both in ${ENV_FILE}; project ${STUDY_DOOR_PROJECT} not brought up (docs/runbook.md \"Study panel and study door\")"
+  rm -f "${STUDY_DOOR_TARGETS_FILE}"
+elif study_door_compose up -d --build --wait --wait-timeout 120; then
+  printf '[{"targets": ["study-door:8098"]}]\n' >"${STUDY_DOOR_TARGETS_FILE}"
+  chmod 644 "${STUDY_DOOR_TARGETS_FILE}"
+else
+  rm -f "${STUDY_DOOR_TARGETS_FILE}"
+  fail_later "study-door: project ${STUDY_DOOR_PROJECT} did not come up healthy (study_door_compose ps / logs study-door)"
+fi
+
 # ─── OpenClaw: move out of the platform project (once), up -d ───────────────
 #
 # scripts/deploy-openclaw.sh, phase `up`. OpenClaw is its own compose project
@@ -563,8 +589,8 @@ say "platform contract: running containers"
 STACK_PROJECT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --format json \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')"
 python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" --enforce "${OPENCLAW_PROJECT}" \
-  --enforce "${IDENTITY_PROJECT}" --enforce "${EDGE_PROJECT}" \
-  || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT}, ${IDENTITY_PROJECT} or ${EDGE_PROJECT} containers fail it (table above)"
+  --enforce "${IDENTITY_PROJECT}" --enforce "${EDGE_PROJECT}" --enforce "${STUDY_DOOR_PROJECT}" \
+  || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT}, ${IDENTITY_PROJECT}, ${EDGE_PROJECT} or ${STUDY_DOOR_PROJECT} containers fail it (table above)"
 
 # ─── Ledger persona: install the pinned finance-sentry persona, then check ──
 #

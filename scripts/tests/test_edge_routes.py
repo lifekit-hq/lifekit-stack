@@ -205,13 +205,23 @@ def test_openclaw_app_route_carries_no_identity():
 
 def test_openclaw_internal_routes_each_match_one_path_and_the_bearer():
     routes = _entrypoint_routers("openclaw-internal")
-    assert set(routes) == {"openclaw-prometheus", "openclaw-finance-sentry"}
+    assert set(routes) == {
+        "openclaw-prometheus",
+        "openclaw-finance-sentry",
+        "openclaw-study-door",
+    }
     bearer = 'Header(`Authorization`, `Bearer {{ env "OPENCLAW_GATEWAY_TOKEN" }}`)'
     assert routes["openclaw-prometheus"]["rule"] == (
         f"Path(`/api/diagnostics/prometheus`) && {bearer}"
     )
     assert (
         routes["openclaw-finance-sentry"]["rule"] == f"PathPrefix(`/v1/`) && {bearer}"
+    )
+    # The door holds its own bearer, so its route is a different identity from
+    # finance-sentry's, never the same match.
+    door_bearer = 'Header(`Authorization`, `Bearer {{ env "STUDY_DOOR_EDGE_SECRET" }}`)'
+    assert (
+        routes["openclaw-study-door"]["rule"] == f"PathPrefix(`/v1/`) && {door_bearer}"
     )
 
 
@@ -220,6 +230,7 @@ def test_openclaw_internal_routes_each_match_one_path_and_the_bearer():
     [
         ("openclaw-prometheus", "service:prometheus", "operator.read"),
         ("openclaw-finance-sentry", "service:finance-sentry", "operator.write"),
+        ("openclaw-study-door", "service:study-door", "operator.write"),
     ],
 )
 def test_openclaw_service_identities_carry_only_the_scope_they_need(
@@ -284,6 +295,45 @@ def test_reply_hook_entrypoint_is_loopback_published_and_trusts_no_forwarded_hea
 def test_hook_path_reaches_traefik_from_the_rendered_env():
     env = COMPOSE["services"]["traefik"]["environment"]
     assert env["OPENCLAW_HOOK_PATH"] == "${OPENCLAW_HOOK_PATH:-}"
+
+
+def test_study_door_edge_secret_reaches_traefik_from_the_rendered_env():
+    env = COMPOSE["services"]["traefik"]["environment"]
+    assert env["STUDY_DOOR_EDGE_SECRET"] == "${STUDY_DOOR_EDGE_SECRET:-}"
+
+
+def test_study_door_route_passes_only_post_and_options_on_the_one_path():
+    r = ROUTERS["study-door"]
+    assert r["entryPoints"] == ["study-door"]
+    assert _rule("study-door") == (
+        "Path(`/v1/turn`) && (Method(`POST`) || Method(`OPTIONS`))"
+    )
+    # No sign-in, no service identity: the door's bearer is the authentication.
+    assert r["middlewares"] == ["study-door-no-identity"]
+    assert MIDDLEWARES["study-door-no-identity"] == {
+        "headers": {
+            "customRequestHeaders": {
+                "X-Auth-Request-Email": "",
+                "X-Openclaw-Scopes": "",
+            }
+        }
+    }
+    assert HTTP["services"]["study-door"] == {
+        "loadBalancer": {"servers": [{"url": "http://study-door:8098"}]}
+    }
+
+
+def test_study_door_entrypoint_has_exactly_that_router():
+    assert set(_entrypoint_routers("study-door")) == {"study-door"}
+
+
+def test_study_door_entrypoint_is_loopback_published_and_trusts_no_forwarded_headers():
+    traefik = COMPOSE["services"]["traefik"]
+    cmd = traefik["command"]
+    assert "--entrypoints.study-door.address=:18895" in cmd
+    assert "--entrypoints.study-door.http.aliasHeadersStrategy=delete" in cmd
+    assert not any("study-door.forwardedHeaders" in c for c in cmd)
+    assert [p for p in traefik["ports"] if "18895" in p] == ["127.0.0.1:18895:18895"]
 
 
 # --- node-host enrolment (#558) ------------------------------------------

@@ -31,7 +31,9 @@
 # route matches one path and the bearer they already hold (the gateway
 # token), and sends the caller on as a fixed service identity with only the
 # scopes it needs: Prometheus reads the metrics route, finance-sentry calls
-# the OpenAI-compatible API. Anything else on this entrypoint is a 404. The
+# the OpenAI-compatible API, and the study door (a separate bearer, its own
+# STUDY_DOOR_EDGE_SECRET, so it is not finance-sentry) calls it for the
+# tool-less study-panel agent. Anything else on this entrypoint is a 404. The
 # same routes work while the gateway is still in token mode (it checks the
 # bearer itself and ignores the identity), so these clients move here before
 # the mode switch, with no gap. In both modes the gateway answers 403
@@ -49,6 +51,10 @@
 # and the hook token, which the gateway checks, is the only authentication.
 # Remove the route, the entrypoint and the port to take it away; the pusher
 # then fails with a transport error and keeps its outbox.
+#
+# Entrypoint `study-door` (:18895, published on 127.0.0.1 only; routed in
+# study-door.yml): the study panel's way in to the study-door service. The route
+# is in its own file because it never touches the gateway.
 #
 # The identity headers are stripped from every request first, so neither a
 # client nor the app route can present one: a header set to "" is removed.
@@ -122,6 +128,13 @@ http:
         && Header(`Authorization`, `Bearer {{ env "OPENCLAW_GATEWAY_TOKEN" }}`)
       middlewares: [openclaw-service-finance-sentry]
       service: openclaw
+    openclaw-study-door:
+      entryPoints: [openclaw-internal]
+      rule: >-
+        PathPrefix(`/v1/`)
+        && Header(`Authorization`, `Bearer {{ env "STUDY_DOOR_EDGE_SECRET" }}`)
+      middlewares: [openclaw-service-study-door]
+      service: openclaw
     openclaw-reply-hook:
       entryPoints: [openclaw-hook]
       rule: >-
@@ -148,6 +161,11 @@ http:
       headers:
         customRequestHeaders:
           X-Auth-Request-Email: service:finance-sentry
+          X-Openclaw-Scopes: operator.write
+    openclaw-service-study-door:
+      headers:
+        customRequestHeaders:
+          X-Auth-Request-Email: service:study-door
           X-Openclaw-Scopes: operator.write
 
   services:

@@ -66,6 +66,14 @@ jobs:
             -v "$GITHUB_WORKSPACE/compose/ops-door:/app:ro" -w /app \
             node:22-trixie-slim node --test
 
+      # study-door's schema, sanitiser, gate, HTTP and no-body-in-logs tests,
+      # same image and isolation (the tests open loopback sockets only).
+      - name: Run study-door tests
+        run: |
+          docker run --rm --network none \
+            -v "$GITHUB_WORKSPACE/compose/study-door:/app:ro" -w /app \
+            node:22-trixie-slim node --test
+
   gitleaks-full:
     name: Gitleaks full-history scan
     uses: lifekit-hq/.github/.github/workflows/secrets-scan.yml@v1
