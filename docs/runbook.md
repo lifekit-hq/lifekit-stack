@@ -5069,7 +5069,10 @@ this before the change merged.
 | | anything else: every browser, Mobile Safari included | the `sso` check, then the gateway | `X-Auth-Request-Email`, the signed-in Logto email, on HTTP and the WebSocket upgrade |
 | `openclaw-internal`, `openclaw-edge:18893` (`lifekit-shared` only, not published) | `/api/diagnostics/prometheus` with the gateway-token bearer | the gateway | `service:prometheus`, capped at `operator.read` |
 | | `/v1/*` with the gateway-token bearer | the gateway | `service:finance-sentry`, capped at `operator.write` |
+| | `/v1/*` with the study door's own bearer (`STUDY_DOOR_EDGE_SECRET`) | the gateway | `service:study-door`, capped at `operator.write` |
 | | anything else | 404 | - |
+| `study-door`, `127.0.0.1:18895` (published on loopback only; Serve's `:8098`) | `POST` or `OPTIONS` `/v1/turn` | the study door (not the gateway) | - (the door checks its own bearer and Origin) |
+| | any other method or path | 404 | - |
 | `openclaw-hook`, `127.0.0.1:18894` (published on loopback only) | `POST <hook path>/firstmate-reply` | the gateway | no identity (any client-sent copy is removed); the hook token, checked by the gateway |
 | | any other method or path | 404 | - |
 
@@ -5081,7 +5084,8 @@ Unchanged and direct: finance-sentry's companion hook trigger
 Kit's channels and cron run inside the gateway and do not change.
 
 **Who gets in.** `gateway.auth.trustedProxy.allowUsers` holds exactly the
-owner's Logto email plus the two service identities above. The gate already
+owner's Logto email plus the service identities above (`service:prometheus`,
+`service:finance-sentry` and, once the study door is turned on, `service:study-door`). The gate already
 admits only Logto's `admin` role, and the gateway narrows that to one email.
 A browser that signs in pairs as a device with OpenClaw's default scopes
 (`deviceAutoApprove`), and the owner's email adds `operator.admin`.
@@ -5470,6 +5474,143 @@ docker start wger-web-1 wger-nginx-1
 From an off-box set, replace the redirect with `age -d -i $K set/wger.dump.age |`
 as in the Off-box backup restore steps. Then run the exercise sync again if the
 `media` volume is empty.
+
+## Study panel and study door
+
+The browser study panel sits beside a problem page (LeetCode and the like) and
+asks the owner one small question at a time. It has two server-side pieces:
+
+- **`study-panel`**, an OpenClaw agent with no tool at all
+  (`defaults/agents/study-panel/`): `tools.allow` is empty and the deny list
+  covers files, web, sessions, memory, messaging, nodes, agents, exec and the
+  MCP servers; it has no skills and no channel. It never writes the owner's
+  code and offers no solution. Its one way to answer is a client function the
+  caller supplies, `reply`.
+- **The door** (`compose/study-door/`, compose project `study-door`, container
+  `study-door-study-door-1`, port 8098): one `POST /v1/turn` in, one gated reply
+  out. It asks the gateway's OpenAI-compatible API (`/v1/chat/completions`,
+  model `openclaw/study-panel`, a single `reply` function, `tool_choice`
+  pinned to it), then checks the answer before the panel sees it: a closed
+  schema (no code field, 280 characters of text, at most four tap options), a
+  code gate (a fenced block, `<pre>`, a statement shape, or a 12-token run
+  copied from the owner's code becomes a fixed fallback reply), and an HTML
+  sanitiser for the small SVG/HTML visual (no script, link, image, form,
+  frame, event handler or external `url()`). The door never logs request or
+  reply bodies: a turn logs sizes, a hash, the outcome and the reject reason.
+  Raw replies (never the page or the code) go to an audit spool
+  (`study-door-spool` volume, mode 700/600) so a rejected answer can be read.
+
+Path: extension → `https://<host>.<tailnet>.ts.net:8098` (Tailscale Serve,
+tailnet only) → edge entrypoint `study-door`, `127.0.0.1:18895`
+(`compose/edge/traefik/study-door.yml`, `POST`/`OPTIONS` on `/v1/turn` only,
+every other path a 404) → the door → the edge's internal entrypoint
+(`openclaw-edge:18893`) with `STUDY_DOOR_EDGE_SECRET` as the bearer → the
+gateway, as the fixed identity `service:study-door` capped at `operator.write`.
+The door checks its own bearer (`STUDY_DOOR_TOKEN`), the extension's Origin and
+a per-minute rate limit (`STUDY_DOOR_RATE_PER_MIN`, default 20); the panel
+cannot name an agent, a model, a tool or a session.
+
+**Off until the owner turns it on.** Merging changes nothing for the door:
+`deploy.sh` brings the project up only once `STUDY_DOOR_TOKEN` and
+`STUDY_DOOR_EDGE_SECRET` are both in the rendered env file, and warns and
+skips otherwise (the wger pattern). The agent entry is host state and the
+deploy only reports it missing (`scripts/ensure-study-panel.sh`). The edge's
+new route, entrypoint and published loopback port do go live on the merge
+deploy (the edge is recreated); with the door off they answer 502 and nothing
+else changes. Prometheus scrapes the door through a `file_sd` targets file the
+deploy writes only while the door runs, so an absent door never fires
+`target-down`.
+
+**Operator steps (once; commands only, values never in git).** On the VPS as
+`lifekit` in `/srv/lifekit-stack`, gateway container
+`openclaw-openclaw-gateway-1`:
+
+1. Prove the cap on this box. It must end with `study-panel canary passed`
+   (needs Docker and the `lifekit-openclaw:local` image; exit 77 means neither,
+   which is a skip, not a pass):
+
+   ```bash
+   CANARY_OUT=/tmp/study-panel-canary scripts/study-panel-canary/run.sh
+   ```
+
+   Stage one is a real local turn against a mock model that obeys an injected
+   page and calls every tool it knows: the model must be offered no tool and
+   every denied call must be refused with no effect. Stage two sends the door's
+   exact request to the gateway's `/v1/chat/completions` and requires
+   `finish_reason: "tool_calls"` with one `reply` call whose arguments equal the
+   mock's. The gateway flags that stage uses were written against the CLI help
+   and not run on a live gateway when this shipped; if it alone fails, read
+   `$CANARY_OUT`, fix the flags, and do not go on. If the gateway cannot return a
+   forced client function on this version, the fallback is `tool_choice: "none"`
+   with the agent answering one JSON object as text, which the door parses and
+   validates the same way (a change to `compose/study-door/gateway.js` and
+   `AGENTS.md` of the agent, not an operator step).
+
+2. Apply the agent entry (host state, merged into the live config), then read
+   the apply hint it prints; restart the gateway only if it says the keys need it:
+
+   ```bash
+   docker exec -i openclaw-openclaw-gateway-1 openclaw config patch --stdin < defaults/agents/study-panel/agent.json
+   scripts/ensure-study-panel.sh        # installs the contract; ends "study-panel agent verified"
+   ```
+
+3. Let the gateway accept the door's service identity (`allowUsers` replaces as
+   an array, so append to the live list):
+
+   ```bash
+   GW=openclaw-openclaw-gateway-1
+   docker exec "$GW" openclaw config get gateway.auth.trustedProxy.allowUsers --json \
+     | python3 -c 'import json,sys; t=sys.stdin.read(); a=json.loads(t[t.find("["):]); print(json.dumps({"gateway": {"auth": {"trustedProxy": {"allowUsers": a + ([] if "service:study-door" in a else ["service:study-door"])}}}}))' \
+     | docker exec -i "$GW" openclaw config patch --stdin
+   ```
+
+   A fresh `scripts/openclaw-sso.sh` run writes the same list.
+
+4. Mint the two secrets (add the two keys to the master file and their rows to
+   `docs/secrets.md` first; `set-secret.sh` refuses a name that is not already a
+   key), render, and redeploy so the edge reads `STUDY_DOOR_EDGE_SECRET` and the
+   door comes up ([`docs/secrets-runbook.md`](./secrets-runbook.md)):
+
+   ```bash
+   scripts/secrets/edit.sh master
+   openssl rand -hex 32 | scripts/set-secret.sh master STUDY_DOOR_TOKEN
+   openssl rand -hex 32 | scripts/set-secret.sh master STUDY_DOOR_EDGE_SECRET
+   ```
+
+   `STUDY_DOOR_TOKEN` is the panel's bearer: paste it once into the extension's
+   options (read it on the host with `sed -n 's/^STUDY_DOOR_TOKEN=//p'
+   /srv/lifekit-secrets/stack.env`); it goes nowhere else. Set
+   `STUDY_DOOR_ORIGIN=chrome-extension://<id>` in the env file once the
+   extension is loaded; until then every browser origin is refused (a `curl` with
+   the bearer still works). Rotate either secret by minting it again and
+   redeploying; a rotated `STUDY_DOOR_TOKEN` needs the new value in the panel.
+
+5. Publish it on the tailnet (tailnet only, never Funnel):
+
+   ```bash
+   sudo tailscale serve --bg --https=8098 http://127.0.0.1:18895
+   tailscale serve status        # 8098 -> 127.0.0.1:18895, "(tailnet only)"
+   ```
+
+6. Check it end to end, from the host (the bearer comes from the env file; the
+   body is a one-turn page):
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<host>.<tailnet>.ts.net:8098/v1/turn   # 401
+   docker compose -p study-door ps                       # study-door healthy
+   docker logs study-door-study-door-1 --tail 5          # one JSON line per turn, no bodies
+   ```
+
+**Take it away.** Unset the two secrets and redeploy (the deploy stops warning
+only when both are present; remove the project with `docker compose -p
+study-door down`), `sudo tailscale serve --https=8098 off`, and
+`openclaw agents delete study-panel`.
+
+**What it does not do.** It does not read the page itself: the extension sends
+the page text, and the spike that proves it can read a problem page on the
+owner's PC is a separate piece. The door's rejects are visible only as the
+`study_door_events_total{kind="reject"}` counter and the audit spool; there is
+no alert on them yet.
 
 ## Ledger persona from finance-sentry
 
