@@ -2937,6 +2937,31 @@ docker exec "$GW" openclaw cron run "$ID" --expect-final --json
 running it). Retire: `openclaw cron rm <id>` and revert the PR. The mirror, the learning page and the record are
 untouched either way.
 
+### Weekly planning reminder (`planning-reminder`, #619)
+
+A recurring reminder from Kit for the owner's weekly planning session: every Monday at 10:00 Europe/Dublin, one
+fixed line in Kit's own Telegram chat (account `default`) pointing at the planning session and nothing else.
+
+- **What the row is.** `scripts/ensure-planning-reminder.sh` declares `planning-reminder`: agent `kit`,
+  `0 10 * * 1` Europe/Dublin, isolated, a command payload (`echo` of one fixed line), announce to Telegram
+  `default` at the owner chat, failure alert after one failure. No model turn runs and nothing is read, so the
+  message cannot carry vault, mail or calendar content. The owner chat id comes from `LIFEKIT_TELEGRAM_CHAT` in the
+  host env file (or `PLANNING_REMINDER_CHAT`) and is never written to git.
+- **Fail closed.** The script exits 1 with a plain reason when the owner chat id cannot be resolved (it never
+  guesses a target) or when the cron is not Monday only, and exits 1 naming the field when the re-read live row
+  differs from the declared one. A re-run on a converged row changes nothing (it only re-enables a paused row).
+  Tests: `scripts/tests/test_planning_reminder.py`.
+
+**Apply** (on the host, after the PR merges and the deploy has run; a separate gated step):
+
+```bash
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-planning-reminder.sh
+```
+
+**Remove.** Pause: `openclaw cron disable <id>` (a later run of the ensure script enables it again, so stop running
+it). Retire: `openclaw cron rm <id>` inside the gateway (`docker exec <gateway> openclaw cron list --all --json`
+shows the id) and revert the PR.
+
 ### Learning objective line from learnclaw (`evening-plan-note`, `today-brief`)
 
 > **Superseded** by "Learnclaw morning learning message" above (decision 2026-11-09, #609): Kit's `today-brief`
