@@ -1,0 +1,38 @@
+{
+  "agents": {
+    "entries": {
+      "study-panel": {
+        "name": "Study panel",
+        "description": "Answers the browser study panel with one JSON object as text; holds no tool of its own and never writes the owner's code.",
+        "workspace": "/home/node/.openclaw/agents/study-panel/workspace",
+        "model": "anthropic/claude-sonnet-5-5",
+        "sandbox": { "mode": "off" },
+        "tools": {
+          "allow": [],
+          "deny": [
+            "group:fs",
+            "group:web",
+            "group:sessions",
+            "group:memory",
+            "group:ui",
+            "group:automation",
+            "group:messaging",
+            "group:nodes",
+            "group:agents",
+            "group:media",
+            "exec",
+            "process",
+            "code_execution",
+            "google-workspace__*",
+            "google-workspace-fleet__*",
+            "devclaw__*",
+            "finance-sentry__*",
+            "*"
+          ],
+          "exec": { "mode": "allowlist" },
+          "agentToAgent": { "send": [] }
+        }
+      }
+    }
+  }
+}

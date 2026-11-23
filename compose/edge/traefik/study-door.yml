@@ -1,0 +1,39 @@
+# Route for the study panel's door (docs/runbook.md "Study panel and study
+# door"). Entrypoint `study-door` (:18895) is published on 127.0.0.1 only;
+# Tailscale Serve puts HTTPS on the tailnet name in front of it. Only
+# `POST /v1/turn` and its preflight reach the door: every other method or path
+# is a 404 from Traefik, so /health, /ready and /metrics stay on the
+# lifekit-shared network for Prometheus and the platform contract.
+#
+# No sign-in and no identity headers: the Chrome extension cannot follow a
+# browser sign-in, and the door checks its own bearer (STUDY_DOOR_TOKEN) and the
+# extension's Origin. The identity headers are cleared, so a caller cannot
+# present one to the door.
+#
+# Until the door runs, this route answers 502/503 from Traefik; nothing else
+# happens. Remove the route, the entrypoint and the port to take it away.
+---
+http:
+  routers:
+    study-door:
+      entryPoints: [study-door]
+      rule: >-
+        Path(`/v1/turn`)
+        && (Method(`POST`) || Method(`OPTIONS`))
+      middlewares: [study-door-no-identity]
+      service: study-door
+
+  middlewares:
+    study-door-no-identity:
+      headers:
+        customRequestHeaders:
+          X-Auth-Request-Email: ""
+          X-Openclaw-Scopes: ""
+
+  services:
+    study-door:
+      loadBalancer:
+        servers:
+          # The door's service name on lifekit-shared
+          # (compose/study-door/docker-compose.yml).
+          - url: http://study-door:8098

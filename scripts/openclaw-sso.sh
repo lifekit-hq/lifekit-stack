@@ -57,7 +57,7 @@ CONFIG_FILE="${OPENCLAW_CONFIG_DIR}/openclaw.json"
 BROWSER_UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Safari/605.1.15"
 WEBVIEW_UA="Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
 # The service identities compose/edge/traefik/openclaw.yml sends.
-SERVICE_USERS='["service:prometheus","service:finance-sentry"]'
+SERVICE_USERS='["service:prometheus","service:finance-sentry","service:study-door"]'
 FINANCE_SENTRY_EDGE="openclaw-edge:18893"
 
 require_root() {

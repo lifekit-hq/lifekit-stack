@@ -1,0 +1,17 @@
+{
+ "text": "What does your pointer hold when the loop first stops?",
+ "visual": {
+  "html": "<svg viewBox=\"0 0 120 24\"><rect x=\"2\" y=\"2\" width=\"20\" height=\"20\" fill=\"none\" stroke=\"#444\"/><text x=\"8\" y=\"17\">3</text></svg>"
+ },
+ "expects": "tap",
+ "options": [
+  {
+   "id": "a",
+   "label": "The first index"
+  },
+  {
+   "id": "b",
+   "label": "The last index"
+  }
+ ]
+}

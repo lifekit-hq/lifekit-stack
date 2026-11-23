@@ -60,6 +60,17 @@ scrape_configs:
     static_configs:
       - targets: ['ops-door:8097']
 
+  # study-door's request and gateway-latency counters (platform contract). Its
+  # own project, reached over lifekit-shared. file_sd, not static: the door is
+  # off until its secrets are placed, and a static target for an absent door
+  # would fire the critical target-down alert. scripts/deploy.sh writes the
+  # targets file only while the door is up (gitignored, rendered).
+  - job_name: study-door
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: ['/etc/prometheus/lifekit/study-door-targets.json']
+        refresh_interval: 30s
+
   # lifekit-dashboard's /metrics (platform contract `scraped`). Its own
   # compose project, reachable here over the external `lifekit-shared` network.
   - job_name: lifekit-dashboard

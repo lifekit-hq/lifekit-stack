@@ -18,6 +18,7 @@ This page is the design, not a mirror of live state. The live fleet is host stat
 | finance | Investing, finance-sentry companion | Own Telegram account, inbound hook |
 | career | Career plan, job search, LinkedIn as a job-search tool (read-only, drafts-only). Paused: `career-weekly` is disabled until the job hunt restarts; the agent and its bot stay | Own Telegram account |
 | learnclaw | The learning loop: the artefact record on the vault's `domains/learning.md`, predict-read-build-apply-post, the grilling. It reviews the artefact, never writes it | Control UI chat, its own Telegram bot (`reading`) and a subagent role under kit; one cron, the daily LeetCode problem (`docs/runbook.md` "learnclaw (the learning loop)", "Daily LeetCode problem") |
+| study-panel | The browser study panel's questions: one small question or visual at a time beside a problem page. Tool-less (empty allow-list, no skills, no channel), answers with one JSON object as text, never writes the owner's code and offers no solution | Not routed: the study door (`compose/study-door/`) calls it through the gateway's `/v1/chat/completions` as `service:study-door` (`docs/runbook.md` "Study panel and study door") |
 
 The table is the intended route; `openclaw agents list --bindings` is the truth.
 

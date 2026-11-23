@@ -1,0 +1,9 @@
+{
+  "name": "study-door",
+  "private": true,
+  "type": "module",
+  "description": "The browser study panel's door: validates a page turn, asks the tool-less study-panel agent for one structured reply, and gates it before the panel renders it. No dependencies.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

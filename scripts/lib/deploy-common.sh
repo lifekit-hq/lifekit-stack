@@ -146,6 +146,21 @@ if re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)
   [[ -z "${name}" ]] || printf 'https://%s:%s\n' "${name}" "${WGER_PORT}"
 }
 
+# The study panel's door (compose/study-door/, docs/runbook.md "Study panel
+# and study door") is compose project `study-door`, brought up by deploy.sh
+# once STUDY_DOOR_TOKEN and STUDY_DOOR_EDGE_SECRET are in ENV_FILE. Until then
+# the project is not touched: merging the files starts nothing.
+STUDY_DOOR_PROJECT="study-door"
+STUDY_DOOR_COMPOSE_FILE="${REPO_DIR}/compose/study-door/docker-compose.yml"
+# Prometheus file_sd targets for the door, rendered only while it runs
+# (compose/observability/prometheus/prometheus.yml job `study-door`). A static
+# target for an absent door would fire the critical target-down alert.
+# shellcheck disable=SC2034 # used by deploy.sh, which sources this file
+STUDY_DOOR_TARGETS_FILE="${REPO_DIR}/compose/observability/prometheus/study-door-targets.json"
+study_door_compose() {
+  docker compose -p "${STUDY_DOOR_PROJECT}" --env-file "${ENV_FILE}" -f "${STUDY_DOOR_COMPOSE_FILE}" "$@"
+}
+
 # CURRENT_STEP is read by the callers' EXIT traps.
 # shellcheck disable=SC2034
 CURRENT_STEP="startup"

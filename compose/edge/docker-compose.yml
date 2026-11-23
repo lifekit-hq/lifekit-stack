@@ -14,7 +14,10 @@
 #                   lifekit-shared. Another, :18894, is published on loopback
 #                   only and passes POST to the `firstmate-reply` hook, nothing
 #                   else: the host reply pusher's way in (docs/runbook.md
-#                   "Reply pusher").
+#                   "Reply pusher"). A fourth loopback entrypoint, :18895, is
+#                   the study panel's way in: POST/OPTIONS on /v1/turn to the
+#                   study-door service, nothing else (docs/runbook.md "Study
+#                   panel and study door").
 #   oauth2-proxy  - a confidential OIDC client of Logto. It answers Traefik's
 #                   check from its session cookie, and on no session redirects
 #                   the browser to Logto and back. The cookie has no domain, so
@@ -96,6 +99,10 @@ services:
       # (traefik/openclaw.yml). No forwardedHeaders trust, like the internal
       # entrypoint: the pusher's own address is what the gateway attributes.
       - --entrypoints.openclaw-hook.address=:18894
+      # The study panel's way in: loopback-published, POST/OPTIONS on /v1/turn
+      # to the study-door service only (traefik/study-door.yml). The door
+      # checks its own bearer; nothing is trusted from the caller's headers.
+      - --entrypoints.study-door.address=:18895
       # Tailscale Serve terminates HTTPS and sends X-Forwarded-Proto/-Host;
       # oauth2-proxy builds its callback URL from them. These ports bind only
       # to loopback, so only Serve (or a local process) can send them. The
@@ -111,6 +118,7 @@ services:
       - --entrypoints.openclaw.http.aliasHeadersStrategy=delete
       - --entrypoints.openclaw-internal.http.aliasHeadersStrategy=delete
       - --entrypoints.openclaw-hook.http.aliasHeadersStrategy=delete
+      - --entrypoints.study-door.http.aliasHeadersStrategy=delete
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
       # Prometheus metrics on a dedicated entrypoint (Traefik serves them
@@ -139,12 +147,18 @@ services:
       # The hooks base path (non-guessable, a credential): the reply-pusher
       # route matches `<path>/firstmate-reply` (traefik/openclaw.yml).
       OPENCLAW_HOOK_PATH: ${OPENCLAW_HOOK_PATH:-}
+      # The study door's own bearer toward the gateway. A separate secret, so
+      # the internal route that carries it is a different identity from
+      # finance-sentry's (traefik/openclaw.yml). Empty until the door's
+      # secrets are placed: the route then matches nothing.
+      STUDY_DOOR_EDGE_SECRET: ${STUDY_DOOR_EDGE_SECRET:-}
       TZ: ${OPENCLAW_TZ:-UTC}
     ports:
       - "127.0.0.1:18890:18890"
       - "127.0.0.1:18891:18891"
       - "127.0.0.1:18892:18892"
       - "127.0.0.1:18894:18894"
+      - "127.0.0.1:18895:18895"
     volumes:
       # A directory, not the file: git replaces the file on deploy, and a
       # single-file bind mount would keep the old inode.

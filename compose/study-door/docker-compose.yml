@@ -1,0 +1,108 @@
+# study-door compose project (`study-door`): the browser study panel's door
+# (docs/runbook.md "Study panel and study door"). The Chrome extension POSTs
+# one turn (page text, the owner's code, one input) to /v1/turn; the door asks
+# the tool-less `study-panel` agent through the gateway's OpenAI-compatible API
+# and returns a gated, sanitised reply. The agent never writes the owner's code
+# and the panel offers no solutions.
+#
+# OFF until its secrets are placed: scripts/deploy.sh brings this project up
+# only once STUDY_DOOR_TOKEN and STUDY_DOOR_EDGE_SECRET are in the env file,
+# and warns and skips otherwise (the wger precedent), so merging this file
+# starts nothing. Both are placed through the secrets runbook, never here.
+#
+# Way in: the panel reaches the door over Tailscale Serve -> the edge's
+# loopback entrypoint `study-door` (:18895, compose/edge/traefik/study-door.yml)
+# -> this service on :8098. The door publishes no host port. Way out: the
+# gateway through the edge's internal entrypoint (`openclaw-edge:18893`),
+# presenting STUDY_DOOR_EDGE_SECRET, which the edge turns into the fixed
+# `service:study-door` identity at operator.write.
+#
+# The x-policy anchor is a copy of the platform file's (YAML anchors do not
+# cross files); keep the two in step.
+---
+name: study-door
+
+x-policy:
+  policy: &policy
+    init: true
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: '50m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          pids: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+services:
+  study-door:
+    <<: *policy
+    # BUILDX_NO_DEFAULT_ATTESTATIONS=1: see notify-relay (platform file).
+    build:
+      context: .
+    image: study-door:local
+    # Contract: ingress `edge` means reached through the edge's Traefik, with
+    # no published port. The edge routes it by file (study-door.yml), not by
+    # these labels, so traefik.enable only states the intent the contract
+    # checks for.
+    labels:
+      lifekit.contract: "v1"
+      lifekit.contract.port: "8098"
+      lifekit.contract.health: /health
+      lifekit.contract.ready: /ready
+      lifekit.contract.metrics: /metrics
+      lifekit.contract.ingress: edge
+      traefik.enable: "true"
+    # lifekit-shared is both ways: the edge's Traefik finds the door there by
+    # service name (study-door:8098), and the door finds the gateway's service
+    # entrypoint there (`openclaw-edge`). `default` is the project's own.
+    networks:
+      - default
+      - lifekit-shared
+    read_only: true
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+          pids: 128
+    environment:
+      STUDY_DOOR_PORT: "8098"
+      # Secrets by name only; values come from the env file.
+      STUDY_DOOR_TOKEN: ${STUDY_DOOR_TOKEN:-}
+      STUDY_DOOR_EDGE_SECRET: ${STUDY_DOOR_EDGE_SECRET:-}
+      STUDY_DOOR_GATEWAY_URL: ${STUDY_DOOR_GATEWAY_URL:-http://openclaw-edge:18893}
+      # The extension's origin (chrome-extension://<id>), set once it is loaded.
+      # Empty refuses every browser origin.
+      STUDY_DOOR_ORIGIN: ${STUDY_DOOR_ORIGIN:-}
+      STUDY_DOOR_RATE_PER_MIN: ${STUDY_DOOR_RATE_PER_MIN:-20}
+      # Raw model replies for audit; never the page or the owner's request. A rejected reply can
+      # itself hold owner code or a solution, so the spool stays mode 700/600.
+      STUDY_DOOR_SPOOL_DIR: /spool
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - study-door-spool:/spool
+    expose:
+      - "8098"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"fetch('http://127.0.0.1:8098/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  study-door-spool: {}
+
+networks:
+  default: {}
+  lifekit-shared:
+    external: true

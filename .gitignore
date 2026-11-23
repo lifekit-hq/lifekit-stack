@@ -4,6 +4,9 @@ wizard.yaml
 .env*
 !.env.example
 
+# Prometheus file_sd targets scripts/deploy.sh renders while the study door runs
+compose/observability/prometheus/study-door-targets.json
+
 # Rendered templates (output of jinja2 render — local artefact)
 *.rendered
 /_render/

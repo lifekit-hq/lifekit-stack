@@ -297,7 +297,12 @@ def test_cutover_moves_the_gateway_behind_the_gate_in_order(box):
         "password": "${OPENCLAW_GATEWAY_PASSWORD}",
         "trustedProxy": {
             "userHeader": "x-auth-request-email",
-            "allowUsers": [EMAIL, "service:prometheus", "service:finance-sentry"],
+            "allowUsers": [
+                EMAIL,
+                "service:prometheus",
+                "service:finance-sentry",
+                "service:study-door",
+            ],
             "deviceAutoApprove": {"enabled": True},
         },
         "identityScopes": {EMAIL: ["operator.admin"]},
