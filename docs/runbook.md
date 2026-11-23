@@ -6972,8 +6972,13 @@ State is one file per home, `/var/lib/lifekit-fleet/idle-lanes/<home>.json` (`id
 `state` `ok|idle|red`, `since`, `free_lanes`, `ready`, `note_sent_at`, `pushed_at`, `checked_at`,
 `reason`, `error`), world-readable for the dashboard.
 
+A home is only covered once it has a lane target (`config/lane-capacity`): without one,
+`fm-capacity.sh` reports `free_lanes=unknown reason=no-target`, the check never starts an episode
+for it, and `status` reports it as unmonitored.
+
 Status: `python3 /usr/local/bin/lifekit-idle-lanes.py status` prints each home as `ok`,
-`idle since T` or `red since T` (exit 1 on red, an error, or a state file older than 5 minutes).
+`idle since T`, `red since T` or `unmonitored: no lane target` (exit 1 on red, unmonitored, an
+error, or a state file older than 5 minutes).
 
 Apply and check (root for apply; the deploy has no sudo and does not run it):
 

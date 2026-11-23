@@ -357,6 +357,8 @@ def describe(hid: str, at: int) -> tuple[str, bool]:
         )
     elif st.get("state") == "idle":
         line, bad = f"{hid}: idle since {iso(st['since'])} ({counts})", False
+    elif st.get("reason") == "no-lane-target":
+        line, bad = f"{hid}: unmonitored: no lane target", True
     elif st.get("reason"):
         line, bad = f"{hid}: ok ({st['reason']})", False
     else:

@@ -7,6 +7,7 @@ inbox notes. A fake docker records the owner envelopes. Fixtures are synthetic.
 
 from __future__ import annotations
 
+import configparser
 import json
 import os
 import subprocess
@@ -234,6 +235,10 @@ def test_no_lane_target_is_not_idle(fleet):
     fleet.set("main", capacity("unknown", "no-target"), ready(3))
     fleet.run(T0)
     assert fleet.st("main")["state"] == "ok"
+    assert fleet.notes("main") == [] and fleet.pushes() == []
+    out = fleet.run(T0 + MIN, "status")
+    assert "main: unmonitored: no lane target" in out.stdout
+    assert out.returncode == 1
 
 
 def quota(fleet, exhausted, resets, status="projected_exhaustion", at=T0):
@@ -334,13 +339,22 @@ def test_status_without_a_home_list_reads_the_state_files(fleet):
     assert res.stdout.startswith("main: idle since")
 
 
+def unit_file(name):
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    cp.optionxform = str
+    cp.read(DIR / name)
+    return cp
+
+
 def test_unit_and_timer_wiring():
-    unit = (DIR / "lifekit-idle-lanes.service").read_text()
-    assert "Type=oneshot" in unit and "User=__ADMIN_USER__" in unit
-    assert '"IDLE_LANES_HOMES=__IDLE_LANES_HOMES__"' in unit
-    assert "/home/" not in unit
-    timer = (DIR / "lifekit-idle-lanes.timer").read_text()
-    assert "OnUnitActiveSec=1min" in timer and "WantedBy=timers.target" in timer
+    unit = unit_file("lifekit-idle-lanes.service")
+    assert unit["Service"]["Type"] == "oneshot"
+    assert unit["Service"]["User"] == "__ADMIN_USER__"
+    assert unit["Service"]["Environment"] == '"IDLE_LANES_HOMES=__IDLE_LANES_HOMES__"'
+    assert unit["Service"]["ExecStart"] == "/usr/local/bin/lifekit-idle-lanes.py check"
+    timer = unit_file("lifekit-idle-lanes.timer")
+    assert timer["Timer"]["OnUnitActiveSec"] == "1min"
+    assert timer["Install"]["WantedBy"] == "timers.target"
 
 
 def run_ensure(tmp_path, *args, homes="/srv/a /srv/b", enabled="enabled"):
