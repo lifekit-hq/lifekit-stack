@@ -90,12 +90,13 @@ if sys.stdin.read().strip() != os.environ["FAKE_IDENTITY"]:
 print(os.environ["FAKE_PUB"])
 """
 
-# FAKE_BACKSTAGE / FAKE_BASKET: running | stopped | absent
+# FAKE_BACKSTAGE / FAKE_BASKET / FAKE_WGER: running | stopped | absent
 FAKE_DOCKER = r"""
 import json, os, sys
 args = sys.argv[1:]
 state = os.environ.get("FAKE_BACKSTAGE", "running")
 basket = os.environ.get("FAKE_BASKET", "running")
+wger = os.environ.get("FAKE_WGER", "running")
 if args[0] == "ps":
     filt = " ".join(args)
     if "service=backstage-db" in filt:
@@ -104,11 +105,14 @@ if args[0] == "ps":
     elif "project=basket" in filt and "service=db" in filt:
         if basket == "running" or (basket == "stopped" and "-aq" in args):
             print("bkdb")
+    elif "project=wger" in filt and "service=db" in filt:
+        if wger == "running" or (wger == "stopped" and "-aq" in args):
+            print("wgdb")
     elif "service=notify-relay" in filt:
         print("relay")
     elif "service=postgres" in filt:
         pass
-elif args[0] == "exec" and args[1] in ("bsdb", "bkdb"):
+elif args[0] == "exec" and args[1] in ("bsdb", "bkdb", "wgdb"):
     sys.stdout.buffer.write(b"PGDMP fake custom-format dump " + args[1].encode())
 elif args[0] == "exec" and args[2] == "relay":
     with open(os.environ["FAKE_POSTS"], "a") as f:
@@ -231,6 +235,7 @@ def test_backup_writes_one_encrypted_set_with_a_manifest(box):
         "identity.sql.gz.age",
         "backstage.dump.age",
         "basket.dump.age",
+        "wger.dump.age",
         "openclaw-secret-key.tar.age",
         "openclaw-sqlite.tar.zst.age",
         "openclaw-state.tar.zst.age",
@@ -311,7 +316,9 @@ def test_verify_passes_and_says_so(box):
     assert res.returncode == 0, res.stderr
     (env,) = box.posts()
     assert env["level"] == "good" and env["subject"] == "offbox-backup"
-    assert env["detail"].count("pg_restore --list: 1 entries") == 2  # backstage, basket
+    assert (
+        env["detail"].count("pg_restore --list: 1 entries") == 3
+    )  # backstage, basket, wger
     assert "same hash as the live key" in env["detail"]
     assert "1 databases pass quick_check" in env["detail"]
     assert KEY_VALUE.decode() not in json.dumps(env) + res.stdout
@@ -589,6 +596,15 @@ def test_an_undeployed_basket_is_recorded_as_skipped(box):
     )
     assert manifest["skipped"] == [{"store": "basket", "reason": "not deployed"}]
     assert "basket.dump.age" not in {o["name"] for o in manifest["objects"]}
+
+
+def test_an_undeployed_wger_is_recorded_as_skipped(box):
+    assert box.run("backup", FAKE_WGER="absent").returncode == 0
+    manifest = json.loads(
+        (box.remote / "daily" / WEDNESDAY / "MANIFEST.json").read_text()
+    )
+    assert manifest["skipped"] == [{"store": "wger", "reason": "not deployed"}]
+    assert "wger.dump.age" not in {o["name"] for o in manifest["objects"]}
 
 
 def test_estimate_uploads_nothing(box):

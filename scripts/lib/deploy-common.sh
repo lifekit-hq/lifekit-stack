@@ -119,6 +119,33 @@ reminder_bot_compose() {
     docker compose -p "${REMINDER_BOT_PROJECT}" --env-file "${ENV_FILE}" -f "${REMINDER_BOT_COMPOSE_FILE}" "$@"
 }
 
+# The workout manager (wger: app, nginx, Postgres, Redis) is compose project
+# `wger` (compose/wger/, docs/runbook.md "Workout manager (wger)"), brought up
+# by deploy.sh once WGER_SECRET_KEY and WGER_DB_PASSWORD are in ENV_FILE. Its
+# public URL is the tailnet name on the Serve port, unless WGER_SITE_URL is set.
+WGER_PROJECT="wger"
+WGER_COMPOSE_FILE="${REPO_DIR}/compose/wger/docker-compose.yml"
+WGER_PORT=8480
+wger_compose() {
+  docker compose -p "${WGER_PROJECT}" --env-file "${ENV_FILE}" -f "${WGER_COMPOSE_FILE}" "$@"
+}
+# Prints the site URL, or nothing when it cannot be decided.
+wger_site_url() {
+  local set name
+  set="$(sed -nE "s/^[[:space:]]*WGER_SITE_URL=[\"']?([^\"']*)[\"']?[[:space:]]*\$/\1/p" "${ENV_FILE}" 2>/dev/null | head -1)"
+  if [[ -n "${set}" ]]; then printf '%s\n' "${set}"; return 0; fi
+  name="$(tailscale status --json 2>/dev/null | python3 -c '
+import json, re, sys
+try:
+    name = json.load(sys.stdin)["Self"]["DNSName"].rstrip(".").lower()
+except Exception:
+    sys.exit()
+if re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+", name):
+    print(name)
+' 2>/dev/null || true)"
+  [[ -z "${name}" ]] || printf 'https://%s:%s\n' "${name}" "${WGER_PORT}"
+}
+
 # CURRENT_STEP is read by the callers' EXIT traps.
 # shellcheck disable=SC2034
 CURRENT_STEP="startup"

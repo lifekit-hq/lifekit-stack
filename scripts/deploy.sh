@@ -289,6 +289,10 @@ edge_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 reminder_bot_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
+wger_compose config --format json \
+  | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
+# Pinned images, persistent database and media, loopback-only ports.
+wger_compose config --format json | python3 "${REPO_DIR}/scripts/check-wger-compose.py" -
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -422,6 +426,29 @@ elif ! bash "${REMINDER_BOT_BUILD}" --check; then
   fail_later "reminder-bot: image reminder-bot:$(bash "${REMINDER_BOT_BUILD}" --tag) is not built; project ${REMINDER_BOT_PROJECT} not brought up. As the operator account: bash scripts/reminder-bot/build-image.sh, then redeploy"
 elif ! reminder_bot_compose up -d --wait --wait-timeout 120; then
   fail_later "reminder-bot: project ${REMINDER_BOT_PROJECT} did not come up (reminder_bot_compose ps / logs reminder-bot)"
+fi
+
+# ─── Workout manager: compose project `wger`, up -d ─────────────────────────
+#
+# wger + nginx + Postgres + Redis (compose/wger/, docs/runbook.md "Workout
+# manager (wger)"). Skipped with a warning until WGER_SECRET_KEY and
+# WGER_DB_PASSWORD are rendered into the env file. Publishing it on the
+# tailnet (`tailscale serve`), the exercise sync and the owner's account are
+# operator steps in the runbook; the deploy never runs them.
+say "workout manager (compose project ${WGER_PROJECT})"
+if ! grep -qE '^[[:space:]]*WGER_SECRET_KEY=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}" \
+  || ! grep -qE '^[[:space:]]*WGER_DB_PASSWORD=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}"; then
+  warn "wger: WGER_SECRET_KEY / WGER_DB_PASSWORD are not both in ${ENV_FILE}; project ${WGER_PROJECT} not brought up (docs/runbook.md \"Workout manager (wger)\")"
+else
+  WGER_SITE_URL="$(wger_site_url)"
+  if [[ -z "${WGER_SITE_URL}" ]]; then
+    fail_later "wger: site URL undecidable (no tailnet name, WGER_SITE_URL unset); project ${WGER_PROJECT} not brought up"
+  else
+    export WGER_SITE_URL
+    echo "wger: site ${WGER_SITE_URL}"
+    wger_compose up -d --wait --wait-timeout 420 \
+      || fail_later "wger: project ${WGER_PROJECT} did not come up healthy (wger_compose ps / logs web)"
+  fi
 fi
 
 # ─── OpenClaw: move out of the platform project (once), up -d ───────────────

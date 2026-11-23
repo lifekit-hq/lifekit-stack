@@ -163,6 +163,7 @@ DEPLOY_ORDER = [
     "contract-static",
     "contract-static",
     "contract-static",
+    "contract-static",
     "openclaw:build",
     "compose-up",
     "openclaw:up",
@@ -287,6 +288,10 @@ def full_deploy(
         "import os, sys\n"
         "sys.stdin.read()  # drain, like the real one: a writer must not hit a closed pipe\n"
         'open(os.environ["DOCKER_CALL_LOG"], "a").write("contract-" + sys.argv[1].lstrip("-") + "\\n")\n',
+    )
+    stub(
+        fake / "scripts/check-wger-compose.py",
+        "import sys\nsys.stdin.read()  # drain, like the real one\n",
     )
     alert_dir = fake / "compose/observability/grafana/provisioning/alerting"
     alert_dir.mkdir(parents=True)
@@ -1457,6 +1462,10 @@ def run_gated_deploy(env, tmp_path, mode, touched):
         "import os, sys\n"
         "sys.stdin.read()  # drain, like the real one: a writer must not hit a closed pipe\n"
         'open(os.environ["DOCKER_CALL_LOG"], "a").write("contract-" + sys.argv[1].lstrip("-") + "\\n")\n',
+    )
+    stub(
+        fake / "scripts/check-wger-compose.py",
+        "import sys\nsys.stdin.read()  # drain, like the real one\n",
     )
     alert_dir = fake / "compose/observability/grafana/provisioning/alerting"
     alert_dir.mkdir(parents=True)

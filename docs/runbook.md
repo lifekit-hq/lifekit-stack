@@ -5369,6 +5369,104 @@ The platform contract label is `none`: the bot has no HTTP surface to declare
 health or metrics on, so liveness is the container's state and its log. The
 database is on the volume only; there is no backup yet.
 
+## Workout manager (wger)
+
+Compose project `wger` (`compose/wger/`): [wger](https://github.com/wger-project/wger),
+the self-hosted workout manager behind the owner's phone app (gym schedule,
+exercise technique, sets checked off), with Kit setting the program through
+its REST API. Four containers, all `lifekit.contract: none` (an upstream app):
+`wger-nginx-1` (static, media and the proxy), `wger-web-1` (Django + gunicorn),
+`wger-db-1` (Postgres) and `wger-cache-1` (Redis, nothing to back up). Images
+are pinned to exact versions; `scripts/check-wger-compose.py` fails the deploy
+before `up` if one is not, if the database or media leave their named volumes
+(`postgres_data`, `media`), or if a port is not loopback-bound.
+
+**Setup (operator, once).** Every merge deploys the project only after both
+secrets are in the rendered env file; until then `deploy.sh` prints a warning
+and skips it. Names only here, values never in git:
+
+```bash
+# 1. add the keys WGER_SECRET_KEY and WGER_DB_PASSWORD to the master file and
+#    their rows to docs/secrets.md (set-secret.sh refuses a name that is not
+#    already a key); docs/secrets-runbook.md
+scripts/secrets/edit.sh master
+# 2. set a value for each (hidden prompt or stdin), then render and redeploy
+openssl rand -hex 32 | scripts/set-secret.sh master WGER_SECRET_KEY
+openssl rand -hex 32 | scripts/set-secret.sh master WGER_DB_PASSWORD
+```
+
+The deploy derives `WGER_SITE_URL` (`https://<host>.<tailnet>.ts.net:8480`) from the
+tailnet name; set `WGER_SITE_URL` in the env file to override. The database
+password is set on the first boot of an empty volume only.
+
+**Phone access.** nginx binds `127.0.0.1:8480` and nothing else; Tailscale Serve
+publishes it on the tailnet name, tailnet-only, never Funnel (the same pattern
+as the identity ports). The sign-in gate (`edge`) is not in front of it: the
+wger mobile app cannot follow a browser sign-in, so wger's own login is the
+gate and `ALLOW_REGISTRATION` is `False`.
+
+```bash
+sudo tailscale serve --bg --https=8480 http://127.0.0.1:8480
+tailscale serve status        # 8480 -> 127.0.0.1:8480, "(tailnet only)"
+```
+
+In the wger mobile app, set the server address to
+`https://<host>.<tailnet>.ts.net:8480` and log in with the owner account.
+
+**Owner account and API token (operator; run by hand, values stay on the host).**
+
+```bash
+docker exec -it wger-web-1 python3 manage.py createsuperuser    # prompts for username and password
+docker exec wger-web-1 python3 manage.py drf_create_token <username>    # prints the API token once
+```
+
+Store the token the way every other secret is stored (`docs/secrets.md`); it
+never goes in git or a PR. Revoke by deleting the user's token in the Django
+admin (`/admin/authtoken/tokenproxy/`) and run `drf_create_token` again.
+
+**Exercise sync (first start, then whenever the catalogue should refresh).**
+The exercise database, images and videos come from the upstream instance
+(`https://wger.de`); the web container has egress for it. Wait until
+`docker compose -p wger ps` shows `web` healthy (first start runs migrations
+and takes minutes), then:
+
+```bash
+docker exec wger-web-1 python3 manage.py sync-exercises
+docker exec wger-web-1 python3 manage.py download-exercise-images
+docker exec wger-web-1 python3 manage.py download-exercise-videos
+docker exec wger-web-1 python3 manage.py warmup-exercise-api-cache
+```
+
+The first run downloads a few GB into the `media` volume; it is safe to
+re-run (it updates in place).
+
+**REST API (what Kit calls).** Base path `https://<host>.<tailnet>.ts.net:8480/api/v2/`
+(tailnet only), header `Authorization: Token <token>`. `GET /api/v2/version/`
+needs no credentials and is the health probe.
+
+**Update.** Change the pinned tags in `compose/wger/docker-compose.yml` in a
+PR (wger first; read its release notes, minor bumps run migrations on start),
+take a database dump first (below), merge; the deploy recreates the project.
+Roll back by reverting the tag; a migration that already ran needs the dump
+restored too.
+
+**Backup and restore.** The Postgres database (accounts, routines, logged
+sets) goes off-box nightly with the other databases: `wger.dump.age`
+([Off-box backup (R2)](#off-box-backup-r2)). Media is not in that set: the
+catalogue images and videos re-download with the exercise sync, and the
+owner's uploads are not used. A manual dump and restore:
+
+```bash
+docker exec wger-db-1 sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > wger-$(date -u +%Y%m%d).dump
+docker stop wger-nginx-1 wger-web-1
+docker exec -i wger-db-1 sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' < wger-<date>.dump
+docker start wger-web-1 wger-nginx-1
+```
+
+From an off-box set, replace the redirect with `age -d -i $K set/wger.dump.age |`
+as in the Off-box backup restore steps. Then run the exercise sync again if the
+`media` volume is empty.
+
 ## Ledger persona from finance-sentry
 
 finance-sentry's `agent/ledger/` is the source of truth for the finance agent's
@@ -5897,7 +5995,7 @@ Restoring from such a mirror is step 3 of
 - `/srv/openclaw/backups/identity/` — nightly dumps of the identity provider's database (users, sign-in settings, OIDC clients and signing keys; [Identity provider (Logto)](#identity-provider-logto) has the restore)
 
 On the maintainer's box the OpenClaw state, the secret key and the identity
-dumps go off-box nightly, encrypted, with the backstage and basket databases:
+dumps go off-box nightly, encrypted, with the backstage, basket and wger databases:
 [Off-box backup (R2)](#off-box-backup-r2). Snapshot the rest via your
 provider's backups or rsync to another box.
 
@@ -6071,7 +6169,7 @@ the env key only stops new ones. `lifekit-stack migrate` copies the laptop's
 ### Off-box backup (R2)
 
 Everything above lives on the box's one disk. `lifekit-offbox-backup.timer`
-copies the five stores that had no other copy to Cloudflare R2 each night,
+copies the six stores that had no other copy to Cloudflare R2 each night,
 encrypted with `age` before they leave the box, and
 `lifekit-offbox-verify.timer` proves once a month that the newest copy
 restores. Both run `scripts/offbox-backup/offbox_backup.py` from the checkout
@@ -6086,6 +6184,7 @@ Sunday's run goes to `lifekit/weekly/`:
 | --- | --- | --- |
 | `identity.sql.gz.age` | identity provider (Logto) | the newest dump `lifekit-identity-backup.timer` wrote; no second dump |
 | `backstage.dump.age` | backstage's Postgres | `pg_dump -Fc` through `docker exec` into compose project `backstage`'s `backstage-db`; skipped (and recorded) where backstage is not deployed |
+| `wger.dump.age` | wger's Postgres (accounts, routines, logged sets) | `pg_dump -Fc` through `docker exec` into compose project `wger`'s `db`; skipped (and recorded) where wger is not deployed |
 | `basket.dump.age` | basket's Postgres (the shared list, passkey accounts) | `pg_dump -Fc` through `docker exec` into compose project `basket`'s `db`; skipped (and recorded) where basket is not deployed |
 | `openclaw-secret-key.tar.age` | `/srv/openclaw/secret-key/` | tar piped into `age`: the key never touches disk in plaintext |
 | `openclaw-sqlite.tar.zst.age` | the state's `*.sqlite` databases | copied with SQLite's backup API (consistent while the gateway writes) into the unit's private `/tmp`, removed after |
@@ -6183,7 +6282,7 @@ reset-failed lifekit-offbox-backup.service`.
 set (it fails when that is older than 48 hours), checks each ciphertext
 against the manifest's sha256, decrypts with the on-box key and proves each
 store restores: the gzip and the `pg_dumpall` footer of the identity dump,
-`pg_restore --list` on the backstage and basket dumps, each in a throwaway
+`pg_restore --list` on the backstage, basket and wger dumps, each in a throwaway
 `--network none` container, a tar listing of the state with `openclaw.json` in it, `PRAGMA
 quick_check` on every SQLite copy, and the secret key against the live one by
 hash only. The verdict goes to the owner through notify-relay: `good` with one
@@ -6573,7 +6672,7 @@ git reset --hard origin/main
 # OR rsync from a snapshot.
 
 # 4. Restore /srv/openclaw/secret-key/, the OpenClaw state, the identity dump
-#    and the backstage and basket databases from the newest R2 set ("Off-box backup (R2)"
+#    and the backstage, basket and wger databases from the newest R2 set ("Off-box backup (R2)"
 #    above, restoring by hand). Without the secret key, you re-pair every channel.
 ```
 

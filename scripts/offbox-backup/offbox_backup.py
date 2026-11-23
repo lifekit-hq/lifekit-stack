@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Nightly encrypted off-box backup to Cloudflare R2, and its monthly restore check.
 
-Five stores have no copy off this disk (docs/runbook.md "Off-box backup (R2)"):
-the identity provider's nightly dumps, the backstage and basket databases, the
+Six stores have no copy off this disk (docs/runbook.md "Off-box backup (R2)"):
+the identity provider's nightly dumps, the backstage, basket and wger databases, the
 OpenClaw auth-profile secret key, and the OpenClaw runtime state. One run streams each
 one through `age` to the captain's key (plus the on-box restore-check key when
 it is configured) and `rclone rcat`s the ciphertext to R2 as one set:
@@ -11,6 +11,7 @@ it is configured) and `rclone rcat`s the ciphertext to R2 as one set:
     identity.sql.gz.age          newest dump the identity-backup timer wrote
     backstage.dump.age           pg_dump -Fc of compose project backstage's db
     basket.dump.age              pg_dump -Fc of compose project basket's db
+    wger.dump.age                pg_dump -Fc of compose project wger's db
     openclaw-secret-key.tar.age  tar of the secret-key directory
     openclaw-sqlite.tar.zst.age  consistent copies of the state's *.sqlite
     openclaw-state.tar.zst.age   the state dir minus caches, logs, archives
@@ -27,7 +28,7 @@ No value read from the env file is ever printed.
             oneshot; the unit gauge alerts on it.
   verify    fetch the newest complete set, check every object against the
             manifest's sha256, decrypt it with the on-box key, and prove it
-            restores: pg_restore --list on the backstage and basket dumps, the
+            restores: pg_restore --list on the backstage, basket and wger dumps, the
             dump-complete footer on the identity dump, a tar listing of the
             state, PRAGMA quick_check on every SQLite copy, and the secret key
             compared with the live one by hash only. The verdict goes to the owner through
@@ -439,6 +440,7 @@ def run_store(source: dict, tail: list[list[str]], sink) -> tuple[int, str]:
 PG_STORES = (
     ("backstage", "backstage", "backstage-db"),
     ("basket", "basket", "db"),
+    ("wger", "wger", "db"),
 )
 
 
