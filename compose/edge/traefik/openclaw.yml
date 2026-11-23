@@ -63,8 +63,11 @@
 #
 # This file is a Go template (Traefik's file provider): `env` reads the
 # container environment once at start. Go's HTTP server trims trailing space
-# from a header value, so with OPENCLAW_GATEWAY_TOKEN unset the internal
-# routes match nothing.
+# from a header value, so with OPENCLAW_GATEWAY_TOKEN unset the Prometheus and
+# finance-sentry routes only match a request sending `Bearer ` with no token,
+# which the gateway then rejects itself. The study door's route does not rely
+# on that: with STUDY_DOOR_EDGE_SECRET empty its rule renders as one that is
+# always false, so the route matches nothing until the secret is placed.
 ---
 http:
   routers:
@@ -133,8 +136,12 @@ http:
     openclaw-study-door:
       entryPoints: [openclaw-internal]
       rule: >-
+        {{ if env "STUDY_DOOR_EDGE_SECRET" -}}
         PathPrefix(`/v1/`)
         && Header(`Authorization`, `Bearer {{ env "STUDY_DOOR_EDGE_SECRET" }}`)
+        {{- else -}}
+        PathPrefix(`/`) && !PathPrefix(`/`)
+        {{- end }}
       middlewares: [openclaw-service-study-door]
       service: openclaw
     openclaw-reply-hook:

@@ -220,9 +220,42 @@ def test_openclaw_internal_routes_each_match_one_path_and_the_bearer():
     # The door holds its own bearer, so its route is a different identity from
     # finance-sentry's, never the same match.
     door_bearer = 'Header(`Authorization`, `Bearer {{ env "STUDY_DOOR_EDGE_SECRET" }}`)'
-    assert (
-        routes["openclaw-study-door"]["rule"] == f"PathPrefix(`/v1/`) && {door_bearer}"
+    assert _door_rule("set") == f"PathPrefix(`/v1/`) && {door_bearer}"
+
+
+def _door_rule(case):
+    """The study door's rule after the template's `if env` picks a branch."""
+    raw = ROUTERS["openclaw-study-door"]["rule"]
+    m = re.fullmatch(
+        r"\{\{ if env \"STUDY_DOOR_EDGE_SECRET\" -\}\}(.*?)\{\{- else -\}\}(.*?)\{\{- end \}\}",
+        re.sub(r"\s+", " ", raw).strip(),
     )
+    assert m, raw
+    return (m.group(1) if case == "set" else m.group(2)).strip()
+
+
+@pytest.mark.parametrize("secret", ["", "s3cret"])
+def test_study_door_route_matches_nothing_while_its_secret_is_empty(secret):
+    rule = _door_rule("set" if secret else "empty")
+    if secret:
+        rule = rule.replace('{{ env "STUDY_DOOR_EDGE_SECRET" }}', secret)
+    matches = _compile(rule)
+    probes = [
+        {"method": "POST", "path": "/v1/chat/completions", "headers": h}
+        for h in (
+            {"Authorization": "Bearer "},
+            {"Authorization": "Bearer"},
+            {"Authorization": ""},
+            {},
+            {"Authorization": "Bearer s3cret"},
+        )
+    ]
+    got = [matches(r) for r in probes]
+    if secret:
+        assert got == [False, False, False, False, True]
+    else:
+        assert got == [False] * 5
+        assert not matches({"method": "GET", "path": "/", "headers": {}})
 
 
 @pytest.mark.parametrize(
