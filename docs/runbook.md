@@ -5497,6 +5497,50 @@ From an off-box set, replace the redirect with `age -d -i $K set/wger.dump.age |
 as in the Off-box backup restore steps. Then run the exercise sync again if the
 `media` volume is empty.
 
+### Kit and wger
+
+Kit's `workout-log` skill talks to wger with `wger.py` (`skills/workout-log/`): `routine`
+writes Kit's `routines/gym.json` into wger as a routine, `logs` reads the workout logs back
+(date range, exercise, sets, reps, weight), `check` proves the URL and the token. No new
+service: the same skill, installed by `scripts/ensure-workout-log.sh`.
+
+- **Base URL.** `WGER_BASE_URL` for the skill's run; the script's default is
+  `http://wger-nginx-1:8080`, wger's nginx on its compose network. The owner's browser
+  and phone use `https://<host>.<tailnet>.ts.net:8480`, the tailnet-only Tailscale Serve
+  front (above). That URL is not reachable from inside the gateway container (checked
+  2026-11-23: connection refused), and wger's nginx is on no network the gateway shares,
+  so Kit needs that nginx joined to `lifekit-shared` before it can call wger. That is a
+  change to the wger deploy and is not part of this section; until it lands `wger.py`
+  exits 4 (`wger is unreachable`). From the host,
+  `WGER_BASE_URL=https://<host>.<tailnet>.ts.net:8480` works and proves a token.
+- **Where the token lives.** `WGER_API_TOKEN` is a key of the gateway secrets file
+  `secrets/lifekit-gateway.env.sops` (inventory row in `docs/secrets.md`). The platform
+  patch gives the skill an `apiKey` SecretRef to it (`skills.entries.workout-log.apiKey`,
+  id `wger-api-token`, the `sops` provider); the skill's `primaryEnv` makes OpenClaw hand
+  the value to the skill's run as `WGER_API_TOKEN`, and `wger.py` sends it only as
+  `Authorization: Token <token>`. The deploy applies the patch and runs
+  `openclaw secrets reload`; there is no env file and no plaintext copy on the host.
+- **Apply on the host.** After the PR deploys, `scripts/ensure-workout-log.sh` (as `lifekit`)
+  installs `wger.py` into kit's workspace and reports, read-only, whether the `apiKey`
+  ref is wired. The token exists only inside a skill run, so verify by asking Kit to run
+  `wger.py check` once (version, then an authenticated profile read).
+- **Rotate** (on exposure, or after a revoke): mint a new token for the owner account and
+  pipe it straight in; the value is never printed or kept in a file.
+
+  ```bash
+  docker exec wger-web-1 python3 manage.py drf_create_token --reset <owner username> \
+    | grep -oE '[0-9a-f]{40}' | scripts/set-secret.sh gateway WGER_API_TOKEN
+  ```
+
+  Merge the PR it opens; the deploy's `openclaw secrets reload` picks the value up, with
+  nothing to restart. Set the inventory row's "Last rotated" date in the same or the next PR.
+- **When the token is revoked** (deleted or reset in wger's admin): every `wger.py` call
+  exits 3 with `wger rejected the token (HTTP 401): it is revoked or wrong`; Kit says so,
+  stops, and nothing is written. Rotate as above. Exit 2 (`WGER_API_TOKEN is not set`)
+  means the value never reached the run: check the `apiKey` ref with
+  `scripts/ensure-workout-log.sh` and that the deploy's `openclaw secrets reload` ran.
+- **Not covered here:** the wger deploy, the owner account, exposure beyond the tailnet.
+
 ## Study panel and study door
 
 The browser study panel sits beside a problem page (LeetCode and the like) and

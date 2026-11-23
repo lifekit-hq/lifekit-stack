@@ -204,6 +204,17 @@
       }
     }
   },
+  "skills": {
+    "entries": {
+      "workout-log": {
+        "apiKey": {
+          "source": "exec",
+          "provider": "sops",
+          "id": "wger-api-token"
+        }
+      }
+    }
+  },
   "channels": {
     "telegram": {
       "accounts": {
