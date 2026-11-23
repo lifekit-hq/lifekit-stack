@@ -7,7 +7,9 @@
 # into the gateway image (compose/openclaw-gateway/package.json); nudge.sh is
 # the command the workout-nudge cron runs (docs/runbook.md, "Kit's workout log
 # and gym-day nudge"); day-check.sh is the one the evening-day-plan cron runs
-# ("Kit's evening day plan"). Kit's allowlist (agents.entries.kit.skills) and the
+# ("Kit's evening day plan"); wger.py is Kit's wger client (write a routine, read
+# workout logs; docs/runbook.md, "Kit and wger"), whose token reaches it through the
+# skill's apiKey SecretRef in platform.patch.json. Kit's allowlist (agents.entries.kit.skills) and the
 # cron, whose day-of-week field holds the gym days, are host state, so this
 # script only reads them; adding either is an operator step.
 #
@@ -40,6 +42,7 @@ skill_dest="${workspace}/skills/${SKILL}"
 install -D -m 0644 "$skill_src/SKILL.md" "$skill_dest/SKILL.md"
 install -D -m 0755 "$skill_src/nudge.sh" "$skill_dest/nudge.sh"
 install -D -m 0755 "$skill_src/day-check.sh" "$skill_dest/day-check.sh"
+install -D -m 0755 "$skill_src/wger.py" "$skill_dest/wger.py"
 echo "skill installed -> $skill_dest"
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
@@ -61,6 +64,19 @@ case "$listed" in
   unfiltered) echo "allowlist: agent '$AGENT' has no skills list; the skill is visible" ;;
   no) echo "allowlist: '$SKILL' is NOT on agent '$AGENT''s skills list - apply the allowlist patch (docs/runbook.md, \"Kit's workout log and gym-day nudge\")" ;;
   *) echo "allowlist: could not read agent '$AGENT''s skills list" ;;
+esac
+
+# Read-only: is the wger token wired? The platform patch (applied by the deploy) gives the
+# skill an apiKey SecretRef; its value is never read here, only whether the ref is set.
+wired="$(docker exec "$GATEWAY" node -e '
+const c = require(process.env.OPENCLAW_CONFIG_PATH);
+const k = ((c.skills || {}).entries || {})["workout-log"]?.apiKey;
+process.stdout.write(k && typeof k === "object" && k.id ? k.id : "none");
+' 2>/dev/null || echo unknown)"
+case "$wired" in
+  wger-api-token) echo "wger: the skill's apiKey SecretRef is wired (wger-api-token)" ;;
+  none) echo "wger: the skill has no apiKey SecretRef - the deploy applies platform.patch.json (docs/runbook.md, \"Kit and wger\")" ;;
+  *) echo "wger: could not read the skill's apiKey (got '$wired')" ;;
 esac
 
 # Read-only: does the nudge cron exist, and on which days does it fire? The

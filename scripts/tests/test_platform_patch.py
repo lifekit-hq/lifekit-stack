@@ -300,7 +300,7 @@ def test_retired_devclaw_agent_wiring_is_gone():
 def test_workshop_approval_policy_stays_retired():
     # OpenClaw 2026.10.5 retired Skill Workshop proposals and removed
     # skills.workshop.approvalPolicy from the schema; the dry run rejects it.
-    assert "skills" not in PATCH
+    assert "workshop" not in PATCH.get("skills", {})
 
 
 def test_bot_tokens_are_sops_refs_or_dropped():

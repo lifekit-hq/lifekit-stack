@@ -1,7 +1,7 @@
 ---
 name: workout-log
-description: Log a gym session from one typed or spoken line with the workout-claw CLI and confirm it back in one line, or answer what the user last did on a lift. Use when the user reports sets, reps or weights ("bench press 8,8,6@60kg, squat 5x5@100kg"), sends a voice note about a session, corrects a session just logged, or asks "what did I do last <lift>".
-metadata: { "openclaw": { "requires": { "bins": ["workout-claw"] } } }
+description: Log a gym session from one typed or spoken line with the workout-claw CLI and confirm it back in one line, or answer what the user last did on a lift. Also writes the user's gym routine into wger and reads wger's workout logs back. Use when the user reports sets, reps or weights ("bench press 8,8,6@60kg, squat 5x5@100kg"), sends a voice note about a session, corrects a session just logged, asks "what did I do last <lift>", or asks to put the routine into wger or what wger has logged.
+metadata: { "openclaw": { "requires": { "bins": ["workout-claw"] }, "primaryEnv": "WGER_API_TOKEN" } }
 ---
 
 # Workout log
@@ -32,6 +32,15 @@ Only for a session you logged in this conversation and only on their words: `wor
 2. Pick the names that are the lift they asked about. When more than one fits ("bench" -> `bench-press` and `incline-bench-press`), answer for the exact match if there is one, else ask which.
 3. Take the most recent date with that name and run `workout-claw summary --date <date>` for its sets.
 4. Reply in one line: `<name>, <date>: <sets>` (e.g. `bench-press, 2026-10-14: 8,8,6@60kg`). If it is not in the last 52 weeks, say so.
+
+## wger: write the routine, read the logs
+wger (the workout manager on the box) holds the routine and the logs the owner enters in its app. `wger.py` sits next to this file; its token reaches it as `WGER_API_TOKEN` from the gateway secrets, so never ask for, print or look for a token. Run it with `python3 <this skill's dir>/wger.py`.
+
+- **Write the routine** (only when the user asks): `wger.py routine routines/gym.json --dry-run` first, show its plan in one line, then without `--dry-run` once they say go. `gym.json` is `{"name": "...", "days": [{"day": "Mon", "name": "Back", "exercises": [{"name": "barbell-row", "sets": 3, "reps": "8-12", "weight": 60}]}]}`: `reps` is a number or a range, `weight` (kg) is optional, an exercise wger does not know by name takes `"wger_exercise": <id>` or an `aliases` entry. wger limits the routine name to 25 characters (`--name` shortens it) and a day's label ("Mon - Back") to 20. It exits 1 and writes nothing when an exercise has no wger match or a value is out of range: tell them which, do not pick another.
+- **A routine with the same name** is never overwritten unless the user says to replace it (`--replace`): the new routine is built in full first and the old one deleted only once it is complete (a failed build deletes the half-built one and keeps the old). Deleting a wger routine also deletes the workout logs and sessions attached to it, so `--replace` refuses a routine that has any (exit 1, nothing written): offer `--name` for a new routine instead, never delete it another way.
+- **Read the logs**: `wger.py logs --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--exercise <name>]`, one line per exercise and day (`2026-10-14 bench-press: 8,8,6@60kg`); `--json` for the sets. Reply from those lines; "no workout logs" means wger has none for the range, not that nothing happened (the owner may not have entered them there).
+- `wger.py check` proves the base URL and the token (version, then an authenticated read).
+- Exit 2: the token is not wired. Exit 3: wger rejected it (revoked or wrong). Exit 4: wger is unreachable. For each, show the error line and stop; the fix is the operator's (docs/runbook.md, "Kit and wger").
 
 ## Errors
 If workout-claw exits non-zero, show its error line and stop. A "corrupt JSON" error means a log file needs repair: tell the user which file and do not retry, delete or write anything.

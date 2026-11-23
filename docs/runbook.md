@@ -5412,7 +5412,8 @@ its REST API. Four containers, all `lifekit.contract: none` (an upstream app):
 `wger-db-1` (Postgres) and `wger-cache-1` (Redis, nothing to back up). Images
 are pinned to exact versions; `scripts/check-wger-compose.py` fails the deploy
 before `up` if one is not, if the database or media leave their named volumes
-(`postgres_data`, `media`), or if a port is not loopback-bound.
+(`postgres_data`, `media`), if a port is not loopback-bound, or if the network rules for
+Kit's route to wger break ("Kit and wger" below).
 
 **Setup.** Both secrets (`WGER_SECRET_KEY`, `WGER_DB_PASSWORD`) are keys in the master
 file with inventory rows in `docs/secrets.md`, so the next deploy renders them into the
@@ -5496,6 +5497,85 @@ docker start wger-web-1 wger-nginx-1
 From an off-box set, replace the redirect with `age -d -i $K set/wger.dump.age |`
 as in the Off-box backup restore steps. Then run the exercise sync again if the
 `media` volume is empty.
+
+### Kit and wger
+
+Kit's `workout-log` skill talks to wger with `wger.py` (`skills/workout-log/`): `routine`
+writes Kit's `routines/gym.json` into wger as a routine, `logs` reads the workout logs back
+(date range, exercise, sets, reps, weight), `check` proves the URL and the token. No new
+service: the same skill, installed by `scripts/ensure-workout-log.sh`.
+
+- **Base URL.** `WGER_BASE_URL` for the skill's run; the script's default is
+  `http://wger-nginx-1:8080`, wger's nginx on its own network with the gateway. The owner's
+  browser and phone use `https://<host>.<tailnet>.ts.net:8480`, the tailnet-only Tailscale
+  Serve front (above); that URL is not reachable from inside the gateway container (checked
+  2026-11-23: connection refused). So the external network `wger-gateway` (internal, no
+  route off the box; `scripts/deploy.sh` creates it before either project's `up`) carries
+  the call: `compose/wger/docker-compose.yml` puts nginx on it and
+  `compose/openclaw/docker-compose.yml` puts the gateway on it, and nothing else joins it.
+  No new published port, wger stays tailnet-only; `web`, `db` and `cache` stay on their own
+  networks, and no wger service is on the wide `lifekit-shared` network. The deploy runs
+  `scripts/check-wger-compose.py` before `up`: it fails the deploy if nginx is off
+  `wger-gateway`, any other wger service is on it or on `lifekit-shared`, or the network
+  stops being external. Docker's DNS answers the container name `wger-nginx-1` on every
+  network the container is on (checked 2026-11-23 on a scratch internal network: the name
+  resolved and `wger.py check` ran from a container that shared only that network). From the
+  host, `WGER_BASE_URL=https://<host>.<tailnet>.ts.net:8480` also works and proves a token.
+  Apply order after the PR deploys: the deploy creates the network, brings wger up (nginx
+  joins), and recreates the gateway (it joins); until the gateway container is recreated the
+  skill answers exit 4 "unreachable".
+- **What was inferred about `routines/gym.json`.** The live file is host state this repo
+  never held, so `wger.py routine` reads the shape from the notes about it, not from the
+  file: `days` (a list, or an object keyed by weekday; `split`, `program`, `schedule` are
+  accepted names) of `{day, name, exercises}`; each exercise `{name, sets, reps, weight}`
+  with `reps` a number, `"8-12"` or `[8, 12]`, `weight` in kg and optional, and optional
+  `aliases` and `wger_exercise` (a wger exercise id). Every other field (steps,
+  progression and deload rules, cardio, notes) is ignored. If the real file differs in a
+  way that matters (for instance exercises under another key), `routine` fails before
+  writing anything and says what it did not find; adjust `load_program` in `wger.py`.
+- **Where the token lives.** `WGER_API_TOKEN` is a key of the gateway secrets file
+  `secrets/lifekit-gateway.env.sops` (inventory row in `docs/secrets.md`). The platform
+  patch gives the skill an `apiKey` SecretRef to it (`skills.entries.workout-log.apiKey`,
+  id `wger-api-token`, the `sops` provider); the skill's `primaryEnv` makes OpenClaw hand
+  the value to the skill's run as `WGER_API_TOKEN`, and `wger.py` sends it only as
+  `Authorization: Token <token>`. The deploy applies the patch and runs
+  `openclaw secrets reload`; there is no env file and no plaintext copy on the host.
+- **Apply on the host.** After the PR deploys, `scripts/ensure-workout-log.sh` (as `lifekit`)
+  installs `wger.py` into kit's workspace and reports, read-only, whether the `apiKey`
+  ref is wired. The token exists only inside a skill run, so verify by asking Kit to run
+  `wger.py check` once (version, then an authenticated profile read).
+- **Rotate** (on exposure, or after a revoke): mint a new token for the owner account and
+  pipe it straight in; the value is never printed or kept in a file.
+
+  ```bash
+  docker exec wger-web-1 python3 manage.py drf_create_token --reset <owner username> \
+    | grep -oE '[0-9a-f]{40}' | scripts/set-secret.sh gateway WGER_API_TOKEN
+  ```
+
+  Merge the PR it opens; the deploy's `openclaw secrets reload` picks the value up, with
+  nothing to restart. Set the inventory row's "Last rotated" date in the same or the next PR.
+- **Replacing a routine.** `wger.py routine --replace` builds the new routine in full first,
+  and deletes the old one only after that succeeded; a failed build deletes the half-built
+  routine and leaves the old one (exit 4). Deleting a routine in wger 2.7 also deletes the
+  workout logs and sessions attached to it (`WorkoutLog.routine` and `WorkoutSession.routine`
+  are `on_delete=CASCADE`), so `--replace` first asks wger whether the old routine has any
+  and, if so, refuses with exit 1 and writes nothing: write the new one under another
+  `--name`. A routine with no history is safe to replace.
+- **How the writer was checked.** The payloads and query parameters in
+  `scripts/tests/test_wger_skill.py` are validated against wger 2.7.0's own OpenAPI schema
+  (`scripts/tests/fixtures/wger-openapi-2.7.0.json`, the part of the live instance's
+  `/api/v2/schema` the client uses; regenerate it when wger is bumped), and one full write,
+  a `--replace` over history, a rollback and the log read-back were rehearsed against a
+  throwaway `wger/server:2.7.0` (own sqlite database, scratch network, no live volume,
+  removed afterwards). wger drops unknown fields and query parameters silently, so the
+  schema check is what showed that the `language` filter on exercise names did nothing
+  (English is now matched on each row's `language`) and that wger's decimals are strings.
+- **When the token is revoked** (deleted or reset in wger's admin): every `wger.py` call
+  exits 3 with `wger rejected the token (HTTP <code>): it is revoked or wrong` (wger 2.7.0 sends 403, other versions 401); Kit says so,
+  stops, and nothing is written. Rotate as above. Exit 2 (`WGER_API_TOKEN is not set`)
+  means the value never reached the run: check the `apiKey` ref with
+  `scripts/ensure-workout-log.sh` and that the deploy's `openclaw secrets reload` ran.
+- **Not covered here:** the wger deploy, the owner account, exposure beyond the tailnet.
 
 ## Study panel and study door
 

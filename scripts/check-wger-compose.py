@@ -9,7 +9,10 @@ stdin) and fails (exit 1, one line per problem) when:
   - the database (`db`, /var/lib/postgresql/data) or the app's media
     (`web`, /home/wger/media) is not on a named volume the file declares;
   - a service publishes a port on anything but loopback (the only way in is
-    Tailscale Serve, docs/runbook.md "Workout manager (wger)").
+    Tailscale Serve, docs/runbook.md "Workout manager (wger)");
+  - `nginx` is not on `wger-gateway` (the gateway's route to wger, docs/runbook.md
+    "Kit and wger"), any other service joins it, any service joins the wide
+    `lifekit-shared` network, or `wger-gateway` is not a declared external network.
 
 Pure mechanism, no Docker. scripts/deploy.sh runs it before `up`; the tests
 (scripts/tests/test_wger_compose.py) hold the blocked and the allowed case.
@@ -29,6 +32,11 @@ PERSISTENT = {
 }
 # An exact tag has a digit-dotted version in it: 2.7.0, 17.10-alpine3.22.
 EXACT_TAG = re.compile(r"^\d+\.\d+(\.\d+)?([.-].+)?$")
+# nginx is the only wger service on the network shared with the OpenClaw gateway;
+# the wide cross-project network is not for wger at all.
+GATEWAY_NETWORK = "wger-gateway"
+GATEWAY_SERVICE = "nginx"
+WIDE_NETWORK = "lifekit-shared"
 
 
 def check(config: dict) -> list[str]:
@@ -46,10 +54,23 @@ def check(config: dict) -> list[str]:
             problems.append(
                 f"{name}: image {image or '(none)'} is not pinned to an exact version tag"
             )
+        networks = svc.get("networks") or {}
+        if WIDE_NETWORK in networks:
+            problems.append(f"{name}: must not join {WIDE_NETWORK}")
+        if GATEWAY_NETWORK in networks and name != GATEWAY_SERVICE:
+            problems.append(
+                f"{name}: must not join {GATEWAY_NETWORK} (only {GATEWAY_SERVICE} may)"
+            )
+        if name == GATEWAY_SERVICE and GATEWAY_NETWORK not in networks:
+            problems.append(f"{name}: must join {GATEWAY_NETWORK}")
         for port in svc.get("ports") or []:
             host_ip = port.get("host_ip") if isinstance(port, dict) else None
             if host_ip != "127.0.0.1":
                 problems.append(f"{name}: port {port} is not bound to 127.0.0.1")
+
+    gateway = (config.get("networks") or {}).get(GATEWAY_NETWORK)
+    if gateway is None or not gateway.get("external"):
+        problems.append(f"network {GATEWAY_NETWORK} must be declared external")
 
     for name, path in sorted(PERSISTENT.items()):
         svc = services.get(name)

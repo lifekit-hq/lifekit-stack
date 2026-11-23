@@ -1,0 +1,4239 @@
+{
+ "components": {
+  "schemas": {
+   "Day": {
+    "description": "Day serializer",
+    "properties": {
+     "config": {
+      "nullable": true
+     },
+     "description": {
+      "maxLength": 1000,
+      "type": "string"
+     },
+     "id": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "is_rest": {
+      "type": "boolean"
+     },
+     "name": {
+      "maxLength": 20,
+      "type": "string"
+     },
+     "need_logs_to_advance": {
+      "type": "boolean"
+     },
+     "order": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "routine": {
+      "type": "integer"
+     },
+     "type": {
+      "$ref": "#/components/schemas/DayTypeEnum"
+     }
+    },
+    "required": [
+     "id",
+     "routine"
+    ],
+    "type": "object"
+   },
+   "DayRequest": {
+    "description": "Day serializer",
+    "properties": {
+     "config": {
+      "nullable": true
+     },
+     "description": {
+      "maxLength": 1000,
+      "type": "string"
+     },
+     "is_rest": {
+      "type": "boolean"
+     },
+     "name": {
+      "maxLength": 20,
+      "type": "string"
+     },
+     "need_logs_to_advance": {
+      "type": "boolean"
+     },
+     "order": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "routine": {
+      "type": "integer"
+     },
+     "type": {
+      "$ref": "#/components/schemas/DayTypeEnum"
+     }
+    },
+    "required": [
+     "routine"
+    ],
+    "type": "object"
+   },
+   "DayTypeEnum": {
+    "description": "* `custom` - Custom\n* `enom` - Enom\n* `amrap` - Amrap\n* `hiit` - Hiit\n* `tabata` - Tabata\n* `edt` - Edt\n* `rft` - Rft\n* `afap` - Afap",
+    "enum": [
+     "custom",
+     "enom",
+     "amrap",
+     "hiit",
+     "tabata",
+     "edt",
+     "rft",
+     "afap"
+    ],
+    "type": "string"
+   },
+   "ExerciseTranslation": {
+    "description": "Exercise translation serializer",
+    "properties": {
+     "created": {
+      "format": "date-time",
+      "readOnly": true,
+      "title": "Date",
+      "type": "string"
+     },
+     "description": {
+      "readOnly": true,
+      "type": "string"
+     },
+     "description_source": {
+      "minLength": 40,
+      "title": "Description (Source)",
+      "type": "string"
+     },
+     "exercise": {
+      "type": "integer"
+     },
+     "id": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "language": {
+      "type": "integer"
+     },
+     "license_author": {
+      "description": "If you are not the author, enter the name or source here.",
+      "maxLength": 3500,
+      "title": "Author(s)",
+      "type": "string"
+     },
+     "name": {
+      "maxLength": 200,
+      "type": "string"
+     },
+     "uuid": {
+      "format": "uuid",
+      "readOnly": true,
+      "type": "string"
+     }
+    },
+    "required": [
+     "created",
+     "description",
+     "description_source",
+     "exercise",
+     "id",
+     "language",
+     "name",
+     "uuid"
+    ],
+    "type": "object"
+   },
+   "ExerciseTranslationRequest": {
+    "description": "Exercise translation serializer",
+    "properties": {
+     "description_source": {
+      "minLength": 40,
+      "title": "Description (Source)",
+      "type": "string"
+     },
+     "exercise": {
+      "type": "integer"
+     },
+     "language": {
+      "type": "integer"
+     },
+     "license_author": {
+      "description": "If you are not the author, enter the name or source here.",
+      "maxLength": 3500,
+      "title": "Author(s)",
+      "type": "string"
+     },
+     "name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     }
+    },
+    "required": [
+     "description_source",
+     "exercise",
+     "language",
+     "name"
+    ],
+    "type": "object"
+   },
+   "ExerciseTypeEnum": {
+    "description": "* `normal` - Normal\n* `warmup` - Warmup\n* `dropset` - Dropset\n* `myo` - Myo\n* `partial` - Partial\n* `forced` - Forced\n* `tut` - Tut\n* `iso` - Iso Hold\n* `jump` - Jump",
+    "enum": [
+     "normal",
+     "warmup",
+     "dropset",
+     "myo",
+     "partial",
+     "forced",
+     "tut",
+     "iso",
+     "jump"
+    ],
+    "type": "string"
+   },
+   "GenderEnum": {
+    "description": "* `1` - Male\n* `2` - Female",
+    "enum": [
+     "1",
+     "2"
+    ],
+    "type": "string"
+   },
+   "ImpressionEnum": {
+    "description": "* `1` - Bad\n* `2` - Neutral\n* `3` - Good",
+    "enum": [
+     "1",
+     "2",
+     "3"
+    ],
+    "type": "string"
+   },
+   "IntensityEnum": {
+    "description": "* `1` - Low\n* `2` - Medium\n* `3` - High",
+    "enum": [
+     "1",
+     "2",
+     "3"
+    ],
+    "type": "string"
+   },
+   "MaxRepetitionsConfig": {
+    "description": "Max Repetition Config serializer",
+    "properties": {
+     "id": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "operation": {
+      "$ref": "#/components/schemas/OperationEnum"
+     },
+     "repeat": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "nullable": true
+     },
+     "slot_entry": {
+      "type": "integer"
+     },
+     "step": {
+      "$ref": "#/components/schemas/StepEnum"
+     },
+     "value": {
+      "format": "decimal",
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "iteration",
+     "slot_entry",
+     "value"
+    ],
+    "type": "object"
+   },
+   "MaxRepetitionsConfigRequest": {
+    "description": "Max Repetition Config serializer",
+    "properties": {
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "operation": {
+      "$ref": "#/components/schemas/OperationEnum"
+     },
+     "repeat": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "nullable": true
+     },
+     "slot_entry": {
+      "type": "integer"
+     },
+     "step": {
+      "$ref": "#/components/schemas/StepEnum"
+     },
+     "value": {
+      "format": "decimal",
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "iteration",
+     "slot_entry",
+     "value"
+    ],
+    "type": "object"
+   },
+   "NullEnum": {
+    "enum": [
+     null
+    ]
+   },
+   "OperationEnum": {
+    "description": "* `+` - Plus\n* `-` - Minus\n* `r` - Replace",
+    "enum": [
+     "+",
+     "-",
+     "r"
+    ],
+    "type": "string"
+   },
+   "PaginatedDayList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/Day"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedExerciseTranslationList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/ExerciseTranslation"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedMaxRepetitionsConfigList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/MaxRepetitionsConfig"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedRepetitionsConfigList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/RepetitionsConfig"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedRoutineList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/Routine"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedSetNrConfigList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/SetNrConfig"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedSlotEntryList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/SlotEntry"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedSlotList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/Slot"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedWeightConfigList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/WeightConfig"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedWorkoutLogList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/WorkoutLog"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedWorkoutSessionList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/WorkoutSession"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "RepetitionsConfig": {
+    "description": "Repetition Config serializer",
+    "properties": {
+     "id": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "operation": {
+      "$ref": "#/components/schemas/OperationEnum"
+     },
+     "repeat": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "nullable": true
+     },
+     "slot_entry": {
+      "type": "integer"
+     },
+     "step": {
+      "$ref": "#/components/schemas/StepEnum"
+     },
+     "value": {
+      "format": "decimal",
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "iteration",
+     "slot_entry",
+     "value"
+    ],
+    "type": "object"
+   },
+   "RepetitionsConfigRequest": {
+    "description": "Repetition Config serializer",
+    "properties": {
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "operation": {
+      "$ref": "#/components/schemas/OperationEnum"
+     },
+     "repeat": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "nullable": true
+     },
+     "slot_entry": {
+      "type": "integer"
+     },
+     "step": {
+      "$ref": "#/components/schemas/StepEnum"
+     },
+     "value": {
+      "format": "decimal",
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "iteration",
+     "slot_entry",
+     "value"
+    ],
+    "type": "object"
+   },
+   "Routine": {
+    "description": "Routine serializer",
+    "properties": {
+     "created": {
+      "format": "date-time",
+      "readOnly": true,
+      "title": "Creation date",
+      "type": "string"
+     },
+     "description": {
+      "maxLength": 1000,
+      "type": "string"
+     },
+     "end": {
+      "format": "date",
+      "title": "End date",
+      "type": "string"
+     },
+     "fit_in_week": {
+      "type": "boolean"
+     },
+     "id": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "is_public": {
+      "description": "A public template is available to other users",
+      "title": "Public template",
+      "type": "boolean"
+     },
+     "is_template": {
+      "description": "Marking a workout as a template will freeze it and allow you to make copies of it",
+      "title": "Workout template",
+      "type": "boolean"
+     },
+     "name": {
+      "maxLength": 25,
+      "type": "string"
+     },
+     "start": {
+      "format": "date",
+      "title": "Start date",
+      "type": "string"
+     }
+    },
+    "required": [
+     "created",
+     "end",
+     "id",
+     "start"
+    ],
+    "type": "object"
+   },
+   "RoutineRequest": {
+    "description": "Routine serializer",
+    "properties": {
+     "description": {
+      "maxLength": 1000,
+      "type": "string"
+     },
+     "end": {
+      "format": "date",
+      "title": "End date",
+      "type": "string"
+     },
+     "fit_in_week": {
+      "type": "boolean"
+     },
+     "is_public": {
+      "description": "A public template is available to other users",
+      "title": "Public template",
+      "type": "boolean"
+     },
+     "is_template": {
+      "description": "Marking a workout as a template will freeze it and allow you to make copies of it",
+      "title": "Workout template",
+      "type": "boolean"
+     },
+     "name": {
+      "maxLength": 25,
+      "type": "string"
+     },
+     "start": {
+      "format": "date",
+      "title": "Start date",
+      "type": "string"
+     }
+    },
+    "required": [
+     "end",
+     "start"
+    ],
+    "type": "object"
+   },
+   "SetNrConfig": {
+    "description": "Set Nr config serializer",
+    "properties": {
+     "id": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "operation": {
+      "$ref": "#/components/schemas/OperationEnum"
+     },
+     "repeat": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "nullable": true
+     },
+     "slot_entry": {
+      "type": "integer"
+     },
+     "step": {
+      "$ref": "#/components/schemas/StepEnum"
+     },
+     "value": {
+      "maximum": 50,
+      "minimum": 0,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "id",
+     "iteration",
+     "slot_entry",
+     "value"
+    ],
+    "type": "object"
+   },
+   "SetNrConfigRequest": {
+    "description": "Set Nr config serializer",
+    "properties": {
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "operation": {
+      "$ref": "#/components/schemas/OperationEnum"
+     },
+     "repeat": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "nullable": true
+     },
+     "slot_entry": {
+      "type": "integer"
+     },
+     "step": {
+      "$ref": "#/components/schemas/StepEnum"
+     },
+     "value": {
+      "maximum": 50,
+      "minimum": 0,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "iteration",
+     "slot_entry",
+     "value"
+    ],
+    "type": "object"
+   },
+   "Slot": {
+    "description": "Slot",
+    "properties": {
+     "comment": {
+      "maxLength": 200,
+      "type": "string"
+     },
+     "config": {
+      "nullable": true
+     },
+     "day": {
+      "title": "Exercise day",
+      "type": "integer"
+     },
+     "id": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "order": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "day",
+     "id"
+    ],
+    "type": "object"
+   },
+   "SlotEntry": {
+    "description": "Slot entry serializer",
+    "properties": {
+     "comment": {
+      "maxLength": 100,
+      "type": "string"
+     },
+     "config": {
+      "nullable": true
+     },
+     "exercise": {
+      "type": "integer"
+     },
+     "id": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "order": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "repetition_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "repetition_unit": {
+      "nullable": true,
+      "type": "integer"
+     },
+     "slot": {
+      "type": "integer"
+     },
+     "type": {
+      "$ref": "#/components/schemas/ExerciseTypeEnum"
+     },
+     "weight_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "weight_unit": {
+      "nullable": true,
+      "title": "Unit",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "exercise",
+     "id",
+     "slot"
+    ],
+    "type": "object"
+   },
+   "SlotEntryRequest": {
+    "description": "Slot entry serializer",
+    "properties": {
+     "comment": {
+      "maxLength": 100,
+      "type": "string"
+     },
+     "config": {
+      "nullable": true
+     },
+     "exercise": {
+      "type": "integer"
+     },
+     "order": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "repetition_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "repetition_unit": {
+      "nullable": true,
+      "type": "integer"
+     },
+     "slot": {
+      "type": "integer"
+     },
+     "type": {
+      "$ref": "#/components/schemas/ExerciseTypeEnum"
+     },
+     "weight_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "weight_unit": {
+      "nullable": true,
+      "title": "Unit",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "exercise",
+     "slot"
+    ],
+    "type": "object"
+   },
+   "SlotRequest": {
+    "description": "Slot",
+    "properties": {
+     "comment": {
+      "maxLength": 200,
+      "type": "string"
+     },
+     "config": {
+      "nullable": true
+     },
+     "day": {
+      "title": "Exercise day",
+      "type": "integer"
+     },
+     "order": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "day"
+    ],
+    "type": "object"
+   },
+   "StepEnum": {
+    "description": "* `na` - Not Applicable\n* `abs` - Absolute\n* `percent` - Percent",
+    "enum": [
+     "na",
+     "abs",
+     "percent"
+    ],
+    "type": "string"
+   },
+   "Userprofile": {
+    "description": "Workout session serializer",
+    "properties": {
+     "age": {
+      "maximum": 100,
+      "minimum": 10,
+      "nullable": true,
+      "type": "integer"
+     },
+     "birthdate": {
+      "format": "date",
+      "nullable": true,
+      "title": "Date of Birth",
+      "type": "string"
+     },
+     "calories": {
+      "description": "Total caloric intake, including e.g. any surplus",
+      "maximum": 5000,
+      "minimum": 1500,
+      "nullable": true,
+      "title": "Total daily calories",
+      "type": "integer"
+     },
+     "date_joined": {
+      "format": "date-time",
+      "readOnly": true,
+      "type": "string"
+     },
+     "email": {
+      "format": "email",
+      "readOnly": true,
+      "type": "string"
+     },
+     "email_verified": {
+      "readOnly": true,
+      "type": "boolean"
+     },
+     "freetime_hours": {
+      "description": "Average hours per day",
+      "maximum": 15,
+      "minimum": 1,
+      "nullable": true,
+      "title": "Free time",
+      "type": "integer"
+     },
+     "freetime_intensity": {
+      "description": "Approximately\n\n* `1` - Low\n* `2` - Medium\n* `3` - High",
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/IntensityEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ],
+      "title": "Physical intensity"
+     },
+     "gender": {
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/GenderEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ]
+     },
+     "gym": {
+      "nullable": true,
+      "readOnly": true,
+      "type": "integer"
+     },
+     "height": {
+      "maximum": 230,
+      "minimum": 140,
+      "nullable": true,
+      "title": "Height (cm)",
+      "type": "integer"
+     },
+     "is_temporary": {
+      "readOnly": true,
+      "type": "boolean"
+     },
+     "is_trustworthy": {
+      "readOnly": true,
+      "type": "boolean"
+     },
+     "last_workout_notification": {
+      "format": "date",
+      "nullable": true,
+      "readOnly": true,
+      "type": "string"
+     },
+     "notification_language": {
+      "description": "Language to use when sending you email notifications, e.g. email reminders for workouts. This does not affect the language used on the website.",
+      "type": "integer"
+     },
+     "num_days_weight_reminder": {
+      "description": "Number of days after the last weight entry (enter 0 to deactivate)",
+      "maximum": 30,
+      "minimum": 0,
+      "title": "Automatic reminders for weight entries",
+      "type": "integer"
+     },
+     "repetitions_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "sleep_hours": {
+      "description": "The average hours of sleep per day",
+      "maximum": 10,
+      "minimum": 4,
+      "nullable": true,
+      "title": "Hours of sleep",
+      "type": "integer"
+     },
+     "sport_hours": {
+      "description": "Average hours per week",
+      "maximum": 30,
+      "minimum": 1,
+      "nullable": true,
+      "title": "Sport",
+      "type": "integer"
+     },
+     "sport_intensity": {
+      "description": "Approximately\n\n* `1` - Low\n* `2` - Medium\n* `3` - High",
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/IntensityEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ],
+      "title": "Physical intensity"
+     },
+     "time_zone": {
+      "description": "IANA timezone name, e.g. \"Europe/Berlin\". Empty means no client has reported one and the instance timezone is used.",
+      "maxLength": 50,
+      "title": "Timezone",
+      "type": "string"
+     },
+     "username": {
+      "readOnly": true,
+      "type": "string"
+     },
+     "weight_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "weight_unit": {
+      "$ref": "#/components/schemas/WeightUnitEnum"
+     },
+     "work_hours": {
+      "description": "Average hours per day",
+      "maximum": 15,
+      "minimum": 1,
+      "nullable": true,
+      "title": "Work",
+      "type": "integer"
+     },
+     "work_intensity": {
+      "description": "Approximately\n\n* `1` - Low\n* `2` - Medium\n* `3` - High",
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/IntensityEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ],
+      "title": "Physical intensity"
+     },
+     "workout_duration": {
+      "description": "Default duration in weeks of workouts not in a schedule. Used for email workout reminders.",
+      "maximum": 30,
+      "minimum": 1,
+      "title": "Default duration of workouts",
+      "type": "integer"
+     },
+     "workout_reminder": {
+      "description": "The number of days you want to be reminded before a workout expires.",
+      "maximum": 30,
+      "minimum": 1,
+      "title": "Remind before expiration",
+      "type": "integer"
+     },
+     "workout_reminder_active": {
+      "description": "Check to activate automatic reminders for workouts. You need to provide a valid email for this to work.",
+      "title": "Activate workout reminders",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "date_joined",
+     "email",
+     "email_verified",
+     "gym",
+     "is_temporary",
+     "is_trustworthy",
+     "last_workout_notification",
+     "username"
+    ],
+    "type": "object"
+   },
+   "UserprofileRequest": {
+    "description": "Workout session serializer",
+    "properties": {
+     "age": {
+      "maximum": 100,
+      "minimum": 10,
+      "nullable": true,
+      "type": "integer"
+     },
+     "birthdate": {
+      "format": "date",
+      "nullable": true,
+      "title": "Date of Birth",
+      "type": "string"
+     },
+     "calories": {
+      "description": "Total caloric intake, including e.g. any surplus",
+      "maximum": 5000,
+      "minimum": 1500,
+      "nullable": true,
+      "title": "Total daily calories",
+      "type": "integer"
+     },
+     "freetime_hours": {
+      "description": "Average hours per day",
+      "maximum": 15,
+      "minimum": 1,
+      "nullable": true,
+      "title": "Free time",
+      "type": "integer"
+     },
+     "freetime_intensity": {
+      "description": "Approximately\n\n* `1` - Low\n* `2` - Medium\n* `3` - High",
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/IntensityEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ],
+      "title": "Physical intensity"
+     },
+     "gender": {
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/GenderEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ]
+     },
+     "height": {
+      "maximum": 230,
+      "minimum": 140,
+      "nullable": true,
+      "title": "Height (cm)",
+      "type": "integer"
+     },
+     "notification_language": {
+      "description": "Language to use when sending you email notifications, e.g. email reminders for workouts. This does not affect the language used on the website.",
+      "type": "integer"
+     },
+     "num_days_weight_reminder": {
+      "description": "Number of days after the last weight entry (enter 0 to deactivate)",
+      "maximum": 30,
+      "minimum": 0,
+      "title": "Automatic reminders for weight entries",
+      "type": "integer"
+     },
+     "repetitions_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "sleep_hours": {
+      "description": "The average hours of sleep per day",
+      "maximum": 10,
+      "minimum": 4,
+      "nullable": true,
+      "title": "Hours of sleep",
+      "type": "integer"
+     },
+     "sport_hours": {
+      "description": "Average hours per week",
+      "maximum": 30,
+      "minimum": 1,
+      "nullable": true,
+      "title": "Sport",
+      "type": "integer"
+     },
+     "sport_intensity": {
+      "description": "Approximately\n\n* `1` - Low\n* `2` - Medium\n* `3` - High",
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/IntensityEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ],
+      "title": "Physical intensity"
+     },
+     "time_zone": {
+      "description": "IANA timezone name, e.g. \"Europe/Berlin\". Empty means no client has reported one and the instance timezone is used.",
+      "maxLength": 50,
+      "title": "Timezone",
+      "type": "string"
+     },
+     "weight_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "weight_unit": {
+      "$ref": "#/components/schemas/WeightUnitEnum"
+     },
+     "work_hours": {
+      "description": "Average hours per day",
+      "maximum": 15,
+      "minimum": 1,
+      "nullable": true,
+      "title": "Work",
+      "type": "integer"
+     },
+     "work_intensity": {
+      "description": "Approximately\n\n* `1` - Low\n* `2` - Medium\n* `3` - High",
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/IntensityEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ],
+      "title": "Physical intensity"
+     },
+     "workout_duration": {
+      "description": "Default duration in weeks of workouts not in a schedule. Used for email workout reminders.",
+      "maximum": 30,
+      "minimum": 1,
+      "title": "Default duration of workouts",
+      "type": "integer"
+     },
+     "workout_reminder": {
+      "description": "The number of days you want to be reminded before a workout expires.",
+      "maximum": 30,
+      "minimum": 1,
+      "title": "Remind before expiration",
+      "type": "integer"
+     },
+     "workout_reminder_active": {
+      "description": "Check to activate automatic reminders for workouts. You need to provide a valid email for this to work.",
+      "title": "Activate workout reminders",
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "WeightConfig": {
+    "description": "Weight Config serializer",
+    "properties": {
+     "id": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "operation": {
+      "$ref": "#/components/schemas/OperationEnum"
+     },
+     "repeat": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "nullable": true
+     },
+     "slot_entry": {
+      "type": "integer"
+     },
+     "step": {
+      "$ref": "#/components/schemas/StepEnum"
+     },
+     "value": {
+      "format": "decimal",
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "iteration",
+     "slot_entry",
+     "value"
+    ],
+    "type": "object"
+   },
+   "WeightConfigRequest": {
+    "description": "Weight Config serializer",
+    "properties": {
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "operation": {
+      "$ref": "#/components/schemas/OperationEnum"
+     },
+     "repeat": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "nullable": true
+     },
+     "slot_entry": {
+      "type": "integer"
+     },
+     "step": {
+      "$ref": "#/components/schemas/StepEnum"
+     },
+     "value": {
+      "format": "decimal",
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "iteration",
+     "slot_entry",
+     "value"
+    ],
+    "type": "object"
+   },
+   "WeightUnitEnum": {
+    "description": "* `kg` - Metric (kilogram)\n* `lb` - Imperial (pound)",
+    "enum": [
+     "kg",
+     "lb"
+    ],
+    "type": "string"
+   },
+   "WorkoutLog": {
+    "description": "Workout log serializer",
+    "properties": {
+     "date": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "exercise": {
+      "type": "integer"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "nullable": true,
+      "type": "integer"
+     },
+     "next_log": {
+      "format": "uuid",
+      "nullable": true,
+      "type": "string"
+     },
+     "repetitions": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "repetitions_target": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "repetitions_unit": {
+      "nullable": true,
+      "type": "integer"
+     },
+     "rest": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "nullable": true,
+      "type": "integer"
+     },
+     "rest_target": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "nullable": true,
+      "type": "integer"
+     },
+     "rir": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,1}(?:\\.\\d{0,1})?$",
+      "type": "string"
+     },
+     "rir_target": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,1}(?:\\.\\d{0,1})?$",
+      "type": "string"
+     },
+     "routine": {
+      "nullable": true,
+      "title": "Workout",
+      "type": "integer"
+     },
+     "session": {
+      "format": "uuid",
+      "nullable": true,
+      "type": "string"
+     },
+     "slot_entry": {
+      "nullable": true,
+      "type": "integer"
+     },
+     "weight": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "weight_target": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "weight_unit": {
+      "nullable": true,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "exercise"
+    ],
+    "type": "object"
+   },
+   "WorkoutLogRequest": {
+    "description": "Workout log serializer",
+    "properties": {
+     "date": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "exercise": {
+      "type": "integer"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "iteration": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "nullable": true,
+      "type": "integer"
+     },
+     "next_log": {
+      "format": "uuid",
+      "nullable": true,
+      "type": "string"
+     },
+     "repetitions": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "repetitions_target": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "repetitions_unit": {
+      "nullable": true,
+      "type": "integer"
+     },
+     "rest": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "nullable": true,
+      "type": "integer"
+     },
+     "rest_target": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "nullable": true,
+      "type": "integer"
+     },
+     "rir": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,1}(?:\\.\\d{0,1})?$",
+      "type": "string"
+     },
+     "rir_target": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,1}(?:\\.\\d{0,1})?$",
+      "type": "string"
+     },
+     "routine": {
+      "nullable": true,
+      "title": "Workout",
+      "type": "integer"
+     },
+     "session": {
+      "format": "uuid",
+      "nullable": true,
+      "type": "string"
+     },
+     "slot_entry": {
+      "nullable": true,
+      "type": "integer"
+     },
+     "weight": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "weight_target": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,4}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "weight_unit": {
+      "nullable": true,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "exercise"
+    ],
+    "type": "object"
+   },
+   "WorkoutSession": {
+    "description": "Workout session serializer",
+    "properties": {
+     "datetime_end": {
+      "format": "date-time",
+      "nullable": true,
+      "title": "End date and time",
+      "type": "string"
+     },
+     "datetime_start": {
+      "format": "date-time",
+      "title": "Start date and time",
+      "type": "string"
+     },
+     "day": {
+      "nullable": true,
+      "type": "integer"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "impression": {
+      "allOf": [
+       {
+        "$ref": "#/components/schemas/ImpressionEnum"
+       }
+      ],
+      "description": "Your impression about this workout session. Did you exercise as well as you could?\n\n* `1` - Bad\n* `2` - Neutral\n* `3` - Good",
+      "title": "General impression"
+     },
+     "notes": {
+      "description": "Any notes you might want to save about this workout session.",
+      "nullable": true,
+      "type": "string"
+     },
+     "routine": {
+      "nullable": true,
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "WorkoutSessionRequest": {
+    "description": "Workout session serializer",
+    "properties": {
+     "datetime_end": {
+      "format": "date-time",
+      "nullable": true,
+      "title": "End date and time",
+      "type": "string"
+     },
+     "datetime_start": {
+      "format": "date-time",
+      "title": "Start date and time",
+      "type": "string"
+     },
+     "day": {
+      "nullable": true,
+      "type": "integer"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "impression": {
+      "allOf": [
+       {
+        "$ref": "#/components/schemas/ImpressionEnum"
+       }
+      ],
+      "description": "Your impression about this workout session. Did you exercise as well as you could?\n\n* `1` - Bad\n* `2` - Neutral\n* `3` - Good",
+      "title": "General impression"
+     },
+     "notes": {
+      "description": "Any notes you might want to save about this workout session.",
+      "nullable": true,
+      "type": "string"
+     },
+     "routine": {
+      "nullable": true,
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   }
+  }
+ },
+ "info": {
+  "title": "wger",
+  "version": "2.7.0"
+ },
+ "openapi": "3.0.3",
+ "paths": {
+  "/api/v2/day/": {
+   "get": {
+    "description": "API endpoint for routine day objects",
+    "operationId": "day_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "description",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "is_rest",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "name",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "need_logs_to_advance",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "order",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "routine",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedDayList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "day"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for routine day objects",
+    "operationId": "day_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DayRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Day"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "day"
+    ]
+   }
+  },
+  "/api/v2/exercise-translation/": {
+   "get": {
+    "description": "API endpoint for editing or adding exercise translation objects.",
+    "operationId": "exercise_translation_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "created",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "description",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exercise",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "name",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "uuid",
+      "schema": {
+       "format": "uuid",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedExerciseTranslationList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "exercise-translation"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for editing or adding exercise translation objects.",
+    "operationId": "exercise_translation_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExerciseTranslationRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ExerciseTranslation"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "exercise-translation"
+    ]
+   }
+  },
+  "/api/v2/max-repetitions-config/": {
+   "get": {
+    "description": "API endpoint for max reps config objects",
+    "operationId": "max_repetitions_config_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "iteration",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "* `+` - Plus\n* `-` - Minus\n* `r` - Replace",
+      "in": "query",
+      "name": "operation",
+      "schema": {
+       "enum": [
+        "+",
+        "-",
+        "r"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repeat",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "slot_entry",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "* `na` - Not Applicable\n* `abs` - Absolute\n* `percent` - Percent",
+      "in": "query",
+      "name": "step",
+      "schema": {
+       "enum": [
+        "abs",
+        "na",
+        "percent"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "value",
+      "schema": {
+       "type": "number"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedMaxRepetitionsConfigList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "max-repetitions-config"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for max reps config objects",
+    "operationId": "max_repetitions_config_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MaxRepetitionsConfigRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MaxRepetitionsConfig"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "max-repetitions-config"
+    ]
+   }
+  },
+  "/api/v2/repetitions-config/": {
+   "get": {
+    "description": "API endpoint for reps config objects",
+    "operationId": "repetitions_config_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "iteration",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "* `+` - Plus\n* `-` - Minus\n* `r` - Replace",
+      "in": "query",
+      "name": "operation",
+      "schema": {
+       "enum": [
+        "+",
+        "-",
+        "r"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repeat",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "slot_entry",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "* `na` - Not Applicable\n* `abs` - Absolute\n* `percent` - Percent",
+      "in": "query",
+      "name": "step",
+      "schema": {
+       "enum": [
+        "abs",
+        "na",
+        "percent"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "value",
+      "schema": {
+       "type": "number"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedRepetitionsConfigList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "repetitions-config"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for reps config objects",
+    "operationId": "repetitions_config_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RepetitionsConfigRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RepetitionsConfig"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "repetitions-config"
+    ]
+   }
+  },
+  "/api/v2/routine/": {
+   "get": {
+    "description": "API endpoint for routine objects",
+    "operationId": "routine_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "created",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "description",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "end",
+      "schema": {
+       "format": "date",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "is_public",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "is_template",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "name",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "start",
+      "schema": {
+       "format": "date",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedRoutineList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "routine"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for routine objects",
+    "operationId": "routine_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RoutineRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Routine"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "routine"
+    ]
+   }
+  },
+  "/api/v2/routine/{id}/": {
+   "delete": {
+    "description": "API endpoint for routine objects",
+    "operationId": "routine_destroy",
+    "parameters": [
+     {
+      "description": "A unique integer value identifying this routine.",
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "No response body"
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "routine"
+    ]
+   }
+  },
+  "/api/v2/sets-config/": {
+   "get": {
+    "description": "API endpoint for set config objects",
+    "operationId": "sets_config_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "iteration",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "* `+` - Plus\n* `-` - Minus\n* `r` - Replace",
+      "in": "query",
+      "name": "operation",
+      "schema": {
+       "enum": [
+        "+",
+        "-",
+        "r"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repeat",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "slot_entry",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "* `na` - Not Applicable\n* `abs` - Absolute\n* `percent` - Percent",
+      "in": "query",
+      "name": "step",
+      "schema": {
+       "enum": [
+        "abs",
+        "na",
+        "percent"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "value",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedSetNrConfigList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "sets-config"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for set config objects",
+    "operationId": "sets_config_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SetNrConfigRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SetNrConfig"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "sets-config"
+    ]
+   }
+  },
+  "/api/v2/slot-entry/": {
+   "get": {
+    "description": "API endpoint for routine slot entry objects",
+    "operationId": "slot_entry_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "comment",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exercise",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "order",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetition_rounding",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetition_unit",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "slot",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "* `normal` - Normal\n* `warmup` - Warmup\n* `dropset` - Dropset\n* `myo` - Myo\n* `partial` - Partial\n* `forced` - Forced\n* `tut` - Tut\n* `iso` - Iso Hold\n* `jump` - Jump",
+      "in": "query",
+      "name": "type",
+      "schema": {
+       "enum": [
+        "dropset",
+        "forced",
+        "iso",
+        "jump",
+        "myo",
+        "normal",
+        "partial",
+        "tut",
+        "warmup"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight_rounding",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight_unit",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedSlotEntryList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "slot-entry"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for routine slot entry objects",
+    "operationId": "slot_entry_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SlotEntryRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SlotEntry"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "slot-entry"
+    ]
+   }
+  },
+  "/api/v2/slot/": {
+   "get": {
+    "description": "API endpoint for routine slot objects",
+    "operationId": "slot_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "comment",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "day",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "order",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedSlotList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "slot"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for routine slot objects",
+    "operationId": "slot_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SlotRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Slot"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "slot"
+    ]
+   }
+  },
+  "/api/v2/userprofile/": {
+   "get": {
+    "description": "API endpoint for the user profile\n\nEvery user has exactly one profile, so this endpoint has no list and no\ndetail route: it always reads and writes the profile of the logged-in user.\nUpdating it takes a PATCH since wger 2.7; up to 2.6 it took a POST.",
+    "operationId": "userprofile_retrieve",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Userprofile"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "userprofile"
+    ]
+   },
+   "post": {
+    "deprecated": true,
+    "description": "Updates the profile of the logged-in user, exactly like PATCH does.\n\nUse this if your client needs to work with wger 2.6 or older, which accept only POST on this endpoint. Servers from 2.7 on accept both, so prefer PATCH in this case.",
+    "operationId": "userprofile_update_legacy",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UserprofileRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Userprofile"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "summary": "Update the profile of servers up to wger 2.6",
+    "tags": [
+     "userprofile"
+    ]
+   }
+  },
+  "/api/v2/version/": {
+   "get": {
+    "description": "Returns the application's version",
+    "operationId": "version_retrieve",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "string"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     },
+     {}
+    ],
+    "tags": [
+     "version"
+    ]
+   }
+  },
+  "/api/v2/weight-config/": {
+   "get": {
+    "description": "API endpoint for weight config objects",
+    "operationId": "weight_config_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "iteration",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "* `+` - Plus\n* `-` - Minus\n* `r` - Replace",
+      "in": "query",
+      "name": "operation",
+      "schema": {
+       "enum": [
+        "+",
+        "-",
+        "r"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repeat",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "slot_entry",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "* `na` - Not Applicable\n* `abs` - Absolute\n* `percent` - Percent",
+      "in": "query",
+      "name": "step",
+      "schema": {
+       "enum": [
+        "abs",
+        "na",
+        "percent"
+       ],
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "value",
+      "schema": {
+       "type": "number"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedWeightConfigList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "weight-config"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for weight config objects",
+    "operationId": "weight_config_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WeightConfigRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WeightConfig"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "weight-config"
+    ]
+   }
+  },
+  "/api/v2/workoutlog/": {
+   "get": {
+    "description": "API endpoint for workout log objects",
+    "operationId": "workoutlog_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "date",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "date__date",
+      "schema": {
+       "format": "date",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "date__gt",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "date__gte",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "date__lt",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "date__lte",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exercise",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Multiple values may be separated by commas.",
+      "explode": false,
+      "in": "query",
+      "name": "exercise__in",
+      "schema": {
+       "items": {
+        "type": "integer"
+       },
+       "type": "array"
+      },
+      "style": "form"
+     },
+     {
+      "in": "query",
+      "name": "iteration",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Multiple values may be separated by commas.",
+      "explode": false,
+      "in": "query",
+      "name": "iteration__in",
+      "schema": {
+       "items": {
+        "type": "integer"
+       },
+       "type": "array"
+      },
+      "style": "form"
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions__gt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions__gte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions__lt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions__lte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions_target",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions_target__gt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions_target__gte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions_target__lt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions_target__lte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "repetitions_unit",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Multiple values may be separated by commas.",
+      "explode": false,
+      "in": "query",
+      "name": "repetitions_unit__in",
+      "schema": {
+       "items": {
+        "type": "integer"
+       },
+       "type": "array"
+      },
+      "style": "form"
+     },
+     {
+      "in": "query",
+      "name": "rir",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "rir__gt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "rir__gte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "description": "Multiple values may be separated by commas.",
+      "explode": false,
+      "in": "query",
+      "name": "rir__in",
+      "schema": {
+       "items": {
+        "type": "number"
+       },
+       "type": "array"
+      },
+      "style": "form"
+     },
+     {
+      "in": "query",
+      "name": "rir__lt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "rir__lte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "rir_target",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "rir_target__gt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "rir_target__gte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "description": "Multiple values may be separated by commas.",
+      "explode": false,
+      "in": "query",
+      "name": "rir_target__in",
+      "schema": {
+       "items": {
+        "type": "number"
+       },
+       "type": "array"
+      },
+      "style": "form"
+     },
+     {
+      "in": "query",
+      "name": "rir_target__lt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "rir_target__lte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "routine",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session",
+      "schema": {
+       "format": "uuid",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight__gt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight__gte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight__lt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight__lte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight_target",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight_target__gt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight_target__gte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight_target__lt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight_target__lte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight_unit",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Multiple values may be separated by commas.",
+      "explode": false,
+      "in": "query",
+      "name": "weight_unit__in",
+      "schema": {
+       "items": {
+        "type": "integer"
+       },
+       "type": "array"
+      },
+      "style": "form"
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedWorkoutLogList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "workoutlog"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for workout log objects",
+    "operationId": "workoutlog_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WorkoutLogRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WorkoutLog"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "workoutlog"
+    ]
+   }
+  },
+  "/api/v2/workoutsession/": {
+   "get": {
+    "description": "API endpoint for workout sessions objects",
+    "operationId": "workoutsession_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "datetime_end",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_end__date",
+      "schema": {
+       "format": "date",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_end__gt",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_end__gte",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_end__lt",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_end__lte",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_start",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_start__date",
+      "schema": {
+       "format": "date",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_start__gt",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_start__gte",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_start__lt",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "datetime_start__lte",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "day",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Your impression about this workout session. Did you exercise as well as you could?\n\n* `1` - Bad\n* `2` - Neutral\n* `3` - Good",
+      "in": "query",
+      "name": "impression",
+      "schema": {
+       "enum": [
+        "1",
+        "2",
+        "3"
+       ],
+       "title": "General impression",
+       "type": "string"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "notes",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "routine",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedWorkoutSessionList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "workoutsession"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for workout sessions objects",
+    "operationId": "workoutsession_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WorkoutSessionRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WorkoutSession"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "workoutsession"
+    ]
+   }
+  }
+ },
+ "x-fixture": "Subset of GET /api/v2/schema?format=json from the live wger 2.7.0 instance (read-only, 2026-11-23): only the paths and schemas skills/workout-log/wger.py uses. Regenerate on a wger bump."
+}
