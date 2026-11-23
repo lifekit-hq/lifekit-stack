@@ -5418,8 +5418,8 @@ and takes minutes), then:
 
 ```bash
 docker exec wger-web-1 python3 manage.py sync-exercises
-docker exec wger-web-1 python3 manage.py sync-exercise-images
-docker exec wger-web-1 python3 manage.py sync-exercise-videos
+docker exec wger-web-1 python3 manage.py download-exercise-images
+docker exec wger-web-1 python3 manage.py download-exercise-videos
 docker exec wger-web-1 python3 manage.py warmup-exercise-api-cache
 ```
 
