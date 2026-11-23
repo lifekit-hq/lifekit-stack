@@ -1,0 +1,13 @@
+[Unit]
+Description=Idle-lane check: free worker lanes beside ready work, escalated at 15 and 30 minutes
+
+[Service]
+Type=oneshot
+# The account that owns the fleet homes and is in the docker group for the
+# notify-relay push (README "VPS users"). scripts/ensure-idle-lanes.sh
+# substitutes the placeholders; IDLE_LANES_HOMES is space-separated.
+User=__ADMIN_USER__
+Environment="IDLE_LANES_HOMES=__IDLE_LANES_HOMES__"
+ExecStart=/usr/local/bin/lifekit-idle-lanes.py check
+TimeoutStartSec=300
+Nice=10
