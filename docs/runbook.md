@@ -3504,7 +3504,8 @@ still sets only `FM_HOME` publishes that one home). For each home it reads
 refuses to publish a home whose summary ever matches a credential pattern),
 joins each open decision to the URL of the open Lavish session that home's
 captain-hold binding feeds it (`board_url`; else the session whose file lives
-under the home's `data/<decision id>/`; else `null`), and copies finished
+under the home's `data/<decision id>/`; else the http(s) address in the
+decision's own text; else `null`; running, queued and held tasks get `open_url` the same way), and copies finished
 reports to `/var/lib/lifekit-fleet/reports/` (`report_url` on each landed item).
 It merges the homes into one summary, tagging every task, hold and decision
 with its `home_id` and listing the homes in `homes[]` (output contract in

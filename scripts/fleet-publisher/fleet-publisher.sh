@@ -25,8 +25,9 @@
 # open decision (an open Lavish session fed by its home's captain-hold
 # binding, else the one whose file lives under that home's
 # data/<decision id>/, else an http(s) address in the item's question, reason,
-# summary or status text (a Lavish /session/<id> one first), else null), report_url on every landed item (the
-# finished report.md copied to OUT_DIR/reports/<id>/report.md, else null),
+# summary or status text (a Lavish /session/<id> one first), else null), open_url
+# the same way on active_children, queued and holds items, report_url on every
+# landed item (the finished report.md copied to OUT_DIR/reports/<id>/report.md, else null),
 # homes[] and published_epoch. A decision a home folds in from a child home
 # this run also publishes (its id is a secondmate id in the home's
 # data/secondmates.md whose "home:" path is a published home) is left out: the
