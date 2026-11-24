@@ -24,7 +24,9 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
 | every item of every top-level list | `home_id` | The id of the home the item came from (`active_children`, `decisions_open`, `holds`, `queued`, `landed`, `endpoints`, `omitted`) |
 | `homes[]` | `invalidity` | The home summary's own `invalidity` (`{kind, ids}`: why `valid` is false, e.g. kind `terminal_in_flight` for finished work still waiting on validation or merge), passed through as-is; `null` when the summary has none |
 | `counts` (object, and each `homes[].counts`) | `queued_open` | The queued items with no hold: neither `hold_kind` nor `hold_bucket` set. `counts.queued` still includes held ones |
-| `decisions_open[]` | `board_url` | The open Lavish session for the decision, else `null` |
+| `decisions_open[]` | `board_url` | The open Lavish session for the decision, else the first http(s) address in its `question`, `reason`, `summary`, `status` or ask question (a Lavish `/session/<id>` address on a host the home's Lavish sessions use, any host when none is known, before any other link), else `null` |
+| `decisions_open[]` | `ask.link` | When the item has an `ask` with no link, its `board_url` |
+| `active_children[]`, `queued[]`, `holds[]` | `open_url` | The same board address as `board_url`, found the same way; absent when the item has none |
 | `landed[]` | `report_url` | The served copy of the item's finished `report.md`, else `null` |
 | `active_children[]` | `started_at` | Epoch of the task's latest `task.dispatched` in the home's ledger; absent when the ledger has none |
 | `landed[]` | `landed_at` | Epoch of the task's latest `task.merged` in the ledger, else its latest `task.cleaned_up`; absent when neither exists |
@@ -66,7 +68,8 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
   (`Captain hold origin:` in `tasks-axi show`, run only for decisions the home's own
   `tasks-axi list` returned, so one with no backlog record is silent), or whose binding names the
   decision. Falls back to the newest open session under the home's
-  `data/<decision id>/`, else `null`. `tasks-axi` finds the backlog from its
+  `data/<decision id>/`, else the http(s) address in the item's own text (see the
+  table), else `null`. `tasks-axi` finds the backlog from its
   working directory, so the publisher runs it from the home, at the absolute
   path in `TASKS_AXI` (the installer resolves it for the admin account and the
   unit carries it; the publisher puts its directory, and so node, on `PATH`). A

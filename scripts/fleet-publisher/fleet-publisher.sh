@@ -24,8 +24,10 @@
 # list fields concatenated, each item tagged with home_id; board_url on every
 # open decision (an open Lavish session fed by its home's captain-hold
 # binding, else the one whose file lives under that home's
-# data/<decision id>/, else null), report_url on every landed item (the
-# finished report.md copied to OUT_DIR/reports/<id>/report.md, else null),
+# data/<decision id>/, else an http(s) address in the item's question, reason,
+# summary or status text (a Lavish /session/<id> one first), else null), open_url
+# the same way on active_children, queued and holds items, report_url on every
+# landed item (the finished report.md copied to OUT_DIR/reports/<id>/report.md, else null),
 # homes[] and published_epoch. A decision a home folds in from a child home
 # this run also publishes (its id is a secondmate id in the home's
 # data/secondmates.md whose "home:" path is a published home) is left out: the
@@ -435,9 +437,28 @@ publish_home() {
       | ([open_sessions[] | select($bound[seg] != null)
           | select(($bound[seg] == $id) or ($o != null and ($bound[seg] == $o or under(.; $o))))] | newest)
         // ([open_sessions[] | select(under(.; $id))] | newest);
+    # An http(s) address the record itself carries: its question, reason,
+    # summary, status or ask question. A Lavish session address
+    # (/session/<id> on a host the Lavish sessions use, any host when none is
+    # known) wins over any other link; trailing punctuation is not part of the
+    # address.
+    def lavish_hosts:
+      [($lav.sessions // {}) | to_entries[] | .value.url | strings
+       | capture("^https?://(?<h>[^/]+)/") | .h];
+    def text_url:
+      lavish_hosts as $hosts |
+      [.question, .reason, .summary, .status, (.ask | objects | .question)]
+      | [.[] | strings | scan("https?://[^\\s<>\"\u0027)\\]]+") | sub("[.,;:!?]+$"; "") | select(length <= 500)]
+      | ([.[] | select(test("^https?://[^/]+/session/[A-Za-z0-9._-]+(?:[/?#]|$)"))
+          | select(($hosts | length) == 0 or (capture("^https?://(?<h>[^/]+)/") | .h | IN($hosts[])))] + .) | first // null;
+    def board_addr: ((.id | strings | board(.)) // null) // text_url;
     (if (.counts | type) == "object" then .counts = published_counts($folded[0]) else . end)
-    | .decisions_open |= map(select(.id as $i | $folded[0] | index($i) | not) | . + {board_url: board(.id)}
-        | if (.ask == null) and ($asks[.id] // null) != null then . + {ask: $asks[.id]} else . end)
+    | .decisions_open |= map(select(.id as $i | $folded[0] | index($i) | not) | . + {board_url: board_addr}
+        | if (.ask == null) and ($asks[.id] // null) != null then . + {ask: $asks[.id]} else . end
+        | if (.ask | type) == "object" and .ask.link == null and .board_url != null
+          then .ask.link = .board_url else . end)
+    | with_entries(if (.key | IN("active_children", "queued", "holds")) and (.value | type) == "array"
+        then .value |= map(if type == "object" and board_addr != null then . + {open_url: board_addr} else . end) else . end)
     | if (.active_children | type) == "array" then .active_children |= map(
         if type == "object" and ($times.started[.id // ""] // null) != null then . + {started_at: $times.started[.id]} else . end) else . end
     | if (.queued | type) == "array" then .queued |= map(
