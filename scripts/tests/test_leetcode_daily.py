@@ -325,6 +325,84 @@ def test_the_weekly_count_is_monday_to_sunday(vault):
     assert daily(vault, "week", day=SUN).stdout.startswith("solved: 3 ")
 
 
+# --- the weekly count file the morning message quotes (#620) -------------------------
+
+
+def weekfile(vault, tmp_path, day, target=20):
+    out = tmp_path / "weekly-count.json"
+    r = daily(
+        vault, "weekfile", "--out", str(out), "--target", str(target), "--date", day
+    )
+    return r, (json.loads(out.read_text()) if out.exists() else None)
+
+
+def solve_row(vault, slug, day, status="done", topic=None):
+    page = vault / "domains/learning.md"
+    row = f"| {day} | {topic or 'leetcode: ' + slug} | https://leetcode.com/problems/{slug}/ | - | - | - | - | {status} |\n"
+    head, sep, tail = page.read_text().partition("\n## In-progress")
+    page.write_text(head.rstrip("\n") + "\n" + row + sep + tail)  # inside the table
+
+
+def test_the_count_line_rolls_over_on_monday(vault, tmp_path):
+    solve_row(vault, "two-sum", SUN_BEFORE)  # last week
+    solve_row(vault, "group-anagrams", SUN)  # done on Sunday of this week
+    r, out = weekfile(vault, tmp_path, SUN)
+    assert r.returncode == 0 and r.stdout == "NO_REPLY\n"
+    assert out == {"for_date": SUN, "line": "Sun 1/20"}
+    # Next Monday only a row dated that day counts: the week starts again at 0.
+    r, out = weekfile(vault, tmp_path, NEXT_MON)
+    assert out == {"for_date": NEXT_MON, "line": "Mon 0/20"}
+    solve_row(vault, "valid-sudoku", NEXT_MON)
+    assert weekfile(vault, tmp_path, NEXT_MON)[1]["line"] == "Mon 1/20"
+    # A row dated after today is not counted yet.
+    assert weekfile(vault, tmp_path, SUN)[1]["line"] == "Sun 1/20"
+
+
+def test_the_count_line_counts_whole_slugs_by_their_latest_row(vault, tmp_path):
+    solve_row(vault, "two-sum", MON, "in progress")
+    solve_row(vault, "two-sum", MON)
+    solve_row(vault, "two-sum", TUE)  # a repeated done row: still one slug
+    solve_row(vault, "group-anagrams", WED)
+    solve_row(vault, "group-anagrams", THU, "dropped")  # latest row decides
+    solve_row(vault, "valid-sudoku", WED, "in progress")
+    solve_row(vault, "x", WED, topic="caching")  # not a leetcode topic
+    r, out = weekfile(vault, tmp_path, FRI, target=25)
+    assert r.returncode == 0, r.stderr
+    assert out["line"] == "Fri 1/25"
+    # The line is the number `week` prints, from the same code.
+    assert daily(vault, "week", day=FRI).stdout.startswith("solved: 1 ")
+
+
+def test_a_row_with_an_unreadable_date_counts_nothing_and_the_rest_still_count(
+    vault, tmp_path
+):
+    solve_row(vault, "two-sum", "someday")
+    solve_row(vault, "group-anagrams", "2026-02-30")  # not a calendar date
+    solve_row(vault, "valid-sudoku", TUE)
+    r, out = weekfile(vault, tmp_path, WED)
+    assert r.returncode == 0, r.stderr
+    assert out["line"] == "Wed 1/20"
+
+
+def test_an_unreadable_record_writes_unreadable_never_zero_and_fails_the_run(
+    vault, tmp_path
+):
+    solve_row(vault, "two-sum", TUE)
+    out = tmp_path / "weekly-count.json"
+    out.write_text(json.dumps({"for_date": TUE, "line": "Tue 1/20"}))  # yesterday's
+    (vault / "domains/learning.md").unlink()
+    r, got = weekfile(vault, tmp_path, WED)
+    assert r.returncode == 1 and "cannot count the week" in r.stderr
+    assert r.stdout == ""
+    assert got == {"for_date": WED, "line": "Wed count unreadable (target 20)"}
+    assert "0/" not in got["line"]
+
+
+def test_a_bad_target_is_refused_and_leaves_the_file(vault, tmp_path):
+    r = daily(vault, "weekfile", "--out", str(tmp_path / "w.json"), "--target", "0")
+    assert r.returncode == 2 and not (tmp_path / "w.json").exists()
+
+
 # --- the cron declaration ----------------------------------------------------------
 
 FAKE_DOCKER = r"""#!/usr/bin/env python3
@@ -643,3 +721,51 @@ def test_the_install_puts_the_skill_in_the_workspace(tmp_path):
     assert os.access(ws / "skills/leetcode-daily/daily.py", os.X_OK)
     # It sits next to learning-record, where daily.py finds record.py.
     assert (ws / "skills/learning-record/record.py").is_file()
+
+
+# --- ensure-learnclaw-weekcount.sh (#620) ------------------------------------------
+
+WEEKCOUNT_SCRIPT = REPO / "scripts/ensure-learnclaw-weekcount.sh"
+COUNT_FILE = "/home/node/.openclaw/agents/learnclaw/workspace/weekly-count.json"
+
+
+def weekcount_env(tmp_path, extra=None):
+    return fake_box(
+        tmp_path, [], {"LEARNCLAW_WEEKCOUNT_CHAT": "424242", **(extra or {})}
+    )
+
+
+def test_the_weekcount_job_is_a_command_that_sends_nothing_itself(tmp_path):
+    state, env = weekcount_env(tmp_path)
+    r = run_script(WEEKCOUNT_SCRIPT, env)
+    assert r.returncode == 0, r.stderr
+    (job,) = json.loads(state.read_text())["jobs"]
+    assert job["name"] == "learnclaw-weekcount" and job["agentId"] == "learnclaw"
+    assert job["schedule"]["expr"] == "10 7 * * 1,2,3,4,5,6"  # before the 07:15 message
+    argv = job["payload"]["argv"]
+    assert argv[0] == "python3" and argv[1].endswith("leetcode-daily/daily.py")
+    assert argv[2:] == ["weekfile", "--out", COUNT_FILE, "--target", "20"]
+    # No model turn is involved in counting.
+    assert job["payload"]["kind"] == "command" and "model" not in job["payload"]
+
+
+def test_the_weekly_target_is_the_one_named_setting(tmp_path):
+    state, env = weekcount_env(tmp_path, {"LEARNCLAW_WEEKLY_TARGET": "25"})
+    assert run_script(WEEKCOUNT_SCRIPT, env).returncode == 0
+    (job,) = json.loads(state.read_text())["jobs"]
+    assert job["payload"]["argv"][-1] == "25"
+
+
+@pytest.mark.parametrize("bad", ["0", "abc", "-5", "2.5", "05"])
+def test_a_bad_weekly_target_is_refused(tmp_path, bad):
+    state, env = weekcount_env(tmp_path, {"LEARNCLAW_WEEKLY_TARGET": bad})
+    r = run_script(WEEKCOUNT_SCRIPT, env)
+    assert r.returncode == 1 and "LEARNCLAW_WEEKLY_TARGET" in r.stderr
+    assert json.loads(state.read_text())["jobs"] == []
+
+
+def test_the_weekcount_schedule_cannot_fire_on_sunday(tmp_path):
+    state, env = weekcount_env(tmp_path, {"LEARNCLAW_WEEKCOUNT_CRON": "10 7 * * 1,7"})
+    r = run_script(WEEKCOUNT_SCRIPT, env)
+    assert r.returncode == 1 and "Sunday" in r.stderr
+    assert json.loads(state.read_text())["jobs"] == []

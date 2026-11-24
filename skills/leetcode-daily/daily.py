@@ -6,6 +6,8 @@ and the weekly solved count (docs/runbook.md, "Daily LeetCode problem").
     daily.py done SLUG --pattern P --time T --space S [--date D]
     daily.py skip SLUG [--reason R] [--date D]
     daily.py week [--date D]              problems solved Monday to Sunday
+    daily.py weekfile --out F --target N [--date D]
+                                          the count line as a file the morning job quotes
     daily.py status                       where the list stands
     daily.py check                        validate problems.json
 
@@ -220,19 +222,59 @@ def cmd_skip(args: argparse.Namespace) -> None:
     )
 
 
+def solved_in_week(record, day: dt.date) -> list[tuple[str, str]]:
+    """(date, slug) of each problem whose latest row is done and dated Monday to Sunday of `day`'s week."""
+    first, last = week_of(day)
+    return sorted(
+        (s["date"], slug)
+        for slug, s in read_state(record).items()
+        if s["status"] == "done" and s["date"] and first <= s["date"] <= last
+    )
+
+
 def cmd_week(args: argparse.Namespace) -> None:
     day = dt.date.fromisoformat(args.date) if args.date else today()
     first, last = week_of(day)
     record = load_record()
     titles = {p["slug"]: p["title"] for p in load_list()}
-    solved = sorted(
-        (s["date"], slug)
-        for slug, s in read_state(record).items()
-        if s["status"] == "done" and s["date"] and first <= s["date"] <= last
-    )
+    solved = solved_in_week(record, day)
     print(f"solved: {len(solved)} (Monday {first} to Sunday {last}, by hand)")
     for d, slug in solved:
         print(f"- {d} {titles.get(slug, slug)}")
+
+
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def week_line(day: dt.date, target: int) -> str:
+    """`<Mon..Sun> <solved>/<target>`: the count `week` prints, in the morning line's form."""
+    return (
+        f"{WEEKDAYS[day.weekday()]} {len(solved_in_week(load_record(), day))}/{target}"
+    )
+
+
+def cmd_weekfile(args: argparse.Namespace) -> None:
+    """Write {"for_date", "line"} for learnclaw-morning, which only quotes it.
+
+    The file is replaced atomically. When the record cannot be read the line
+    says so (never 0), and the run exits 1 so the failure alert fires.
+    """
+    day = dt.date.fromisoformat(args.date) if args.date else today()
+    if args.target < 1:
+        fail("--target must be a positive whole number")
+    err = ""
+    try:
+        line = week_line(day, args.target)
+    except (SystemExit, Exception) as e:  # an unreadable page or record
+        err = str(e) or type(e).__name__
+        line = f"{WEEKDAYS[day.weekday()]} count unreadable (target {args.target})"
+    out = Path(args.out)
+    tmp = out.with_name(out.name + ".tmp")
+    tmp.write_text(json.dumps({"for_date": day.isoformat(), "line": line}) + "\n")
+    tmp.replace(out)
+    if err:
+        fail(f"cannot count the week: {err}", 1)
+    print("NO_REPLY")
 
 
 def cmd_status(_: argparse.Namespace) -> None:
@@ -293,6 +335,10 @@ def main() -> None:
     s.add_argument("--date", default="")
     w = sub.add_parser("week")
     w.add_argument("--date", default="")
+    f = sub.add_parser("weekfile")
+    f.add_argument("--out", required=True)
+    f.add_argument("--target", type=int, required=True)
+    f.add_argument("--date", default="")
     sub.add_parser("status")
     sub.add_parser("check")
     args = p.parse_args()
@@ -301,6 +347,7 @@ def main() -> None:
         "done": cmd_done,
         "skip": cmd_skip,
         "week": cmd_week,
+        "weekfile": cmd_weekfile,
         "status": cmd_status,
         "check": cmd_check,
     }[args.cmd](args)
