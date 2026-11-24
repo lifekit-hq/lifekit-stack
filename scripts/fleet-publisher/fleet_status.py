@@ -21,6 +21,9 @@ sections"). Everything is read from structured sources, never from prose:
   stalled       items whose state has not changed for their queue's threshold
                 (fleet-stalled.json beside this script): GitHub issues of the
                 registered projects, backlog items, jobq jobs, A2A threads
+  clip_queue    one row per clip channel from the clip queue's own outputs
+                (daily-check.json, egress.json, queue-run.json beside the stats
+                feed, read-only): waiting, oldest age, buffer days, egress, stalled
   problems      the three oldest stalled items by first-seen age, one brief line
   side_hustles  per-channel numbers from the clip stats feed (stats.jsonl), as
                 the Monday/Thursday brief lines and the Monday week-sheet rows
@@ -37,9 +40,11 @@ project> ..." where the names differ), FLEET_INTAKE_CMD (overrides the gateway
 the stalled check reads; empty skips them, unset skips them too when
 FLEET_INTAKE_CMD is set),
 FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: none reachable),
+FLEET_SCOUT_STATE (the scout's state dir, `candidates/<date>.txt` inside; unset:
+the scout is not read),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
-script), FLEET_CLIP_STATS_FEED (path of clip's stats.jsonl; unset: no
-side_hustles section, an unreadable file: its "no data" line). A source that fails empties its own part
+script), FLEET_CLIP_STATS_FEED (path of clip's stats.jsonl, whose directory is
+the clip queue's: unset: no side_hustles or clip_queue section, or clip source, an unreadable file: its "no data" line). A source that fails empties its own part
 and adds a line to `errors`; the helper itself only fails on bad arguments.
 """
 
@@ -801,6 +806,19 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
             isinstance(n, (int, float)) and not isinstance(n, bool) and n > 0
             for n in numbers
         )
+        for key, fields in (
+            ("clip", ("buffer_floor_days", "slot_window_hours")),
+            ("scout", ("idle_hours",)),
+        ):
+            if key in cfg:  # optional: absent leaves that source unread
+                block = cfg[key]
+                assert all(
+                    isinstance(block[f], (int, float))
+                    and not isinstance(block[f], bool)
+                    and block[f] > 0
+                    for f in fields
+                )
+                assert block.get("owner", "firstmate") in owners
         assert isinstance(github["held_labels"], list)
         assert isinstance(github["repo_owners"], dict)
         assert set(github["repo_owners"].values()) <= set(owners)
@@ -1052,6 +1070,228 @@ def thread_stalls(
     return rows, {"read": True, "reason": None}
 
 
+CLIP_CHANNELS = ("cosmos", "mind", "neural", "yc", "vice-footage")
+CLIP_FILES = ("daily-check.json", "egress.json", "queue-run.json")
+SCOUT_CANDIDATES = "candidates"
+ADDED_RE = re.compile(r"^added:\s*(\S+)\s*$", re.M)
+
+
+def clip_dir() -> Path | None:
+    """The clip queue's directory: where the stats feed (FLEET_CLIP_STATS_FEED)
+    lives. None when the feed is not wired."""
+    feed = os.environ.get("FLEET_CLIP_STATS_FEED", "")
+    return Path(feed).parent if feed else None
+
+
+def read_json_object(path: Path) -> dict[str, Any] | None:
+    """A JSON object file, or None when it is missing or unreadable. Never writes."""
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def clip_oldest_waiting(queue: Path, channel: str, now: int) -> tuple[bool, int | None]:
+    """(readable, age in seconds of the oldest waiting source). The waiting
+    sources are `<channel>/pending/<key>` files with an `added:` line; an empty
+    directory reads as (True, None), an unreadable one as (False, None)."""
+    if not CHANNEL_RE.match(channel):
+        return False, None
+    try:
+        files = [f for f in (queue / channel / "pending").iterdir() if f.is_file()]
+        added = []
+        for f in files:
+            m = ADDED_RE.search(f.read_text())
+            if (at := feed_epoch(m.group(1)) if m else None) is not None:
+                added.append(at)
+    except (OSError, UnicodeDecodeError):
+        return False, None
+    if files and not added:
+        return False, None
+    return True, max(0, now - min(added)) if added else None
+
+
+def clip_channel_row(
+    name: str,
+    check: dict[str, Any] | None,
+    egress: str | None,
+    queue: Path,
+    cfg: dict[str, Any] | None,
+    now: int,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """One channel's published row and, when it is stalled, its stalled row.
+    A number the inputs do not hold is None and named in `unavailable`: never 0."""
+    rec = check.get("channels", {}).get(name) if check else None
+    rec = rec if isinstance(rec, dict) else None
+    unavailable = []
+    waiting = buffer_days = None
+    if rec is not None:
+        waiting = feed_int(rec.get("buffer_waiting"))
+        days = rec.get("buffer_days")
+        if isinstance(days, (int, float)) and not isinstance(days, bool) and days >= 0:
+            buffer_days = days
+    if waiting is None:
+        unavailable.append("waiting")
+    if buffer_days is None:
+        unavailable.append("buffer_days")
+    readable, oldest = clip_oldest_waiting(queue, name, now)
+    if not readable:
+        unavailable.append("oldest_age_s")
+    if egress is None:
+        unavailable.append("egress")
+    stalled = reason = None
+    since = cut = 0
+    if rec is not None and cfg is not None and "clip" in cfg:
+        last_post = rec.get("last_post")
+        posted = feed_epoch(last_post)
+        slot, checked = feed_epoch(rec.get("slot")), feed_epoch(rec.get("checked_at"))
+        window = int(cfg["clip"]["slot_window_hours"] * 3600)
+        post_ok: bool | None = None  # a post time that does not parse is unknown
+        if last_post is None:
+            post_ok, since = False, slot or checked or now
+        elif posted is not None:
+            post_ok, since = now - posted <= window, posted
+        buffer_ok = (
+            None
+            if buffer_days is None
+            else buffer_days >= cfg["clip"]["buffer_floor_days"]
+        )
+        if post_ok is False:
+            reason, cut = "no-post", window
+        elif buffer_ok is False:
+            reason, since = "buffer-short", checked or now
+        if reason:
+            stalled = True
+        elif post_ok is not None and buffer_ok is not None:
+            stalled = False
+    if stalled is None:
+        unavailable.append("stalled")
+    row = {
+        "channel": name,
+        "status": "unavailable" if rec is None else "ok",
+        "waiting": waiting,
+        "oldest_age_s": oldest if readable else None,
+        "buffer_days": buffer_days,
+        "egress": egress,
+        "stalled": stalled,
+        "stalled_reason": reason,
+        "unavailable": unavailable,
+    }
+    out = None
+    if reason and cfg is not None:
+        out = {
+            "source": "clip",
+            "id": name,
+            "home_id": None,
+            "title": f"clip channel {name}",
+            "url": None,
+            "reason": reason,
+            "since": int(since),
+            "threshold": int(cut),
+            "owner": cfg["clip"].get("owner", "firstmate"),
+        }
+    return row, out
+
+
+def clip_queue(
+    cfg: dict[str, Any] | None, now: int, errors: list[str]
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any]]:
+    """The clip queue's rows and its stalled rows, read-only from the queue's
+    own `daily-check.json`, `egress.json` and `queue-run.json` (and each
+    channel's pending sources for the oldest age). Returns (section, stalled
+    rows, the source's `{read, reason}`). An input that is missing or unreadable
+    makes its own numbers unavailable (None), never zero."""
+    queue = clip_dir()
+    if queue is None:
+        return None, [], {"read": False, "reason": "FLEET_CLIP_STATS_FEED is not set"}
+    check = read_json_object(queue / CLIP_FILES[0])
+    egress_doc = read_json_object(queue / CLIP_FILES[1])
+    run_doc = read_json_object(queue / CLIP_FILES[2])
+    if check is not None and not isinstance(check.get("channels"), dict):
+        check = None
+    missing = [
+        n
+        for n, d in zip(CLIP_FILES, (check, egress_doc, run_doc), strict=True)
+        if d is None
+    ]
+    if missing:
+        errors.append(f"clip queue input unreadable: {', '.join(missing)}")
+    state = egress_doc.get("state") if egress_doc else None
+    egress = state if isinstance(state, str) and state else None
+    names = list(CLIP_CHANNELS)
+    if check:
+        names += sorted(n for n in check["channels"] if n not in CLIP_CHANNELS)
+    rows, stalled_rows = [], []
+    for name in names:
+        row, hit = clip_channel_row(name, check, egress, queue, cfg, now)
+        rows.append(row)
+        if hit:
+            stalled_rows.append(hit)
+    ran = run_doc.get("at") if run_doc else None
+    ran_at = feed_epoch(ran)
+    section = {
+        "schema": "fleet-clip-queue.v1",
+        "channels": rows,
+        "egress": {
+            "state": egress,
+            "since": feed_epoch(egress_doc.get("since")) if egress_doc else None,
+        },
+        "queue_run": {
+            "at": ran_at,
+            "age_s": None if ran_at is None else max(0, now - ran_at),
+        },
+        "unavailable": missing,
+    }
+    if cfg is None or "clip" not in cfg:
+        source = {"read": False, "reason": "no clip thresholds in fleet-stalled.json"}
+    elif check is None:
+        source = {"read": False, "reason": "daily-check.json unreadable"}
+    else:
+        source = {"read": True, "reason": None}
+    return section, stalled_rows, source
+
+
+def scout_stalls(
+    cfg: dict[str, Any] | None, now: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The scout is stalled when its newest candidates file (`candidates/<date>.txt`
+    in FLEET_SCOUT_STATE) is older than `scout.idle_hours`. A state dir that is not
+    set, unreadable or holds no candidates yet is unread: an age is never guessed."""
+    state = os.environ.get("FLEET_SCOUT_STATE", "")
+    if cfg is None or "scout" not in cfg:
+        return [], {
+            "read": False,
+            "reason": "no scout thresholds in fleet-stalled.json",
+        }
+    if not state:
+        return [], {"read": False, "reason": "FLEET_SCOUT_STATE is not set"}
+    try:
+        newest = max(
+            f.stat().st_mtime
+            for f in (Path(state) / SCOUT_CANDIDATES).glob("*.txt")
+            if f.is_file()
+        )
+    except (OSError, ValueError):
+        return [], {"read": False, "reason": "scout output unreadable or none yet"}
+    window = int(cfg["scout"]["idle_hours"] * 3600)
+    if now - int(newest) < window:
+        return [], {"read": True, "reason": None}
+    return [
+        {
+            "source": "scout",
+            "id": "scout",
+            "home_id": None,
+            "title": "scout candidates",
+            "url": None,
+            "reason": "no-output",
+            "since": int(newest),
+            "threshold": window,
+            "owner": cfg["scout"].get("owner", "firstmate"),
+        }
+    ], {"read": True, "reason": None}
+
+
 def stalled_section(
     rows: list[dict[str, Any]], owners: list[str]
 ) -> list[dict[str, Any]]:
@@ -1082,6 +1322,8 @@ PROBLEM_SOURCE_KEY = {
     "issue": "github",
     "job": "jobq",
     "thread": "a2a",
+    "clip": "clip",
+    "scout": "scout",
 }
 PROBLEM_PHRASE = {
     "no-status-line": "silent",
@@ -1090,6 +1332,9 @@ PROBLEM_PHRASE = {
     "waiting": "job waiting",
     "past-deadline": "past deadline",
     "no-turn": "thread quiet",
+    "no-post": "no post",
+    "buffer-short": "buffer short",
+    "no-output": "no output",
 }
 
 
@@ -1665,14 +1910,17 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     caps.extend(remote_capacity(e, errors) for e in remote_entries(args.remote, errors))
     rows = projects(records, homes, pr_cache, args.now, errors)
     stalled, sources, stalled_rows = None, None, None
-    if cfg := stalled_config(errors):
+    cfg = stalled_config(errors)
+    clip_section, clip_rows, clip_source = clip_queue(cfg, args.now, errors)
+    if cfg:
         found = backlog_stalls(records, homes, cfg, args.now)
         issues, github = issue_stalls(
             {r["github"] for r in rows if r["github"]}, pr_cache, cfg, args.now
         )
         jobs, jobq = job_stalls(cfg, args.now, errors)
         threads, a2a = thread_stalls(cfg, args.now, errors)
-        stalled_rows = found + issues + jobs + threads
+        scout_rows, scout_source = scout_stalls(cfg, args.now)
+        stalled_rows = found + issues + jobs + threads + clip_rows + scout_rows
         stalled = stalled_section(stalled_rows, cfg["owners"])
         sources = {
             "backlog": {
@@ -1684,6 +1932,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "github": github,
             "jobq": jobq,
             "a2a": a2a,
+            "clip": clip_source,
+            "scout": scout_source,
         }
     depth: dict[str, Any] | None = None
     if os.environ.get("FLEET_INTAKE_CMD") != "":
@@ -1719,6 +1969,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "delivered": outcomes,
         "problems": problem_list,
         "side_hustles": side,
+        "clip_queue": clip_section,
         "follow_ups": [
             f"owner page for {h['title'].lower()}" for h in how if not h["url"]
         ],

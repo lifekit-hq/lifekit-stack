@@ -132,7 +132,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `intake` | The shared job queue's depth: `{waiting, running, done_24h, failed_24h}`, or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
-| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`): `{read, reason}`; `read: false` says why a source contributed nothing, or `null` with `stalled` |
+| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`): `{read, reason}`; `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | The side-hustle lines and week-sheet rows (below): `{channels[], lines[], week_rows[], credential, brief_day, week_of, feed_read}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
 | `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
@@ -214,6 +214,8 @@ line), never a guess.
 | Firstmate backlog record | `queued` or `in_flight` (held and done keep their own buckets), no status line for 48 hours | `backlog.hours` | the newer of the record's creation date and the last `[at=<epoch>]` in `<home>/state/<id>.status` | `firstmate` |
 | jobq job | attempts exhausted (`attempts` at the queue's `max_attempts`, `failed` or `queued`), or `queued` more than 24 hours | `jobq.waiting_hours` | finish time (exhausted) or `queued_at` | the envelope's `class` when it is an owner, else `firstmate` |
 | A2A thread | open and past its own `deadline`, or no turn for 24 hours | `a2a.idle_hours` | the `deadline`, or the last turn | the thread's `owner` when it is one, else `firstmate` |
+| Clip channel | `buffer_days` under `clip.buffer_floor_days` (1), or no post inside `clip.slot_window_hours` (30; a channel that never posted counts) | `clip.buffer_floor_days`, `clip.slot_window_hours` | the last post (or the slot, never posted), or the check time for a short buffer | `clip.owner` (`firstmate`) |
+| Scout | no new candidates file for `scout.idle_hours` (96) | `scout.idle_hours` | the newest `candidates/*.txt` of `FLEET_SCOUT_STATE`, by modification time | `scout.owner` (`firstmate`) |
 | Captain call | unchanged: days waited, as before | - | - | - |
 
 - **Shape.** `records[].stalled` and `queue.top[].stalled` are `null` or
@@ -221,9 +223,9 @@ line), never a guess.
   duration, an exhausted job or a passed deadline). `stalled[]` is
   `[{owner, count, items: [{source, id, home_id, title, url, reason, since,
   threshold}]}]` in the config's `owners` order (a count of 0 is kept), oldest
-  `since` first. `source` is `backlog`, `issue`, `job` or `thread`; `reason` is
+  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip` or `scout`; `reason` is
   `no-status-line`, `no-update`, `attempts-exhausted`, `waiting`,
-  `past-deadline` or `no-turn`. The schema stays `fleet-status-page.v1`; these
+  `past-deadline`, `no-turn`, `no-post`, `buffer-short` or `no-output`. The schema stays `fleet-status-page.v1`; these
   are new optional keys, and a consumer that ignores them is unchanged. The
   dashboard's rendering is its own issue.
 - **GitHub issues** come from `gh issue list -R <owner/name> --state open`
@@ -240,6 +242,12 @@ line), never a guess.
   Today no relay or session store the publisher can reach holds those, so
   unset, `stalled_sources.a2a` is `{read: false, reason: "no relay or session
   records reachable"}`: the page says so rather than guessing.
+- **Clip and scout** thresholds are optional blocks of `fleet-stalled.json`; a
+  file without one leaves that source unread (`stalled_sources` says so). The clip
+  rows are read from the queue directory (see "Clip queue" below); the scout reads
+  `FLEET_SCOUT_STATE` (its state dir, `~/.local/state/lifekit-scout` by default for
+  the scout's own unit; the publisher does not guess it, so unset the source is
+  `read: false`), and a state dir with no candidates file yet is unread, not stalled.
 - **Failure** of one source empties only its own rows, sets its
   `stalled_sources` entry to `read: false` and adds an `errors[]` line.
 
@@ -291,6 +299,30 @@ collection is not touched.
   rest into `+N more channels not shown`), so the
   12-line cap holds. The week sheet itself is drafted by firstmate in the vault from
   `week_rows`.
+
+## Clip queue (`status_page.clip_queue`)
+
+One row per clip channel, read only from the clip queue's own outputs in the
+directory holding the stats feed (`FLEET_CLIP_STATS_FEED`'s parent; unset leaves
+the section `null`): `daily-check.json`, `egress.json`, `queue-run.json`, and
+each channel's `pending/` sources (their `added:` line, for the oldest age).
+Nothing is written to them and clip is not changed.
+
+- **Rows.** `channels[]` has `cosmos`, `mind`, `neural`, `yc` and `vice-footage`
+  always (then any other channel `daily-check.json` lists), each
+  `{channel, status, waiting, oldest_age_s, buffer_days, egress, stalled,
+  stalled_reason, unavailable[]}`: `waiting` is `buffer_waiting`, `oldest_age_s` the
+  age of the oldest waiting source (`null` when nothing waits), `buffer_days` as
+  clip counts it, `egress` the queue-wide state (`up`, `pc-down`, `relay-down`,
+  `bot-check`, `cookies-stale`), `stalled` the flag the stalled sources use
+  (`stalled_reason` `no-post` or `buffer-short`).
+- **Unavailable, never zero.** A missing or unreadable input, or a channel absent
+  from it, gives `null` for the numbers it feeds and names them in the row's
+  `unavailable[]`; a real zero stays `0`. `status` is `unavailable` when the channel
+  has no `daily-check.json` entry. `unavailable[]` at the section level lists the
+  unreadable input files, with one `errors[]` line.
+- **Section.** `{schema: "fleet-clip-queue.v1", channels[], egress: {state, since},
+  queue_run: {at, age_s}, unavailable[]}`.
 
 ## Delivered decisions (`status_page.delivered`)
 
