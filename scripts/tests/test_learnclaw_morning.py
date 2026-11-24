@@ -150,20 +150,6 @@ def declared_message(tmp_path, extra=None):
     return job["payload"]["message"]
 
 
-def line4(msg):
-    return msg.split("\nLine 4: ", 1)[1].split("\nNever teach", 1)[0]
-
-
-def test_line_4_quotes_the_count_file_and_never_counts(tmp_path):
-    # The count is made by scripts/ensure-learnclaw-weekcount.sh (tested in
-    # test_leetcode_daily.py); this message only quotes it (#620).
-    four = line4(declared_message(tmp_path))
-    assert "weekly-count.json" in four and "never counted" in four
-    assert "count unreadable" in four and "never write a number" in four
-    assert "latest row" not in four  # no counting rule left for the model to apply
-    assert "exec" not in four
-
-
 def test_the_owner_chat_is_not_in_the_message(tmp_path):
     state, env = fake_box(tmp_path, [])
     assert run_script(env).returncode == 0

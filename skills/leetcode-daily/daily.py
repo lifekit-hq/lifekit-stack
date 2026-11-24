@@ -222,16 +222,22 @@ def cmd_skip(args: argparse.Namespace) -> None:
     )
 
 
+def solved_in_week(record, day: dt.date) -> list[tuple[str, str]]:
+    """(date, slug) of each problem whose latest row is done and dated Monday to Sunday of `day`'s week."""
+    first, last = week_of(day)
+    return sorted(
+        (s["date"], slug)
+        for slug, s in read_state(record).items()
+        if s["status"] == "done" and s["date"] and first <= s["date"] <= last
+    )
+
+
 def cmd_week(args: argparse.Namespace) -> None:
     day = dt.date.fromisoformat(args.date) if args.date else today()
     first, last = week_of(day)
     record = load_record()
     titles = {p["slug"]: p["title"] for p in load_list()}
-    solved = sorted(
-        (s["date"], slug)
-        for slug, s in read_state(record).items()
-        if s["status"] == "done" and s["date"] and first <= s["date"] <= last
-    )
+    solved = solved_in_week(record, day)
     print(f"solved: {len(solved)} (Monday {first} to Sunday {last}, by hand)")
     for d, slug in solved:
         print(f"- {d} {titles.get(slug, slug)}")
@@ -242,13 +248,7 @@ WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 def week_line(day: dt.date, target: int) -> str:
     """`<Mon..Sun> <solved>/<target>`: the count `week` prints, in the morning line's form."""
-    first, last = week_of(day)
-    solved = sum(
-        1
-        for s in read_state(load_record()).values()
-        if s["status"] == "done" and s["date"] and first <= s["date"] <= last
-    )
-    return f"{WEEKDAYS[day.weekday()]} {solved}/{target}"
+    return f"{WEEKDAYS[day.weekday()]} {len(solved_in_week(load_record(), day))}/{target}"
 
 
 def cmd_weekfile(args: argparse.Namespace) -> None:

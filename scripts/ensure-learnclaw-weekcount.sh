@@ -117,21 +117,6 @@ for job in json.load(sys.stdin)["jobs"]:
 
 job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
 
-# A row that is still the old agent turn cannot fail itself, so it is removed
-# and declared again as a command payload (a run history of the old turns goes
-# with it; the record in the vault is untouched).
-if [ -n "$job_id" ]; then
-  kind="$(live_jobs | python3 -c '
-import json, sys
-job = next(j for j in json.load(sys.stdin)["jobs"] if j.get("id") == sys.argv[1])
-print((job.get("payload") or {}).get("kind", ""))' "$job_id")" || exit 1
-  if [ "$kind" != command ]; then
-    docker exec "$GATEWAY" openclaw cron rm "$job_id" >/dev/null
-    echo "removed the '$JOB_NAME' agent-turn row ($job_id); declaring it as a command"
-    job_id=""
-  fi
-fi
-
 if [ -z "$job_id" ]; then
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
