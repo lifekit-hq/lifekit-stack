@@ -248,7 +248,9 @@ WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 def week_line(day: dt.date, target: int) -> str:
     """`<Mon..Sun> <solved>/<target>`: the count `week` prints, in the morning line's form."""
-    return f"{WEEKDAYS[day.weekday()]} {len(solved_in_week(load_record(), day))}/{target}"
+    return (
+        f"{WEEKDAYS[day.weekday()]} {len(solved_in_week(load_record(), day))}/{target}"
+    )
 
 
 def cmd_weekfile(args: argparse.Namespace) -> None:

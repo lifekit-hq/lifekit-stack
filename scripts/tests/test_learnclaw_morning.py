@@ -7,12 +7,9 @@ is exercised against what it actually wrote.
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import os
-import re
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
