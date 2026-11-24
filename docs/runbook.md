@@ -2057,7 +2057,9 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
     section order and the length cap (40 lines, 3500 characters).
   - The core is the four tests every kind gets: evidence at a primary source the judge opened
     itself, cost stated and proportionate, a trace to a ranked goal, and no overengineering.
-    `accept` needs all four passed.
+    `accept` needs all four passed. Since v8 they run on each adoptable part (`take` or `skip`
+    under "Useful for the goals"), and the verdict is the best part worth taking; a drop needs
+    that no part is.
   - The mode is `claim-check` (each factual claim checked against sources) for a reel, a file
     or `--check`, and `standard` for a YouTube video.
   - `report` refuses a report off the rubric with exit 3 and the reasons, and the job stays
@@ -2196,7 +2198,7 @@ Then:
 - **Verify:**
   - Send Kit a public YouTube link. It answers `video queued` at once, and with the PC on the
     three-line answer arrives within a few minutes. Then `scripts/video-eval.sh index` shows
-    its row, and its report has a `Rubric: video-eval v7 (standard)` line.
+    its row, and its report has a `Rubric: video-eval v8 (standard)` line.
   - `scripts/video-eval.sh enqueue <the same link>` answers `already judged`.
   - A made-up reel link ends as an `unavailable` line, which proves the yt-dlp and the route
     to Instagram.
