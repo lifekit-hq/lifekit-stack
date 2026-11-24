@@ -438,12 +438,18 @@ publish_home() {
         // ([open_sessions[] | select(under(.; $id))] | newest);
     # An http(s) address the record itself carries: its question, reason,
     # summary, status or ask question. A Lavish session address
-    # (/session/<id>) wins over any other link; trailing punctuation is not
-    # part of the address.
+    # (/session/<id> on a host the Lavish sessions use, any host when none is
+    # known) wins over any other link; trailing punctuation is not part of the
+    # address.
+    def lavish_hosts:
+      [($lav.sessions // {}) | to_entries[] | .value.url | strings
+       | capture("^https?://(?<h>[^/]+)/") | .h];
     def text_url:
+      lavish_hosts as $hosts |
       [.question, .reason, .summary, .status, (.ask | objects | .question)]
       | [.[] | strings | scan("https?://[^\\s<>\"\u0027)\\]]+") | sub("[.,;:!?]+$"; "") | select(length <= 500)]
-      | ([.[] | select(test("^https?://[^/]+/session/[A-Za-z0-9._-]+(?:[/?#]|$)"))] + .) | first // null;
+      | ([.[] | select(test("^https?://[^/]+/session/[A-Za-z0-9._-]+(?:[/?#]|$)"))
+          | select(($hosts | length) == 0 or (capture("^https?://(?<h>[^/]+)/") | .h | IN($hosts[])))] + .) | first // null;
     def board_addr: ((.id | strings | board(.)) // null) // text_url;
     (if (.counts | type) == "object" then .counts = published_counts($folded[0]) else . end)
     | .decisions_open |= map(select(.id as $i | $folded[0] | index($i) | not) | . + {board_url: board_addr}

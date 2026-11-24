@@ -246,7 +246,8 @@ def test_decision_gets_the_newest_open_board_of_its_own_data_dir(fleet):
     }
 
 
-LAVISH_ADDR = "http://lifekit-vps.tail1cb676.ts.net:4387/session/12b5d64c38b4ae60"
+LAVISH_HOST = "http://lifekit-vps.tail1cb676.ts.net:4387"
+LAVISH_ADDR = f"{LAVISH_HOST}/session/12b5d64c38b4ae60"
 
 
 def test_board_address_in_the_full_question_fills_board_url_and_ask_link(fleet):
@@ -296,15 +297,39 @@ def test_open_session_beats_a_text_address_and_a_session_url_beats_another_link(
                 decision("other-link", reason="read https://x.test/page, please"),
             ]
         ),
-        lavish=[session(f"{data}/on-disk/plan.html", "http://board/disk")],
+        lavish=[session(f"{data}/on-disk/plan.html", f"{LAVISH_HOST}/session/disk")],
     )
     assert fleet.run().returncode == 0
     urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_open"]}
     assert urls == {
-        "on-disk": "http://board/disk",
+        "on-disk": f"{LAVISH_HOST}/session/disk",
         "text-only": LAVISH_ADDR,
         "other-link": "https://x.test/page",
     }
+
+
+def test_another_services_session_link_does_not_outrank_the_lavish_host(fleet):
+    data = str(fleet.tmp / "data")
+    fleet.write(
+        summary(
+            decisions_open=[
+                decision(
+                    "glossary-board-review",
+                    question=f"see https://other.example/session/abc then {LAVISH_ADDR}",
+                ),
+            ]
+        ),
+        lavish=[
+            session(
+                f"{data}/elsewhere/plan.html",
+                f"{LAVISH_HOST}/session/gone",
+                status="ended",
+            )
+        ],
+    )
+    assert fleet.run().returncode == 0
+    (item,) = fleet.published()["decisions_open"]
+    assert item["board_url"] == LAVISH_ADDR
 
 
 def test_task_rows_get_open_url_from_their_board_or_their_text(fleet):
@@ -318,14 +343,14 @@ def test_task_rows_get_open_url_from_their_board_or_their_text(fleet):
             ],
             queued=[{"id": "q", "reason": f"waits on {LAVISH_ADDR}"}, {"id": "z"}],
         ),
-        lavish=[session(f"{data}/c/plan.html", "http://board/c")],
+        lavish=[session(f"{data}/c/plan.html", f"{LAVISH_HOST}/session/c")],
     )
     assert fleet.run().returncode == 0
     published = fleet.published()
     assert {t["id"]: t.get("open_url") for t in published["active_children"]} == {
         "a": LAVISH_ADDR,
         "b": None,
-        "c": "http://board/c",
+        "c": f"{LAVISH_HOST}/session/c",
     }
     assert {t["id"]: t.get("open_url") for t in published["queued"]} == {
         "q": LAVISH_ADDR,
