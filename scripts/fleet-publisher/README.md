@@ -135,6 +135,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`): `{read, reason}`; `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | The side-hustle lines and week-sheet rows (below): `{channels[], lines[], week_rows[], credential, brief_day, week_of, feed_read}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
+| `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
 | `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
 | `follow_ups[]` | The owner pages still to be written |
 | `errors[]` | One line per source that could not be read this run |
