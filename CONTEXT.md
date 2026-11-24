@@ -99,4 +99,3 @@ A free worker lane sitting beside ready work in a supervisor's home; `scripts/id
 - The supervising agent is "second mate" (`docs/runbook.md`, "Asking another agent"), "secondmate" (skill `skills/secondmate-relay`, `kit-relay` script) and "firstmate"/"captain inbox" (`docs/runbook.md`); the relation between them is not defined in this repo.
 - The knowledge store is `~/.life/` / "knowledge layer" in `docs/architecture.md` but "the vault" (`~/memory/`) in `docs/runbook.md` and AGENTS.md.
 - "Tier 2" appears undefined in README's `ops-door` row; it names the escalation call the `ops-door-escalate` timer files through `fleet-policy decide`.
-
