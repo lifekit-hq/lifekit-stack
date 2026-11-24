@@ -21,5 +21,6 @@ Only on the owner's words in this conversation. Never write the solution, not a 
 
 ## Counts and position
 - `daily.py week [--date YYYY-MM-DD]`: problems solved by hand, Monday to Sunday. The first line is `solved: <n> (...)`. Kit's Sunday check-in reads this line; never estimate it.
+- `daily.py weekfile --out FILE --target N`: the cron's job, not yours. It writes the week's count line for learnclaw's morning message (`Mon 0/20`).
 - `daily.py status`: done, skipped and open counts and the next problem.
 - `daily.py check`: validate the list (run after editing `problems.json`).

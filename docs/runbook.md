@@ -2885,12 +2885,14 @@ Europe/Dublin, Monday to Saturday, in learnclaw's own Telegram chat (account `re
 
 - **What is sent.** At most four lines: (1) today's one LearnHarness session to open, or the one goal on the
   learning page, and the gap it closes; (2) one practical output; (3) `mirror newest session <date>`, so a
-  stale mirror shows; (4) the weekly count of problems solved by hand, `<weekday> <n>/<target>` (`Mon 0/20`):
-  the `leetcode: <slug>` topics on `domains/learning.md` whose latest row is `done` and dated Monday to today
-  (Monday to Sunday week, so it resets on Monday). If the table cannot be read the line says `count unreadable`,
-  never 0. The target is `LEARNCLAW_WEEKLY_TARGET` (default 20, week of 2026-11-23), read once by the ensure
-  script; re-run it after changing it. Sunday is excluded by the schedule alone: the script refuses a cron that can fire on Sunday.
-- **Read-only.** The turn reads the LearnHarness mirror and the vault page `domains/learning.md`, and nothing
+  stale mirror shows; (4) the weekly count of problems solved by hand, `<weekday> <n>/<target>` (`Mon 0/20`),
+  quoted by the model from `weekly-count.json` and never counted by it (#620): `learnclaw-weekcount`, a command job
+  at 07:10 (below), runs `daily.py weekfile`, the tested counter behind `daily.py week` (latest row per
+  `leetcode: <slug>` topic, status `done`, dated Monday to Sunday, so it resets on Monday). The turn writes the
+  file's `line` only when its `for_date` is today; otherwise, or if the file is unreadable, the line says
+  `<weekday> count unreadable`, never 0. The target is `LEARNCLAW_WEEKLY_TARGET` (default 20, week of 2026-11-23),
+  read by `scripts/ensure-learnclaw-weekcount.sh`; re-run that script after changing it. Sunday is excluded by the schedule alone: the script refuses a cron that can fire on Sunday.
+- **Read-only.** The turn reads the LearnHarness mirror, the vault page `domains/learning.md` and `weekly-count.json`, and nothing
   else. Its `read` tool reaches the agent's workspace and the vault, not `~/.life-state` (the first test run,
   #611, said "mirror unreadable" for that reason), so it reads a copy inside the workspace,
   `/home/node/.openclaw/agents/learnclaw/workspace/learnharness-mirror`. `learnharness-sync.service` refreshes
@@ -2906,6 +2908,12 @@ Europe/Dublin, Monday to Saturday, in learnclaw's own Telegram chat (account `re
   live row and exits 1 (naming the field) unless the agent, schedule and its timezone, message, tool list, model, isolated
   session and delivery (announce, Telegram, `reading`, owner chat) are the declared ones.
   Tests: `scripts/tests/test_learnclaw_morning.py`.
+- **The count file.** `scripts/ensure-learnclaw-weekcount.sh` declares `learnclaw-weekcount`: agent `learnclaw`,
+  `10 7 * * 1,2,3,4,5,6` Europe/Dublin, a command payload (no model turn) that runs
+  `daily.py weekfile --out <workspace>/weekly-count.json --target <target>`, replacing the file atomically with
+  `{"for_date", "line"}`. It prints `NO_REPLY`, so nothing is sent. A record that cannot be read writes
+  `<weekday> count unreadable` and exits 1, so the failure alert fires. The script re-reads the live row and exits 1
+  unless schedule, agent, argv and delivery are the declared ones. Tests: `scripts/tests/test_leetcode_daily.py`.
 - **Cost.** One short model turn a day; the turn reads a page and a few session files.
 
 **Apply** (once, after the PR merges and the deploy has run; the `reading` account must already be enabled and
@@ -2916,6 +2924,7 @@ then pull and apply:
 LH_SYNC_HOST=<PC tailnet name> LH_SYNC_USER=<PC account> \
   /srv/lifekit-stack/scripts/learnharness-sync/install-learnharness-sync.sh   # as the admin account
 sudo systemctl start learnharness-sync.service                                 # fills the workspace copy now
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-learnclaw-weekcount.sh
 sudo -u lifekit /srv/lifekit-stack/scripts/ensure-learnclaw-morning.sh
 ```
 
