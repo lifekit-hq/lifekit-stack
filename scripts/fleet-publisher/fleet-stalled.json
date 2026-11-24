@@ -8,5 +8,7 @@
   },
   "backlog": {"hours": 48},
   "jobq": {"waiting_hours": 24},
-  "a2a": {"idle_hours": 24}
+  "a2a": {"idle_hours": 24},
+  "clip": {"buffer_floor_days": 1, "slot_window_hours": 30, "owner": "firstmate"},
+  "scout": {"idle_hours": 96, "owner": "firstmate"}
 }

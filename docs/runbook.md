@@ -3552,6 +3552,15 @@ mechanical age check over every queue; the thresholds are the one
 changing a number is a PR to that file and a re-install, never a code change.
 The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
 publisher can reach exists; the page says so.
+Clip and scout are two more stalled sources (`clip`, `scout` blocks of the same file:
+`buffer_floor_days`, `slot_window_hours`, `idle_hours`), and
+`status_page.clip_queue` publishes one row per clip channel (cosmos, mind, neural, yc,
+vice-footage: waiting, oldest age, buffer days, egress, stalled; README "Clip queue"). Both
+are read by the publisher's existing run, read-only, from the directory of
+`FLEET_CLIP_STATS_FEED` (the clip queue's `daily-check.json`, `egress.json`,
+`queue-run.json`; a missing input shows as unavailable, never zero) and, for the scout,
+`FLEET_SCOUT_STATE` (its state dir). Neither variable is set by the unit: point them with
+the same systemd drop-in as the clip stats feed; unset, the page says `read: false`.
 
 The same run writes `/var/lib/lifekit-fleet/taken-for-you.json`, the dashboard's
 "Taken for you" feed: the last 200 actions the fleet took under a standing

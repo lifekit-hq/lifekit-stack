@@ -4120,3 +4120,173 @@ def test_no_feed_configured_or_an_empty_feed(homes):
     assert side["lines"] == [
         "Side hustles: no data (no channel rows in the stats feed)"
     ]
+
+
+# --- clip queue rows and the clip and scout stalled sources -----------------------
+
+
+def clip_iso(age):
+    return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(NOW - age))
+
+
+def clip_channel(**over):
+    base = {
+        "buffer_days": 3.0,
+        "buffer_waiting": 3,
+        "checked_at": clip_iso(600),
+        "last_post": clip_iso(6 * 3600),
+        "slot": clip_iso(8 * 3600),
+        "status": "ok",
+    }
+    return {**base, **over}
+
+
+def clip_world(homes, channels, *, egress="up", files=True):
+    """A clip queue directory beside the stats feed; returns the run's env."""
+    queue = homes.tmp / "clipq"
+    queue.mkdir(exist_ok=True)
+    if files:
+        (queue / "daily-check.json").write_text(json.dumps({"channels": channels}))
+        (queue / "egress.json").write_text(json.dumps({"state": egress}))
+        (queue / "queue-run.json").write_text(
+            json.dumps({"at": clip_iso(900), "ran": [], "idle": list(channels)})
+        )
+    for name in channels:
+        pending = queue / name / "pending"
+        pending.mkdir(parents=True, exist_ok=True)
+    return {
+        "FLEET_NOW": str(NOW),
+        "FLEET_CLIP_STATS_FEED": str(queue / "stats.jsonl"),
+    }
+
+
+def clip_rows(homes, env):
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    return page, {r["channel"]: r for r in page["clip_queue"]["channels"]}
+
+
+def test_a_healthy_clip_channel_is_published_not_stalled(homes):
+    env = clip_world(homes, {"cosmos": clip_channel()})
+    pend = homes.tmp / "clipq/cosmos/pending"
+    (pend / "a").write_text(f"https://x/a\nadded: {clip_iso(7200)}\nby: seed\n")
+    (pend / "b").write_text(f"https://x/b\nadded: {clip_iso(3600)}\nby: seed\n")
+    page, rows = clip_rows(homes, env)
+    assert rows["cosmos"] == {
+        "channel": "cosmos",
+        "status": "ok",
+        "waiting": 3,
+        "oldest_age_s": 7200,
+        "buffer_days": 3.0,
+        "egress": "up",
+        "stalled": False,
+        "stalled_reason": None,
+        "unavailable": [],
+    }
+    assert [
+        i for g in page["stalled"] for i in g["items"] if i["source"] == "clip"
+    ] == []
+    assert page["stalled_sources"]["clip"] == {"read": True, "reason": None}
+
+
+def test_every_live_channel_has_a_row_and_the_missing_ones_say_unavailable(homes):
+    env = clip_world(homes, {"cosmos": clip_channel()})
+    _, rows = clip_rows(homes, env)
+    assert list(rows) == ["cosmos", "mind", "neural", "yc", "vice-footage"]
+    gone = rows["vice-footage"]
+    assert gone["status"] == "unavailable"
+    assert gone["waiting"] is None and gone["buffer_days"] is None
+    assert gone["stalled"] is None and "waiting" in gone["unavailable"]
+
+
+def test_missing_clip_inputs_are_unavailable_never_zero(homes):
+    env = clip_world(homes, {"cosmos": clip_channel()}, files=False)
+    page, rows = clip_rows(homes, env)
+    for row in rows.values():
+        assert row["waiting"] is None and row["buffer_days"] is None
+        assert row["egress"] is None and row["stalled"] is None
+    assert page["clip_queue"]["unavailable"] == [
+        "daily-check.json",
+        "egress.json",
+        "queue-run.json",
+    ]
+    assert page["stalled_sources"]["clip"]["read"] is False
+    assert any("clip queue input unreadable" in e for e in page["errors"])
+
+
+def test_an_empty_buffer_is_a_stalled_channel_with_a_real_zero(homes):
+    chans = {"neural": clip_channel(buffer_days=0.0, buffer_waiting=0)}
+    env = clip_world(homes, chans)
+    page, rows = clip_rows(homes, env)
+    assert rows["neural"]["waiting"] == 0 and rows["neural"]["buffer_days"] == 0.0
+    assert rows["neural"]["oldest_age_s"] is None  # nothing waits: no age
+    assert rows["neural"]["stalled"] is True
+    assert rows["neural"]["stalled_reason"] == "buffer-short"
+    items = {i["id"]: i for g in page["stalled"] for i in g["items"]}
+    assert items["neural"]["source"] == "clip"
+    assert items["neural"]["reason"] == "buffer-short"
+
+
+def test_no_post_inside_the_slot_window_is_stalled_and_a_never_posted_one_too(homes):
+    chans = {
+        "mind": clip_channel(last_post=clip_iso(40 * 3600)),
+        "vice-footage": clip_channel(last_post=None, buffer_days=0.0),
+    }
+    page, rows = clip_rows(homes, clip_world(homes, chans))
+    assert rows["mind"]["stalled_reason"] == "no-post"
+    assert rows["vice-footage"]["stalled_reason"] == "no-post"
+    owners = {g["owner"]: [i["id"] for i in g["items"]] for g in page["stalled"]}
+    assert sorted(owners["firstmate"]) == ["mind", "vice-footage"]
+
+
+def test_a_down_egress_is_published_on_every_row(homes):
+    env = clip_world(homes, {"yc": clip_channel()}, egress="pc-down")
+    _, rows = clip_rows(homes, env)
+    assert {r["egress"] for r in rows.values()} == {"pc-down"}
+    assert rows["yc"]["stalled"] is False  # a down egress alone is not a stall
+
+
+def test_the_clip_queue_is_read_only(homes):
+    env = clip_world(homes, {"cosmos": clip_channel()})
+    queue = homes.tmp / "clipq"
+    (queue / "cosmos/pending/a").write_text(f"u\nadded: {clip_iso(60)}\n")
+
+    def snapshot():
+        return {
+            p: (p.read_bytes() if p.is_file() else None, p.stat().st_mtime_ns)
+            for p in queue.rglob("*")
+        }
+
+    before = snapshot()
+    clip_rows(homes, env)
+    assert snapshot() == before
+
+
+def test_the_scout_is_stalled_when_its_output_is_older_than_the_interval(homes):
+    state = homes.tmp / "scout"
+    (state / "candidates").mkdir(parents=True)
+    out = state / "candidates/2027-01-01.txt"
+    out.write_text("ideas\tx\n")
+    env = {"FLEET_NOW": str(NOW), "FLEET_SCOUT_STATE": str(state)}
+    os.utime(out, (NOW - 5 * DAY, NOW - 5 * DAY))
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    item = next(
+        i for g in page["stalled"] for i in g["items"] if i["source"] == "scout"
+    )
+    assert item["reason"] == "no-output" and item["threshold"] == 96 * 3600
+    os.utime(out, (NOW - DAY, NOW - DAY))
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert not [
+        i for g in page["stalled"] for i in g["items"] if i["source"] == "scout"
+    ]
+    assert page["stalled_sources"]["scout"] == {"read": True, "reason": None}
+
+
+def test_an_unset_scout_or_clip_feed_is_said_not_guessed(homes):
+    assert homes.run(side_home(homes), FLEET_NOW=str(NOW)).returncode == 0
+    page = status(homes)
+    assert page["clip_queue"] is None
+    assert page["stalled_sources"]["clip"]["read"] is False
+    assert page["stalled_sources"]["scout"]["read"] is False
