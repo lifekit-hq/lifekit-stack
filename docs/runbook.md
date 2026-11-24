@@ -2057,7 +2057,9 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
     section order and the length cap (40 lines, 3500 characters).
   - The core is the four tests every kind gets: evidence at a primary source the judge opened
     itself, cost stated and proportionate, a trace to a ranked goal, and no overengineering.
-    `accept` needs all four passed.
+    `accept` needs all four passed. Since v8 they run on each adoptable part (`take` or `skip`
+    under "Useful for the goals"), and the verdict is the best part worth taking; a drop needs
+    that no part is.
   - The mode is `claim-check` (each factual claim checked against sources) for a reel, a file
     or `--check`, and `standard` for a YouTube video.
   - `report` refuses a report off the rubric with exit 3 and the reasons, and the job stays
