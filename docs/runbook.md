@@ -3545,7 +3545,11 @@ environment gains `FLEET_PLAN_MAP` only when the installer is given one
 (`FLEET_PLAN_MAP="<repo>=<project> ..."` beside `FM_HOMES`; README "One row per
 project"): the alias list that folds a repo spelling naming no project, such as
 the vault's, into its project's row. It is host config, so a re-install without
-it drops the line.
+it drops the line. `FLEET_CLIP_STATS_FEED` works the same way and is what
+turns the clip queue rows on: on the VPS pass
+`FLEET_CLIP_STATS_FEED=/home/denys/clip-data/queue/stats.jsonl` beside
+`FM_HOMES` (an absolute path of `[A-Za-z0-9._/-]`; only its parent directory is
+read); unset, the unit carries none and those rows stay `null`.
 Stalled items (`status_page.stalled`, README "Stalled items") are marked by one
 mechanical age check over every queue; the thresholds are the one
 `scripts/fleet-publisher/fleet-stalled.json` (installed beside the helper), so
@@ -3607,7 +3611,7 @@ cat /var/lib/node_exporter/textfile/fleet.prom
 ```
 
 `bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
-set and skips it otherwise (it passes no `FLEET_PLAN_MAP`, so re-run the
+set and skips it otherwise (it passes no `FLEET_PLAN_MAP` or `FLEET_CLIP_STATS_FEED`, so re-run the
 installer by hand to restore one). Re-running the installer is how a home is
 added or removed: it reinstalls the script and rewrites the unit's `FM_HOMES`.
 The `lifekit-*.timer` glob in the unit gauge picks the timer up with no further

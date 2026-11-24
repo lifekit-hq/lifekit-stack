@@ -16,6 +16,11 @@
 # in code) into its project's status-page row; unset or empty, the unit carries
 # no FLEET_PLAN_MAP.
 #
+# FLEET_CLIP_STATS_FEED (optional) is the absolute path of clip's stats.jsonl
+# (only its parent directory is read); it switches on the publisher's clip queue
+# rows. On the VPS: /home/denys/clip-data/queue/stats.jsonl. Unset or empty, the
+# unit carries no FLEET_CLIP_STATS_FEED and those rows stay null.
+#
 # Tests set INSTALL_ROOT (a prefix for every installed path), SYSTEMCTL and SU; an
 # INSTALL_ROOT run needs no root and does not chown.
 
@@ -49,6 +54,15 @@ if [[ -n "$FLEET_PLAN_MAP" ]]; then
     exit 1
   }
   plan_map_env=" \"FLEET_PLAN_MAP=${FLEET_PLAN_MAP}\""
+fi
+FLEET_CLIP_STATS_FEED="${FLEET_CLIP_STATS_FEED:-}"
+clip_feed_env=""
+if [[ -n "$FLEET_CLIP_STATS_FEED" ]]; then
+  [[ "$FLEET_CLIP_STATS_FEED" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+    echo "FLEET_CLIP_STATS_FEED must be an absolute path of [A-Za-z0-9._/-]" >&2
+    exit 1
+  }
+  clip_feed_env=" \"FLEET_CLIP_STATS_FEED=${FLEET_CLIP_STATS_FEED}\""
 fi
 owner=(-o "$ADMIN_USER" -g "$ADMIN_USER")
 if [[ -n "$INSTALL_ROOT" ]]; then
@@ -92,7 +106,7 @@ install -m 755 "$HERE/screen_changes.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fl
 # The activity journal helper, found the same way.
 install -m 755 "$HERE/activity_journal.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-journal.py"
 sed -e "s|__ADMIN_USER__|${ADMIN_USER}|" -e "s|__FM_HOMES__|${FM_HOMES}|" -e "s|__TASKS_AXI__|${TASKS_AXI}|" \
-  -e "s|__FLEET_PLAN_MAP_ENV__|${plan_map_env}|" \
+  -e "s|__FLEET_PLAN_MAP_ENV__|${plan_map_env}|" -e "s|__FLEET_CLIP_STATS_FEED_ENV__|${clip_feed_env}|" \
   "$HERE/lifekit-fleet-publisher.service" > "$UNIT_DIR/lifekit-fleet-publisher.service"
 install -m 644 "$HERE/lifekit-fleet-publisher.timer" "$UNIT_DIR/lifekit-fleet-publisher.timer"
 "$SYSTEMCTL" daemon-reload

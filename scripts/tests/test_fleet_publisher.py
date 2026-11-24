@@ -1620,6 +1620,40 @@ def test_installer_refuses_a_plan_map_it_cannot_render(tmp_path, plan_map):
     assert not (tmp_path / "root/etc/systemd").exists()
 
 
+def test_installer_carries_the_clip_stats_feed_into_the_unit(tmp_path):
+    feed = "/home/denys/clip-data/queue/stats.jsonl"
+    result = run_installer(
+        tmp_path, FM_HOMES="/srv/fleet-home", FLEET_CLIP_STATS_FEED=feed
+    )
+    assert result.returncode == 0, result.stderr
+    assert installed_environment(tmp_path) == (
+        '"FM_HOMES=/srv/fleet-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
+        f' "FLEET_CLIP_STATS_FEED={feed}"'
+    )
+
+
+@pytest.mark.parametrize("feed", [None, ""])
+def test_installer_leaves_the_clip_stats_feed_out_of_the_unit_when_unset(
+    tmp_path, feed
+):
+    env = {} if feed is None else {"FLEET_CLIP_STATS_FEED": feed}
+    result = run_installer(tmp_path, FM_HOMES="/srv/fleet-home", **env)
+    assert result.returncode == 0, result.stderr
+    assert "FLEET_CLIP_STATS_FEED" not in installed_environment(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "feed",
+    ["relative/stats.jsonl", "/srv/a b/stats.jsonl", '/srv/a"b', "/srv/a|b", "/srv/$x"],
+)
+def test_installer_refuses_a_clip_stats_feed_it_cannot_render(tmp_path, feed):
+    result = run_installer(
+        tmp_path, FM_HOMES="/srv/fleet-home", FLEET_CLIP_STATS_FEED=feed
+    )
+    assert result.returncode == 1
+    assert not (tmp_path / "root/etc/systemd").exists()
+
+
 @pytest.mark.parametrize("home", ["relative/home", '/srv/a"b', "/srv/a|b"])
 def test_installer_refuses_a_home_it_cannot_render(tmp_path, home):
     result = run_installer(tmp_path, FM_HOMES=f"/srv/ok {home}")
