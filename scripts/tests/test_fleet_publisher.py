@@ -246,6 +246,93 @@ def test_decision_gets_the_newest_open_board_of_its_own_data_dir(fleet):
     }
 
 
+LAVISH_ADDR = "http://lifekit-vps.tail1cb676.ts.net:4387/session/12b5d64c38b4ae60"
+
+
+def test_board_address_in_the_full_question_fills_board_url_and_ask_link(fleet):
+    # The glossary call's shape: the address only in the full question; the
+    # short title and the 150-character reason do not carry it.
+    question = (
+        "Which glossary terms stay? Review the board at "
+        f"https://example.com/docs and then {LAVISH_ADDR}."
+    )
+    fleet.write(
+        summary(
+            decisions_open=[
+                decision(
+                    "glossary-board-review",
+                    title="Glossary board review",
+                    reason="r" * 150,
+                    question=question,
+                    ask={
+                        "question": "Keep these terms?",
+                        "options": [],
+                        "free_text_allowed": True,
+                        "link": None,
+                    },
+                ),
+                decision("plain", reason="no address here"),
+            ]
+        )
+    )
+    assert fleet.run().returncode == 0
+    items = {d["id"]: d for d in fleet.published()["decisions_open"]}
+    glossary = items["glossary-board-review"]
+    assert glossary["board_url"] == LAVISH_ADDR
+    assert glossary["ask"]["link"] == LAVISH_ADDR
+    assert items["plain"]["board_url"] is None
+    assert items["plain"].get("ask") is None
+
+
+def test_open_session_beats_a_text_address_and_a_session_url_beats_another_link(fleet):
+    data = str(fleet.tmp / "data")
+    fleet.write(
+        summary(
+            decisions_open=[
+                decision("on-disk", question=f"see {LAVISH_ADDR}"),
+                decision(
+                    "text-only", summary=f"docs https://x.test/a then {LAVISH_ADDR})"
+                ),
+                decision("other-link", reason="read https://x.test/page, please"),
+            ]
+        ),
+        lavish=[session(f"{data}/on-disk/plan.html", "http://board/disk")],
+    )
+    assert fleet.run().returncode == 0
+    urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_open"]}
+    assert urls == {
+        "on-disk": "http://board/disk",
+        "text-only": LAVISH_ADDR,
+        "other-link": "https://x.test/page",
+    }
+
+
+def test_task_rows_get_open_url_from_their_board_or_their_text(fleet):
+    data = str(fleet.tmp / "data")
+    fleet.write(
+        summary(
+            active_children=[
+                {"id": "a", "state": "working", "status": f"board up at {LAVISH_ADDR}"},
+                {"id": "b", "state": "working"},
+                {"id": "c", "state": "working"},
+            ],
+            queued=[{"id": "q", "reason": f"waits on {LAVISH_ADDR}"}, {"id": "z"}],
+        ),
+        lavish=[session(f"{data}/c/plan.html", "http://board/c")],
+    )
+    assert fleet.run().returncode == 0
+    published = fleet.published()
+    assert {t["id"]: t.get("open_url") for t in published["active_children"]} == {
+        "a": LAVISH_ADDR,
+        "b": None,
+        "c": "http://board/c",
+    }
+    assert {t["id"]: t.get("open_url") for t in published["queued"]} == {
+        "q": LAVISH_ADDR,
+        "z": None,
+    }
+
+
 @pytest.mark.parametrize("lavish", [None, "not json"])
 def test_missing_or_broken_lavish_state_still_publishes(fleet, lavish):
     fleet.write(summary(decisions_open=[decision("x")]))
