@@ -1,6 +1,6 @@
 ---
 rubric: video-eval
-version: 7
+version: 8
 kinds: video, idea, link, note, repo
 categories: persona, channels, finance, dev-tooling, home, other
 verdicts: adopt, accept, park, drop
@@ -39,10 +39,21 @@ The block above is the machine-read part of this rubric: `video.py report` check
 against it, and stamps its `version` on every report. Change a list there, the four tests or
 the template below only together with a version bump.
 
+## Judge the parts, not only the whole (v8)
+
+Most items carry more than one adoptable thing: a tool, and the practices or patterns it
+shows. Before the tests, list each one under "Useful for the goals" as `take` or `skip`,
+with the project or goal it feeds and the reason, one line each. Then run the four tests on
+what you would take, not on the item as a package. A heavy plugin, a sales pitch at the end
+or a stack unlike ours never sinks a practice that stands on its own: that practice is judged
+by itself. The verdict is the verdict of the best part worth taking; `drop` only when no part
+is worth taking. "Nothing to adopt as a tool" is never a drop reason while a practice is
+worth taking.
+
 ## The four tests (every kind)
 
-Every verdict rests on the same four tests. Each one passes or fails; `adopt` and `accept`
-need all four.
+Every verdict rests on the same four tests, applied to the parts you would take. Each one
+passes or fails; `adopt` and `accept` need all four.
 
 1. **evidence** - what the verdict hinges on holds at a primary source you opened yourself in
    this pass (the vendor's docs, the paper, the repo, the official figures), not the item's
@@ -51,17 +62,24 @@ need all four.
    money, hours, ongoing run cost or quota) and is proportionate to what it gives.
 3. **goal-trace** - what we would adopt traces to one of the owner's ranked standing goals,
    named. The goals
-   come first to last in the order the run output lists them; the first ones outrank the rest.
+   come first to last in the order the run output lists them; the order sets priority, not
+   eligibility: a part that serves a lower goal passes, and its priority shows in the Next
+   step. A practice that improves a project the owner is building now (for example devclaw,
+   the development harness, under goal 3) traces to that goal. Fail only when the part serves
+   no listed goal at all.
 4. **no-overengineering** - adopting it is the smallest change to how we already work that
    does the job: nothing the owner already has and uses covers it, it is one job for one
    tool, and it adds no new control plane. Adopting a finished tool or practice as it is
-   passes this test; building a copy of it fails it.
+   passes this test; building a copy of it fails it. Adding a practice to a flow we already
+   run (a rule in a prompt, a step in a gate) is the small change this test wants, not a
+   duplicate: "already-have" needs the place where we already do that exact practice, named.
 
-A failed test usually decides the verdict: evidence fails → `drop` (`no-evidence`) or `park`
+A failed test on every part worth considering usually decides the verdict: evidence fails → `drop` (`no-evidence`) or `park`
 until it can be checked; cost fails → `drop` or `park`; goal-trace fails → `drop` (`off-goal`);
 no-overengineering fails → `drop` (`already-have`, or `other` naming the simpler way).
 Nothing to adopt (a generic pitch, a funnel, an opinion with no tool, practice or pattern in
-it) → `drop`: `paid-funnel` when its point is a sale, else `other`, and the sentence says
+it) → `drop`; a workshop or course pitch next to real practices is a line under Claims, not
+a drop: `paid-funnel` when its point is a sale, else `other`, and the sentence says
 there is nothing to adopt.
 
 ## Write the report
@@ -85,7 +103,7 @@ Note: <text note only: the note's text as the owner sent it, on one line>
 <the claims that carry its message, one line each, and how they are backed (see the mode)>
 
 ## Useful for the goals
-<what in it we could adopt and which ranked goal that serves, concretely; "nothing to adopt" is a valid answer>
+<each adoptable part on its own line: take | skip - the part - the project or goal it feeds, or why not; "nothing to adopt" is a valid answer>
 
 ## Cost of adoption
 <what adopting it takes: steps, prerequisites, who does it, money, hours, ongoing run cost, risks - one line each, numbers where you have them>
