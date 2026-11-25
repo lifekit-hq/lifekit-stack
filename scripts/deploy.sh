@@ -295,7 +295,8 @@ reminder_bot_compose config --format json \
 wger_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 # Pinned images, persistent database and media, loopback-only ports; and, once
-# wger is meant to be up (its signing key is rendered), its secrets all set.
+# wger is meant to be up (its signing key is rendered), its secrets all set
+# (the JWT pair and the PowerSync storage password among them).
 WGER_CHECK_ARGS=()
 if grep -qE '^[[:space:]]*WGER_SECRET_KEY=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}" 2>/dev/null; then
   WGER_CHECK_ARGS=(--require-secrets)
@@ -440,8 +441,8 @@ fi
 
 # ─── Workout manager: compose project `wger`, up -d ─────────────────────────
 #
-# wger + nginx + Postgres + Redis (compose/wger/, docs/runbook.md "Workout
-# manager (wger)"). Skipped with a warning until WGER_SECRET_KEY and
+# wger + nginx + Postgres + Redis + the PowerSync sync service (compose/wger/,
+# docs/runbook.md "Workout manager (wger)"). Skipped with a warning until WGER_SECRET_KEY and
 # WGER_DB_PASSWORD are rendered into the env file. Publishing it on the
 # tailnet (`tailscale serve`), the exercise sync and the owner's account are
 # operator steps in the runbook; the deploy never runs them.
@@ -458,6 +459,11 @@ else
     echo "wger: site ${WGER_SITE_URL}"
     wger_compose up -d --wait --wait-timeout 420 \
       || fail_later "wger: project ${WGER_PROJECT} did not come up healthy (wger_compose ps / logs web)"
+    # The phone app's sync service, through nginx's /ps/ proxy: live, ready
+    # (replicating from Postgres), and wger serving the key it verifies tokens
+    # with. Readiness lags `up` on a first start, hence the wait.
+    python3 "${REPO_DIR}/scripts/check-wger-powersync.py" "http://127.0.0.1:${WGER_PORT}" --wait 120 \
+      || fail_later "wger: the PowerSync endpoint does not answer through nginx (docs/runbook.md \"Workout manager (wger)\", PowerSync; wger_compose logs powersync)"
   fi
 fi
 

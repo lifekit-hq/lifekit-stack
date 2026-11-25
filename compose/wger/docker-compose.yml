@@ -12,7 +12,13 @@
 #            on start. Has egress (default network) because the exercise
 #            sync downloads from the upstream wger instance.
 #   db     - Postgres. Named volume; on an internal network with no egress.
+#            Logical WAL level, for PowerSync's replication.
 #   cache  - Redis (Django cache). On the same internal network.
+#   powersync - the sync service behind the phone app's offline mode
+#            (journeyapps/powersync-service). Replicates wger's Postgres into
+#            sync buckets and serves them to the app; reached only through
+#            nginx at /ps/ (same tailnet address as wger), on its own internal
+#            network, no egress. Config in ./powersync/ (upstream's files).
 #
 # Celery (the upstream setup's worker and beat) is not deployed: the exercise
 # sync is a documented management command instead (runbook), so the
@@ -23,7 +29,8 @@
 # Settings come from the host env file (scripts/lib/deploy-common.sh passes
 # --env-file); only names are here. scripts/deploy.sh brings the project up
 # only once WGER_SECRET_KEY and WGER_DB_PASSWORD are in it (and fails it when
-# WGER_JWT_PRIVATE_KEY / WGER_JWT_PUBLIC_KEY are not, check-wger-compose.py). An ad-hoc call:
+# WGER_JWT_PRIVATE_KEY / WGER_JWT_PUBLIC_KEY / WGER_POWERSYNC_STORAGE_PASSWORD
+# are not, check-wger-compose.py). An ad-hoc call:
 #   docker compose -p wger --env-file /srv/lifekit-secrets/stack.env \
 #     -f compose/wger/docker-compose.yml ps
 #
@@ -99,10 +106,12 @@ services:
     # http://wger-nginx-1:8080 (docs/runbook.md, "Kit and wger"). Only nginx and the
     # gateway are on it - web, db and cache stay on their own networks, no other
     # container joins it - and it publishes no new port: wger stays tailnet-only
-    # through Tailscale Serve.
+    # through Tailscale Serve. `powersync` is the internal network shared with
+    # the PowerSync service only (nginx proxies /ps/ to it).
     networks:
       - default
       - wger-gateway
+      - powersync
 
   web:
     <<: *policy
@@ -117,6 +126,13 @@ services:
       # interpolation as is. Never the image default.
       JWT_PRIVATE_KEY: ${WGER_JWT_PRIVATE_KEY:-}
       JWT_PUBLIC_KEY: ${WGER_JWT_PUBLIC_KEY:-}
+      # PowerSync (the app's offline sync). The URL wger hands the app is
+      # SITE_URL/<POWERSYNC_URL_PATH>/, which is nginx's /ps/ proxy
+      # (nginx.conf); POWERSYNC_URL stays unset. PS_STORAGE_PG_URI is the
+      # storage role `setup-powersync-storage` creates (the command below) and
+      # the service's own storage setting: the same string, one password.
+      POWERSYNC_URL_PATH: ps
+      PS_STORAGE_PG_URI: postgres://powersync_storage:${WGER_POWERSYNC_STORAGE_PASSWORD:-}@db:5432/wger
       # The public URL (https://<host>.<tailnet>.ts.net:8480). deploy.sh
       # derives it from the tailnet name unless WGER_SITE_URL is set.
       SITE_URL: ${WGER_SITE_URL:-}
@@ -153,6 +169,11 @@ services:
       X_FORWARDED_PROTO_HEADER_SET: "True"
       TIME_ZONE: ${OPENCLAW_TZ:-UTC}
       TZ: ${OPENCLAW_TZ:-UTC}
+    # Create (or re-sync the password of) PowerSync's storage role and schema
+    # in wger's database before the app starts: idempotent, and the powersync
+    # service waits for this container to be healthy. Then the image's own
+    # start (migrations, collectstatic, gunicorn) as ever.
+    command: ["/bin/bash", "-c", "python3 manage.py setup-powersync-storage && exec /home/wger/entrypoint.sh"]
     volumes:
       - static:/home/wger/static
       - media:/home/wger/media
@@ -187,6 +208,11 @@ services:
     # The alpine image's postgres user; the named volume inherits the image's
     # postgres-owned data directory, so no root step is needed.
     user: "70:70"
+    # PowerSync reads the write-ahead log through a replication slot, which
+    # needs wal_level=logical. Applying it restarts Postgres only: the named
+    # volume and its data are untouched. The publication it replicates from is
+    # created by wger's own migration.
+    command: ["postgres", "-c", "wal_level=logical"]
     environment:
       POSTGRES_USER: wger
       POSTGRES_PASSWORD: ${WGER_DB_PASSWORD:-}
@@ -237,6 +263,51 @@ services:
     networks:
       - backend
 
+  powersync:
+    <<: *policy
+    # Upstream wger's setup runs journeyapps/powersync-service (`start -r
+    # unified`: API server and replication worker in one container).
+    image: journeyapps/powersync-service:1.29.1
+    labels:
+      lifekit.contract: "none"  # upstream service, not a product (scripts/platform-contract.py)
+    command: ["start", "-r", "unified"]
+    environment:
+      POWERSYNC_CONFIG_PATH: /config/powersync.yaml
+      # Replication source: wger's own database role (a superuser here, which
+      # logical replication needs). Bucket storage: the dedicated role.
+      PS_DATABASE_URI: postgres://wger:${WGER_DB_PASSWORD:-}@db:5432/wger
+      PS_STORAGE_PG_URI: postgres://powersync_storage:${WGER_POWERSYNC_STORAGE_PASSWORD:-}@db:5432/wger
+      PS_PORT: "8080"
+      # The public half of the sign-in keypair, served by wger itself.
+      PS_JWKS_URL: http://web:8000/api/v2/powersync-keys
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - ./powersync:/config:ro
+    expose:
+      - "8080"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/probes/liveness').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      db:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    # backend: db and web (the key set). powersync: nginx, the only way in.
+    networks:
+      - backend
+      - powersync
+
 networks:
   # web's egress (the exercise sync) and nginx's published port.
   default: {}
@@ -248,6 +319,9 @@ networks:
   # project's `up`, and compose/openclaw/docker-compose.yml declares it too.
   wger-gateway:
     external: true
+  # nginx <-> powersync only, for the /ps/ proxy. internal: no route off the box.
+  powersync:
+    internal: true
 
 volumes:
   postgres_data:

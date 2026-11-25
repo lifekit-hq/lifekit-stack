@@ -12,11 +12,15 @@ stdin) and fails (exit 1, one line per problem) when:
     Tailscale Serve, docs/runbook.md "Workout manager (wger)");
   - `nginx` is not on `wger-gateway` (the gateway's route to wger, docs/runbook.md
     "Kit and wger"), any other service joins it, any service joins the wide
-    `lifekit-shared` network, or `wger-gateway` is not a declared external network.
+    `lifekit-shared` network, or `wger-gateway` is not a declared external network;
+  - the PowerSync sync service (`powersync`) is missing, is not on the internal
+    `powersync` network it shares with nginx (only those two may be on it), is on
+    `default` (it has no business with egress), or `db` lacks `wal_level=logical`;
   - with --require-secrets (deploy.sh passes it once WGER_SECRET_KEY is in the
     env file, i.e. wger is meant to be up): `web` has an empty SECRET_KEY,
-    DJANGO_DB_PASSWORD, JWT_PRIVATE_KEY or JWT_PUBLIC_KEY. Without the JWT
-    pair the mobile app's token login answers a server error.
+    DJANGO_DB_PASSWORD, JWT_PRIVATE_KEY or JWT_PUBLIC_KEY, or the PowerSync
+    storage password is empty in `web`'s or `powersync`'s PS_STORAGE_PG_URI.
+    Without the JWT pair the mobile app's token login answers a server error.
 
 Pure mechanism, no Docker. scripts/deploy.sh runs it before `up`; the tests
 (scripts/tests/test_wger_compose.py) hold the blocked and the allowed case.
@@ -28,6 +32,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # service -> container path that must sit on a named volume
 PERSISTENT = {
@@ -49,6 +54,11 @@ EXACT_TAG = re.compile(r"^\d+\.\d+(\.\d+)?([.-].+)?$")
 GATEWAY_NETWORK = "wger-gateway"
 GATEWAY_SERVICE = "nginx"
 WIDE_NETWORK = "lifekit-shared"
+# The sync service and the one network it shares with nginx (nginx proxies /ps/).
+SYNC_SERVICE = "powersync"
+SYNC_NETWORK = "powersync"
+# (service, setting) pairs holding the PowerSync storage role's connection string.
+STORAGE_URIS = (("web", "PS_STORAGE_PG_URI"), ("powersync", "PS_STORAGE_PG_URI"))
 
 
 def check(config: dict, require_secrets: bool = False) -> list[str]:
@@ -75,10 +85,34 @@ def check(config: dict, require_secrets: bool = False) -> list[str]:
             )
         if name == GATEWAY_SERVICE and GATEWAY_NETWORK not in networks:
             problems.append(f"{name}: must join {GATEWAY_NETWORK}")
+        if SYNC_NETWORK in networks and name not in (GATEWAY_SERVICE, SYNC_SERVICE):
+            problems.append(
+                f"{name}: must not join {SYNC_NETWORK} (only {GATEWAY_SERVICE} and {SYNC_SERVICE} may)"
+            )
         for port in svc.get("ports") or []:
             host_ip = port.get("host_ip") if isinstance(port, dict) else None
             if host_ip != "127.0.0.1":
                 problems.append(f"{name}: port {port} is not bound to 127.0.0.1")
+
+    sync = services.get(SYNC_SERVICE)
+    if sync is None:
+        problems.append(f"{SYNC_SERVICE}: service is missing")
+    else:
+        sync_nets = sync.get("networks") or {}
+        if SYNC_NETWORK not in sync_nets:
+            problems.append(f"{SYNC_SERVICE}: must join {SYNC_NETWORK}")
+        if "default" in sync_nets:
+            problems.append(f"{SYNC_SERVICE}: must not join default (no egress)")
+    if SYNC_NETWORK not in (services.get(GATEWAY_SERVICE) or {}).get("networks", {}):
+        problems.append(f"{GATEWAY_SERVICE}: must join {SYNC_NETWORK} (the /ps/ proxy)")
+    sync_net = (config.get("networks") or {}).get(SYNC_NETWORK)
+    if sync_net is None or not sync_net.get("internal"):
+        problems.append(f"network {SYNC_NETWORK} must be declared internal")
+    command = (services.get("db") or {}).get("command") or []
+    if "wal_level=logical" not in command:
+        problems.append(
+            "db: command must set wal_level=logical (PowerSync replication)"
+        )
 
     gateway = (config.get("networks") or {}).get(GATEWAY_NETWORK)
     if gateway is None or not gateway.get("external"):
@@ -107,6 +141,12 @@ def check(config: dict, require_secrets: bool = False) -> list[str]:
         for key in REQUIRED_SECRETS:
             if not env.get(key):
                 problems.append(f"web: {key} is empty (docs/secrets.md, WGER_ rows)")
+        for name, key in STORAGE_URIS:
+            uri = ((services.get(name) or {}).get("environment") or {}).get(key) or ""
+            if not urlsplit(uri).password:
+                problems.append(
+                    f"{name}: {key} has no password (WGER_POWERSYNC_STORAGE_PASSWORD, docs/secrets.md)"
+                )
     return problems
 
 

@@ -1,0 +1,46 @@
+# PowerSync service config for the wger compose project
+# (compose/wger/docker-compose.yml, service `powersync`). Adapted from the
+# upstream wger docker setup's services/config-powersync/powersync.yaml: the same
+# replication source, bucket storage, client auth and sync rules; the telemetry
+# is off and the ports and connection strings come from `PS_*` settings the
+# compose file sets (YAML `!env` substitution reads only names starting `PS_`).
+# sync_rules.yaml next to it is the upstream file unchanged; it is not watched,
+# so a change needs a restart of the service.
+
+telemetry:
+  disable_telemetry_sharing: true
+  prometheus_port: 9090
+
+# Source database: wger's Postgres. The `powersync` publication it replicates
+# from is created by wger's own migration (core 0027); wal_level=logical is set
+# on `db` in the compose file.
+replication:
+  connections:
+    - type: postgresql
+      uri: !env PS_DATABASE_URI
+      sslmode: disable  # the internal `backend` network, no route off the box
+
+# Sync bucket storage: the `powersync` schema in the same database, owned by
+# the dedicated role that wger's `setup-powersync-storage` command creates.
+storage:
+  type: postgresql
+  uri: !env PS_STORAGE_PG_URI
+  sslmode: disable
+
+port: !env PS_PORT
+
+# Upstream's workaround for PSYNC_S2305 (large nutrition logs).
+# https://github.com/powersync-ja/powersync-service/issues/682
+api:
+  parameters:
+    max_parameter_query_results: 10000
+
+sync_rules:
+  path: sync_rules.yaml
+
+# The app's tokens are signed with wger's RS256 key; the service fetches the
+# public half from wger itself (`PS_JWKS_URL`).
+client_auth:
+  allow_local_jwks: true
+  jwks_uri: !env PS_JWKS_URL
+  audience: ["powersync"]
