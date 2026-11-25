@@ -2521,6 +2521,14 @@ last: the next deploy undoes it. To keep the jobs on Kit, retire the reader firs
 
 The env overrides alone are a one-off for testing: the next deploy puts `doc-door` back on the reader.
 
+**A refused `cron.update`.** When the gateway answers the job edit with `invalid cron.update params: MCP
+authorization was disconnected or replaced` (the MCP authorization behind the job's stored creator
+authority was retired by a gateway restart or reconnect), `ensure-doc-door.sh` leaves the row unchanged, prints
+one `cron 'doc-door' (...) NOT updated` line and does not print `converged`; the deploy stays green, the
+fail-closed check still runs on the row as it stands, and the next deploy retries. Any other edit failure is
+still red. If the line repeats across deploys, the authorization is genuinely gone: restore it as an operator
+step (reconnect the Workspace MCP, `docs/google-mcp-setup.md`), then re-run `scripts/ensure-doc-door.sh`.
+
 ### Document door
 
 New document attachments in the owner's mailbox become one short cited report each, with no step

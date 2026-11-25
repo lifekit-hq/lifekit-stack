@@ -149,6 +149,10 @@ elif cmd[:2] == ["cron", "add"]:
     save("jobs", jobs)
 elif cmd[:2] == ["cron", "edit"]:
     log_call(cmd)
+    refusal = load("edit_refusal")
+    if refusal:
+        print(refusal, file=sys.stderr)
+        sys.exit(1)
     jobs = load("jobs", [])
     for job in jobs:
         if job["id"] == cmd[2]:
@@ -479,6 +483,50 @@ def test_the_door_job_is_declared_as_the_reader_running_the_allowlisted_door(box
     assert [c[:2] for c in box.calls()] == [["cron", "add"], ["cron", "edit"]] + [
         ["cron", "edit"]
     ]
+
+
+REFUSED = "invalid cron.update params: MCP authorization was disconnected or replaced"
+
+
+def test_a_refused_cron_update_skips_the_edit_with_one_line_and_is_not_converged(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    box.put("jobs", [{"id": "job1", "name": "doc-door", "agentId": "reader"}])
+    box.put("edit_refusal", REFUSED)
+    # the live row is a good one, so the fail-closed check passes on it unchanged
+    row = box.get("jobs")[0]
+    row |= {
+        "sessionTarget": "isolated",
+        "delivery": {"mode": "none"},
+        "payload": {"toolsAllow": ["exec"], "model": POLICY_MODEL},
+    }
+    box.put("jobs", [row])
+    done = box.script("ensure-doc-door.sh")
+    assert done.returncode == 0, done.stderr
+    lines = [ln for ln in done.stderr.splitlines() if "NOT updated" in ln]
+    assert len(lines) == 1 and "disconnected or replaced" in lines[0]
+    assert "converged" not in done.stdout
+    assert box.job("doc-door") == row
+
+
+def test_a_refused_update_on_a_row_that_is_not_the_declared_one_still_fails_closed(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    box.put("jobs", [{"id": "job1", "name": "doc-door", "agentId": "kit"}])
+    box.put("edit_refusal", REFUSED)
+    done = box.script("ensure-doc-door.sh")
+    assert done.returncode == 1
+    assert "agentId='kit', want 'reader'" in done.stderr
+
+
+def test_any_other_cron_update_failure_is_still_red(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    box.put("jobs", [{"id": "job1", "name": "doc-door", "agentId": "reader"}])
+    box.put("edit_refusal", "gateway closed (1006): connection refused")
+    done = box.script("ensure-doc-door.sh")
+    assert done.returncode == 1
+    assert "connection refused" in done.stderr
 
 
 def test_a_door_row_that_stays_on_another_agent_is_refused(box):

@@ -178,14 +178,30 @@ if [ "$AGENT" = reader ]; then
 elif [ -n "$current_gate" ]; then
   gate_args=(--clear-trigger)
 fi
-docker exec "$GATEWAY" openclaw cron edit "$job_id" \
+# cron.update re-resolves the MCP authorization the job's stored creator authority
+# points at. After a gateway restart or reconnect that authorization is retired and
+# the gateway refuses the edit ("invalid cron.update params: MCP authorization was
+# disconnected or replaced"); the deploy used to end red on it. That refusal alone is
+# not a failure of this script: the row is left as it is, one line says so, and the
+# fail-closed check below still runs on it. It is never reported as converged.
+edit_out="$(docker exec "$GATEWAY" openclaw cron edit "$job_id" \
   --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
   --agent "$AGENT" --session isolated \
   --message "$MESSAGE" --model "$MODEL" --tools "$JOB_TOOLS" --light-context \
   --timeout-seconds 600 --no-deliver "${gate_args[@]}" \
   --failure-alert --failure-alert-after 1 \
   --failure-alert-mode announce --failure-alert-channel telegram \
-  --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT" >/dev/null
+  --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT" 2>&1)" && edit_rc=0 || edit_rc=$?
+converged=1
+if [ "$edit_rc" -ne 0 ]; then
+  if printf '%s' "$edit_out" | grep -q "MCP authorization was disconnected or replaced"; then
+    converged=0
+    echo "cron '$JOB_NAME' ($job_id) NOT updated: the gateway refused cron.update, the job's MCP authorization is disconnected or replaced; the row is unchanged and the next deploy retries (docs/runbook.md, \"Document door\")" >&2
+  else
+    printf '%s\n' "$edit_out" >&2
+    exit "$edit_rc"
+  fi
+fi
 
 # Fail closed: exec only, no delivery, isolated session.
 live_jobs | python3 -c '
@@ -213,5 +229,6 @@ if bad:
     sys.exit("refusing: the document door could do more than declared: " + "; ".join(bad))
 ' "$job_id" "$JOB_TOOLS" "$AGENT" "$MODEL" >&2
 
+[ "$converged" = 1 ] || exit 0
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, model $MODEL, tools $JOB_TOOLS only, no delivery (verified)"
 echo "verify: docker exec $GATEWAY openclaw cron run $job_id --expect-final --json"
