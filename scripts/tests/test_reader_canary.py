@@ -183,3 +183,39 @@ def test_the_inert_deferred_placeholder_is_not_a_wider_catalogue(tmp_path):
 )
 def test_a_lookalike_of_the_placeholder_still_fails(tmp_path, tool):
     assert any("tool catalogue" in b for b in with_extra_tool(tmp_path, tool))
+
+
+TOOL_SEARCH = {
+    "name": "ToolSearch",
+    "description": "Fetches full schema definitions for deferred tools so they can be called.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "max_results": {"type": "number"}},
+        "required": ["query", "max_results"],
+    },
+}
+
+
+def test_the_deferred_tool_loader_is_not_a_wider_catalogue(tmp_path):
+    assert with_extra_tool(tmp_path, TOOL_SEARCH) == []
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        {
+            **TOOL_SEARCH,
+            "input_schema": {
+                **TOOL_SEARCH["input_schema"],
+                "properties": {
+                    **TOOL_SEARCH["input_schema"]["properties"],
+                    "cmd": {"type": "string"},
+                },
+            },
+        },
+        {**TOOL_SEARCH, "defer_loading": True},
+        {**TOOL_SEARCH, "name": "ToolSearch2"},
+    ],
+)
+def test_a_lookalike_of_the_loader_still_fails(tmp_path, tool):
+    assert any("tool catalogue" in b for b in with_extra_tool(tmp_path, tool))
