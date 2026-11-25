@@ -3913,7 +3913,10 @@ has `gh` logged in and can write `/var/lib/lifekit/intake`), does two things wit
    only after reading the filed issue back and finding all four. The row becomes
    `handed-off <issue url>`; from then on the issue owns the item and the hub keeps the
    reference. Answer `approve` to file as proposed, `drop` to file nothing, or send
-   `repo:` / `class:` / `done when:` lines to change the proposal. An answer that cannot be
+   `repo:` / `class:` / `done when:` lines to change the proposal. A closed item the decision
+   matrix settled (its record opens "Captain answered this call through matrix settlement")
+   is read from its `matrix:` line, else its `Answer:` line, by the same rules and counts as
+   `matrix auto-answered`. An answer that cannot be
    filed (unreadable, no registered repo, a failed check) is logged once and does not end the
    item: the same item is reopened under its hold with the reason in its text, the rows stay
    `shaping`, and the step waits for the owner's next answer on it.
