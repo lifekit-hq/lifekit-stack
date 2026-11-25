@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""wger.py - Kit's two uses of the wger workout manager (docs/runbook.md, "Workout manager (wger)").
+"""wger.py - Kit's uses of the wger workout manager (docs/runbook.md, "Workout manager (wger)").
 
   wger.py check                                  # GET /api/v2/version/, then an authenticated profile read
   wger.py routine <gym.json> [--name N] [--start YYYY-MM-DD] [--weeks N] [--replace] [--dry-run]
   wger.py logs --from YYYY-MM-DD --to YYYY-MM-DD [--exercise NAME] [--json]
+  wger.py nutrition <plan.json> [--dry-run]
+  wger.py profile [--birthdate YYYY-MM-DD] [--height CM] [--weight KG] [--date YYYY-MM-DD] [--dry-run]
+  wger.py log-write "<exercises>" [--date YYYY-MM-DD] [--dry-run]
 
 `routine` writes Kit's routine definition (routines/gym.json, the file Kit keeps in its
 workspace) into wger as a routine: one wger day per program day, one slot per exercise, one
@@ -11,6 +14,18 @@ slot entry per slot with its sets, rep range and weight. `logs` reads the workou
 date, exercise, sets, reps and weight, grouped the way the skill replies.
 
 Unknown fields in gym.json (steps, notes, deload rules, anything else) are ignored.
+
+`nutrition` writes one nutrition plan from a JSON file ({"name", "kcal", "protein", "carbs",
+"fat"}, optional "fiber", "start", "end"): it is created, or updated when wger already has a plan
+with that name (wger calls the name the plan's `description`), and left alone when the goals
+already match. `profile` sets the profile fields wger exposes (birth date, height in cm) and adds
+a weight entry for the day, or corrects that day's entry. `log-write` writes a session as wger
+workout logs, one per set, from the same line Kit gives `workout-claw log` ("hack squat 3x10@60kg,
+bench press 8,8,6@60kg"): each exercise is linked to the routine covering the date and its slot
+entry, and an exercise that already has logs on that date is never written twice (identical sets:
+unchanged; the first sets of the line, left by an interrupted run: the rest is written;
+any other difference: exit 1, nothing overwritten). workout-claw stays the record of the
+session; a wger failure here never touches it.
 
 `routine` builds the whole new routine first and deletes the old one (`--replace`) only after
 it is complete; a failed build deletes the half-built routine and leaves the old one. Deleting
@@ -47,6 +62,12 @@ LANGUAGE_EN = 2  # wger's language id for English
 UNIT_REPS, UNIT_KG = 1, 1
 # Field limits from wger 2.7's own OpenAPI schema (scripts/tests/fixtures/wger-openapi-2.7.0.json).
 ROUTINE_NAME_MAX, DAY_NAME_MAX, SETS_MAX, NUMBER_MAX = 25, 20, 50, 9999
+PLAN_NAME_MAX, INT_MAX = (
+    80,
+    2147483647,
+)  # nutrition plan `description`; wger's integer fields
+HEIGHT_MIN, HEIGHT_MAX = 140, 230  # userprofile.height (cm)
+UNIT_LB, UNIT_BW = 2, 3
 WEIGHT_UNITS = {1: "kg", 2: "lb", 3: "bw"}
 WEEKDAYS = {
     "mon": "Mon", "monday": "Mon", "tue": "Tue", "tuesday": "Tue", "wed": "Wed",
@@ -169,7 +190,7 @@ def resolve_exercise(w: Wger, ex: dict, cache: dict[str, int]) -> int:
                 cache[cand] = hit[0]["exercise"]
                 return hit[0]["exercise"]
     raise Fail(
-        f"no wger exercise named {ex['name']!r}: add \"wger_exercise\": <id> to it in gym.json "
+        f'no wger exercise named {ex["name"]!r}: add "wger_exercise": <id> to it in gym.json '
         "(the id is on the exercise's wger page) or an alias that matches wger's name",
         1,
     )
@@ -576,6 +597,326 @@ def cmd_logs(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- nutrition ---------------------------------------------------------------
+
+GOAL_KEYS = {  # wger field -> the keys plan.json may use for it
+    "goal_energy": ("kcal", "calories", "goal_energy"),
+    "goal_protein": ("protein", "goal_protein"),
+    "goal_carbohydrates": ("carbs", "carbohydrates", "goal_carbohydrates"),
+    "goal_fat": ("fat", "goal_fat"),
+    "goal_fiber": ("fiber", "goal_fiber"),
+}
+
+
+def parse_date(value: object, label: str) -> str:
+    try:
+        return dt.date.fromisoformat(str(value)).isoformat()
+    except ValueError:
+        raise Fail(f"{label} must be YYYY-MM-DD", 1) from None
+
+
+def load_plan(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except OSError as err:
+        raise Fail(f"cannot read {path}: {err.strerror}", 1) from None
+    except json.JSONDecodeError as err:
+        raise Fail(f"{path} is not valid JSON: {err}", 1) from None
+    if not isinstance(doc, dict):
+        raise Fail(f"{path} must be a JSON object", 1)
+    name = doc.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise Fail(f'{path} needs a "name" (the plan\'s name in wger)', 1)
+    name = name.strip()
+    if len(name) > PLAN_NAME_MAX:
+        raise Fail(
+            f"plan name {name!r} is longer than wger's {PLAN_NAME_MAX} characters", 1
+        )
+    plan: dict = {"description": name}
+    for field, keys in GOAL_KEYS.items():
+        key = next((k for k in keys if doc.get(k) is not None), None)
+        if key is None:
+            if field == "goal_fiber":
+                continue
+            raise Fail(f'{path} needs "{keys[0]}" (a whole number)', 1)
+        v = doc[key]
+        if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= INT_MAX:
+            raise Fail(f'"{key}" must be a whole number, got {v!r}', 1)
+        plan[field] = v
+    for key in ("start", "end"):
+        if doc.get(key) is not None:
+            plan[key] = parse_date(doc[key], f'"{key}"')
+    return plan
+
+
+def plan_summary(plan: dict) -> str:
+    return (
+        f"{plan['goal_energy']} kcal, protein {plan['goal_protein']} g, "
+        f"carbs {plan['goal_carbohydrates']} g, fat {plan['goal_fat']} g"
+    )
+
+
+def cmd_nutrition(args: argparse.Namespace) -> int:
+    plan = load_plan(args.file)
+    name = plan["description"]
+    w = client()
+    rows = [
+        r
+        for r in w.pages("nutritionplan/", {"description": name})
+        if r.get("description") == name
+    ]
+    if len(rows) > 1:
+        raise Fail(
+            f"wger has {len(rows)} nutrition plans named {name!r}: delete the extras in the "
+            "app, then run this again (nothing was written)",
+            1,
+        )
+    if rows:
+        changes = {k: v for k, v in plan.items() if rows[0].get(k) != v}
+        if not changes:
+            print(f"nutrition plan {name!r} is already as asked: {plan_summary(plan)}")
+            return 0
+        if args.dry_run:
+            print(f"dry-run: would update nutrition plan {name!r}: {sorted(changes)}")
+            return 0
+        w.call("PATCH", f"nutritionplan/{rows[0]['id']}/", changes)
+        print(f"nutrition plan {name!r} updated: {plan_summary(plan)}")
+        return 0
+    body = {
+        "start": dt.date.today().isoformat(),
+        "only_logging": False,
+        **plan,
+    }
+    if args.dry_run:
+        print(f"dry-run: would create nutrition plan {name!r}: {plan_summary(plan)}")
+        return 0
+    w.call("POST", "nutritionplan/", body)
+    print(f"nutrition plan {name!r} created: {plan_summary(plan)}")
+    return 0
+
+
+# --- profile -----------------------------------------------------------------
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    if args.birthdate is None and args.height is None and args.weight is None:
+        raise Fail("give at least one of --birthdate, --height, --weight", 1)
+    want: dict = {}
+    if args.birthdate is not None:
+        born = parse_date(args.birthdate, "--birthdate")
+        if born >= dt.date.today().isoformat():
+            raise Fail("--birthdate must be in the past", 1)
+        want["birthdate"] = born
+    if args.height is not None:
+        if not HEIGHT_MIN <= args.height <= HEIGHT_MAX:
+            raise Fail(
+                f"--height is in whole cm, {HEIGHT_MIN}-{HEIGHT_MAX} (wger's limits)", 1
+            )
+        want["height"] = args.height
+    day = parse_date(args.date, "--date") if args.date else dt.date.today().isoformat()
+    if args.weight is not None and not 0 < args.weight <= 999:
+        raise Fail("--weight is in kg, above 0 and at most 999", 1)
+    w = client()
+    profile = w.call("GET", "userprofile/")
+    if not isinstance(profile, dict) or "username" not in profile:
+        raise Fail("wger answered an unexpected profile", 4)
+    verb = "dry-run: would set" if args.dry_run else "set"
+    changes = {k: v for k, v in want.items() if profile.get(k) != v}
+    for k, v in want.items():
+        if k not in changes:
+            print(f"profile {k} is already {v}")
+    if changes:
+        if not args.dry_run:
+            w.call("PATCH", "userprofile/", changes)
+        print(f"profile: {verb} " + ", ".join(f"{k} {v}" for k, v in changes.items()))
+    if args.weight is not None:
+        entries = [
+            r
+            for r in w.pages(
+                "weightentry/",
+                {"date__gte": day, "date__lte": day + "T23:59:59", "ordering": "date"},
+            )
+            if str(r.get("date", ""))[:10] == day
+        ]
+        if entries and dec(entries[0].get("weight")) == dec(args.weight):
+            print(f"weight entry for {day} is already {dec(args.weight)} kg")
+        elif entries:
+            if not args.dry_run:
+                w.call(
+                    "PATCH",
+                    f"weightentry/{entries[0]['id']}/",
+                    {"weight": dec(args.weight)},
+                )
+            print(
+                f"weight entry for {day}: {verb} {dec(args.weight)} kg "
+                f"(was {dec(entries[0].get('weight'))})"
+            )
+        else:
+            if not args.dry_run:
+                w.call(
+                    "POST",
+                    "weightentry/",
+                    {"date": f"{day}T12:00:00+00:00", "weight": dec(args.weight)},
+                )
+            print(f"weight entry for {day}: {verb} {dec(args.weight)} kg")
+    return 0
+
+
+# --- log-write ---------------------------------------------------------------
+
+SESSION_PART = re.compile(
+    r"^(?P<name>[A-Za-z][A-Za-z0-9 _'-]*?)\s+"
+    r"(?P<sets>\d+\s*x\s*\d+|\d+(?:\s*,\s*\d+)*)"
+    r"(?:\s*@\s*(?:(?P<bw>bw)|(?P<weight>\d+(?:\.\d+)?)\s*(?P<unit>kg|lb)?))?$",
+    re.IGNORECASE,
+)
+
+
+def parse_session(line: str) -> list[dict]:
+    """workout-claw's syntax: `squat 5x5@100kg, bench press 8,8,6@60kg`. A comma that
+    starts a new exercise is the one followed by a letter; commas between digits separate sets."""
+    out = []
+    for part in re.split(r",\s*(?=[A-Za-z])", line.strip()):
+        m = SESSION_PART.match(part.strip())
+        if not m:
+            raise Fail(
+                f"cannot read {part.strip()!r}: write it like 'squat 5x5@100kg' or "
+                "'bench press 8,8,6@60kg'",
+                1,
+            )
+        if "x" in m["sets"].lower():
+            n, reps = (int(v) for v in re.split(r"\s*x\s*", m["sets"].lower()))
+            if not 1 <= n <= SETS_MAX:
+                raise Fail(f"{m['name']!r}: sets must be 1-{SETS_MAX}", 1)
+            reps_list = [reps] * n
+        else:
+            reps_list = [int(v) for v in re.split(r"\s*,\s*", m["sets"])]
+            if len(reps_list) > SETS_MAX:
+                raise Fail(f"{m['name']!r}: at most {SETS_MAX} sets", 1)
+        if not all(1 <= r <= NUMBER_MAX for r in reps_list):
+            raise Fail(f"{m['name']!r}: reps must be 1-{NUMBER_MAX}", 1)
+        weight = float(m["weight"]) if m["weight"] else None
+        if weight is not None and weight > NUMBER_MAX:
+            raise Fail(f"{m['name']!r}: weight is above {NUMBER_MAX}", 1)
+        unit = (
+            UNIT_BW
+            if m["bw"]
+            else UNIT_LB
+            if (m["unit"] or "").lower() == "lb"
+            else UNIT_KG
+        )
+        out.append(
+            {
+                "name": m["name"].strip(),
+                "reps": reps_list,
+                "weight": weight,
+                "unit": unit,
+            }
+        )
+    if not out:
+        raise Fail("no exercises: pass the same line given to workout-claw log", 1)
+    return out
+
+
+def routine_entries(w: Wger, day: str) -> tuple[dict | None, dict[int, int]]:
+    """The routine whose dates cover `day` (the latest start wins) and its exercise -> slot
+    entry map; (None, {}) when no routine covers the day."""
+    covering = [
+        r
+        for r in w.pages("routine/", {})
+        if str(r.get("start") or "") <= day <= str(r.get("end") or "9999-12-31")
+    ]
+    if not covering:
+        return None, {}
+    routine = max(covering, key=lambda r: str(r.get("start")))
+    entries: dict[int, int] = {}
+    for d in w.pages("day/", {"routine": str(routine["id"])}):
+        for slot in w.pages("slot/", {"day": str(d["id"])}):
+            for e in w.pages("slot-entry/", {"slot": str(slot["id"])}):
+                entries.setdefault(e["exercise"], e["id"])
+    return routine, entries
+
+
+def set_key(
+    reps: object, weight: object, unit: object
+) -> tuple[float, float | None, object]:
+    return float(reps), None if weight is None else float(weight), unit  # type: ignore[arg-type]
+
+
+def cmd_log_write(args: argparse.Namespace) -> int:
+    day = parse_date(args.date, "--date") if args.date else dt.date.today().isoformat()
+    session = parse_session(args.line)
+    w = client()
+    ids: dict[str, int] = {}
+    routine, entries = routine_entries(w, day)
+    where = f"routine {routine['name']!r}" if routine else "no routine covers the date"
+    failed: list[Fail] = []
+    for ex in session:
+        label = slug(ex["name"])
+        try:
+            eid = resolve_exercise(w, ex, ids)
+            have = [
+                r
+                for r in w.pages(
+                    "workoutlog/",
+                    {
+                        "date__gte": day,
+                        "date__lte": day + "T23:59:59",
+                        "exercise": str(eid),
+                        "ordering": "date",
+                    },
+                )
+                if str(r.get("date", ""))[:10] == day and r.get("exercise") == eid
+            ]
+            sets = [set_key(r, ex["weight"], ex["unit"]) for r in ex["reps"]]
+            held = [
+                set_key(r.get("repetitions"), r.get("weight"), r.get("weight_unit"))
+                for r in have
+            ]
+            if held == sets:
+                print(f"{day} {label}: wger already has these sets, unchanged")
+                continue
+            if held != sets[: len(held)]:
+                raise Fail(
+                    f"wger already has {len(have)} logged set(s) for {label} on {day} that "
+                    "differ from this line: nothing was written (change them in the wger app)",
+                    1,
+                )
+            missing = len(sets) - len(held)
+            if args.dry_run:
+                print(
+                    f"dry-run: would write {label} {missing} set(s) for {day} ({where})"
+                )
+                continue
+            for i, reps in enumerate(ex["reps"]):
+                if i < len(held):
+                    continue
+                body = {
+                    "exercise": eid,
+                    "date": f"{day}T12:{i:02d}:00+00:00",
+                    "repetitions": dec(reps),
+                    "repetitions_unit": UNIT_REPS,
+                    "weight_unit": ex["unit"],
+                }
+                if ex["weight"] is not None:
+                    body["weight"] = dec(ex["weight"])
+                if routine and eid in entries:
+                    body["routine"] = routine["id"]
+                    body["slot_entry"] = entries[eid]
+                w.call("POST", "workoutlog/", body)
+            linked = (
+                "in the routine" if routine and eid in entries else "not in the routine"
+            )
+            print(f"{day} {label}: {missing} set(s) written to wger ({linked})")
+        except Fail as err:
+            if err.code != 1:
+                raise
+            print(f"wger: {label}: {err}", file=sys.stderr)
+            failed.append(err)
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="wger.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -594,6 +935,24 @@ def main(argv: list[str] | None = None) -> int:
     lg.add_argument("--exercise")
     lg.add_argument("--json", action="store_true")
     lg.set_defaults(fn=cmd_logs)
+    n = sub.add_parser("nutrition")
+    n.add_argument("file")
+    n.add_argument("--dry-run", action="store_true")
+    n.set_defaults(fn=cmd_nutrition)
+    pr = sub.add_parser("profile")
+    pr.add_argument("--birthdate")
+    pr.add_argument("--height", type=int)
+    pr.add_argument("--weight", type=float)
+    pr.add_argument("--date", help="the weight entry's day (default: today)")
+    pr.add_argument("--dry-run", action="store_true")
+    pr.set_defaults(fn=cmd_profile)
+    lw = sub.add_parser("log-write")
+    lw.add_argument(
+        "line", help='the line given to workout-claw log, e.g. "squat 5x5@100kg"'
+    )
+    lw.add_argument("--date")
+    lw.add_argument("--dry-run", action="store_true")
+    lw.set_defaults(fn=cmd_log_write)
     args = p.parse_args(argv)
     try:
         return args.fn(args)

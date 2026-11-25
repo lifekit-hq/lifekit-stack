@@ -5680,7 +5680,8 @@ as in the Off-box backup restore steps. Then run the exercise sync again if the
 
 Kit's `workout-log` skill talks to wger with `wger.py` (`skills/workout-log/`): `routine`
 writes Kit's `routines/gym.json` into wger as a routine, `logs` reads the workout logs back
-(date range, exercise, sets, reps, weight), `check` proves the URL and the token. No new
+(date range, exercise, sets, reps, weight), `nutrition`, `profile` and `log-write` fill the app
+("Fill the app" below), `check` proves the URL and the token. No new
 service: the same skill, installed by `scripts/ensure-workout-log.sh`.
 
 - **Base URL.** `WGER_BASE_URL` for the skill's run; the script's default is
@@ -5748,6 +5749,39 @@ service: the same skill, installed by `scripts/ensure-workout-log.sh`.
   removed afterwards). wger drops unknown fields and query parameters silently, so the
   schema check is what showed that the `language` filter on exercise names did nothing
   (English is now matched on each row's `language`) and that wger's decimals are strings.
+- **Fill the app: `nutrition`, `profile`, `log-write`.** The three commands that put the
+  owner's numbers into wger so the app and Kit agree. All three take `--dry-run` (reads wger,
+  writes nothing, says what it would do), all three are safe to run again, and none of them
+  deletes anything.
+  - `wger.py nutrition <plan.json>`: one nutrition plan, `{"name": "Cut 85 kg", "kcal": 2300,
+    "protein": 190, "carbs": 220, "fat": 70}` (optional `fiber`, `start`, `end`; `start`
+    defaults to today). The name is wger's plan `description` (80 characters at most) and is the
+    identity: a plan with that name is created when absent, patched on only the goals that
+    differ, and left alone when they match; two plans with the same name make it stop (exit 1)
+    and ask for the extra to be deleted in the app. The goals live in the owner's health page;
+    the file is built from them, never written into this repo.
+  - `wger.py profile [--birthdate YYYY-MM-DD] [--height CM] [--weight KG] [--date YYYY-MM-DD]`:
+    patches the profile fields wger 2.7 exposes (`birthdate`, `height`, 140-230 cm) when they
+    differ, and adds a weight entry for `--date` (default today). A day has one entry: running it
+    again with the same weight changes nothing, with another weight corrects that day's entry.
+  - `wger.py log-write "<exercises>" [--date YYYY-MM-DD]`: the line Kit gave `workout-claw log`
+    (`hack squat 3x10@60kg, bench press 8,8,6@60kg`; `@bw`, `lb` and uneven sets work) becomes
+    one wger workout log per set. Each exercise is linked to the routine whose dates cover the
+    day (the latest start wins) and its slot entry; an exercise that is not in the routine, or a
+    day no routine covers, is still logged, without the link. It is idempotent per date and
+    exercise: wger already holding identical sets prints `unchanged`; holding only the first sets of the
+    line (a run cut short by a wger error) writes the rest, so sending the line again repairs it;
+    holding anything else (other reps, weight or unit) exits 1 and writes nothing (correct those
+    in the app). An exercise wger has no name for
+    fails alone (exit 1, `wger_exercise` hint) while the others are written. The skill calls it
+    only after `workout-claw summary` has shown the session; it never runs, reads or changes
+    workout-claw, and a non-zero exit is reported in Kit's reply next to the "Logged" line.
+  - Failures: a value wger refuses (HTTP 400, for instance a height outside its limits) is exit 4
+    with wger's message; exit 2, 3 and 4 otherwise mean what they mean for every command (no
+    token, token rejected, wger unreachable). The payloads are checked against the schema
+    fixture, which has carried the nutrition plan, weight entry and profile PATCH endpoints
+    since 2026-11-25, so a wger bump that renames a field fails the test, not the owner's
+    session.
 - **When the token is revoked** (deleted or reset in wger's admin): every `wger.py` call
   exits 3 with `wger rejected the token (HTTP <code>): it is revoked or wrong` (wger 2.7.0 sends 403, other versions 401); Kit says so,
   stops, and nothing is written. Rotate as above. Exit 2 (`WGER_API_TOKEN is not set`)

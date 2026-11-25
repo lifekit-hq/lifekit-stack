@@ -7,8 +7,8 @@
 # into the gateway image (compose/openclaw-gateway/package.json); nudge.sh is
 # the command the workout-nudge cron runs (docs/runbook.md, "Kit's workout log
 # and gym-day nudge"); day-check.sh is the one the evening-day-plan cron runs
-# ("Kit's evening day plan"); wger.py is Kit's wger client (write a routine, read
-# workout logs; docs/runbook.md, "Kit and wger"), whose token reaches it through the
+# ("Kit's evening day plan"); wger.py is Kit's wger client (write a routine, nutrition plan,
+# profile and logged sessions, read workout logs; docs/runbook.md, "Kit and wger"), whose token reaches it through the
 # skill's apiKey SecretRef in platform.patch.json. Kit's allowlist (agents.entries.kit.skills) and the
 # cron, whose day-of-week field holds the gym days, are host state, so this
 # script only reads them; adding either is an operator step.
