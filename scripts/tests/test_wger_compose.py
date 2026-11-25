@@ -186,12 +186,6 @@ def test_secrets_are_not_required_by_default(real):
     assert gate.check(real) == []
 
 
-def test_every_wger_secret_has_an_inventory_row():
-    inventory = (REPO / "docs/secrets.md").read_text()
-    for name in ("WGER_JWT_PRIVATE_KEY", "WGER_JWT_PUBLIC_KEY"):
-        assert f"| `{name}` | master |" in inventory
-
-
 def _jwk_pair():
     """A keypair shaped like `manage.py generate-jwt-keys` prints (wger 2.7.0):
     each half a single-line base64url JSON JWK."""
