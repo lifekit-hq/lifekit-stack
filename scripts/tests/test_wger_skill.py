@@ -39,6 +39,7 @@ EXERCISES = {  # English translation name -> wger exercise (base) id
     "Barbell Row": 101,
     "Squats": 615,
     "Bench Press": 192,
+    "Hack Squat": 300,
 }
 NAMES = {v: k for k, v in EXERCISES.items()}
 LOGS = [
@@ -128,10 +129,13 @@ def schema_errors(method: str, path: str, query: dict, body: object) -> list[str
         return [f"{method} {path}: not an endpoint wger 2.7 declares"]
     declared = {p["name"] for p in op.get("parameters", []) if p["in"] == "query"}
     errs = [f"query {k!r} is not declared" for k in query if k not in declared]
-    if method == "POST":
+    if method in ("POST", "PATCH"):
         body_schema = op["requestBody"]["content"]["application/json"]["schema"]
         errs += validate(body_schema, body)
     return errs
+
+
+LISTS = ("nutritionplan", "weightentry", "day", "slot", "slot-entry")
 
 
 class FakeWger(BaseHTTPRequestHandler):
@@ -143,6 +147,9 @@ class FakeWger(BaseHTTPRequestHandler):
     attached: set[int] = set()  # routine ids that hold workout logs or sessions
     fail_on: tuple[str, int] | None = None  # (endpoint, nth POST to it) answered 500
     posted: dict[str, int] = {}
+    store: dict[str, list[dict]] = {}  # what POSTs created, per endpoint
+    profile: dict = {}
+    logs: list[dict] = []
 
     def _send(self, code: int, body: object) -> None:
         raw = json.dumps(body).encode()
@@ -176,8 +183,30 @@ class FakeWger(BaseHTTPRequestHandler):
             return self._send(200, "2.7.0")
         if type(self).mode == "revoked" or auth != f"Token {TOKEN}":
             return self._send(401, {"detail": "Invalid token."})
+        if path == "userprofile" and method == "PATCH":
+            if type(self).fail_on == (path, 1):
+                return self._send(500, {"detail": "boom"})
+            type(self).profile.update(body)
+            return self._send(200, type(self).profile)
         if path == "userprofile":
-            return self._send(200, {"username": "owner", "weight_unit": "kg"})
+            return self._send(200, type(self).profile)
+        if path.split("/")[0] in LISTS and method == "PATCH":
+            kind, rid = path.split("/")
+            row = next(r for r in type(self).store[kind] if str(r["id"]) == rid)
+            row.update(body)
+            return self._send(200, row)
+        if path in LISTS and method == "GET":
+            rows = type(self).store.get(path, [])
+            rows = [
+                r
+                for r in rows
+                if all(
+                    str(r.get(k)) == v
+                    for k, v in query.items()
+                    if k in ("description", "routine", "day", "slot")
+                )
+            ]
+            return self._send(200, {"count": len(rows), "next": None, "results": rows})
         if path == "exercise-translation" and method == "GET":
             if "exercise" in query:
                 n = NAMES.get(int(query["exercise"]))
@@ -223,6 +252,10 @@ class FakeWger(BaseHTTPRequestHandler):
             created = {**body, "id": type(self).next_id}
             if path == "routine":
                 type(self).routines.append(created)
+            if path in LISTS:
+                type(self).store.setdefault(path, []).append(created)
+            if path == "workoutlog":
+                type(self).logs.append(created)
             return self._send(201, created)
         if path in ("workoutlog", "workoutsession") and "routine" in query:
             hit = int(query["routine"]) in type(self).attached
@@ -230,17 +263,7 @@ class FakeWger(BaseHTTPRequestHandler):
                 200, {"count": int(hit), "next": None, "results": [{}] * int(hit)}
             )
         if path == "workoutlog":
-            rows = [
-                {
-                    "id": i,
-                    "exercise": e,
-                    "date": d,
-                    "repetitions": r,
-                    "weight": w,
-                    "weight_unit": u,
-                }
-                for (i, e, d, r, w, u) in LOGS
-            ]
+            rows = list(type(self).logs)
             if "exercise" in query:
                 rows = [r for r in rows if r["exercise"] == int(query["exercise"])]
             # Page the answer so the client has to follow `next`.
@@ -261,6 +284,9 @@ class FakeWger(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._handle("POST")
 
+    def do_PATCH(self) -> None:
+        self._handle("PATCH")
+
     def do_DELETE(self) -> None:
         self._handle("DELETE")
 
@@ -278,6 +304,19 @@ def wger():
     )
     FakeWger.rejected, FakeWger.attached = [], set()
     FakeWger.fail_on, FakeWger.posted = None, {}
+    FakeWger.store = {}
+    FakeWger.profile = {"username": "owner", "weight_unit": "kg", "height": None}
+    FakeWger.logs = [
+        {
+            "id": i,
+            "exercise": e,
+            "date": d,
+            "repetitions": r,
+            "weight": w,
+            "weight_unit": u,
+        }
+        for (i, e, d, r, w, u) in LOGS
+    ]
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeWger)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_port}"
@@ -339,7 +378,7 @@ def gym(tmp_path):
 
 
 def writes():
-    return [r for r in FakeWger.log if r["method"] in ("POST", "DELETE")]
+    return [r for r in FakeWger.log if r["method"] in ("POST", "PATCH", "DELETE")]
 
 
 # --- write a routine ---------------------------------------------------------
@@ -654,15 +693,394 @@ def test_logs_reject_bad_dates(wger):
     assert wger("logs", "--from", "2026-12-01", "--to", "2026-11-30").returncode == 1
 
 
+# --- nutrition ---------------------------------------------------------------
+
+CUT = {
+    "name": "Cut 85 kg",
+    "kcal": 2300,
+    "protein": 190,
+    "carbs": 220,
+    "fat": 70,
+}
+
+
+@pytest.fixture
+def plan(tmp_path):
+    def make(**over):
+        p = tmp_path / "plan.json"
+        p.write_text(json.dumps({**CUT, **over}))
+        return str(p)
+
+    return make
+
+
+def test_nutrition_creates_the_plan_with_its_goals(wger, plan):
+    r = wger("nutrition", plan(start="2026-11-25"))
+    assert r.returncode == 0, r.stderr
+    assert "'Cut 85 kg' created" in r.stdout and "2300 kcal" in r.stdout
+    (post,) = writes()
+    assert post["path"] == "/api/v2/nutritionplan/"
+    assert post["body"] == {
+        "description": "Cut 85 kg",
+        "goal_energy": 2300,
+        "goal_protein": 190,
+        "goal_carbohydrates": 220,
+        "goal_fat": 70,
+        "start": "2026-11-25",
+        "only_logging": False,
+    }
+    assert post["auth"] == f"Token {TOKEN}"
+
+
+def test_nutrition_run_twice_writes_once(wger, plan):
+    assert wger("nutrition", plan()).returncode == 0
+    n = len(writes())
+    again = wger("nutrition", plan())
+    assert again.returncode == 0 and "already as asked" in again.stdout
+    assert len(writes()) == n and len(FakeWger.store["nutritionplan"]) == 1
+
+
+def test_nutrition_updates_only_what_changed_on_the_same_name(wger, plan):
+    assert wger("nutrition", plan()).returncode == 0
+    r = wger("nutrition", plan(kcal=2200, fiber=35))
+    assert r.returncode == 0, r.stderr
+    assert "updated" in r.stdout
+    patch = writes()[-1]
+    assert patch["method"] == "PATCH"
+    assert (
+        patch["path"]
+        == f"/api/v2/nutritionplan/{FakeWger.store['nutritionplan'][0]['id']}/"
+    )
+    assert patch["body"] == {"goal_energy": 2200, "goal_fiber": 35}
+    assert len(FakeWger.store["nutritionplan"]) == 1
+
+
+def test_nutrition_another_name_is_another_plan(wger, plan):
+    assert wger("nutrition", plan()).returncode == 0
+    assert wger("nutrition", plan(name="Maintain")).returncode == 0
+    assert len(FakeWger.store["nutritionplan"]) == 2
+
+
+def test_nutrition_dry_run_writes_nothing(wger, plan):
+    r = wger("nutrition", plan(), "--dry-run")
+    assert r.returncode == 0 and "would create" in r.stdout
+    assert writes() == []
+    assert wger("nutrition", plan()).returncode == 0
+    r = wger("nutrition", plan(kcal=2000), "--dry-run")
+    assert "would update" in r.stdout and len(writes()) == 1
+
+
+@pytest.mark.parametrize(
+    "over,needle",
+    [
+        ({"name": ""}, 'needs a "name"'),
+        ({"name": "n" * 81}, "80 characters"),
+        ({"kcal": None}, 'needs "kcal"'),
+        ({"protein": "190"}, "whole number"),
+        ({"fat": -1}, "whole number"),
+        ({"start": "soon"}, "YYYY-MM-DD"),
+    ],
+)
+def test_nutrition_rejects_a_bad_plan_before_any_call(wger, plan, over, needle):
+    r = wger("nutrition", plan(**over))
+    assert r.returncode == 1 and needle in r.stderr
+    assert [x for x in FakeWger.log] == []
+
+
+def test_nutrition_with_an_unreadable_file_is_a_data_error(wger, tmp_path):
+    assert wger("nutrition", str(tmp_path / "nope.json")).returncode == 1
+    bad = tmp_path / "bad.json"
+    bad.write_text("{")
+    assert "not valid JSON" in wger("nutrition", str(bad)).stderr
+
+
+def test_nutrition_names_a_wger_error(wger, plan):
+    FakeWger.fail_on = ("nutritionplan", 1)
+    r = wger("nutrition", plan())
+    assert r.returncode == 4 and "HTTP 500" in r.stderr
+
+
+# --- profile -----------------------------------------------------------------
+
+
+def test_profile_sets_birthdate_height_and_adds_a_weight_entry(wger):
+    r = wger(
+        "profile",
+        *("--birthdate", "1990-05-17", "--height", "182", "--weight", "86.4"),
+        *("--date", "2026-11-25"),
+    )
+    assert r.returncode == 0, r.stderr
+    patch, post = writes()
+    assert (patch["method"], patch["path"]) == ("PATCH", "/api/v2/userprofile/")
+    assert patch["body"] == {"birthdate": "1990-05-17", "height": 182}
+    assert (post["method"], post["path"]) == ("POST", "/api/v2/weightentry/")
+    assert post["body"] == {"date": "2026-11-25T12:00:00+00:00", "weight": "86.4"}
+    assert FakeWger.profile["height"] == 182
+
+
+def test_profile_run_twice_writes_once(wger):
+    args = ("profile", "--birthdate", "1990-05-17", "--height", "182", "--weight", "86")
+    assert wger(*args, "--date", "2026-11-25").returncode == 0
+    n = len(writes())
+    again = wger(*args, "--date", "2026-11-25")
+    assert again.returncode == 0, again.stderr
+    assert "already" in again.stdout and len(writes()) == n
+
+
+def test_profile_corrects_the_days_weight_instead_of_adding_a_second(wger):
+    day = ("--weight", "86", "--date", "2026-11-25")
+    assert wger("profile", *day).returncode == 0
+    r = wger("profile", "--weight", "85.5", "--date", "2026-11-25")
+    assert r.returncode == 0 and "was 86" in r.stdout
+    assert writes()[-1]["method"] == "PATCH"
+    assert [e["weight"] for e in FakeWger.store["weightentry"]] == ["85.5"]
+    # another day is a new entry
+    assert wger("profile", "--weight", "85", "--date", "2026-11-26").returncode == 0
+    assert len(FakeWger.store["weightentry"]) == 2
+
+
+def test_profile_weight_alone_leaves_the_profile_fields_alone(wger):
+    assert wger("profile", "--weight", "86").returncode == 0
+    assert [w["path"] for w in writes()] == ["/api/v2/weightentry/"]
+
+
+def test_profile_dry_run_writes_nothing(wger):
+    r = wger(
+        "profile", *("--birthdate", "1990-05-17", "--height", "182", "--weight", "86"),
+        "--dry-run",
+    )  # fmt: skip
+    assert r.returncode == 0 and "would set" in r.stdout
+    assert writes() == []
+
+
+@pytest.mark.parametrize(
+    "args,needle",
+    [
+        ((), "at least one"),
+        (("--height", "300"), "140-230"),
+        (("--height", "100"), "140-230"),
+        (("--birthdate", "1990-13-01"), "YYYY-MM-DD"),
+        (("--birthdate", "2999-01-01"), "in the past"),
+        (("--weight", "0"), "above 0"),
+        (("--weight", "86", "--date", "yesterday"), "YYYY-MM-DD"),
+    ],
+)
+def test_profile_rejects_bad_values_before_any_call(wger, args, needle):
+    r = wger("profile", *args)
+    assert r.returncode == 1 and needle in r.stderr
+    assert FakeWger.log == []
+
+
+def test_profile_names_a_wger_error(wger):
+    FakeWger.fail_on = ("userprofile", 1)
+    r = wger("profile", "--height", "182")
+    assert r.returncode == 4 and "HTTP 500" in r.stderr
+    FakeWger.fail_on = ("weightentry", 1)
+    r = wger("profile", "--weight", "86")
+    assert r.returncode == 4 and "HTTP 500" in r.stderr
+
+
+# --- log-write ---------------------------------------------------------------
+
+
+@pytest.fixture
+def legs(tmp_path):
+    """A routine covering 2026-11-25 with hack squat (explicit wger id) and squat."""
+    p = tmp_path / "legs.json"
+    p.write_text(
+        json.dumps(
+            {
+                "name": "Legs",
+                "days": [
+                    {
+                        "day": "Wed",
+                        "name": "legs",
+                        "exercises": [
+                            {
+                                "name": "hack-squat",
+                                "wger_exercise": 300,
+                                "sets": 3,
+                                "reps": 10,
+                            },
+                            {
+                                "name": "squat",
+                                "aliases": ["squats"],
+                                "sets": 5,
+                                "reps": 5,
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    return p
+
+
+def make_routine(wger, legs):
+    r = wger("routine", str(legs), "--start", "2026-11-23")
+    assert r.returncode == 0, r.stderr
+    FakeWger.log.clear()
+
+
+def log_posts():
+    return [w["body"] for w in writes() if w["path"] == "/api/v2/workoutlog/"]
+
+
+def test_a_hack_squat_line_lands_in_wger_logs_against_the_routine(wger, legs):
+    make_routine(wger, legs)
+    r = wger("log-write", "hack squat 3x10@60kg", "--date", "2026-11-25")
+    assert r.returncode == 0, r.stderr
+    assert "hack-squat: 3 set(s) written" in r.stdout and "in the routine" in r.stdout
+    posts = log_posts()
+    assert len(posts) == 3
+    entry = next(e for e in FakeWger.store["slot-entry"] if e["exercise"] == 300)
+    assert all(
+        b["exercise"] == 300
+        and b["repetitions"] == "10"
+        and b["weight"] == "60"
+        and (b["weight_unit"], b["repetitions_unit"]) == (1, 1)
+        and b["routine"] == FakeWger.routines[0]["id"]
+        and b["slot_entry"] == entry["id"]
+        and b["date"].startswith("2026-11-25T")
+        for b in posts
+    )
+    assert len({b["date"] for b in posts}) == 3  # sets keep their order
+    # and the owner sees it where the skill reads wger back
+    back = wger("logs", "--from", "2026-11-25", "--to", "2026-11-25")
+    assert back.stdout.splitlines() == ["2026-11-25 hack-squat: 10,10,10@60kg"]
+
+
+def test_log_write_twice_writes_once(wger, legs):
+    make_routine(wger, legs)
+    assert (
+        wger("log-write", "hack squat 3x10@60kg", "--date", "2026-11-25").returncode
+        == 0
+    )
+    n = len(writes())
+    again = wger("log-write", "hack squat 3x10@60kg", "--date", "2026-11-25")
+    assert again.returncode == 0, again.stderr
+    assert "unchanged" in again.stdout and len(writes()) == n
+    # another date is a new session
+    assert (
+        wger("log-write", "hack squat 3x10@60kg", "--date", "2026-11-26").returncode
+        == 0
+    )
+    assert len(log_posts()) == 6
+
+
+def test_log_write_never_overwrites_different_sets_for_the_day(wger, legs):
+    make_routine(wger, legs)
+    assert (
+        wger("log-write", "hack squat 3x10@60kg", "--date", "2026-11-25").returncode
+        == 0
+    )
+    n = len(writes())
+    r = wger("log-write", "hack squat 3x8@70kg", "--date", "2026-11-25")
+    assert r.returncode == 1 and "differ" in r.stderr
+    assert len(writes()) == n
+
+
+def test_log_write_takes_several_exercises_and_uneven_sets(wger, legs):
+    make_routine(wger, legs)
+    r = wger("log-write", "hack squat 10,10,8@60kg, bench press 8,8,6@60kg, squat 5x5@bw",
+             "--date", "2026-11-25")  # fmt: skip
+    assert r.returncode == 0, r.stderr
+    by = {}
+    for b in log_posts():
+        by.setdefault(b["exercise"], []).append(b)
+    assert [b["repetitions"] for b in by[300]] == ["10", "10", "8"]
+    assert [b["repetitions"] for b in by[192]] == ["8", "8", "6"]
+    assert "routine" not in by[192][0]  # bench press is not in this routine
+    assert "not in the routine" in r.stdout
+    assert all("weight" not in b and b["weight_unit"] == 3 for b in by[615])  # @bw
+
+
+def test_log_write_without_a_covering_routine_still_logs(wger, legs):
+    make_routine(wger, legs)
+    r = wger("log-write", "hack squat 1x5@40kg", "--date", "2027-06-01")
+    assert r.returncode == 0, r.stderr
+    (b,) = log_posts()
+    assert "routine" not in b and "slot_entry" not in b
+
+
+def test_log_write_pounds_are_sent_as_pounds(wger):
+    assert wger("log-write", "squat 5@135lb", "--date", "2026-11-25").returncode == 0
+    (b,) = log_posts()
+    assert (b["weight"], b["weight_unit"]) == ("135", 2)
+
+
+def test_log_write_an_unknown_exercise_fails_that_one_and_writes_the_rest(wger):
+    r = wger(
+        "log-write", "cable fly 3x12@20kg, hack squat 3x10@60kg", "--date", "2026-11-25"
+    )
+    assert r.returncode == 1
+    assert "cable-fly" in r.stderr and "wger_exercise" in r.stderr
+    assert [b["exercise"] for b in log_posts()] == [300, 300, 300]
+
+
+def test_log_write_dry_run_writes_nothing(wger, legs):
+    make_routine(wger, legs)
+    r = wger("log-write", "hack squat 3x10@60kg", "--date", "2026-11-25", "--dry-run")
+    assert r.returncode == 0 and "would write hack-squat 3 set(s)" in r.stdout
+    assert writes() == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["", "hack squat", "hack squat 3x@60kg", "3x10@60kg", "hack squat 3x10@sixty",
+     "hack squat 0x10@60kg", "hack squat 3x10000@60kg", "hack squat 3x10@6kg@7"],
+)  # fmt: skip
+def test_log_write_rejects_a_line_it_cannot_read_before_any_call(wger, line):
+    r = wger("log-write", line, "--date", "2026-11-25")
+    assert r.returncode == 1 and "wger:" in r.stderr
+    assert FakeWger.log == []
+
+
+def test_log_write_rejects_a_bad_date(wger):
+    assert wger("log-write", "squat 5x5@100kg", "--date", "11/25").returncode == 1
+
+
+def test_log_write_names_a_wger_error_and_stops(wger, legs):
+    make_routine(wger, legs)
+    FakeWger.fail_on = ("workoutlog", 2)
+    r = wger(
+        "log-write", "hack squat 3x10@60kg, squat 5x5@100kg", "--date", "2026-11-25"
+    )
+    assert r.returncode == 4 and "HTTP 500" in r.stderr
+    assert len(log_posts()) == 2  # the first set, and the one that was refused
+
+
+def test_log_write_never_runs_workout_claw(wger, tmp_path):
+    marker = tmp_path / "ran"
+    stub = tmp_path / "bin" / "workout-claw"
+    stub.parent.mkdir()
+    stub.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    stub.chmod(0o755)
+    os.environ["PATH"] = f"{stub.parent}:{os.environ['PATH']}"
+    try:
+        assert (
+            wger("log-write", "squat 5x5@100kg", "--date", "2026-11-25").returncode == 0
+        )
+    finally:
+        os.environ["PATH"] = os.environ["PATH"].split(":", 1)[1]
+    assert not marker.exists()  # workout-claw stays the record, written by its own call
+
+
 # --- the token paths ---------------------------------------------------------
 
 
 @pytest.mark.parametrize("token", [None, "", "   "])
 def test_a_missing_token_stops_before_any_call(wger, gym, token):
+    plan = gym.parent / "plan.json"
+    plan.write_text(json.dumps(CUT))
     for args in (
         ("logs", "--from", "2026-11-01", "--to", "2026-11-30"),
         ("routine", str(gym)),
         ("check",),
+        ("nutrition", str(plan)),
+        ("profile", "--weight", "86"),
+        ("log-write", "squat 5x5@100kg"),
     ):
         r = wger(*args, token=token)
         assert r.returncode == 2, args
@@ -672,10 +1090,15 @@ def test_a_missing_token_stops_before_any_call(wger, gym, token):
 
 def test_a_revoked_token_is_named_and_writes_nothing(wger, gym):
     FakeWger.mode = "revoked"
+    plan = gym.parent / "plan.json"
+    plan.write_text(json.dumps(CUT))
     for args in (
         ("logs", "--from", "2026-11-01", "--to", "2026-11-30"),
         ("routine", str(gym)),
         ("check",),
+        ("nutrition", str(plan)),
+        ("profile", "--weight", "86"),
+        ("log-write", "squat 5x5@100kg"),
     ):
         r = wger(*args)
         assert r.returncode == 3, args
@@ -691,10 +1114,15 @@ def test_a_wrong_token_is_rejected_the_same_way(wger):
 def test_the_token_never_appears_in_output(wger, gym):
     FakeWger.mode = "ok"
     outs = []
+    plan = gym.parent / "plan.json"
+    plan.write_text(json.dumps(CUT))
     for args in (
         ("check",),
         ("routine", str(gym)),
         ("logs", "--from", "2026-11-01", "--to", "2026-11-30"),
+        ("nutrition", str(plan)),
+        ("profile", "--weight", "86"),
+        ("log-write", "squat 5x5@100kg"),
     ):
         r = wger(*args)
         outs += [r.stdout, r.stderr]

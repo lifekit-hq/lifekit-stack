@@ -307,6 +307,132 @@
      null
     ]
    },
+   "NutritionPlan": {
+    "description": "Nutritional plan serializer",
+    "properties": {
+     "creation_date": {
+      "format": "date",
+      "readOnly": true,
+      "type": "string"
+     },
+     "description": {
+      "description": "A description of the goal of the plan, e.g. \"Gain mass\" or \"Prepare for summer\"",
+      "maxLength": 80,
+      "type": "string"
+     },
+     "end": {
+      "format": "date",
+      "nullable": true,
+      "title": "End date",
+      "type": "string"
+     },
+     "goal_carbohydrates": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_energy": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_fat": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_fiber": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_protein": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "only_logging": {
+      "type": "boolean"
+     },
+     "start": {
+      "format": "date",
+      "title": "Start date",
+      "type": "string"
+     }
+    },
+    "required": [
+     "creation_date"
+    ],
+    "type": "object"
+   },
+   "NutritionPlanRequest": {
+    "description": "Nutritional plan serializer",
+    "properties": {
+     "description": {
+      "description": "A description of the goal of the plan, e.g. \"Gain mass\" or \"Prepare for summer\"",
+      "maxLength": 80,
+      "type": "string"
+     },
+     "end": {
+      "format": "date",
+      "nullable": true,
+      "title": "End date",
+      "type": "string"
+     },
+     "goal_carbohydrates": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_energy": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_fat": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_fiber": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_protein": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "only_logging": {
+      "type": "boolean"
+     },
+     "start": {
+      "format": "date",
+      "title": "Start date",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
    "OperationEnum": {
     "description": "* `+` - Plus\n* `-` - Minus\n* `r` - Replace",
     "enum": [
@@ -399,6 +525,37 @@
      "results": {
       "items": {
        "$ref": "#/components/schemas/MaxRepetitionsConfig"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
+   "PaginatedNutritionPlanList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/NutritionPlan"
       },
       "type": "array"
      }
@@ -595,6 +752,37 @@
     ],
     "type": "object"
    },
+   "PaginatedWeightEntryList": {
+    "properties": {
+     "count": {
+      "example": 123,
+      "type": "integer"
+     },
+     "next": {
+      "example": "http://api.example.org/accounts/?offset=400&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "previous": {
+      "example": "http://api.example.org/accounts/?offset=200&limit=100",
+      "format": "uri",
+      "nullable": true,
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/WeightEntry"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "count",
+     "results"
+    ],
+    "type": "object"
+   },
    "PaginatedWorkoutLogList": {
     "properties": {
      "count": {
@@ -655,6 +843,250 @@
      "count",
      "results"
     ],
+    "type": "object"
+   },
+   "PatchedNutritionPlanRequest": {
+    "description": "Nutritional plan serializer",
+    "properties": {
+     "description": {
+      "description": "A description of the goal of the plan, e.g. \"Gain mass\" or \"Prepare for summer\"",
+      "maxLength": 80,
+      "type": "string"
+     },
+     "end": {
+      "format": "date",
+      "nullable": true,
+      "title": "End date",
+      "type": "string"
+     },
+     "goal_carbohydrates": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_energy": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_fat": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_fiber": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "goal_protein": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "nullable": true,
+      "type": "integer"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "only_logging": {
+      "type": "boolean"
+     },
+     "start": {
+      "format": "date",
+      "title": "Start date",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "PatchedUserprofileRequest": {
+    "description": "Workout session serializer",
+    "properties": {
+     "age": {
+      "maximum": 100,
+      "minimum": 10,
+      "nullable": true,
+      "type": "integer"
+     },
+     "birthdate": {
+      "format": "date",
+      "nullable": true,
+      "title": "Date of Birth",
+      "type": "string"
+     },
+     "calories": {
+      "description": "Total caloric intake, including e.g. any surplus",
+      "maximum": 5000,
+      "minimum": 1500,
+      "nullable": true,
+      "title": "Total daily calories",
+      "type": "integer"
+     },
+     "freetime_hours": {
+      "description": "Average hours per day",
+      "maximum": 15,
+      "minimum": 1,
+      "nullable": true,
+      "title": "Free time",
+      "type": "integer"
+     },
+     "freetime_intensity": {
+      "description": "Approximately\n\n* `1` - Low\n* `2` - Medium\n* `3` - High",
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/IntensityEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ],
+      "title": "Physical intensity"
+     },
+     "gender": {
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/GenderEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ]
+     },
+     "height": {
+      "maximum": 230,
+      "minimum": 140,
+      "nullable": true,
+      "title": "Height (cm)",
+      "type": "integer"
+     },
+     "notification_language": {
+      "description": "Language to use when sending you email notifications, e.g. email reminders for workouts. This does not affect the language used on the website.",
+      "type": "integer"
+     },
+     "num_days_weight_reminder": {
+      "description": "Number of days after the last weight entry (enter 0 to deactivate)",
+      "maximum": 30,
+      "minimum": 0,
+      "title": "Automatic reminders for weight entries",
+      "type": "integer"
+     },
+     "repetitions_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "sleep_hours": {
+      "description": "The average hours of sleep per day",
+      "maximum": 10,
+      "minimum": 4,
+      "nullable": true,
+      "title": "Hours of sleep",
+      "type": "integer"
+     },
+     "sport_hours": {
+      "description": "Average hours per week",
+      "maximum": 30,
+      "minimum": 1,
+      "nullable": true,
+      "title": "Sport",
+      "type": "integer"
+     },
+     "sport_intensity": {
+      "description": "Approximately\n\n* `1` - Low\n* `2` - Medium\n* `3` - High",
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/IntensityEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ],
+      "title": "Physical intensity"
+     },
+     "time_zone": {
+      "description": "IANA timezone name, e.g. \"Europe/Berlin\". Empty means no client has reported one and the instance timezone is used.",
+      "maxLength": 50,
+      "title": "Timezone",
+      "type": "string"
+     },
+     "weight_rounding": {
+      "format": "decimal",
+      "nullable": true,
+      "pattern": "^-?\\d{0,2}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     },
+     "weight_unit": {
+      "$ref": "#/components/schemas/WeightUnitEnum"
+     },
+     "work_hours": {
+      "description": "Average hours per day",
+      "maximum": 15,
+      "minimum": 1,
+      "nullable": true,
+      "title": "Work",
+      "type": "integer"
+     },
+     "work_intensity": {
+      "description": "Approximately\n\n* `1` - Low\n* `2` - Medium\n* `3` - High",
+      "nullable": true,
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/IntensityEnum"
+       },
+       {
+        "$ref": "#/components/schemas/NullEnum"
+       }
+      ],
+      "title": "Physical intensity"
+     },
+     "workout_duration": {
+      "description": "Default duration in weeks of workouts not in a schedule. Used for email workout reminders.",
+      "maximum": 30,
+      "minimum": 1,
+      "title": "Default duration of workouts",
+      "type": "integer"
+     },
+     "workout_reminder": {
+      "description": "The number of days you want to be reminded before a workout expires.",
+      "maximum": 30,
+      "minimum": 1,
+      "title": "Remind before expiration",
+      "type": "integer"
+     },
+     "workout_reminder_active": {
+      "description": "Check to activate automatic reminders for workouts. You need to provide a valid email for this to work.",
+      "title": "Activate workout reminders",
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "PatchedWeightEntryRequest": {
+    "description": "Weight serializer",
+    "properties": {
+     "date": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "weight": {
+      "format": "decimal",
+      "pattern": "^-?\\d{0,6}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     }
+    },
     "type": "object"
    },
    "RepetitionsConfig": {
@@ -1534,6 +1966,55 @@
     ],
     "type": "object"
    },
+   "WeightEntry": {
+    "description": "Weight serializer",
+    "properties": {
+     "date": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "user": {
+      "readOnly": true,
+      "type": "integer"
+     },
+     "weight": {
+      "format": "decimal",
+      "pattern": "^-?\\d{0,6}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "user",
+     "weight"
+    ],
+    "type": "object"
+   },
+   "WeightEntryRequest": {
+    "description": "Weight serializer",
+    "properties": {
+     "date": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "id": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "weight": {
+      "format": "decimal",
+      "pattern": "^-?\\d{0,6}(?:\\.\\d{0,2})?$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "weight"
+    ],
+    "type": "object"
+   },
    "WeightUnitEnum": {
     "description": "* `kg` - Metric (kilogram)\n* `lb` - Imperial (pound)",
     "enum": [
@@ -2321,6 +2802,199 @@
     ],
     "tags": [
      "max-repetitions-config"
+    ]
+   }
+  },
+  "/api/v2/nutritionplan/": {
+   "get": {
+    "description": "API endpoint for nutrition plan objects. For a read-only endpoint with all\nthe information of nutritional plan(s), see /api/v2/nutritionplaninfo/",
+    "operationId": "nutritionplan_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "creation_date",
+      "schema": {
+       "format": "date",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "description",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "has_goal_calories",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedNutritionPlanList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "nutritionplan"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for nutrition plan objects. For a read-only endpoint with all\nthe information of nutritional plan(s), see /api/v2/nutritionplaninfo/",
+    "operationId": "nutritionplan_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/NutritionPlanRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/NutritionPlan"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "nutritionplan"
+    ]
+   }
+  },
+  "/api/v2/nutritionplan/{id}/": {
+   "patch": {
+    "description": "API endpoint for nutrition plan objects. For a read-only endpoint with all\nthe information of nutritional plan(s), see /api/v2/nutritionplaninfo/",
+    "operationId": "nutritionplan_partial_update",
+    "parameters": [
+     {
+      "description": "A UUID string identifying this nutrition plan.",
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PatchedNutritionPlanRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/NutritionPlan"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "nutritionplan"
     ]
    }
   },
@@ -3238,6 +3912,51 @@
      "userprofile"
     ]
    },
+   "patch": {
+    "description": "API endpoint for the user profile\n\nEvery user has exactly one profile, so this endpoint has no list and no\ndetail route: it always reads and writes the profile of the logged-in user.\nUpdating it takes a PATCH since wger 2.7; up to 2.6 it took a POST.",
+    "operationId": "userprofile_partial_update",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PatchedUserprofileRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Userprofile"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "userprofile"
+    ]
+   },
    "post": {
     "deprecated": true,
     "description": "Updates the profile of the logged-in user, exactly like PATCH does.\n\nUse this if your client needs to work with wger 2.6 or older, which accept only POST on this endpoint. Servers from 2.7 on accept both, so prefer PATCH in this case.",
@@ -3496,6 +4215,275 @@
     ],
     "tags": [
      "weight-config"
+    ]
+   }
+  },
+  "/api/v2/weightentry/": {
+   "get": {
+    "description": "API endpoint for weight entry objects",
+    "operationId": "weightentry_list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "date",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "date__gt",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "date__gte",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "date__lt",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "date__lte",
+      "schema": {
+       "format": "date-time",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "id",
+      "schema": {
+       "format": "uuid",
+       "type": "string"
+      }
+     },
+     {
+      "description": "Multiple values may be separated by commas.",
+      "explode": false,
+      "in": "query",
+      "name": "id__in",
+      "schema": {
+       "items": {
+        "format": "uuid",
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "style": "form"
+     },
+     {
+      "description": "Number of results to return per page.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The initial index from which to return the results.",
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Which field to use when ordering the results.",
+      "in": "query",
+      "name": "ordering",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight__gt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight__gte",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight__lt",
+      "schema": {
+       "type": "number"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weight__lte",
+      "schema": {
+       "type": "number"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedWeightEntryList"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "weightentry"
+    ]
+   },
+   "post": {
+    "description": "API endpoint for weight entry objects",
+    "operationId": "weightentry_create",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WeightEntryRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WeightEntry"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "weightentry"
+    ]
+   }
+  },
+  "/api/v2/weightentry/{id}/": {
+   "patch": {
+    "description": "API endpoint for weight entry objects",
+    "operationId": "weightentry_partial_update",
+    "parameters": [
+     {
+      "description": "A UUID string identifying this measurement.",
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PatchedWeightEntryRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WeightEntry"
+        }
+       }
+      },
+      "description": ""
+     }
+    },
+    "security": [
+     {
+      "cookieAuth": []
+     },
+     {
+      "tokenAuth": []
+     },
+     {
+      "headlessJwtAuth": []
+     },
+     {
+      "oidcAuth": []
+     },
+     {
+      "jwtAuth": []
+     }
+    ],
+    "tags": [
+     "weightentry"
     ]
    }
   },
@@ -4235,5 +5223,5 @@
    }
   }
  },
- "x-fixture": "Subset of GET /api/v2/schema?format=json from the live wger 2.7.0 instance (read-only, 2026-11-23): only the paths and schemas skills/workout-log/wger.py uses. Regenerate on a wger bump."
+ "x-fixture": "Subset of GET /api/v2/schema?format=json from the live wger 2.7.0 instance (read-only, 2026-11-23; nutritionplan, weightentry and the userprofile PATCH added 2026-11-25 from the same instance via `manage.py spectacular`): only the paths and schemas skills/workout-log/wger.py uses. Regenerate on a wger bump."
 }
