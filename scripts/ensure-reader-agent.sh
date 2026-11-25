@@ -141,25 +141,19 @@ if [ "$a2a_on" = 1 ]; then
   # nothing is written when it already is that set).
   if [ "$check_only" = 0 ]; then
     read_cfg tools.agentToAgent.allow
-    printf '%s' "${got:-null}" | A2A="$a2a_agents" python3 -c '
+    live_allow="$(printf '%s' "$got" | pick_json '[]')" || live_allow=null
+    printf '%s' "$live_allow" | A2A="$a2a_agents" python3 -c '
 import json, os, sys
-text, want = sys.stdin.read(), sorted(json.loads(os.environ["A2A"]))
-try:
-    live = json.JSONDecoder().raw_decode(text[text.find("[") :])[0] if "[" in text else None
-except ValueError:
-    live = None
+live, want = json.load(sys.stdin), sorted(json.loads(os.environ["A2A"]))
 sys.exit(0 if isinstance(live, list) and sorted(live) == want else 1)' \
       || printf '{"tools":{"agentToAgent":{"allow":%s}}}' "$a2a_agents" \
         | docker exec -i "$GATEWAY" openclaw config patch --stdin >/dev/null
   fi
   read_cfg tools.agentToAgent.allow
-  printf '%s' "${got:-null}" | python3 -c '
+  live_allow="$(printf '%s' "$got" | pick_json '[]')" || live_allow=null
+  printf '%s' "$live_allow" | python3 -c '
 import json, sys
-text = sys.stdin.read()
-try:
-    allow = json.JSONDecoder().raw_decode(text[text.find("[") :])[0] if "[" in text else None
-except ValueError:
-    allow = None
+allow = json.load(sys.stdin)
 if not isinstance(allow, list) or not allow:
     sys.exit("refusing: tools.agentToAgent.enabled is true with no allow list; the reader must not be reachable by other agents (set tools.agentToAgent.allow to the agents that use it, without the reader)")
 if any(a in ("reader", "*") or a.endswith("*") for a in allow):

@@ -115,6 +115,8 @@ if cmd[:2] == ["config", "get"]:
         if allow is None:
             print("Config path not found: tools.agentToAgent.allow", file=sys.stderr)
             sys.exit(1)
+        if load("a2a_allow_noise"):
+            print("[gateway] noise before the value")
         print(json.dumps(allow))
 elif cmd[:2] == ["config", "patch"]:
     log_call(cmd)
@@ -369,6 +371,21 @@ def test_agent_to_agent_enabled_is_read_through_log_noise(box):
     assert done.returncode == 1 and "agentToAgent" in done.stderr
     box.put("a2a", False)
     assert box.run().returncode == 0
+
+
+def test_the_allow_list_is_read_through_log_noise(box):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("a2a_allow_noise", True)
+    box.put("a2a_allow", list(reversed(A2A_AGENTS)))
+    for args in ((), ("--check",)):
+        done = box.run(*args)
+        assert done.returncode == 0 or "exec allowlist" in done.stderr, done.stderr
+        assert "allow list" not in done.stderr
+    assert patches(box) == []
+    box.put("a2a_allow", ["kit", "reader"])
+    done = box.run("--check")
+    assert done.returncode == 1 and "reaches the reader" in done.stderr
 
 
 def test_an_unset_agent_to_agent_key_is_disabled(box):
