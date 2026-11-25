@@ -127,18 +127,7 @@
       "subagents": {
         "model": "anthropic/claude-sonnet-5-5"
       },
-      "heartbeat": {
-        "every": "0m",
-        "model": "anthropic/claude-sonnet-5-5"
-      },
       "utilityModel": ""
-    },
-    "entries": {
-      "finance": {
-        "heartbeat": {
-          "every": "0m"
-        }
-      }
     }
   },
   "hooks": {

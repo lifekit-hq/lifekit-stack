@@ -31,7 +31,7 @@ phases run on a push only when an OpenClaw path changed (`scripts/lib/openclaw-p
 account (sudo); see README "VPS users".
 
 The live OpenClaw config (`/srv/openclaw/config/openclaw.json`) has two halves. Platform keys
-(logging, diagnostics, plugin enables, gateway auth rate limit, memory search, heartbeat, inbound
+(logging, diagnostics, plugin enables, gateway auth rate limit, memory search, inbound
 hooks, each Telegram account's `botToken` - secrets there are `${VAR}` references resolved from
 the env file, or, `botToken` only, a SOPS exec SecretRef resolved live (docs/secrets.md) - never
 values) live in `compose/openclaw-gateway/platform.patch.json`: `deploy.sh` compares it with the

@@ -98,7 +98,9 @@ DEST_MADE=0
 START="$(date +%s)"
 COPIED_KB=0
 P_REPINNED=0 P_FALLBACK=0 P_OFFCORE=0
-FIX_RC="-" SECOND_RC="-" SQLITE_RC="-" LINT_RC="-"
+PROBE_NAME=""
+PROBE_WAIT="${PROBE_WAIT:-180}"
+VALIDATE_RC="-" START_RC="-" LOCK_RC="-" FIX_RC="-" SECOND_RC="-" SQLITE_RC="-" LINT_RC="-"
 TOLERATED_COUNTS="-"
 UNTOLERATED=""
 CORE_VER="unknown"
@@ -106,6 +108,7 @@ CORE_VER="unknown"
 cleanup() {
   local rc=$?
   trap - EXIT
+  [[ -z "${PROBE_NAME}" ]] || docker rm -f "${PROBE_NAME}" >/dev/null 2>&1 || true
   if ((BUILT)); then
     docker rmi "${REHEARSE_TAG}" >/dev/null 2>&1 || true
   fi
@@ -223,6 +226,25 @@ write_env() {
     } | awk -F= '!seen[$1]++' >"${out}")
 }
 
+# In trusted-proxy mode the gateway refuses to start while a shared token is
+# set, so the live deploy overlays the token away (compose/openclaw/
+# trusted-proxy.yml; an empty value counts as unset). Follow the copied
+# config's mode the same way: blank the placeholder token. Only the mode
+# string is read; no value leaves python.
+match_token_to_auth_mode() {
+  python3 - "${DEST}/config/openclaw.json" "${DEST}/env.rehearsal" <<'PY'
+import json, sys
+try:
+    mode = json.load(open(sys.argv[1]))["gateway"]["auth"]["mode"]
+except Exception:
+    sys.exit(0)
+if mode == "trusted-proxy":
+    lines = open(sys.argv[2]).read().splitlines()
+    lines = ["OPENCLAW_GATEWAY_TOKEN=" if ln.startswith("OPENCLAW_GATEWAY_TOKEN=") else ln for ln in lines]
+    open(sys.argv[2], "w").write("\n".join(lines) + "\n")
+PY
+}
+
 # oc <config-dir> <workspace-dir> <secret-dir> <mount-suffix> -- openclaw args
 oc() {
   local cfg="$1" ws="$2" sec="$3" sfx="$4"
@@ -235,6 +257,59 @@ oc() {
     --entrypoint openclaw "${IMAGE}" "$@"
 }
 oc_copy() { oc "${DEST}/config" "${DEST}/workspace" "${DEST}/secret-key" "" -- "$@"; }
+
+# The copy carries the running gateway's ownership record (sidecar lock plus
+# the owner lease inside the state database), written by a holder in another
+# pid namespace and renewed seconds before the copy. OpenClaw 2026.11.7+ never
+# reclaims an owner it cannot verify: doctor waits ~94 s, then exits "cannot
+# verify Gateway ownership". Nothing runs on the copy, so the holder is
+# stopped by construction; clear it with the CLI's own recover-lock
+# (inspect, then --confirm the printed fingerprint) - never by deleting lock
+# files, which the docs forbid. Holder pid/host stay in the CLI output and
+# are not logged here.
+recover_copied_lock() {
+  local out fp
+  out="$(oc_copy gateway recover-lock --json 2>"${DEST}/recover-lock.err")" || { LOCK_RC=$?; return; }
+  fp="$(python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d["confirmation"] if d.get("present") else "")
+' <<<"${out}" 2>/dev/null)" || { LOCK_RC=1; return; }
+  if [[ -z "${fp}" ]]; then
+    LOCK_RC=0
+    return
+  fi
+  oc_copy gateway recover-lock --confirm "${fp}" >"${DEST}/recover-lock.log" 2>&1 || LOCK_RC=$?
+  return 0
+}
+
+# The migrated copy must be a config the new gateway accepts and boots on:
+# `config validate` (schema only), then a real `gateway run` on the copy with
+# no published port, polled for /healthz from inside the container. Env keys
+# are placeholders, so channels and models cannot reach anything real; the
+# container is removed on every path. Logs stay in ${DEST}.
+probe_gateway_start() {
+  local waited=0
+  PROBE_NAME="rehearsal-gateway-$$"
+  docker run -d --name "${PROBE_NAME}" --memory 2g --env-file "${DEST}/env.rehearsal" \
+    -v "${DEST}/config:/home/node/.openclaw" \
+    -v "${DEST}/workspace:/home/node/.openclaw/workspace" \
+    -v "${DEST}/secret-key:/home/node/.config/openclaw" \
+    -v "${DEST}/vault:/home/node/memory:ro" \
+    --entrypoint openclaw "${IMAGE}" gateway run --bind loopback >"${DEST}/gateway-start.log" 2>&1 || return 1
+  while ((waited < PROBE_WAIT)); do
+    if docker exec "${PROBE_NAME}" node -e 'fetch("http://127.0.0.1:18789/healthz").then(r=>process.exit(r.ok?0:1),()=>process.exit(1))' >/dev/null 2>&1; then
+      docker rm -f "${PROBE_NAME}" >/dev/null 2>&1 || true
+      return 0
+    fi
+    [[ "$(docker inspect -f '{{.State.Running}}' "${PROBE_NAME}" 2>/dev/null || echo true)" == true ]] || break
+    sleep 2
+    waited=$((waited + 2))
+  done
+  docker logs "${PROBE_NAME}" >>"${DEST}/gateway-start.log" 2>&1 || true
+  docker rm -f "${PROBE_NAME}" >/dev/null 2>&1 || true
+  return 1
+}
 
 # Structured classification of `doctor --json`: matches on the finding's
 # `checkId` plus a structured field (`path`, `requirement`), never on free
@@ -265,6 +340,21 @@ TOLERATED = {
     # if gateway.auth ever gains a token/password SecretRef.
     "machine_client_auth": ("core/doctor/node-hosting-preconditions",
                             {"requirement": r"^machine-client-auth$", "path": r"^gateway\.auth$"}),
+    # Live state, not a bump effect: the reader agent ships tools.deny for the
+    # filesystem write tools plus exec in allowlist mode with one allowlisted
+    # path, canary-proven (docs/openclaw-agent-design.md). The doctor's policy
+    # check cannot see the exec allowlist, so it flags every such agent. Only
+    # the reader is tolerated; any other agent's entry stays red.
+    "reader_exec_policy": ("core/doctor/security",
+                           {"requirement": r"^doctor\.exec_filesystem_policy$",
+                            "message": r"agents\.entries\.reader\.tools: "}),
+    # An upstream default, not a bump effect: 2026.11.9 flags
+    # browser.extensionRelay.allowLegacyAuth, which defaults to true during
+    # the deprecation window. The fleet pairs no browser extension and runs no
+    # external CDP client; the finding has no path or requirement, hence the
+    # anchored message prefix.
+    "browser_legacy_relay_auth": ("core/doctor/browser",
+                                  {"message": r"Legacy Browser Relay Authentication is enabled "}),
 }
 OK = {"info", "ok", "pass", "passed", "debug"}
 try:
@@ -352,7 +442,7 @@ write_summary() {
     echo "## OpenClaw bump rehearsal: ${verdict}"
     echo
     echo "- image core version: ${CORE_VER}"
-    echo "- exit codes: fix=${FIX_RC} second-fix=${SECOND_RC} session-sqlite=${SQLITE_RC} lint=${LINT_RC}"
+    echo "- exit codes: recover-lock=${LOCK_RC} config-validate=${VALIDATE_RC} gateway-start=${START_RC} fix=${FIX_RC} second-fix=${SECOND_RC} session-sqlite=${SQLITE_RC} lint=${LINT_RC}"
     echo "- tolerated findings: ${TOLERATED_COUNTS}"
     echo "- untolerated finding ids: ${UNTOLERATED:--}"
     echo "- plugins: re-pinned by doctor=${P_REPINNED} needed update fallback=${P_FALLBACK} still off core=${P_OFFCORE}"
@@ -435,6 +525,12 @@ fi
 say "copying state"
 copy_state
 cp "${DEST}/config/openclaw.json" "${DEST}/config.before.json" 2>/dev/null || true
+match_token_to_auth_mode
+
+say "clearing the copied gateway ownership record"
+LOCK_RC=0
+recover_copied_lock
+((LOCK_RC == 0)) || RED+=("recover-lock-exit-${LOCK_RC}")
 
 say "doctor --fix --non-interactive"
 FIX_RC=0
@@ -443,6 +539,8 @@ if ((FIX_RC != 0)) && grep -qiE 'malformed|database is locked|SQLITE_BUSY' "${DE
   # The copy came from a running gateway; one re-copy for a torn snapshot.
   say "torn SQLite snapshot suspected; re-copying once"
   copy_state
+  LOCK_RC=0
+  recover_copied_lock
   FIX_RC=0
   oc_copy doctor --fix --non-interactive >"${DEST}/doctor-fix.log" 2>&1 || FIX_RC=$?
 fi
@@ -464,6 +562,16 @@ else
 
   say "doctor --json lint on the migrated copy"
   run_lint "" "${DEST}/config" "${DEST}/workspace" "${DEST}/secret-key"
+
+  say "config validate on the migrated copy"
+  VALIDATE_RC=0
+  oc_copy config validate --json >"${DEST}/config-validate.json" 2>"${DEST}/config-validate.err" || VALIDATE_RC=$?
+  ((VALIDATE_RC == 0)) || RED+=("config-invalid-exit-${VALIDATE_RC}")
+
+  say "gateway must start on the migrated copy"
+  START_RC=0
+  probe_gateway_start || START_RC=$?
+  ((START_RC == 0)) || RED+=("gateway-start-failed")
 
   say "asserting official plugins match core ${CORE_VER}"
   MISMATCH="$(plugin_mismatches)"

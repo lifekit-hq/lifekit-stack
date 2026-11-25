@@ -89,7 +89,13 @@ the flags). It builds the image as `lifekit-openclaw:rehearse` (never `:local`
 or `:prev`), copies the state and workspace under `~/rehearsal/`, runs
 `doctor --fix` twice plus the SQLite dry-run and a `doctor --json` lint on the
 copy, checks plugin versions against core, and prints a summary of key paths and
-counts with no config values. `--lint-only` is the quick read-only pass against
+counts with no config values. Before doctor it clears the copied gateway
+ownership record with `gateway recover-lock` (inspect, then `--confirm` the
+fingerprint; the copy holds the live gateway's owner lease, which 2026.11.7+
+doctor will not reclaim from another pid namespace and waits ~94 s on); it
+never deletes lock files by hand. After doctor it runs `config validate` and
+starts a real gateway on the copy (no published port, `/healthz` polled, container
+removed), so a migrated config the new schema rejects is red. `--lint-only` is the quick read-only pass against
 live state. The copy skips the gateway's `tmp/` and cache dirs (plugin-build
 scratch that is deleted while it copies) and treats rsync exit 24 (files
 vanished mid-copy) as a warning; any other rsync failure is red. The full
@@ -150,9 +156,9 @@ file); rotating that token means recreating `prometheus` too. Check it with
 `/srv/openclaw/config/openclaw.json` has two halves. The platform keys -
 `logging.consoleStyle`, `diagnostics.otel`, the `diagnostics-prometheus` and
 `diagnostics-otel` plugin enables, memory-core dreaming off, `gateway.auth.rateLimit`, `memory.search`
-(`enabled` + `extraPaths`), `tools.codeMode`, `agents.defaults.heartbeat.every`, the inbound
+(`enabled` + `extraPaths`), `tools.codeMode`, the inbound
 `hooks` block (with `defaultSessionKey`), the bootstrap limit, the 5.5 default models and the
-reading Telegram door (learnclaw's own bot), and the finance agent's heartbeat - live in
+reading Telegram door (learnclaw's own bot) - live in
 `compose/openclaw-gateway/platform.patch.json`. On every OpenClaw deploy (see
 [Path-gated OpenClaw deploys](#path-gated-openclaw-deploys)) `deploy.sh`
 compares that file with the live config, applies it with
@@ -313,7 +319,7 @@ it.
 #### Inbound hooks and the finance pulse (in the platform file since 2026-09-18)
 
 The same file turns on OpenClaw's inbound HTTP hooks for two callers and two
-agents, and gives the finance agent a heartbeat:
+agents:
 
 - `hooks`: enabled, `allowedAgentIds: ["finance", "kit"]` (the second is the
   firstmate-reply mapping below; it also lets a token holder target kit
@@ -333,11 +339,13 @@ agents, and gives the finance agent a heartbeat:
   owner's Kit DM through an explicit `channel: "telegram"` and
   `to: ${OPENCLAW_KIT_CHAT}`. Kit's persistent main session has no last route
   to that chat, so the mapping never delivers to `"last"`.
-- `agents.entries.finance.heartbeat`: **retired 2026-09-26, see the fs-685
-  note below** - the key is now `{"every": "0m"}`, same shape as
-  `agents.defaults.heartbeat`, so the finance agent no longer ticks on the
-  heartbeat lane at all. It stays the one `agents.entries` key in the
-  platform file; every other per-agent key stays host state.
+- `agents.defaults.heartbeat` and `agents.entries.finance.heartbeat`: **removed
+  from the platform file with the 2026.11.9 bump** - that release retired both
+  keys (`doctor --fix` migrates them into ordinary automation jobs), so
+  `config patch` would re-add keys the schema rejects. The post-deploy doctor
+  pass does the migration; the finance agent stays off the heartbeat lane (see
+  the fs-685 note below). No `agents.entries` key remains in the platform file;
+  every per-agent key is host state.
 - **No value is in git or in `openclaw.json`.** The file holds the literal
   references `${OPENCLAW_HOOK_TOKEN}`, `${OPENCLAW_HOOK_PATH}`,
   `${OPENCLAW_FINANCE_CHAT}` and `${OPENCLAW_KIT_CHAT}`; OpenClaw resolves
@@ -428,7 +436,7 @@ per-script behavioral tests (`test_deploy_openclaw.py`, `test_kit_cron_models.py
 `test_finance_pulse.py`), which assert the policy model in the stubbed argv. Kit's chat model
 is a per-agent entry (host state) and is not covered. The scripts are host steps after the merge: the deploy runs
 `ensure-doc-door.sh`; run `ensure-kit-cron-models.sh`, `ensure-needs-you-digest.sh` and `ensure-finance-pulse.sh` as
-`lifekit` (each with `--check` first where it has one). `agents.defaults.heartbeat` stays `every: "0m"` (no heartbeat runs;
+`lifekit` (each with `--check` first where it has one). No heartbeat runs (2026.11.9 retired the key;
 the finance pulse is the gated `ledger-pulse` row above), so it makes no model call.
 
 **Gates for the scheduled mail jobs.** Like `ledger-pulse` and `job-queue-drain`, the doc-door scan and the needs-you mail
@@ -522,7 +530,8 @@ session, and its `delivery` block is tracked per run (`deliveryStatus`:
 uses.
 
 The fix retires the heartbeat tick (`agents.entries.finance.heartbeat.every`
-set to `"0m"` in the platform file, deployed) and replaces it with a new
+set to `"0m"` in the platform file, deployed; the key itself is gone since
+2026.11.9, see "Inbound hooks and the finance pulse") and replaces it with a new
 cron row, `ledger-pulse`, that mirrors `ledger-opportunity`'s shape: isolated
 session target, Telegram announce delivery, and a prompt that requires either
 exactly one delivered message or a bare `NO_REPLY` with no other output. Both
@@ -576,7 +585,7 @@ run, never the old `agent:finance:main:heartbeat`) and `deliveryStatus` is
 `not-requested` there is correct, not a failure). `openclaw cron show <id>`
 should report the row `enabled` with `sessionTarget: "isolated"`.
 
-**Rollback:** restore `agents.entries.finance.heartbeat` to its pre-fs-685
+**Rollback** (on 2026.11.8 or older; 2026.11.9 rejects the key): restore `agents.entries.finance.heartbeat` to its pre-fs-685
 shape (`every: "6h"`, the same `activeHours`/`model`/`lightContext`/
 `isolatedSession`/`target`/`to`/`accountId`/`timeoutSeconds` this file carried
 before, from git history) and disable or remove the `ledger-pulse` row
@@ -801,7 +810,7 @@ image tag and compose env changed, recreates the gateway once.
   host cannot assemble-before-prompt, compact or call the runtime LLM. The `claude-cli` boundary
   stays.
 - `hooks.defaultSessionKey: "hook:lifekit"` (security audit warn; mappings are all `isolated`).
-- `agents.defaults.model`, `heartbeat.model`, `subagents.model` and `modelPolicy.allow` on
+- `agents.defaults.model`, `subagents.model` and `modelPolicy.allow` on
   `anthropic/claude-sonnet-5-5` (plus `anthropic/claude-opus-5-5` allowed for Kit's own chat).
   `ensure-needs-you-digest.sh` defaults to the same Sonnet.
 - `channels.telegram.accounts.reading.enabled: false`; learnclaw answers through Kit only. (Re-enabled on its own token by the daily LeetCode problem, #594; see "Daily LeetCode problem".)

@@ -88,9 +88,8 @@ command-kind. Nothing to do.
 
 ### Off or retired: zero cost
 
-- **Heartbeats**: `agents.defaults.heartbeat.every` is `"0m"` and the finance agent's heartbeat was
-  retired 2026-09-26 for the `ledger-pulse` cron (`platform.patch.json`, runbook fs-685). No heartbeat
-  turns run.
+- **Heartbeats**: the finance agent's heartbeat was retired 2026-09-26 for the `ledger-pulse` cron
+  (runbook fs-685), and 2026.11.9 retired the `heartbeat` config keys. No heartbeat turns run.
 - **memory-core dreaming** is disabled in `platform.patch.json`.
 - `career-weekly` is disabled; `ledger-scan` was retired 2026-09-19; the `health`, `social` and
   `learning` agents were deleted 2026-10-07 along with their crons.
