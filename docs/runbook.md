@@ -6232,6 +6232,17 @@ old sessions.
   `openclaw_api_key_billing_disabled` (absent then), `openclaw_api_key_probe_ok` (api mode
   only), `openclaw_api_fallback_active{reason}`,
   `openclaw_api_spend_unpriced_tokens`.
+- **What fails the unit, and what does not.** An `auth` path OpenClaw answers as
+  "valid but unset ... the runtime default applies" is a valid read: `auth-mode.sh`
+  reads it as `{}`, resolves the mode from the agents' runtimes, says so in one stderr
+  line (`status --json` carries `authSource: "default"`) and the guard logs "auth config
+  unset, the runtime default applies; mode <m>" - exit 0. A gateway that is restarting
+  (container missing, or `docker exec` refused with "Error response from daemon") makes
+  `auth-mode.sh` exit 3; the guard then leaves `openclaw_api_spend.prom` untouched (its
+  mtime stays honest for `textfile-collector-stale`), prints one journal line and exits
+  0 while that file is younger than 30 minutes (`OPENCLAW_SPEND_STALE_SECONDS`, three
+  passes). A gateway down longer than that, no metric file at all, or any real read
+  error (a config read that still fails after the bounded retries) exits 2 and fails the unit.
 - **Alerts** (Grafana group `openclaw`, existing Telegram contact point; only
   `critical` pages the phone, the rest reach the fleet inbox):
   `openclaw-api-credit-50` (warning), `openclaw-api-credit-75` and

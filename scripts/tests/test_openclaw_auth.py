@@ -91,7 +91,8 @@ if args[0] == "compose":
     else:
         sys.exit(3)
 elif args[0] == "ps":
-    print("cid123")
+    if not flag("_no_container"):
+        print("cid123")
 elif args[0] == "restart":
     pass
 elif args[0] == "inspect":
@@ -102,6 +103,9 @@ elif args[0] == "exec":
         rest = rest[2:] if rest[0] == "-e" else rest[1:]
     assert rest[0] == "cid123", rest
     rest = rest[1:]
+    if flag("_exec_refused"):
+        print("Error response from daemon: container cid123 is restarting, wait until the container is running", file=sys.stderr)
+        sys.exit(1)
     if rest[0] == "python3":      # key-probe.py on stdin
         sys.stdin.read()
         print(json.dumps({"result": (load("probe") or "ok"), "http": 200, "detail": ""}))
@@ -119,6 +123,12 @@ elif args[0] == "exec":
     elif rest[0] == "openclaw":
         cmd = rest[1:]
         config = load("config.json")
+        auth_gets = sum(1 for ln in open(f"{state}/_calls") if "config get auth" in ln)
+        if cmd[:2] == ["config", "get"] and (
+            flag("_config_refused") or (flag("_config_refused_after_mode") and auth_gets > 1)
+        ):
+            print("Error response from daemon: container cid123 is restarting, wait until the container is running", file=sys.stderr)
+            sys.exit(1)
         if (cmd[:2] == ["config", "get"] and flag("_reads_fail")) or (
             cmd[:2] == ["models", "status"] and flag("_status_fails")
         ):
@@ -127,6 +137,9 @@ elif args[0] == "exec":
         if cmd[:2] == ["config", "get"] and flag("_reads_fail_once") and not flag("_failed_" + cmd[2]):
             open(f"{state}/_failed_{cmd[2]}", "w").close()
             print("slow SQLite transaction", file=sys.stderr)
+            sys.exit(1)
+        if cmd[:3] == ["config", "get", "auth"] and flag("_auth_unset"):
+            print("Config path is valid but unset: auth. The runtime default applies.", file=sys.stderr)
             sys.exit(1)
         if cmd[:2] == ["config", "get"]:
             print(json.dumps(config[cmd[2]]))
@@ -913,6 +926,111 @@ def test_guard_keeps_exporting_when_only_the_mode_read_keeps_failing(box):
     assert 'openclaw_api_auth_mode{mode="unreadable"} 1' in prom
     assert 'openclaw_api_spend_usd{window="since_topup"} 15.0' in prom
     assert not any("config patch" in c and "--dry-run" not in c for c in box.calls())
+
+
+def test_an_unset_auth_path_is_the_runtime_default_not_a_failure(box):
+    box.flag("_auth_unset")
+    proc = box.auth("mode")
+    assert proc.stdout.strip() == "subscription"
+    assert "runtime default applies" in proc.stderr
+    assert len([c for c in box.calls() if "config get auth" in c]) == 1  # not retried
+    status = json.loads(box.auth("status", "--json", "--quick").stdout)
+    assert status["authSource"] == "default"
+    assert status["authOrder"] == []
+    assert "runtime default" in box.auth("status", "--quick").stdout
+    box.run_guard()  # the unit does not fail
+    assert 'openclaw_api_auth_mode{mode="subscription"} 1' in box.prom()
+
+
+def test_guard_says_once_that_the_mode_came_from_the_default(box):
+    box.flag("_auth_unset")
+    proc = box.run_guard()
+    assert (
+        proc.stderr.count(
+            "auth config unset, the runtime default applies; mode subscription"
+        )
+        == 1
+    )
+
+
+def test_a_restarting_gateway_exits_3_for_a_missing_container_or_refused_exec(box):
+    box.flag("_exec_refused")
+    proc = box.auth("mode", expect=3)
+    assert "gateway unavailable" in proc.stderr
+    (box.state / "_exec_refused").unlink()
+    box.flag("_no_container")
+    assert "gateway unavailable" in box.auth("mode", expect=3).stderr
+
+
+def test_guard_keeps_the_last_metric_while_the_gateway_restarts(box):
+    box.run_guard()
+    prom_file = box.out / "openclaw_api_spend.prom"
+    before = prom_file.read_text()
+    old = NOW_MS / 1000 - 600
+    os.utime(prom_file, (old, old))
+    box.flag("_exec_refused")  # restart mid-run: usage and mode reads both refused
+    proc = box.run_guard()
+    assert proc.stderr.count("gateway unavailable") == 1
+    assert prom_file.read_text() == before
+    assert prom_file.stat().st_mtime == old  # a skipped run stamps nothing fresh
+    assert 'openclaw_api_auth_mode{mode="unreadable"} 1' not in prom_file.read_text()
+
+
+def hold_after_a_restart_between_usage_and_the_state_read(box, *flags):
+    box.run_guard()
+    prom_file = box.out / "openclaw_api_spend.prom"
+    before = prom_file.read_text()
+    old = NOW_MS / 1000 - 600
+    os.utime(prom_file, (old, old))
+    for name in flags:
+        box.flag(name)  # the usage extraction still succeeds
+    (box.state / "_calls").write_text("")
+    proc = box.run_guard()
+    assert (
+        len([ln for ln in proc.stderr.splitlines() if "gateway unavailable" in ln]) == 1
+    )
+    assert "mode unreadable" not in proc.stderr
+    assert prom_file.read_text() == before
+    assert prom_file.stat().st_mtime == old
+
+
+def test_guard_holds_when_the_restart_lands_on_the_mode_read(box):
+    hold_after_a_restart_between_usage_and_the_state_read(box, "_config_refused")
+
+
+def test_guard_holds_when_the_restart_lands_on_the_api_status_read(box):
+    box.auth("api")
+    box.put("profiles", {"kit": {"profile": True}, "finance": {"profile": True}})
+    hold_after_a_restart_between_usage_and_the_state_read(
+        box, "_config_refused_after_mode"
+    )
+
+
+def test_guard_holds_when_the_container_is_missing_before_the_run_starts(box):
+    box.run_guard()
+    old = NOW_MS / 1000 - 600
+    os.utime(box.out / "openclaw_api_spend.prom", (old, old))
+    box.flag("_no_container")
+    proc = box.run_guard()
+    assert "gateway unavailable" in proc.stderr
+    assert (box.out / "openclaw_api_spend.prom").stat().st_mtime == old
+
+
+def test_guard_fails_when_the_gateway_is_down_past_the_stale_threshold(box):
+    box.run_guard()
+    prom_file = box.out / "openclaw_api_spend.prom"
+    old = NOW_MS / 1000 - guard.STALE_SECONDS - 60
+    os.utime(prom_file, (old, old))
+    box.flag("_exec_refused")
+    proc = box.run_guard(expect=2)
+    assert "over the" in proc.stderr
+    assert prom_file.stat().st_mtime == old
+
+
+def test_guard_fails_when_the_gateway_is_down_and_there_is_no_last_metric(box):
+    box.flag("_no_container")
+    proc = box.run_guard(expect=2)
+    assert "no last metric" in proc.stderr
 
 
 def test_guard_survives_a_transient_mode_read_failure(box):

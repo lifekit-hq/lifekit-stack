@@ -22,8 +22,13 @@ When the usage extraction fails the pass still checks the mode, the billing
 state and the key probe (the signals that do not need the estimate), skips the
 spend rule and the spend metrics, and exits 2 afterwards.
 Exit 0 on a completed pass, 1 when a needed flip failed, 2 when an input cannot
-be read. When only the mode cannot be read (auth-mode.sh retries its reads
-first) the pass still writes a fresh textfile - openclaw_api_auth_mode{mode=
+be read. An auth config OpenClaw reports as "valid but unset" is a valid read (the
+runtime default applies), not an unreadable one. A gateway that is restarting
+(container not running, exec refused; auth-mode.sh exits 3) is tolerated: the pass
+leaves the last metric file untouched (so it is not stamped fresh), prints one
+line and exits 0 while that file is younger than STALE_SECONDS (30 min, three
+passes); older than that, or on any real read error, it exits 2.
+When only the mode cannot be read (auth-mode.sh retries its reads first) the pass still writes a fresh textfile - openclaw_api_auth_mode{mode=
 "unreadable"} 1, no billing sample, the spend metrics when the estimate worked -
 so the metric is not stale, and exits 2. A broken config file writes nothing.
 
@@ -43,6 +48,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -56,10 +62,20 @@ PROM_NAME = "openclaw_api_spend.prom"
 DAY_MS = 86_400_000
 MODES = ("api", "subscription", "mixed")
 UNREADABLE = "unreadable"
+GATEWAY_UNAVAILABLE = 3  # auth-mode.sh exit code
+GATEWAY_REFUSED = re.compile(
+    r"Error response from daemon|is not running|is restarting|No such container",
+    re.IGNORECASE,
+)
+STALE_SECONDS = int(os.environ.get("OPENCLAW_SPEND_STALE_SECONDS", "1800"))
 
 
 class InputError(Exception):
     """An input the pass needs could not be read; nothing is written."""
+
+
+class GatewayUnavailable(InputError):
+    """The gateway container is not running or refuses exec: most likely a restart."""
 
 
 def parse_time(text: str) -> int:
@@ -199,7 +215,10 @@ def extract(docker: str, container: str, since_ms: int) -> list[dict]:
         check=False,
     )
     if proc.returncode != 0:
-        raise InputError(f"usage extraction failed: {proc.stderr.strip()[:200]}")
+        err = proc.stderr.strip()[:200]
+        if GATEWAY_REFUSED.search(err):
+            raise GatewayUnavailable(f"usage extraction refused: {err}")
+        raise InputError(f"usage extraction failed: {err}")
     out = []
     for line in proc.stdout.splitlines():
         try:
@@ -221,6 +240,8 @@ def gateway_container(docker: str) -> str:
         check=False,
     )  # fmt: skip
     cid = proc.stdout.split()[0] if proc.returncode == 0 and proc.stdout.split() else ""
+    if not cid and proc.returncode == 0:
+        raise GatewayUnavailable("no running openclaw-gateway container")
     if not cid:
         raise InputError("no running openclaw-gateway container")
     return cid
@@ -255,11 +276,20 @@ def current_state(args) -> dict:
     """Mode, and in api mode the per-agent key state. One gateway call when not api."""
     proc = auth_mode(args, "mode")
     mode = proc.stdout.strip()
+    if proc.returncode == GATEWAY_UNAVAILABLE:
+        raise GatewayUnavailable(f"auth-mode.sh: {proc.stderr.strip()[-200:]}")
     if mode not in MODES:
         raise InputError(f"auth-mode.sh mode unreadable: {proc.stderr.strip()[:200]}")
+    if "runtime default applies" in proc.stderr:
+        print(
+            f"spend guard: auth config unset, the runtime default applies; mode {mode}",
+            file=sys.stderr,
+        )
     if mode != "api":
         return {"mode": mode, "billingDisabled": False}
     proc = auth_mode(args, "status", "--json", "--quick")
+    if proc.returncode == GATEWAY_UNAVAILABLE:
+        raise GatewayUnavailable(f"auth-mode.sh: {proc.stderr.strip()[-200:]}")
     try:
         state = json.loads(proc.stdout)
         if state["mode"] not in MODES:
@@ -370,10 +400,38 @@ def write_atomic(path: Path, text: str) -> None:
             os.unlink(tmp)
 
 
+def hold_last_metric(args, err: Exception, now_ms: int) -> int:
+    """The gateway is unavailable: keep the last good metric file, do not rewrite it.
+
+    Not rewriting keeps its mtime honest (node_textfile_mtime_seconds, the stale
+    alert). 0 while it is younger than STALE_SECONDS, else 2.
+    """
+    path = Path(args.textfile) / PROM_NAME if args.textfile else None
+    try:
+        age = now_ms / 1000 - path.stat().st_mtime if path else None
+    except OSError:
+        age = None
+    if age is not None and age < STALE_SECONDS:
+        print(
+            f"spend guard: gateway unavailable ({err}); keeping the last metric, "
+            f"{max(age, 0):.0f}s old (limit {STALE_SECONDS}s)",
+            file=sys.stderr,
+        )
+        return 0
+    last = "no last metric" if age is None else f"last metric {age:.0f}s old"
+    print(
+        f"spend guard: gateway unavailable ({err}); {last}, over the {STALE_SECONDS}s limit",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def run_pass(args, credit: dict, prices: dict, now_ms: int) -> int:
     est = None
     try:
         est = collect(args, credit, prices, now_ms)
+    except GatewayUnavailable as err:
+        return hold_last_metric(args, err, now_ms)
     except InputError as err:
         print(
             f"spend guard: {err}; carrying on without the spend estimate",
@@ -382,6 +440,8 @@ def run_pass(args, credit: dict, prices: dict, now_ms: int) -> int:
     mode_error = None
     try:
         state = current_state(args)
+    except GatewayUnavailable as err:
+        return hold_last_metric(args, err, now_ms)
     except InputError as err:
         # export an explicit "mode unreadable" sample instead of going stale
         mode_error = err
