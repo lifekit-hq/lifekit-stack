@@ -5777,8 +5777,9 @@ service: the same skill, installed by `scripts/ensure-workout-log.sh`.
     only after `workout-claw summary` has shown the session; it never runs, reads or changes
     workout-claw, and a non-zero exit is reported in Kit's reply next to the "Logged" line.
   - `wger.py log-delete <YYYY-MM-DD> <exercise> [--dry-run]`: takes back a mirror (a wrong or
-    test one): deletes that exercise's workout logs for the date, then the workout sessions wger
-    made for the day that hold no log any more (a session still holding another exercise's logs
+    test one): deletes that exercise's workout logs for the date, then each workout session that
+    held one of those logs and is empty afterwards (a session still holding another exercise's
+    logs, or one that held none of the deleted logs, such as an app-made session with notes,
     stays), and prints what it removed; run again it says `nothing to remove`. `--dry-run` only
     says what it would remove. `bicep(s) curl` is a built-in spelling of wger's `Biceps Curls With
     Dumbbell` (the plain curl; another curl needs `wger_exercise` or an alias in `gym.json`).

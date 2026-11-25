@@ -1357,12 +1357,28 @@ def test_log_delete_keeps_a_session_that_still_holds_another_exercises_logs(wger
     assert len(FakeWger.sessions) == 1
 
 
-def test_log_delete_sweeps_a_session_a_cut_short_run_left_empty(wger):
+def test_log_delete_leaves_a_session_that_held_none_of_the_deleted_logs(wger):
     write_curl(wger)
     FakeWger.logs = [b for b in FakeWger.logs if not b["date"].startswith("2026-11-25")]
     r = wger("log-delete", "2026-11-25", "biceps curl")
     assert r.returncode == 0, r.stderr
-    assert "removed 0 log(s) and 1 empty" in r.stdout and FakeWger.sessions == []
+    assert "nothing to remove" in r.stdout and len(FakeWger.sessions) == 1
+    assert deletes() == []
+
+
+def test_log_delete_keeps_an_app_made_session_with_a_note(wger):
+    write_curl(wger)
+    FakeWger.sessions.append(
+        {
+            "id": "uuid-app",
+            "datetime_start": "2026-11-25T18:00:00+00:00",
+            "notes": "felt strong",
+        }
+    )
+    r = wger("log-delete", "2026-11-25", "biceps curl")
+    assert r.returncode == 0, r.stderr
+    assert "removed 3 log(s) and 1 empty" in r.stdout
+    assert [s["id"] for s in FakeWger.sessions] == ["uuid-app"]
 
 
 def test_log_delete_an_unknown_exercise_or_bad_date_fails_before_deleting(wger):

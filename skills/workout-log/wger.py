@@ -29,10 +29,11 @@ any other difference: exit 1, nothing overwritten). workout-claw stays the recor
 session; a wger failure here never touches it.
 
 `log-delete` takes back what `log-write` wrote for one exercise on one date: every workout log
-of that exercise that day, then the workout sessions wger made for the day that no longer hold
-a log. It reports what it removed, says "nothing to remove" when there is nothing (so running
-it again is safe), and with --dry-run only says what it would remove. It never touches another
-exercise's logs or a session that still holds one.
+of that exercise that day, then each workout session that held one of those logs and is empty
+afterwards. It reports what it removed, says "nothing to remove" when there is nothing (so
+running it again is safe), and with --dry-run only says what it would remove. It never touches
+another exercise's logs, a session that still holds one, or a session that held none of the
+deleted logs (an app-made session with notes stays).
 
 `routine` builds the whole new routine first and deletes the old one (`--replace`) only after
 it is complete; a failed build deletes the half-built routine and leaves the old one. Deleting
@@ -957,10 +958,10 @@ def cmd_log_delete(args: argparse.Namespace) -> int:
     ]
     gone = {r["id"] for r in logs}
     empty = []
-    for s in w.pages("workoutsession/", {"datetime_start__date": day}):
-        held = w.pages("workoutlog/", {"session": str(s["id"])})
+    for sid in dict.fromkeys(r["session"] for r in logs if r.get("session")):
+        held = w.pages("workoutlog/", {"session": str(sid)})
         if all(r["id"] in gone for r in held):
-            empty.append(s["id"])
+            empty.append(sid)
     if not logs and not empty:
         print(f"{day} {label}: nothing to remove")
         return 0
