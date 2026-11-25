@@ -583,7 +583,7 @@ def _elapsed(seconds: float) -> str:
 def _mark(jid: str, **fields) -> None:
     """Note how far this runner got (run.stage, run.alive_at), so a runner
     killed outright, with no chance to record anything, still names it."""
-    with locked() as d:
+    with contextlib.suppress(OSError), locked() as d:
         p = _path(d, jid)
         job = _load(p)
         if _mine(job):
@@ -657,9 +657,6 @@ def run_handler(jid: str) -> None:
     except _Killed as k:
         for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
             signal.signal(sig, signal.SIG_IGN)  # let the record be written
-        if proc is not None:
-            with contextlib.suppress(OSError):
-                os.killpg(proc.pid, signal.SIGKILL)
         stopped = k.signum
         code, err = (
             None,
@@ -670,6 +667,9 @@ def run_handler(jid: str) -> None:
         code, err = None, str(e).encode()
     except Exception as e:  # the runner's own bug: still recorded, never silent
         code, err = None, f"runner crashed: {type(e).__name__}: {e}".encode()
+    if proc is not None and stage != "handler ended":
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
     text = ""
     if code == 0:
         with contextlib.suppress(OSError):

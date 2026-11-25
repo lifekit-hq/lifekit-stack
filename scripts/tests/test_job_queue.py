@@ -1231,6 +1231,84 @@ def test_a_runner_marks_its_stage_while_it_runs(q, monkeypatch):
     assert run["alive_at"] >= run["runner_at"]
 
 
+@pytest.fixture
+def this_runner(q):
+    """A job claimed for this test process as its runner, so run_handler runs
+    in-process; the signal handlers it installs are put back afterwards."""
+    sigs = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+    saved = {s: signal.getsignal(s) for s in sigs}
+    _add_file()
+    jid = "video-file-AAA111"
+    with jobq.locked() as d:
+        p = jobq._path(d, jid)
+        job = jobq._load(p)
+        jobq._claim(job, 1001.0)
+        job["run"] = {"pid": os.getpid(), "start": "1", "started_at": 1001.0}
+        jobq._save(p, job)
+    yield jid
+    for s, h in saved.items():
+        signal.signal(s, h)
+
+
+def _gone(pid: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except OSError:
+            return True
+        if state == "Z":
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_a_breadcrumb_the_disk_refuses_does_not_end_the_run(this_runner, monkeypatch):
+    # ENOSPC on every stage and sign-of-life write while the handler runs;
+    # the run still goes to its end and records the handler's real exit.
+    monkeypatch.setenv("FAKE_SLEEP", "1")
+    monkeypatch.setattr(jobq, "BEAT", 0.1)
+    real_save = jobq._save
+
+    def full_disk(p, job):
+        run = job.get("run") or {}
+        if run.get("stage") == "handler running" and "ran_at" not in run:
+            raise OSError(28, "No space left on device")
+        real_save(p, job)
+
+    monkeypatch.setattr(jobq, "_save", full_disk)
+    jobq.run_handler(this_runner)
+    job = jobq.get(this_runner)
+    assert job["run"]["exit"] == 0
+    assert job["run"]["stage"] == "handler ended"
+    assert "last_error" not in job
+    assert jobq.output(this_runner) == f"material for {this_runner}"
+
+
+@pytest.mark.parametrize(
+    "boom, said",
+    [
+        (OSError(5, "Input/output error"), "Input/output error"),
+        (RuntimeError("bug"), "runner crashed: RuntimeError: bug"),
+    ],
+)
+def test_a_runner_that_fails_after_starting_its_handler_kills_it(
+    this_runner, monkeypatch, boom, said
+):
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+
+    def broken_wait(proc, jid, deadline):
+        raise boom
+
+    monkeypatch.setattr(jobq, "_wait", broken_wait)
+    jobq.run_handler(this_runner)
+    job = jobq.get(this_runner)
+    assert job["run"]["exit"] is None
+    assert job["run"]["stage"] == "handler running"
+    assert said in job["last_error"]
+    assert _gone(job["run"]["handler_pid"])
+
+
 ANCHOR = r"""
 import ctypes, os, signal, subprocess, sys, time
 # What OpenClaw's exec tool does around a command (2026.11.9,
