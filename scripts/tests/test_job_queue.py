@@ -1269,15 +1269,19 @@ def test_a_breadcrumb_the_disk_refuses_does_not_end_the_run(this_runner, monkeyp
     monkeypatch.setenv("FAKE_SLEEP", "1")
     monkeypatch.setattr(jobq, "BEAT", 0.1)
     real_save = jobq._save
+    refused = []
 
     def full_disk(p, job):
         run = job.get("run") or {}
-        if run.get("stage") == "handler running" and "ran_at" not in run:
+        if "ran_at" not in run and run.get("alive_at") != run.get("runner_at"):
+            refused.append(run["stage"])
             raise OSError(28, "No space left on device")
         real_save(p, job)
 
     monkeypatch.setattr(jobq, "_save", full_disk)
     jobq.run_handler(this_runner)
+    assert "handler running" in refused
+    assert refused.count("runner started") > 1
     job = jobq.get(this_runner)
     assert job["run"]["exit"] == 0
     assert job["run"]["stage"] == "handler ended"

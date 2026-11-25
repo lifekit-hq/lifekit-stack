@@ -1959,8 +1959,8 @@ answer once it is on. Video evaluations are its first kind ("Video evaluation").
   `the runner was stopped by SIGTERM at stage 'handler running' after 4m10s`. One with `stage`
   but no `ran_at` was killed outright (SIGKILL, the OOM killer, a gateway restart). One with no
   `stage` died before its first step: under `via: gate` that is the exec tool's cleanup below.
-  A `run` holding only `requested_at` is waiting for the launcher; after 120 s it is given up as
-  `no launcher started its runner`.
+  A `run` holding only `requested_at` is waiting for the launcher; after 120 s it counts as a
+  failed attempt, and the last attempt gives up as `no launcher started its runner`.
 - **Egress, configured in one place:** `LIFEKIT_EGRESS_PROXY` in
   `/srv/lifekit-secrets/stack.env`, passed to the gateway by `compose/openclaw/docker-compose.yml`.
   Unset or empty is the PC relay, `socks5h://host.docker.internal:18081`; it takes any
