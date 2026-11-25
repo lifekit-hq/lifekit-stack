@@ -1945,7 +1945,12 @@ answer once it is on. Video evaluations are its first kind ("Video evaluation").
   sent twice is one job; it names the handler command the queue runs, the host its egress pre-check
   connects to (none for a file already here), its payload and a one-line label. Finished jobs are pruned after 14 days
   (`JOBQ_KEEP_DAYS`). Nothing about a job's result beyond its first line is kept here, except a
-  finished run's output (`<job id>.out`, 0600) until a drain turn reads it.
+  finished run's output (`<job id>.out`, 0600) until a drain turn reads it. A run that dies is
+  never silent: the job records the run's exit status (`run.exit`; a signal reads
+  `killed by SIGKILL`) and its last stderr lines in `last_error`, a runner told to stop
+  (SIGTERM/SIGHUP/SIGINT) records that and kills its handler, and the runner's own stderr is kept in
+  `<job id>.err` (0600). When the queue gives up on a job whose runs never recorded an end, the
+  job's `result` carries that last error, or says the runner was gone with its stderr.
 - **Egress, configured in one place:** `LIFEKIT_EGRESS_PROXY` in
   `/srv/lifekit-secrets/stack.env`, passed to the gateway by `compose/openclaw/docker-compose.yml`.
   Unset or empty is the PC relay, `socks5h://host.docker.internal:18081`; it takes any
