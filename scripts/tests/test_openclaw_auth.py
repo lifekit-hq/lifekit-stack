@@ -123,6 +123,12 @@ elif args[0] == "exec":
     elif rest[0] == "openclaw":
         cmd = rest[1:]
         config = load("config.json")
+        auth_gets = sum(1 for ln in open(f"{state}/_calls") if "config get auth" in ln)
+        if cmd[:2] == ["config", "get"] and (
+            flag("_config_refused") or (flag("_config_refused_after_mode") and auth_gets > 1)
+        ):
+            print("Error response from daemon: container cid123 is restarting, wait until the container is running", file=sys.stderr)
+            sys.exit(1)
         if (cmd[:2] == ["config", "get"] and flag("_reads_fail")) or (
             cmd[:2] == ["models", "status"] and flag("_status_fails")
         ):
@@ -968,6 +974,36 @@ def test_guard_keeps_the_last_metric_while_the_gateway_restarts(box):
     assert prom_file.read_text() == before
     assert prom_file.stat().st_mtime == old  # a skipped run stamps nothing fresh
     assert 'openclaw_api_auth_mode{mode="unreadable"} 1' not in prom_file.read_text()
+
+
+def hold_after_a_restart_between_usage_and_the_state_read(box, *flags):
+    box.run_guard()
+    prom_file = box.out / "openclaw_api_spend.prom"
+    before = prom_file.read_text()
+    old = NOW_MS / 1000 - 600
+    os.utime(prom_file, (old, old))
+    for name in flags:
+        box.flag(name)  # the usage extraction still succeeds
+    (box.state / "_calls").write_text("")
+    proc = box.run_guard()
+    assert (
+        len([ln for ln in proc.stderr.splitlines() if "gateway unavailable" in ln]) == 1
+    )
+    assert "mode unreadable" not in proc.stderr
+    assert prom_file.read_text() == before
+    assert prom_file.stat().st_mtime == old
+
+
+def test_guard_holds_when_the_restart_lands_on_the_mode_read(box):
+    hold_after_a_restart_between_usage_and_the_state_read(box, "_config_refused")
+
+
+def test_guard_holds_when_the_restart_lands_on_the_api_status_read(box):
+    box.auth("api")
+    box.put("profiles", {"kit": {"profile": True}, "finance": {"profile": True}})
+    hold_after_a_restart_between_usage_and_the_state_read(
+        box, "_config_refused_after_mode"
+    )
 
 
 def test_guard_holds_when_the_container_is_missing_before_the_run_starts(box):
