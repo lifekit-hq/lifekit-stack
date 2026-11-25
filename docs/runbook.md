@@ -5563,16 +5563,18 @@ database is on the volume only; there is no backup yet.
 Compose project `wger` (`compose/wger/`): [wger](https://github.com/wger-project/wger),
 the self-hosted workout manager behind the owner's phone app (gym schedule,
 exercise technique, sets checked off), with Kit setting the program through
-its REST API. Four containers, all `lifekit.contract: none` (an upstream app):
+its REST API. Five containers, all `lifekit.contract: none` (an upstream app):
 `wger-nginx-1` (static, media and the proxy), `wger-web-1` (Django + gunicorn),
-`wger-db-1` (Postgres) and `wger-cache-1` (Redis, nothing to back up). Images
+`wger-db-1` (Postgres), `wger-cache-1` (Redis, nothing to back up) and
+`wger-powersync-1` (the app's offline-sync service, "PowerSync" below). Images
 are pinned to exact versions; `scripts/check-wger-compose.py` fails the deploy
 before `up` if one is not, if the database or media leave their named volumes
 (`postgres_data`, `media`), if a port is not loopback-bound, if one of `web`'s four
-secrets is empty once wger is meant to be up, or if the network rules for
-Kit's route to wger break ("Kit and wger" below).
+secrets or the PowerSync storage password is empty once wger is meant to be up, if
+`db` loses `wal_level=logical`, or if the network rules for Kit's route to wger or
+for PowerSync's network break ("Kit and wger", "PowerSync" below).
 
-**Setup.** The secrets (`WGER_SECRET_KEY`, `WGER_DB_PASSWORD` and the sign-in pair below) are keys in the master
+**Setup.** The secrets (`WGER_SECRET_KEY`, `WGER_DB_PASSWORD`, the sign-in pair below and the PowerSync storage password, "PowerSync" below) are keys in the master
 file with inventory rows in `docs/secrets.md`, so the next deploy renders them into the
 env file and brings the project up; until `WGER_SECRET_KEY` and `WGER_DB_PASSWORD` are
 present `deploy.sh` prints a warning and skips it. Values never in git. To rotate one, set a fresh value and redeploy (the
@@ -5675,6 +5677,87 @@ docker start wger-web-1 wger-nginx-1
 From an off-box set, replace the redirect with `age -d -i $K set/wger.dump.age |`
 as in the Off-box backup restore steps. Then run the exercise sync again if the
 `media` volume is empty.
+
+### PowerSync (the phone app's sync service)
+
+The app signs in, then asks wger for a sync URL (`GET /api/v2/powersync-token`) and
+syncs its offline copy through the separate PowerSync service. Without that service
+the app stops on "Sync service unreachable". `powersync` is
+`journeyapps/powersync-service` (pinned, `start -r unified`), configured with
+upstream wger's own files in `compose/wger/powersync/` (`powersync.yaml`,
+`sync_rules.yaml` unchanged; the service does not watch them, a change needs a
+redeploy). How it hangs together:
+
+- **Address.** wger returns `SITE_URL/ps/` (`POWERSYNC_URL_PATH=ps`, `POWERSYNC_URL`
+  unset); nginx proxies `/ps/` to `powersync:8080`. So the app reaches it on the same
+  tailnet-only address as wger (Tailscale Serve, never Funnel); no new published port.
+- **Source.** wger's Postgres, over logical replication: `db` runs with
+  `wal_level=logical` and the `powersync` publication comes from wger's own
+  migration (core 0027). Sync buckets are stored in the `powersync` schema of the
+  same database, owned by the role `powersync_storage` that `web` creates (wger's
+  `setup-powersync-storage`, idempotent, run before the app starts on every boot)
+  with the password `WGER_POWERSYNC_STORAGE_PASSWORD`.
+- **Auth.** The service fetches wger's public JWKS (`web:8000/api/v2/powersync-keys`,
+  the public half of `WGER_JWT_*`) to verify the app's tokens, so no extra key.
+- **Networks.** `powersync` joins `backend` (db, web) and the internal `powersync`
+  network it shares with nginx only; no `default`, so no egress. Read-only root,
+  `cap_drop: ALL`, the same memory and pid limits as the rest.
+- **Secret.** `WGER_POWERSYNC_STORAGE_PASSWORD` in the master file (inventory row in
+  `docs/secrets.md`; `openssl rand -hex 32 | scripts/set-secret.sh master
+  WGER_POWERSYNC_STORAGE_PASSWORD`). `check-wger-compose.py` fails the deploy while
+  it is empty.
+
+**Bring up.** Merge to `main`; the CI deploy does it all, with the secret in the
+master file first (the deploy fails before `up` otherwise):
+
+1. The deploy recreates `db` with `wal_level=logical` (a Postgres restart of a few
+   seconds on the same named volume; the data is untouched; wger answers 502/503
+   meanwhile), then `web` (runs `setup-powersync-storage`, then the usual start),
+   then `powersync`, then `nginx`.
+2. The deploy runs `scripts/check-wger-powersync.py` (below) and goes red if it fails.
+
+Take the dump first ("Backup and restore") when you want a safety net; nothing in
+this step changes existing tables.
+
+**Verify.**
+
+```bash
+python3 scripts/check-wger-powersync.py http://127.0.0.1:8480 --wait 120
+# ok (.../ps/ live and ready, keys served); checks GET /ps/probes/liveness,
+# /ps/probes/readiness and /api/v2/powersync-keys through nginx
+python3 scripts/check-wger-powersync.py https://<host>.<tailnet>.ts.net:8480    # the tailnet path the app uses
+docker exec wger-db-1 psql -U wger -d wger -c 'show wal_level' -c 'select slot_name, active from pg_replication_slots'    # logical; a powersync_* slot, active
+docker logs --tail 20 wger-powersync-1
+```
+
+Then open the wger app: it passes the "Sync service unreachable" screen and the
+workout data loads. If the app still cannot reach it, run the check against the
+tailnet address; a 502 there with the loopback check passing is Tailscale Serve
+(`tailscale serve status` must show `8480 -> 127.0.0.1:8480`).
+
+**Troubleshooting.** `/ps/probes/readiness` failing while liveness passes: read
+`docker logs wger-powersync-1`; a storage-login error means the role and the env
+password differ (`docker exec wger-web-1 python3 manage.py setup-powersync-storage`
+resets the role to the password in the env file); a "publication does not exist"
+error means wger's migrations have not run (wait for `web` healthy). After a
+`WGER_SITE_URL` change the app needs to sign in again.
+
+**Roll back.** A logical replication slot outlives its client, and an unread one
+holds WAL on the volume without bound, so drop it before the revert lands:
+
+```bash
+docker stop wger-powersync-1    # an active slot cannot be dropped
+docker exec wger-db-1 psql -U wger -d wger -c "select pg_drop_replication_slot(slot_name) from pg_replication_slots where slot_name like 'powersync%'"
+```
+
+Then revert the PR and let the deploy run: `powersync` disappears, nginx drops
+`/ps/`, and `db` returns to the default WAL level (a few seconds of Postgres
+restart). The `powersync_storage` role, the `powersync` schema and the
+publication stay in the database and are harmless; to remove the first two, as
+the database owner: `DROP SCHEMA powersync CASCADE; DROP ROLE powersync_storage;`
+(the publication belongs to wger's migration; leave it). Nothing in the owner's workout data is
+touched either way. Rotating `WGER_POWERSYNC_STORAGE_PASSWORD`: set the new value,
+redeploy; `web` re-applies it to the role on start.
 
 ### Kit and wger
 

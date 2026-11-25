@@ -96,6 +96,21 @@ def test_every_service_declares_the_platform_contract():
         ("web", "DJANGO_DB_PASSWORD", "${WGER_DB_PASSWORD:-}"),
         ("web", "JWT_PRIVATE_KEY", "${WGER_JWT_PRIVATE_KEY:-}"),
         ("web", "JWT_PUBLIC_KEY", "${WGER_JWT_PUBLIC_KEY:-}"),
+        (
+            "web",
+            "PS_STORAGE_PG_URI",
+            "postgres://powersync_storage:${WGER_POWERSYNC_STORAGE_PASSWORD:-}@db:5432/wger",
+        ),
+        (
+            "powersync",
+            "PS_STORAGE_PG_URI",
+            "postgres://powersync_storage:${WGER_POWERSYNC_STORAGE_PASSWORD:-}@db:5432/wger",
+        ),
+        (
+            "powersync",
+            "PS_DATABASE_URI",
+            "postgres://wger:${WGER_DB_PASSWORD:-}@db:5432/wger",
+        ),
         ("db", "POSTGRES_PASSWORD", "${WGER_DB_PASSWORD:-}"),
     ],
 )
@@ -112,7 +127,11 @@ def test_web_trusts_the_proxy_scheme_header():
 
 
 def test_only_nginx_is_on_the_gateway_network(real):
-    assert set(real["services"]["nginx"]["networks"]) == {"default", "wger-gateway"}
+    assert set(real["services"]["nginx"]["networks"]) == {
+        "default",
+        "wger-gateway",
+        "powersync",
+    }
     assert gate.check(real) == []
     for other in ("web", "db", "cache"):
         assert "wger-gateway" not in real["services"][other]["networks"]
@@ -131,13 +150,13 @@ def test_the_gateway_is_the_only_openclaw_service_on_the_wger_network():
     assert doc["networks"]["wger-gateway"] == {"external": True}
 
 
-@pytest.mark.parametrize("service", ["web", "db", "cache"])
+@pytest.mark.parametrize("service", ["web", "db", "cache", "powersync"])
 def test_another_service_on_the_gateway_network_is_blocked(real, service):
     real["services"][service]["networks"]["wger-gateway"] = None
     assert f"{service}: must not join wger-gateway (only nginx may)" in gate.check(real)
 
 
-@pytest.mark.parametrize("service", ["nginx", "web", "db", "cache"])
+@pytest.mark.parametrize("service", ["nginx", "web", "db", "cache", "powersync"])
 def test_any_service_on_the_wide_shared_network_is_blocked(real, service):
     real["services"][service]["networks"]["lifekit-shared"] = None
     assert f"{service}: must not join lifekit-shared" in gate.check(real)
@@ -164,11 +183,13 @@ SECRETS = {
     "DJANGO_DB_PASSWORD": "p",
     "JWT_PRIVATE_KEY": "a",
     "JWT_PUBLIC_KEY": "b",
+    "PS_STORAGE_PG_URI": "postgres://powersync_storage:pw@db:5432/wger",
 }
 
 
 def test_secrets_set_passes_the_required_check(real):
     real["services"]["web"]["environment"].update(SECRETS)
+    real["services"]["powersync"]["environment"].update(SECRETS)
     assert gate.check(real, require_secrets=True) == []
 
 
@@ -182,8 +203,73 @@ def test_missing_jwt_key_fails_the_required_check(real, key):
     )
 
 
+@pytest.mark.parametrize("service", ["web", "powersync"])
+def test_empty_storage_password_fails_the_required_check(real, service):
+    real["services"]["web"]["environment"].update(SECRETS)
+    real["services"]["powersync"]["environment"].update(SECRETS)
+    # what compose resolves an unset ${WGER_POWERSYNC_STORAGE_PASSWORD:-} to
+    real["services"][service]["environment"]["PS_STORAGE_PG_URI"] = (
+        "postgres://powersync_storage:@db:5432/wger"
+    )
+    assert (
+        f"{service}: PS_STORAGE_PG_URI has no password "
+        "(WGER_POWERSYNC_STORAGE_PASSWORD, docs/secrets.md)"
+    ) in gate.check(real, require_secrets=True)
+
+
 def test_secrets_are_not_required_by_default(real):
     assert gate.check(real) == []
+
+
+# --- PowerSync (the app's offline sync service) -----------------------------
+
+
+def test_powersync_service_is_pinned_and_on_its_own_network_only(real):
+    svc = real["services"]["powersync"]
+    assert set(svc["networks"]) == {"backend", "powersync"}
+    assert set(real["services"]["nginx"]["networks"]) >= {"powersync"}
+    assert "ports" not in svc or svc["ports"] == []
+    assert gate.check(real) == []
+
+
+def test_powersync_missing_is_blocked(real):
+    del real["services"]["powersync"]
+    assert "powersync: service is missing" in gate.check(real)
+
+
+def test_powersync_on_default_network_is_blocked(real):
+    real["services"]["powersync"]["networks"]["default"] = None
+    assert "powersync: must not join default (no egress)" in gate.check(real)
+
+
+@pytest.mark.parametrize("service", ["web", "db", "cache"])
+def test_another_service_on_the_sync_network_is_blocked(real, service):
+    real["services"][service]["networks"]["powersync"] = None
+    assert (
+        f"{service}: must not join powersync (only nginx and powersync may)"
+        in gate.check(real)
+    )
+
+
+def test_nginx_off_the_sync_network_is_blocked(real):
+    real["services"]["nginx"]["networks"].pop("powersync")
+    assert "nginx: must join powersync (the /ps/ proxy)" in gate.check(real)
+
+
+def test_sync_network_must_be_internal(real):
+    real["networks"]["powersync"] = {}
+    assert "network powersync must be declared internal" in gate.check(real)
+
+
+def test_db_without_logical_wal_is_blocked(real):
+    real["services"]["db"].pop("command")
+    assert any("wal_level=logical" in p for p in gate.check(real))
+
+
+def test_web_hands_the_app_the_nginx_path():
+    env = yaml.safe_load(COMPOSE.read_text())["services"]["web"]["environment"]
+    assert env["POWERSYNC_URL_PATH"] == "ps"
+    assert "POWERSYNC_URL" not in env  # SITE_URL/ps/ is the nginx path
 
 
 def _jwk_pair():
