@@ -1951,6 +1951,16 @@ answer once it is on. Video evaluations are its first kind ("Video evaluation").
   (SIGTERM/SIGHUP/SIGINT) records that and kills its handler, and the runner's own stderr is kept in
   `<job id>.err` (0600). When the queue gives up on a job whose runs never recorded an end, the
   job's `result` carries that last error, or says the runner was gone with its stderr.
+- **Reading a killed run** (lifekit-stack#676): `run` in the job file is the runner's own
+  record. `via` says who started it (`launcher`, or `gate` when no launcher was running);
+  `stage` is how far it got (`runner started`, `handler running`, `handler ended`) and
+  `alive_at` its last sign of life (once a minute), so `alive_at - runner_at` is how long it
+  lived. A runner told to stop adds `signal`, `ran_for` (seconds) and a `last_error` of the form
+  `the runner was stopped by SIGTERM at stage 'handler running' after 4m10s`. One with `stage`
+  but no `ran_at` was killed outright (SIGKILL, the OOM killer, a gateway restart). One with no
+  `stage` died before its first step: under `via: gate` that is the exec tool's cleanup below.
+  A `run` holding only `requested_at` is waiting for the launcher; after 120 s it is given up as
+  `no launcher started its runner`.
 - **Egress, configured in one place:** `LIFEKIT_EGRESS_PROXY` in
   `/srv/lifekit-secrets/stack.env`, passed to the gateway by `compose/openclaw/docker-compose.yml`.
   Unset or empty is the PC relay, `socks5h://host.docker.internal:18081`; it takes any
@@ -1960,10 +1970,19 @@ answer once it is on. Video evaluations are its first kind ("Video evaluation").
   the next deploy.
 - **Drain:** one cron row on kit, `job-queue-drain`, every 2 minutes. Its trigger script
   (`drain-gate.js`, stored in the cron row) runs `jobq.py next`. When a job can run, `next`
-  starts its handler itself, detached in a session of its own (`jobq.py runner`), and wakes no
-  agent: the run belongs to the queue, not to a turn, so neither a tool's timeout nor a turn
-  ending can kill it mid-run (a long fetch or transcription on a busy host once outlived the
-  agent's exec timeout and never reported back). The runner keeps what the handler printed.
+  claims it and asks the launcher to start it, and wakes no agent: the run belongs to the queue,
+  not to a turn, so neither a tool's timeout nor a turn ending can kill it mid-run (a long fetch
+  or transcription on a busy host once outlived the agent's exec timeout and never reported
+  back). The launcher (`jobq.py launcher`) is a long-lived process the gateway's entrypoint
+  starts outside every exec, in a loop that restarts it when it exits; it starts the runner
+  (`jobq.py runner`) within a second and leaves when a deploy installs a new `jobq.py`, so the
+  loop picks the new code up. `next` cannot start the runner itself: since OpenClaw 2026.11.9 the
+  exec tool runs each command under a child-subreaper anchor that kills every process the
+  command left behind, however detached, the moment it ends (lifekit-stack#676). With no
+  launcher running (by hand on a host, in tests) `next` still starts it, as `via: gate`.
+  `docker exec <gateway> python3 /home/node/.openclaw/skills/job-queue/jobq.py launcher-status`
+  says whether one runs; its own errors go to `.launcher.err` in the queue directory. The
+  runner keeps what the handler printed.
   Only a run that printed an answer wakes the agent: the next drain turn gets one appended
   instruction (`Run exactly: python3 .../jobq.py output <job id>`), which prints that output
   once, and the owning skill says how to answer. Nothing queued, a job already running, or no

@@ -314,9 +314,11 @@ def test_ages_gives_states_and_times_and_no_label_or_result(q):
 
 def test_drop_removes_one_job(q):
     _add()
+    (q / "reel-AAA111.err").write_text("")
     assert jobq.drop("reel-AAA111") is True
     assert jobq.drop("reel-AAA111") is False
     assert jobq.get("reel-AAA111") is None
+    assert not (q / "reel-AAA111.err").exists()
 
 
 # --- next: what the gate sees ------------------------------------------------------------
@@ -1113,11 +1115,20 @@ def test_a_runner_told_to_stop_records_it_and_its_handler_is_killed(q, monkeypat
     jid = "video-file-AAA111"
     jobq.next_job(now=1001.0)
     runner = jobq.get(jid)["run"]["pid"]
-    time.sleep(0.5)  # past its signal handlers
+    deadline = time.monotonic() + 10
+    while jobq.get(jid)["run"].get("stage") != "handler running":
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
     os.kill(runner, signal.SIGTERM)
     job = _ran(jid)
     assert job["run"]["exit"] is None
-    assert job["last_error"] == "no exit status: the runner was stopped by SIGTERM"
+    assert job["run"]["signal"] == "SIGTERM"
+    assert job["run"]["stage"] == "handler running"
+    assert job["run"]["ran_for"] >= 0
+    assert job["last_error"].startswith(
+        "no exit status: the runner was stopped by SIGTERM at stage "
+        "'handler running' after "
+    )
 
 
 def test_a_runner_killed_outright_is_named_when_the_queue_gives_up(q, monkeypatch):
@@ -1156,3 +1167,192 @@ def test_a_runner_crash_leaves_its_traceback_in_the_give_up(q, monkeypatch):
         "its stderr: Traceback (most recent call last): | MemoryError"
         in (jobq.get(jid)["result"])
     )
+
+
+# --- a killed runner leaves a cause (lifekit-stack#676) -------------------------
+
+
+def test_a_runner_killed_outright_names_the_stage_it_reached_and_how_long_it_lived(q):
+    # A mocked SIGKILL: the run's own record as the runner left it (its last
+    # mark), and a pid that names no process any more.
+    _add_file()
+    jid = "video-file-AAA111"
+    with jobq.locked() as d:
+        p = jobq._path(d, jid)
+        job = jobq._load(p)
+        jobq._claim(job, 1001.0)
+        job["run"] = {
+            "pid": 2**22 + 7,
+            "start": "1",
+            "started_at": 1001.0,
+            "via": "launcher",
+            "runner_at": 1001.5,
+            "stage": "handler running",
+            "alive_at": 1001.5 + 185,
+        }
+        jobq._save(p, job)
+    assert jobq._stale(jobq.get(jid), 1200.0)
+    reason = jobq._never_reported(q, jobq.get(jid))
+    assert f"runner pid {2**22 + 7} was gone before it recorded an exit" in reason
+    assert "it reached stage 'handler running'" in reason
+    assert "last seen alive 3m05s after it started" in reason
+    assert "killed outright" in reason
+
+
+def test_a_runner_the_gate_started_that_died_at_once_names_the_exec_cleanup(q):
+    _add_file()
+    jid = "video-file-AAA111"
+    with jobq.locked() as d:
+        p = jobq._path(d, jid)
+        job = jobq._load(p)
+        jobq._claim(job, 1001.0)
+        job["run"] = {
+            "pid": 2**22 + 7,
+            "start": "1",
+            "started_at": 1001.0,
+            "via": "gate",
+        }
+        jobq._save(p, job)
+    reason = jobq._never_reported(q, jobq.get(jid))
+    assert "before it reached its first stage" in reason
+    assert "exec tool's cleanup" in reason
+
+
+def test_a_runner_marks_its_stage_while_it_runs(q, monkeypatch):
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    deadline = time.monotonic() + 10
+    while (run := jobq.get(jid)["run"]).get("stage") != "handler running":
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    assert run["via"] == "gate" and run["handler_pid"] > 0
+    assert run["alive_at"] >= run["runner_at"]
+
+
+ANCHOR = r"""
+import ctypes, os, signal, subprocess, sys, time
+# What OpenClaw's exec tool does around a command (2026.11.9,
+# service-child-group-anchor): become the child subreaper, run the command,
+# then kill every process it left behind, however detached, and reap them.
+assert ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
+print(subprocess.run(sys.argv[1:], capture_output=True, text=True).stdout, flush=True)
+
+def children():
+    kids = set()
+    for t in os.listdir("/proc/self/task"):
+        kids.update(int(x) for x in open(f"/proc/self/task/{t}/children").read().split())
+    return kids
+
+for sig in (signal.SIGTERM, signal.SIGKILL):
+    for pid in children():
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            pass
+    time.sleep(1)
+    while True:
+        try:
+            if os.waitpid(-1, os.WNOHANG)[0] == 0:
+                break
+        except ChildProcessError:
+            break
+"""
+
+
+def _under_anchor(*argv):
+    return subprocess.run(
+        [sys.executable, "-c", ANCHOR, sys.executable, str(SKILL / "jobq.py"), *argv],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
+
+
+def _launcher():
+    p = subprocess.Popen(
+        [sys.executable, str(SKILL / "jobq.py"), "launcher"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + 10
+    while not jobq.launcher_status().startswith("launcher pid"):
+        assert time.monotonic() < deadline and p.poll() is None
+        time.sleep(0.05)
+    return p
+
+
+def test_an_exec_anchor_kills_a_runner_the_gate_started_and_it_leaves_a_cause(
+    q, monkeypatch
+):
+    # The bug: with no launcher the gate's command starts the runner, and the
+    # exec tool's anchor kills it the moment the command ends. It must leave
+    # the cause, never "it left no stderr" alone.
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("FAKE_SLEEP", "30")
+    _add_file()
+    jid = "video-file-AAA111"
+    assert _under_anchor("next").startswith("JOBQ idle")
+    deadline = time.monotonic() + 15
+    while (state := jobq.next_job())[0] != "ready":
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    result = jobq.get(jid)["result"]
+    assert (
+        "the runner was stopped by SIGTERM at stage" in result
+        or "exec tool's cleanup" in result
+    ), result
+    assert "never reported back" in state[1]
+
+
+def test_a_launched_runner_outlives_the_exec_anchor_and_reports(q, monkeypatch):
+    monkeypatch.setenv("FAKE_SLEEP", "2")
+    _add_file()
+    jid = "video-file-AAA111"
+    launcher = _launcher()
+    assert _under_anchor("next").startswith("JOBQ idle")
+    job = _ran(jid)
+    assert job["run"]["via"] == "launcher" and job["run"]["exit"] == 0
+    assert job["run"]["stage"] == "handler ended"
+    assert jobq.next_job()[0] == "ready"
+    assert jobq.output(jid) == f"material for {jid}"
+    launcher.kill()
+    launcher.wait()
+
+
+def test_a_runner_no_launcher_started_is_given_up_with_that_reason(q, monkeypatch):
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "1")
+    _add_file()
+    jid = "video-file-AAA111"
+    me = {"pid": os.getpid(), "start": jobq._proc_start(os.getpid())}
+    jobq._save(q / jobq.LAUNCHER, me)  # a launcher that will never start it
+    assert jobq.next_job(now=1001.0) == ("started", "")
+    assert set(jobq.get(jid)["run"]) == {"requested_at"}
+    assert jobq.next_job(now=1001.0 + 60)[0] == "idle"  # within the grace
+    (q / jobq.LAUNCHER).unlink()
+    state, message = jobq.next_job(now=1001.0 + jobq.LAUNCH_GRACE + 1)
+    assert state == "ready"
+    assert (
+        f"no launcher started its runner within {jobq.LAUNCH_GRACE}s "
+        "(no launcher is running)" in message
+    )
+
+
+def test_only_one_launcher_runs_and_it_leaves_when_its_code_changes(q, tmp_path):
+    copy = tmp_path / "jobq.py"
+    shutil.copy(SKILL / "jobq.py", copy)
+    first = subprocess.Popen([sys.executable, str(copy), "launcher"])
+    deadline = time.monotonic() + 10
+    while not jobq.launcher_status().startswith("launcher pid"):
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    second = subprocess.run(
+        [sys.executable, str(copy), "launcher"], timeout=10, check=False
+    )
+    assert second.returncode == 0 and first.poll() is None
+    os.utime(copy, (time.time() + 5, time.time() + 5))  # a deploy installed new code
+    assert first.wait(timeout=10) == 0
+    assert "no launcher is running" in jobq.launcher_status()

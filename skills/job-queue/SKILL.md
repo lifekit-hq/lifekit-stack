@@ -22,6 +22,6 @@ python3 {baseDir}/jobq.py drop <id>
 
 Removes one job, only when the owner asks to cancel it. Never drop a job to "fix" the queue.
 
-`jobq.py next` is the drain cron's check, and it starts each run itself; `jobq.py runner` is that run. Neither is for you. A drain turn's `Run exactly: ... jobq.py output <id>` prints a finished run's output once, for the skill that owns the job to answer.
+`jobq.py next` is the drain cron's check, and it starts each run (through `jobq.py launcher`, which the gateway runs); `jobq.py runner` is that run. None of them is for you. A drain turn's `Run exactly: ... jobq.py output <id>` prints a finished run's output once, for the skill that owns the job to answer.
 
 A script queues a job with `jobq.py enqueue <kind> <key> --skill S --handler JSON [--origin --owner --class --acceptance --fingerprint --thread]`; it prints the receipt `{"id","url","state"}`, and `jobq.py status <id>` prints it again later. You do not call these.

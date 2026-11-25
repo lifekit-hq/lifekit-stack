@@ -315,6 +315,21 @@ services:
         if ! command -v life-state >/dev/null 2>&1; then
           npm install -g /home/node/.openclaw/agents/kit/workspace/skills/life-state 2>&1 | tail -3 | jlog
         fi
+        # The shared job queue's launcher (docs/runbook.md, "Shared job
+        # queue"): it starts each queued run outside the exec tool's process
+        # tree, whose cleanup kills every process an exec leaves behind
+        # (lifekit-stack#676). The loop restarts it when it exits, which it
+        # does when a deploy installs a new jobq.py. Its output is not JSON,
+        # so it writes none: errors go to .launcher.err in the queue dir.
+        (
+          while :; do
+            if [ -f /home/node/.openclaw/skills/job-queue/jobq.py ]; then
+              python3 /home/node/.openclaw/skills/job-queue/jobq.py launcher \
+                </dev/null >/dev/null 2>&1
+            fi
+            sleep 2
+          done
+        ) &
         exec "$$@"
       - --
     command:
