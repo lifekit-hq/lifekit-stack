@@ -198,6 +198,29 @@ def _out(d: Path, jid: str) -> Path:
     return d / f"{jid}.out"
 
 
+def _err(d: Path, jid: str) -> Path:
+    """The runner's own stderr (a crash's traceback), kept beside the job so a
+    run that dies leaves its error somewhere a later turn can read."""
+    return d / f"{jid}.err"
+
+
+def _tail(text: str, lines: int = 5, limit: int = 400) -> str:
+    """The last few non-empty lines of a stream, on one line, newest last."""
+    kept = [ln.strip() for ln in text.splitlines() if ln.strip()][-lines:]
+    return " | ".join(kept)[-limit:]
+
+
+def _exit_text(code: int | None) -> str:
+    if code is None:
+        return "no exit status"
+    if code < 0:
+        try:
+            return f"killed by {signal.Signals(-code).name}"
+        except ValueError:
+            return f"killed by signal {-code}"
+    return f"exit {code}"
+
+
 def _proc_start(pid: int) -> str | None:
     """When the process started (clock ticks after boot), or None when it is
     gone or a zombie. With the pid it names one process, so a pid reused after
@@ -237,6 +260,7 @@ def _prune(d: Path, now: float) -> None:
         if job["status"] in (DONE, FAILED) and now - job.get("finished_at", 0) > keep:
             p.unlink(missing_ok=True)
             _out(d, job["id"]).unlink(missing_ok=True)
+            _err(d, job["id"]).unlink(missing_ok=True)
 
 
 def add(
@@ -428,17 +452,19 @@ def running(jid: str) -> dict | None:
     return job if job is not None and job["status"] == RUNNING else None
 
 
-def _spawn(jid: str, now: float) -> dict:
+def _spawn(d: Path, jid: str, now: float) -> dict:
     """Start the job's runner in a session of its own with its stdio closed,
     so it outlives the gate's command and a tool that kills that command's
     process group or children."""
-    p = subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "runner", jid],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    fd = os.open(_err(d, jid), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as err:  # the runner's crash, not a closed stream
+        p = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "runner", jid],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=err,
+            start_new_session=True,
+        )
     return {"pid": p.pid, "start": _proc_start(p.pid), "started_at": now}
 
 
@@ -446,18 +472,36 @@ def _mine(job: dict | None) -> bool:
     return job is not None and (job.get("run") or {}).get("pid") == os.getpid()
 
 
+class _Killed(BaseException):
+    """The runner was told to stop (a gateway restart, an exec tool's cleanup)."""
+
+    def __init__(self, signum: int):
+        self.signum = signum
+
+
+def _on_signal(signum, _frame):
+    raise _Killed(signum)
+
+
 def run_handler(jid: str) -> None:
     """The runner: run the job's handler to its end (at most JOBQ_RUN_MINUTES),
     keep what it printed for the turn that answers it, and note that it ran.
     It records under the lock `next` holds while it starts it, so the job
     names this runner by then; a runner the job no longer names records
-    nothing."""
+    nothing. However the run ends (the handler's exit or death by a signal,
+    this runner told to stop, or a crash of its own) the exit status and the
+    last stderr lines are recorded, so a run that dies is never silent."""
     with locked() as d:
         job = _load(_path(d, jid))
     if not _mine(job):
         return
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, _on_signal)
     out = _out(d, jid)
     limit = _int_env("JOBQ_RUN_MINUTES", DEFAULT_RUN_MINUTES) * 60
+    code: int | None = None
+    err = b""
+    proc = None
     try:
         fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "wb") as f:
@@ -474,11 +518,24 @@ def run_handler(jid: str) -> None:
                 code = proc.returncode
             except subprocess.TimeoutExpired:
                 os.killpg(proc.pid, signal.SIGKILL)
-                proc.communicate()
-                code, err = None, f"ran over {limit // 60} minutes".encode()
+                err = proc.communicate()[1]
+                code, err = None, err + f"\nran over {limit // 60} minutes".encode()
+    except _Killed as k:
+        if proc is not None:
+            with contextlib.suppress(OSError):
+                os.killpg(proc.pid, signal.SIGKILL)
+        code, err = (
+            None,
+            f"the runner was stopped by {signal.Signals(k.signum).name}".encode(),
+        )
     except OSError as e:
         code, err = None, str(e).encode()
-    text = out.read_text(errors="replace").strip() if code == 0 else ""
+    except Exception as e:  # the runner's own bug: still recorded, never silent
+        code, err = None, f"runner crashed: {type(e).__name__}: {e}".encode()
+    text = ""
+    if code == 0:
+        with contextlib.suppress(OSError):
+            text = out.read_text(errors="replace").strip()
     with locked() as d:
         p = _path(d, jid)
         job = _load(p)
@@ -491,8 +548,8 @@ def run_handler(jid: str) -> None:
         else:
             out.unlink(missing_ok=True)
         if code != 0:
-            lines = err.decode(errors="replace").strip().splitlines()
-            job["last_error"] = (lines[-1] if lines else f"exit {code}")[:500]
+            tail = _tail(err.decode(errors="replace"))
+            job["last_error"] = f"{_exit_text(code)}: {tail}"[:500].rstrip(": ")
         _save(p, job)
 
 
@@ -676,8 +733,38 @@ def give_up_message(job: dict, reason: str) -> str:
     )
 
 
+def _never_reported(d: Path, job: dict) -> str:
+    """Why a stale job's runs never reported back, from the final run's own
+    evidence: its recorded exit, else that the runner itself died, with its
+    stderr (a crash's traceback) when it left one. An older attempt's error
+    is only ever labelled as earlier."""
+    n = job["attempts"]
+    reason = f"its last {n} runs never reported back"
+    run = job.get("run") or {}
+    if "read_at" in run:
+        return f"{reason} (its output was read but the turn never finished the job)"
+    if "ran_at" in run:
+        if run.get("exit") == 0:
+            return f"{reason} (the handler exited 0 and printed nothing)"
+        return f"{reason} (last error: {job.get('last_error')})"
+    try:
+        tail = _tail(_err(d, job["id"]).read_text(errors="replace"))
+    except OSError:
+        tail = ""
+    gone = (
+        f"runner pid {run['pid']} was gone before it recorded an exit"
+        if run
+        else "no runner was started for it"
+    )
+    earlier = f"; earlier error: {job['last_error']}" if job.get("last_error") else ""
+    return (
+        f"{reason} ({gone}"
+        f"{'; its stderr: ' + tail if tail else '; it left no stderr'}{earlier})"
+    )
+
+
 def _give_up(d: Path, job: dict, reason: str, now: float) -> str:
-    job.update(status=FAILED, result=f"gave up: {reason}", finished_at=now)
+    job.update(status=FAILED, result=f"gave up: {reason}"[:500], finished_at=now)
     _save(_path(d, job["id"]), job)
     return give_up_message(job, reason)
 
@@ -711,7 +798,7 @@ def next_job(now: float | None = None) -> tuple[str, str]:
         ready = _runnable(d, now)
         for job in ready:
             if _stale(job, now) and job["attempts"] >= max_attempts():
-                reason = f"its last {job['attempts']} runs never reported back"
+                reason = _never_reported(d, job)
                 return "ready", _give_up(d, job, reason, now)
     if not ready:
         return "idle", ""
@@ -722,7 +809,7 @@ def next_job(now: float | None = None) -> tuple[str, str]:
         job = next((j for j in _runnable(d, now) if j["id"] == picked["id"]), None)
         if job is None:
             return "idle", ""
-        run = _spawn(job["id"], now)
+        run = _spawn(d, job["id"], now)
         _claim(job, now)
         job["run"] = run
         _save(_path(d, job["id"]), job)

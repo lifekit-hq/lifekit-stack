@@ -33,7 +33,7 @@ jobq = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(jobq)
 
 FAKE_HANDLER = r"""
-import os, sys, time
+import os, signal, sys, time
 sys.path.insert(0, os.environ["FAKE_LIB"])
 import jobq
 jid = sys.argv[-1]
@@ -51,6 +51,13 @@ elif mode == "retry":
     print("NO_REPLY")
 elif mode == "crash":
     sys.exit("Traceback: boom")
+elif mode == "noisy":
+    sys.stderr.write("warming up\nTraceback (most recent call last):\nKeyError: 'x'\n")
+    sys.exit(3)
+elif mode == "oom":
+    os.kill(os.getpid(), signal.SIGKILL)
+elif mode == "silent":
+    pass
 """
 HANDLER = [sys.executable, "-c", FAKE_HANDLER, "run"]
 
@@ -461,7 +468,9 @@ def test_a_handler_that_ended_without_reporting_back_is_run_again_at_once(
     job = _ran("video-file-AAA111")
     assert job["status"] == "running" and "unread" not in job["run"]
     if mode == "crash":
-        assert job["run"]["exit"] == 1 and job["last_error"] == "Traceback: boom"
+        assert (
+            job["run"]["exit"] == 1 and job["last_error"] == "exit 1: Traceback: boom"
+        )
     assert jobq.next_job(now=1002.0) == ("started", "")
     assert jobq.get("video-file-AAA111")["attempts"] == 2
 
@@ -1034,3 +1043,116 @@ def test_status_prints_the_receipt_as_it_stands_and_fails_for_no_job(q):
     r = _cli("status", "reel-AAA111", env={**os.environ})
     assert json.loads(r.stdout)["state"] == "completed"
     assert _cli("status", "reel-NOPE", env={**os.environ}).returncode == 1
+
+
+def test_a_handler_killed_by_a_signal_records_which_one(q, monkeypatch):
+    monkeypatch.setenv("FAKE_MODE", "oom")
+    _add_file()
+    jobq.next_job(now=1001.0)
+    job = _ran("video-file-AAA111")
+    assert job["run"]["exit"] == -signal.SIGKILL
+    assert job["last_error"] == "killed by SIGKILL"
+
+
+def test_giving_up_names_the_last_exit_status_and_stderr_lines(q, monkeypatch):
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("FAKE_MODE", "noisy")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    _ran(jid)
+    state, message = jobq.next_job(now=1002.0)
+    assert state == "ready"
+    job = jobq.get(jid)
+    assert job["status"] == "failed"
+    assert "never reported back" in job["result"]
+    assert (
+        "exit 3: warming up | Traceback (most recent call last): | KeyError: 'x'"
+        in (job["result"])
+    )
+    assert "KeyError: 'x'" in message
+
+
+def test_a_read_output_whose_turn_never_finished_is_not_blamed_on_the_handler(
+    q, monkeypatch
+):
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "1")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    _ran(jid)
+    assert jobq.next_job(now=1002.0)[0] == "ready"
+    assert jobq.output(jid, now=1003.0) != "NO_REPLY"
+    state, message = jobq.next_job(now=1003.0 + 31 * 60)
+    assert state == "ready"
+    result = jobq.get(jid)["result"]
+    assert "its output was read but the turn never finished the job" in result
+    assert "printed nothing" not in result and "printed nothing" not in message
+
+
+def test_a_final_silent_run_is_not_blamed_for_an_earlier_attempts_error(q, monkeypatch):
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("FAKE_MODE", "noisy")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    assert _ran(jid)["last_error"].startswith("exit 3")
+    monkeypatch.setenv("FAKE_MODE", "silent")
+    assert jobq.next_job(now=1002.0) == ("started", "")
+    assert _ran(jid)["attempts"] == 2
+    state, message = jobq.next_job(now=1002.0 + 31 * 60)
+    assert state == "ready"
+    result = jobq.get(jid)["result"]
+    assert "the handler exited 0 and printed nothing" in result
+    assert "KeyError" not in result and "KeyError" not in message
+
+
+def test_a_runner_told_to_stop_records_it_and_its_handler_is_killed(q, monkeypatch):
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    runner = jobq.get(jid)["run"]["pid"]
+    time.sleep(0.5)  # past its signal handlers
+    os.kill(runner, signal.SIGTERM)
+    job = _ran(jid)
+    assert job["run"]["exit"] is None
+    assert job["last_error"] == "no exit status: the runner was stopped by SIGTERM"
+
+
+def test_a_runner_killed_outright_is_named_when_the_queue_gives_up(q, monkeypatch):
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    pid = jobq.get(jid)["run"]["pid"]
+    os.kill(pid, signal.SIGKILL)
+    _kill_runs(q)
+    deadline = time.monotonic() + 10
+    while (state := jobq.next_job(now=1002.0))[0] != "ready":
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    result = jobq.get(jid)["result"]
+    assert f"runner pid {pid} was gone before it recorded an exit" in result
+    assert "never reported back" in state[1]
+
+
+def test_a_runner_crash_leaves_its_traceback_in_the_give_up(q, monkeypatch):
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    pid = jobq.get(jid)["run"]["pid"]
+    os.kill(pid, signal.SIGKILL)
+    _kill_runs(q)
+    (q / f"{jid}.err").write_text("Traceback (most recent call last):\nMemoryError\n")
+    deadline = time.monotonic() + 10
+    while jobq.next_job(now=1002.0)[0] != "ready":
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    assert (
+        "its stderr: Traceback (most recent call last): | MemoryError"
+        in (jobq.get(jid)["result"])
+    )
