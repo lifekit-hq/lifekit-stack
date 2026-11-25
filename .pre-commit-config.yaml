@@ -10,8 +10,8 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
-        # compose's `!reset` tag has no PyYAML constructor; yamllint still lints the file
-        exclude: ^compose/openclaw/trusted-proxy\.yml$
+        # compose's `!reset` and PowerSync's `!env` tags have no PyYAML constructor; yamllint still lints the files
+        exclude: ^(compose/openclaw/trusted-proxy|compose/wger/powersync/powersync)\.ya?ml$
       - id: check-added-large-files
       - id: check-merge-conflict
       - id: detect-private-key

@@ -77,7 +77,10 @@ def main(argv: list[str]) -> int:
         try:
             wait = float(args[i + 1])
         except (IndexError, ValueError):
-            print("check-wger-powersync: --wait needs a number of seconds", file=sys.stderr)
+            print(
+                "check-wger-powersync: --wait needs a number of seconds",
+                file=sys.stderr,
+            )
             return 2
         del args[i : i + 2]
     if len(args) > 1:
