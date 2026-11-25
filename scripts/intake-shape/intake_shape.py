@@ -53,7 +53,8 @@ Environment:
 Usage: intake_shape.py [open|answer|sweep] [--since YYYY-MM-DD]
 
 Exit: 0 done or nothing to do; 1 something could not be done (the journal says
-what; the next run retries); 2 bad usage or configuration.
+what; the next run retries); 2 bad usage or configuration (no firstmate home,
+or no tasks-axi on TASKS_AXI/PATH: one journal line, not one per item).
 """
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -651,8 +653,12 @@ def main(argv: list[str]) -> int:
     if not home or not (Path(home) / "bin" / "fm-captain-hold.sh").is_file():
         log("INTAKE_SHAPE_FM_HOME does not name a firstmate home")
         return 2
+    hub = Hub(home)
+    if not hub.tasks or not shutil.which(hub.tasks[0]):
+        log("tasks-axi not found: set TASKS_AXI or put it on PATH (reinstall the unit)")
+        return 2
     intake = Path(os.environ.get("INTAKE_SHAPE_INTAKE", "/var/lib/lifekit/intake"))
-    hub, failed = Hub(home), 0
+    failed = 0
     if command in ("open", "sweep"):
         try:
             failed += open_items(intake, hub, since_cutoff(intake, since))

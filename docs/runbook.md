@@ -3931,6 +3931,20 @@ sudo INTAKE_SHAPE_FM_HOME=/home/denys/fm-vps \
   bash /srv/lifekit-stack/scripts/intake-shape/install-intake-shape.sh
 ```
 
+Optional `TASKS_AXI=<absolute path of tasks-axi>` (add it to the `sudo` line): the unit gets
+`TASKS_AXI=` and a `PATH` that starts with that tool's directory. Unset, the installer looks
+the tool up as the admin account (login shell, then an interactive one for a node version
+manager) and refuses to install when it finds none. **Reinstall** after a change to the tool's
+location, or to fix a unit installed without it: re-run the command above (it is idempotent;
+it rewrites the unit and reloads systemd), then `sudo systemctl start lifekit-intake-shape.service`
+and read `journalctl -u lifekit-intake-shape.service -n 20`.
+
+> **Any root-installed unit that calls firstmate tools** (`tasks-axi`, `fm-captain-hold.sh`
+> and the like) runs from systemd with a PATH that has no node version manager's bin
+> directory, so the installer must write the tool's absolute path (`TASKS_AXI=`) and a `PATH=`
+> starting with its directory into the unit, as the fleet publisher and intake shape installers
+> do. A unit that skips this fails at run time, not at install.
+
 Only rows dated from the install day on open items; to include earlier ones, run
 `intake_shape.py open --since YYYY-MM-DD` once.
 
@@ -3939,7 +3953,7 @@ Only rows dated from the install day on open items; to include earlier ones, run
 an issue failed the label check, an answer the step cannot read, a `shaping` row whose hub
 item is gone - the answer was lost with it, so re-ask by hand and mark the row; an answer that cannot be filed is not a failure state, the item is reopened and waits). Every step is checked first,
 so the next run completes a half-done one and files nothing twice: the issue carries a hidden
-`intake-shape: <item>` marker the step searches before creating. Exit 2: no firstmate home.
+`intake-shape: <item>` marker the step searches before creating. Exit 2: no firstmate home, or `tasks-axi not found` (one journal line for the whole run: reinstall with `TASKS_AXI`, see above).
 
 **Undo:**
 

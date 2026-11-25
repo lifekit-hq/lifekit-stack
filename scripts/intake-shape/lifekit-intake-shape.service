@@ -11,6 +11,10 @@ Type=oneshot
 # scripts/intake-shape/install-intake-shape.sh substitutes the placeholders.
 User=__ADMIN_USER__
 ExecStartPre=+/usr/bin/setfacl -R -m u:__ADMIN_USER__:rwX,m::rwX,d:u:__ADMIN_USER__:rwX,d:m::rwX /var/lib/lifekit/intake
+# TASKS_AXI and PATH (the tool's directory first, so it and node resolve) are
+# the installer's TASKS_AXI or its admin-account lookup; a system unit's own PATH
+# has neither, and fm-captain-hold.sh finds tasks-axi through PATH.
+Environment="TASKS_AXI=__TASKS_AXI__" "PATH=__UNIT_PATH__"
 Environment="INTAKE_SHAPE_FM_HOME=__FM_HOME__" "INTAKE_SHAPE_INTAKE=/var/lib/lifekit/intake" "INTAKE_SHAPE_REPOS=__REPOS__"
 ExecStart=/usr/bin/python3 /usr/local/libexec/lifekit-intake-shape/intake_shape.py sweep
 TimeoutStartSec=300

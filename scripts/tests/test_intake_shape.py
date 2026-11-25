@@ -462,7 +462,15 @@ def test_main_needs_a_firstmate_home(env, monkeypatch):
     assert env.run() == 2
 
 
-def test_installer_renders_the_unit(tmp_path):
+def test_main_needs_tasks_axi(env, monkeypatch, capsys):
+    monkeypatch.setenv("TASKS_AXI", str(env.home / "no-such-tasks-axi"))
+    env.index(row("a"), row("b"))
+    assert env.run() == 2
+    err = capsys.readouterr().err
+    assert err.count("tasks-axi not found") == 1, err
+
+
+def run_intake_installer(tmp_path, **extra):
     import subprocess
 
     root = tmp_path / "root"
@@ -475,10 +483,57 @@ def test_installer_renders_the_unit(tmp_path):
             "ADMIN_USER": "ops",
             "INTAKE_SHAPE_FM_HOME": "/home/ops/fm",
             "INTAKE_SHAPE_REPOS": "lifekit-stack=lifekit-hq/lifekit-stack",
+            **extra,
         },
         capture_output=True,
         text=True,
     )
+    return root, res
+
+
+def intake_unit(root):
+    return (root / "etc/systemd/system/lifekit-intake-shape.service").read_text()
+
+
+def test_installer_writes_tasks_axi_and_path(tmp_path):
+    root, res = run_intake_installer(
+        tmp_path, TASKS_AXI="/home/ops/.nvm/versions/node/v22/bin/tasks-axi"
+    )
+    assert res.returncode == 0, res.stderr
+    unit = intake_unit(root)
+    assert '"TASKS_AXI=/home/ops/.nvm/versions/node/v22/bin/tasks-axi"' in unit
+    assert '"PATH=/home/ops/.nvm/versions/node/v22/bin:/usr/local/sbin:' in unit
+    assert "__" not in unit
+
+
+def test_installer_finds_tasks_axi_as_the_admin_account(tmp_path):
+    fake_su = tmp_path / "su"
+    fake_su.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$4" in *"bash -ic"*) echo noise; echo /home/ops/.nvm/bin/tasks-axi;; esac\n'
+    )
+    fake_su.chmod(0o755)
+    root, res = run_intake_installer(tmp_path, SU=str(fake_su))
+    assert res.returncode == 0, res.stderr
+    unit = intake_unit(root)
+    assert '"TASKS_AXI=/home/ops/.nvm/bin/tasks-axi"' in unit
+    assert '"PATH=/home/ops/.nvm/bin:' in unit
+
+
+def test_installer_refuses_without_tasks_axi(tmp_path):
+    fake_su = tmp_path / "su"
+    fake_su.write_text("#!/usr/bin/env bash\nexit 1\n")
+    fake_su.chmod(0o755)
+    root, res = run_intake_installer(tmp_path, SU=str(fake_su))
+    assert res.returncode == 1
+    assert "tasks-axi not found for ops" in res.stderr
+    assert not (root / "etc/systemd/system/lifekit-intake-shape.service").exists()
+    root, res = run_intake_installer(tmp_path, TASKS_AXI="relative/tasks-axi")
+    assert res.returncode == 1
+
+
+def test_installer_renders_the_unit(tmp_path):
+    root, res = run_intake_installer(tmp_path, TASKS_AXI="/opt/tools/bin/tasks-axi")
     assert res.returncode == 0, res.stderr
     unit = (root / "etc/systemd/system/lifekit-intake-shape.service").read_text()
     assert "User=ops" in unit and "INTAKE_SHAPE_FM_HOME=/home/ops/fm" in unit
