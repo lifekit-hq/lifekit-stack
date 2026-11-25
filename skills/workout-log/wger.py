@@ -179,9 +179,11 @@ def name_candidates(name: str) -> list[str]:
 
 # Spellings an owner types that wger does not carry as a name, tried after the name itself and
 # the entry's own aliases: slug of the typed name -> wger English names. wger has several curls
-# (barbell, dumbbell, SZ-bar, cable, machine); the plain "biceps curl" is the dumbbell one.
+# (barbell, dumbbell, SZ-bar, cable, machine); the plain "biceps curl" is the dumbbell one the
+# owner's routine uses ("Dumbbell Curl", 1931). log-write prefers the routine's own exercise
+# (resolve_for_routine), so this is the fallback for a day the routine does not cover.
 BUILTIN_ALIASES = {
-    slug(spelling): ["Biceps Curls With Dumbbell"]
+    slug(spelling): ["Dumbbell Curl"]
     for spelling in ("bicep curl", "biceps curl", "bicep curls", "biceps curls")
 }
 
@@ -215,6 +217,35 @@ def resolve_exercise(w: Wger, ex: dict, cache: dict[str, int]) -> int:
         "(the id is on the exercise's wger page) or an alias that matches wger's name",
         1,
     )
+
+
+def name_key(name: str) -> str:
+    """slug with a trailing plural `s` dropped, so `squats` and `Squat` compare equal."""
+    return slug(name).removesuffix("s")
+
+
+def resolve_for_routine(
+    w: Wger,
+    ex: dict,
+    entries: dict[int, int],
+    names: dict[int, str],
+    cache: dict[str, int],
+) -> tuple[int, bool]:
+    """(exercise id, is a routine slot). The routine's own exercise when its name matches the
+    typed name or one of its aliases; the usual resolution (aliases, wger's names) otherwise."""
+    wanted = {
+        name_key(n)
+        for n in [
+            ex["name"],
+            *[a for a in ex.get("aliases", []) if isinstance(a, str)],
+            *BUILTIN_ALIASES.get(slug(ex["name"]), []),
+        ]
+    }
+    for eid in entries:
+        if name_key(exercise_name(w, eid, names)) in wanted:
+            return eid, True
+    eid = resolve_exercise(w, ex, cache)
+    return eid, eid in entries
 
 
 def exercise_name(w: Wger, ex_id: int, cache: dict[int, str]) -> str:
@@ -871,12 +902,13 @@ def cmd_log_write(args: argparse.Namespace) -> int:
     w = client()
     ids: dict[str, int] = {}
     routine, entries = routine_entries(w, day)
+    names: dict[int, str] = {}
     where = f"routine {routine['name']!r}" if routine else "no routine covers the date"
     failed: list[Fail] = []
     for ex in session:
         label = slug(ex["name"])
         try:
-            eid = resolve_exercise(w, ex, ids)
+            eid, in_routine = resolve_for_routine(w, ex, entries, names, ids)
             have = [
                 r
                 for r in w.pages(
@@ -906,8 +938,10 @@ def cmd_log_write(args: argparse.Namespace) -> int:
                 )
             missing = len(sets) - len(held)
             if args.dry_run:
+                slot = "a routine slot" if in_routine else "not a routine slot"
                 print(
-                    f"dry-run: would write {label} {missing} set(s) for {day} ({where})"
+                    f"dry-run: would write {label} {missing} set(s) for {day} to "
+                    f"exercise {eid} ({slot}; {where})"
                 )
                 continue
             for i, reps in enumerate(ex["reps"]):
@@ -922,14 +956,17 @@ def cmd_log_write(args: argparse.Namespace) -> int:
                 }
                 if ex["weight"] is not None:
                     body["weight"] = dec(ex["weight"])
-                if routine and eid in entries:
+                if routine and in_routine:
                     body["routine"] = routine["id"]
                     body["slot_entry"] = entries[eid]
                 w.call("POST", "workoutlog/", body)
             linked = (
-                "in the routine" if routine and eid in entries else "not in the routine"
+                "in the routine" if routine and in_routine else "not in the routine"
             )
-            print(f"{day} {label}: {missing} set(s) written to wger ({linked})")
+            print(
+                f"{day} {label}: {missing} set(s) written to wger "
+                f"(exercise {eid}, {linked})"
+            )
         except Fail as err:
             if err.code != 1:
                 raise
