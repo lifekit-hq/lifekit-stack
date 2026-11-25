@@ -5574,7 +5574,7 @@ secrets or the PowerSync storage password is empty once wger is meant to be up, 
 `db` loses `wal_level=logical`, or if the network rules for Kit's route to wger or
 for PowerSync's network break ("Kit and wger", "PowerSync" below).
 
-**Setup.** The secrets (`WGER_SECRET_KEY`, `WGER_DB_PASSWORD` and the sign-in pair below) are keys in the master
+**Setup.** The secrets (`WGER_SECRET_KEY`, `WGER_DB_PASSWORD`, the sign-in pair below and the PowerSync storage password, "PowerSync" below) are keys in the master
 file with inventory rows in `docs/secrets.md`, so the next deploy renders them into the
 env file and brings the project up; until `WGER_SECRET_KEY` and `WGER_DB_PASSWORD` are
 present `deploy.sh` prints a warning and skips it. Values never in git. To rotate one, set a fresh value and redeploy (the
