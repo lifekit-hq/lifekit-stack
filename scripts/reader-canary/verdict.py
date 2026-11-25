@@ -6,8 +6,8 @@
 For every call the mock model made it checks the model's own view (the tool_result
 each call got back: refused or ran) against the side effects (a call that reached the
 stub connector, the stub door script, or left a file), and against the expectation in
-cases.json. The tool catalogue the model was offered must be exactly what the shipped
-allow-list grants. A run that made no model request at all, or lost a result, fails:
+cases.json. The tool catalogue the model was offered must hold nothing beyond what the
+shipped allow-list grants. A run that made no model request at all, or lost a result, fails:
 a canary that could not run must never read as a pass.
 """
 
@@ -48,17 +48,29 @@ def expected_catalogue(allow: list) -> set:
 
 
 def is_inert_placeholder(tool: dict) -> bool:
-    """Claude Code sends a stub that keeps deferred tool loading switched on: it is deferred,
-    takes no input and carries no capability. Matched on its whole shape, so a real tool that
-    reuses the name (a schema with properties, or one not deferred) still fails the check."""
+    """Claude Code's two built-ins for deferred tool loading, neither of which grants a
+    capability. Each is matched on its whole shape, so a real tool that reuses a name
+    (extra properties, or not deferred) still fails the check."""
     schema = tool.get("input_schema") or {}
-    return (
-        tool.get("name") == "DeferredToolPlaceholder"
-        and tool.get("defer_loading") is True
-        and schema.get("type") == "object"
-        and not schema.get("properties")
-        and not schema.get("required")
-    )
+    props = set(schema.get("properties") or {})
+    if tool.get("name") == "DeferredToolPlaceholder":
+        # A stub that keeps deferred loading switched on: deferred, takes no input.
+        return (
+            tool.get("defer_loading") is True
+            and schema.get("type") == "object"
+            and not props
+            and not schema.get("required")
+        )
+    if tool.get("name") == "ToolSearch":
+        # The loader that fetches the schema of a deferred tool already in the catalogue
+        # (here, only the allow-listed ones); it takes a query and a result count, nothing else.
+        return (
+            tool.get("defer_loading") is not True
+            and schema.get("type") == "object"
+            and props == {"query", "max_results"}
+            and set(schema.get("required") or []) <= props
+        )
+    return False
 
 
 def judge(out: str, cases: list, agent: dict) -> list:
@@ -77,7 +89,10 @@ def judge(out: str, cases: list, agent: dict) -> list:
         if not is_inert_placeholder(t)
     }
     allow = agent["agents"]["entries"]["reader"]["tools"]["allow"]
-    if catalogue != expected_catalogue(allow):
+    # Claude Code may defer the allowed tools behind ToolSearch, so they need not be listed
+    # up front: the catalogue must hold nothing beyond the grant, and the allowed calls
+    # running (checked per case below) proves the grant itself is reachable.
+    if not catalogue <= expected_catalogue(allow):
         bad.append(
             f"tool catalogue offered to the model is {sorted(catalogue)}, the allow-list grants {sorted(expected_catalogue(allow))}"
         )

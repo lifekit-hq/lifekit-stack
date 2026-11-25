@@ -183,3 +183,74 @@ def test_the_inert_deferred_placeholder_is_not_a_wider_catalogue(tmp_path):
 )
 def test_a_lookalike_of_the_placeholder_still_fails(tmp_path, tool):
     assert any("tool catalogue" in b for b in with_extra_tool(tmp_path, tool))
+
+
+TOOL_SEARCH = {
+    "name": "ToolSearch",
+    "description": "Fetches full schema definitions for deferred tools so they can be called.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "max_results": {"type": "number"}},
+        "required": ["query", "max_results"],
+    },
+}
+
+
+def test_the_deferred_tool_loader_is_not_a_wider_catalogue(tmp_path):
+    assert with_extra_tool(tmp_path, TOOL_SEARCH) == []
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        {
+            **TOOL_SEARCH,
+            "input_schema": {
+                **TOOL_SEARCH["input_schema"],
+                "properties": {
+                    **TOOL_SEARCH["input_schema"]["properties"],
+                    "cmd": {"type": "string"},
+                },
+            },
+        },
+        {**TOOL_SEARCH, "defer_loading": True},
+        {**TOOL_SEARCH, "name": "ToolSearch2"},
+    ],
+)
+def test_a_lookalike_of_the_loader_still_fails(tmp_path, tool):
+    assert any("tool catalogue" in b for b in with_extra_tool(tmp_path, tool))
+
+
+def with_catalogue(tmp_path, tools):
+    out = evidence(tmp_path)
+    rows = [json.loads(line) for line in (out / "mock.log").read_text().splitlines()]
+    rows[0]["req"]["tools"] = tools
+    write_jsonl(out / "mock.log", rows)
+    return out
+
+
+def test_allowed_tools_deferred_behind_the_loader_still_pass(tmp_path):
+    out = with_catalogue(tmp_path, [TOOL_SEARCH])
+    assert verdict.judge(str(out), CASES, AGENT) == []
+
+
+def test_allowed_tools_missing_from_the_catalogue_fail_when_their_call_did_not_run(
+    tmp_path,
+):
+    out = with_catalogue(tmp_path, [TOOL_SEARCH])
+    case = next(c for c in CASES if c["expect"] == "allow" and "mcp" in c["effect"])
+    (out / "mcp-calls.log").write_text("")
+    bad = verdict.judge(str(out), CASES, AGENT)
+    assert any(f"case {case['id']}" in b and "expected to run" in b for b in bad)
+
+
+def test_an_allowed_call_whose_result_is_an_error_fails_with_no_catalogue(tmp_path):
+    out = with_catalogue(tmp_path, [])
+    case = next(c for c in CASES if c["expect"] == "allow")
+    rows = [json.loads(line) for line in (out / "mock.log").read_text().splitlines()]
+    for c in rows[1]["req"]["messages"][0]["content"]:
+        if c["tool_use_id"] == f"toolu_canary{case['id']}":
+            c["is_error"] = True
+    write_jsonl(out / "mock.log", rows)
+    bad = verdict.judge(str(out), CASES, AGENT)
+    assert any(f"case {case['id']}" in b and "expected to run" in b for b in bad)
