@@ -38,7 +38,6 @@ MODEL_ID = re.compile(
 def test_the_cron_model_is_on_the_allow_list():
     assert DEFAULTS["model"]["primary"] in ALLOW
     assert DEFAULTS["subagents"]["model"] in ALLOW
-    assert DEFAULTS["heartbeat"]["model"] in ALLOW
 
 
 def test_the_lib_hands_out_the_policy_model():

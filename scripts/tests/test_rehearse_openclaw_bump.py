@@ -55,9 +55,25 @@ case "$args" in
     if [ -f "$STUB_STATE/updated" ]; then echo "$STUB_PLUGINS_AFTER"; else echo "$STUB_PLUGINS"; fi
     exit 0 ;;
   *" plugins update "*) touch "$STUB_STATE/updated"; exit 0 ;;
+  *" gateway recover-lock --confirm "*)
+    [ -z "${STUB_LOCK_CONFIRM_RC:-}" ] || exit "$STUB_LOCK_CONFIRM_RC"
+    case "$args" in *" --confirm fp-1234 "*) touch "$STUB_STATE/lock-cleared" ;; *) exit 3 ;; esac
+    exit 0 ;;
+  *" gateway recover-lock --json "*)
+    [ -z "${STUB_LOCK_INSPECT_RC:-}" ] || exit "$STUB_LOCK_INSPECT_RC"
+    if [ -f "$STUB_STATE/lock-cleared" ] || [ "${STUB_LOCK_PRESENT:-1}" = 0 ]; then
+      echo '{"present":false,"holders":[],"confirmation":""}'
+    else
+      echo '{"present":true,"holders":["holder 7 at host/pid-ns 1"],"confirmation":"fp-1234","command":"x"}'
+    fi
+    exit 0 ;;
+  *" config validate "*) exit "${STUB_VALIDATE_RC:-0}" ;;
+  *" exec "*) exit "${STUB_HEALTH_RC:-0}" ;;
   *" --session-sqlite "*) exit "${STUB_SQLITE_RC:-0}" ;;
   *" doctor --json "*) cat "$STUB_LINT_JSON"; exit 0 ;;
   *" doctor --fix "*)
+    # 2026.11.7+: an unverifiable owner is never reclaimed by doctor.
+    if [ "${STUB_LOCK_PRESENT:-1}" != 0 ] && [ ! -f "$STUB_STATE/lock-cleared" ]; then exit 1; fi
     cfg=$(printf '%s' "$*" | grep -o '[^ ]*:/home/node/.openclaw ' | head -n1 | cut -d: -f1)
     if [ -n "$cfg" ] && [ ! -f "$STUB_STATE/fixed" ]; then
       cp "$STUB_AFTER" "$cfg/openclaw.json"
@@ -481,3 +497,73 @@ def test_lint_only_mounts_read_only_and_does_not_copy(rig):
 def test_baseline_not_implemented(rig):
     out = run(rig, "--baseline", "img:x")
     assert out.returncode == 2
+
+
+def calls(rig):
+    return rig["docker_log"].read_text().splitlines()
+
+
+def test_copied_ownership_record_is_recovered_before_doctor(rig):
+    r = run(rig)
+    assert r.returncode == 0, r.stderr
+    log = calls(rig)
+    confirm = next(
+        i for i, c in enumerate(log) if "gateway recover-lock --confirm fp-1234" in c
+    )
+    fix = next(i for i, c in enumerate(log) if "doctor --fix" in c)
+    assert confirm < fix
+    assert "recover-lock=0" in r.stdout
+    # the holder's pid/host from the inspection never reach the summary
+    assert "holder 7" not in r.stdout + r.stderr
+
+
+def test_recover_lock_runs_on_the_copy_never_live_state(rig):
+    run(rig)
+    for c in calls(rig):
+        if "recover-lock" in c:
+            assert f"{rig['dest']}/config:/home/node/.openclaw " in c
+            assert f"{rig['tmp']}/config:" not in c
+
+
+def test_no_lock_present_skips_the_confirm(rig):
+    r = run(rig, extra_env={"STUB_LOCK_PRESENT": "0"})
+    assert r.returncode == 0, r.stderr
+    assert not any("--confirm" in c for c in calls(rig))
+
+
+def test_failed_lock_recovery_is_red_and_keeps_the_copy(rig):
+    r = run(rig, extra_env={"STUB_LOCK_CONFIRM_RC": "4"})
+    assert r.returncode == 1
+    assert "recover-lock-exit-4" in r.stdout
+    assert rig["dest"].exists()
+
+
+def test_unparseable_inspection_is_red(rig):
+    r = run(rig, extra_env={"STUB_LOCK_INSPECT_RC": "2"})
+    assert r.returncode == 1
+    assert "recover-lock-exit-2" in r.stdout
+
+
+def test_migrated_copy_is_validated_and_gateway_started_on_the_copy(rig):
+    r = run(rig, extra_env={"PROBE_WAIT": "4"})
+    assert r.returncode == 0, r.stderr
+    log = calls(rig)
+    assert any("config validate --json" in c for c in log)
+    start = next(c for c in log if c.startswith("run -d "))
+    assert f"{rig['dest']}/config:/home/node/.openclaw " in start
+    assert "gateway run" in start and " -p " not in start and "--publish" not in start
+    assert any(c.startswith("rm -f rehearsal-gateway-") for c in log)
+    assert "config-validate=0 gateway-start=0" in r.stdout
+
+
+def test_invalid_migrated_config_is_red(rig):
+    r = run(rig, extra_env={"STUB_VALIDATE_RC": "1", "PROBE_WAIT": "4"})
+    assert r.returncode == 1
+    assert "config-invalid-exit-1" in r.stdout
+
+
+def test_gateway_that_never_answers_is_red_and_container_removed(rig):
+    r = run(rig, extra_env={"STUB_HEALTH_RC": "1", "PROBE_WAIT": "2"})
+    assert r.returncode == 1
+    assert "gateway-start-failed" in r.stdout
+    assert any(c.startswith("rm -f rehearsal-gateway-") for c in calls(rig))

@@ -190,10 +190,12 @@ def test_gateway_publishes_loopback_only():
     assert published and all(p.startswith("127.0.0.1:") for p in published), published
 
 
-def test_only_the_finance_agent_gets_a_heartbeat():
-    assert PATCH["agents"]["defaults"]["heartbeat"]["every"] == "0m"
-    assert set(PATCH["agents"]["entries"]) == {"finance"}
-    assert set(PATCH["agents"]["entries"]["finance"]) == {"heartbeat"}
+def test_no_heartbeat_keys_the_2026_11_9_schema_rejects():
+    # 2026.11.9 retired agents.defaults.heartbeat and agents.entries.<id>.heartbeat
+    # (doctor --fix migrates them into automation jobs); config patch would
+    # re-add them and the gateway would read the config as invalid.
+    assert "heartbeat" not in PATCH["agents"]["defaults"]
+    assert "entries" not in PATCH["agents"]
 
 
 # Model providers something routes to: every agent's model is anthropic/*
@@ -237,7 +239,6 @@ def test_bundle_a_audit_keys():
     sonnet = "anthropic/claude-sonnet-5-5"
     assert defaults["model"]["primary"] == sonnet
     assert defaults["subagents"]["model"] == sonnet
-    assert defaults["heartbeat"]["model"] == sonnet
     assert set(defaults["modelPolicy"]["allow"]) == {
         sonnet,
         "anthropic/claude-opus-5-5",

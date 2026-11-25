@@ -44,7 +44,7 @@ A domain that fails the test is a skill in kit, not an agent.
 | Routing | top-level `bindings` in the live `openclaw.json`; change with `openclaw agents bind` / `unbind` |
 | Telegram bots | `channels.telegram.accounts.<id>` in the live `openclaw.json` |
 | Cron jobs | the gateway's store, not `openclaw.json`; `openclaw cron add` / `edit` / `rm`. Git-side declarations where they exist: `scripts/ensure-*.sh` and `docs/runbook.md` |
-| Platform keys (logging, diagnostics, plugins, memory search, heartbeat, hooks) | `compose/openclaw-gateway/platform.patch.json`, applied by `deploy.sh` |
+| Platform keys (logging, diagnostics, plugins, memory search, hooks) | `compose/openclaw-gateway/platform.patch.json`, applied by `deploy.sh` |
 | Workspace `MEMORY.md` / `USER.md` | the vault pointers in `defaults/workspace-pointers/`, written by `deploy.sh` |
 | Workspace templates | `defaults/agents/<id>/workspace/`, copied into the agent's workspace by hand, except learnclaw's, which the deploy installs (`scripts/ensure-learnclaw.sh`) (resolve the path with `openclaw agents list --json`; container paths under `/home/node/.openclaw/` map to `/srv/openclaw/config/` on the host) |
 | Persona block shared by every agent ("Development-class problems") | `defaults/agents/shared/dev-problems.md`, put into each workspace `SOUL.md` by `scripts/ensure-dev-problem-block.sh` (`docs/runbook.md`, "Development-class problems: file and carry on") |
