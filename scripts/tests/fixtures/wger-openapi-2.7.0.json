@@ -4979,6 +4979,31 @@
     ]
    }
   },
+  "/api/v2/workoutlog/{id}/": {
+   "delete": {
+    "description": "API endpoint for workout log objects",
+    "operationId": "workoutlog_destroy",
+    "parameters": [
+     {
+      "description": "A unique value identifying this object.",
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "No response body"
+     }
+    },
+    "tags": [
+     "workoutlog"
+    ]
+   }
+  },
   "/api/v2/workoutsession/": {
    "get": {
     "description": "API endpoint for workout sessions objects",
@@ -5217,6 +5242,31 @@
       "jwtAuth": []
      }
     ],
+    "tags": [
+     "workoutsession"
+    ]
+   }
+  },
+  "/api/v2/workoutsession/{id}/": {
+   "delete": {
+    "description": "API endpoint for workout session objects",
+    "operationId": "workoutsession_destroy",
+    "parameters": [
+     {
+      "description": "A unique value identifying this object.",
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "No response body"
+     }
+    },
     "tags": [
      "workoutsession"
     ]
