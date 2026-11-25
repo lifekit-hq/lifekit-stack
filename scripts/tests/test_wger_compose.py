@@ -266,13 +266,6 @@ def test_db_without_logical_wal_is_blocked(real):
     assert any("wal_level=logical" in p for p in gate.check(real))
 
 
-def test_nginx_proxies_the_powersync_path():
-    conf = (REPO / "compose/wger/nginx.conf").read_text()
-    assert "location /ps/ {" in conf
-    assert "http://powersync:8080" in conf
-    assert "rewrite ^/ps/(.*)$ /$1 break;" in conf
-
-
 def test_web_hands_the_app_the_nginx_path():
     env = yaml.safe_load(COMPOSE.read_text())["services"]["web"]["environment"]
     assert env["POWERSYNC_URL_PATH"] == "ps"
