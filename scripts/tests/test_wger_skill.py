@@ -923,6 +923,10 @@ def make_routine(wger, legs):
     FakeWger.log.clear()
 
 
+def logs_on(day):
+    return [b for b in FakeWger.logs if b["date"].startswith(day)]
+
+
 def log_posts():
     return [w["body"] for w in writes() if w["path"] == "/api/v2/workoutlog/"]
 
@@ -1049,6 +1053,43 @@ def test_log_write_names_a_wger_error_and_stops(wger, legs):
     )
     assert r.returncode == 4 and "HTTP 500" in r.stderr
     assert len(log_posts()) == 2  # the first set, and the one that was refused
+
+
+def test_log_write_resumes_after_a_wger_error_to_exactly_the_requested_sets(wger, legs):
+    make_routine(wger, legs)
+    FakeWger.fail_on = ("workoutlog", 2)
+    r = wger("log-write", "hack squat 3x10@60kg", "--date", "2026-11-25")
+    assert r.returncode == 4
+    assert len(logs_on("2026-11-25")) == 1
+    FakeWger.fail_on = None
+    again = wger("log-write", "hack squat 3x10@60kg", "--date", "2026-11-25")
+    assert again.returncode == 0, again.stderr
+    assert "2 set(s) written" in again.stdout
+    back = wger("logs", "--from", "2026-11-25", "--to", "2026-11-25")
+    assert back.stdout.splitlines() == ["2026-11-25 hack-squat: 10,10,10@60kg"]
+    assert len({b["date"] for b in logs_on("2026-11-25")}) == 3
+    third = wger("log-write", "hack squat 3x10@60kg", "--date", "2026-11-25")
+    assert "unchanged" in third.stdout and len(logs_on("2026-11-25")) == 3
+
+
+def test_log_write_a_different_unit_is_a_different_set(wger):
+    assert wger("log-write", "squat 5@135lb", "--date", "2026-11-25").returncode == 0
+    r = wger("log-write", "squat 5@135kg", "--date", "2026-11-25")
+    assert r.returncode == 1 and "differ" in r.stderr
+    assert len(logs_on("2026-11-25")) == 1
+
+
+def test_log_write_more_sets_than_wger_holds_in_a_different_shape_still_fails(
+    wger, legs
+):
+    make_routine(wger, legs)
+    assert (
+        wger("log-write", "hack squat 2x10@60kg", "--date", "2026-11-25").returncode
+        == 0
+    )
+    r = wger("log-write", "hack squat 3x8@60kg", "--date", "2026-11-25")
+    assert r.returncode == 1 and "differ" in r.stderr
+    assert len(logs_on("2026-11-25")) == 2
 
 
 def test_log_write_never_runs_workout_claw(wger, tmp_path):

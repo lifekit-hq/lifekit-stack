@@ -23,7 +23,8 @@ a weight entry for the day, or corrects that day's entry. `log-write` writes a s
 workout logs, one per set, from the same line Kit gives `workout-claw log` ("hack squat 3x10@60kg,
 bench press 8,8,6@60kg"): each exercise is linked to the routine covering the date and its slot
 entry, and an exercise that already has logs on that date is never written twice (identical sets:
-unchanged; different sets: exit 1, nothing overwritten). workout-claw stays the record of the
+unchanged; the first sets of the line, left by an interrupted run: the rest is written;
+any other difference: exit 1, nothing overwritten). workout-claw stays the record of the
 session; a wger failure here never touches it.
 
 `routine` builds the whole new routine first and deletes the old one (`--replace`) only after
@@ -189,7 +190,7 @@ def resolve_exercise(w: Wger, ex: dict, cache: dict[str, int]) -> int:
                 cache[cand] = hit[0]["exercise"]
                 return hit[0]["exercise"]
     raise Fail(
-        f"no wger exercise named {ex['name']!r}: add \"wger_exercise\": <id> to it in gym.json "
+        f'no wger exercise named {ex["name"]!r}: add "wger_exercise": <id> to it in gym.json '
         "(the id is on the exercise's wger page) or an alias that matches wger's name",
         1,
     )
@@ -837,8 +838,10 @@ def routine_entries(w: Wger, day: str) -> tuple[dict | None, dict[int, int]]:
     return routine, entries
 
 
-def set_key(reps: object, weight: object) -> tuple[float, float | None]:
-    return float(reps), None if weight is None else float(weight)  # type: ignore[arg-type]
+def set_key(
+    reps: object, weight: object, unit: object
+) -> tuple[float, float | None, object]:
+    return float(reps), None if weight is None else float(weight), unit  # type: ignore[arg-type]
 
 
 def cmd_log_write(args: argparse.Namespace) -> int:
@@ -866,24 +869,29 @@ def cmd_log_write(args: argparse.Namespace) -> int:
                 )
                 if str(r.get("date", ""))[:10] == day and r.get("exercise") == eid
             ]
-            sets = [set_key(r, ex["weight"]) for r in ex["reps"]]
-            if have:
-                if [
-                    set_key(r.get("repetitions"), r.get("weight")) for r in have
-                ] == sets:
-                    print(f"{day} {label}: wger already has these sets, unchanged")
-                    continue
+            sets = [set_key(r, ex["weight"], ex["unit"]) for r in ex["reps"]]
+            held = [
+                set_key(r.get("repetitions"), r.get("weight"), r.get("weight_unit"))
+                for r in have
+            ]
+            if held == sets:
+                print(f"{day} {label}: wger already has these sets, unchanged")
+                continue
+            if held != sets[: len(held)]:
                 raise Fail(
                     f"wger already has {len(have)} logged set(s) for {label} on {day} that "
                     "differ from this line: nothing was written (change them in the wger app)",
                     1,
                 )
+            missing = len(sets) - len(held)
             if args.dry_run:
                 print(
-                    f"dry-run: would write {label} {len(sets)} set(s) for {day} ({where})"
+                    f"dry-run: would write {label} {missing} set(s) for {day} ({where})"
                 )
                 continue
             for i, reps in enumerate(ex["reps"]):
+                if i < len(held):
+                    continue
                 body = {
                     "exercise": eid,
                     "date": f"{day}T12:{i:02d}:00+00:00",
@@ -900,7 +908,7 @@ def cmd_log_write(args: argparse.Namespace) -> int:
             linked = (
                 "in the routine" if routine and eid in entries else "not in the routine"
             )
-            print(f"{day} {label}: {len(sets)} set(s) written to wger ({linked})")
+            print(f"{day} {label}: {missing} set(s) written to wger ({linked})")
         except Fail as err:
             if err.code != 1:
                 raise

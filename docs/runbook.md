@@ -5769,8 +5769,10 @@ service: the same skill, installed by `scripts/ensure-workout-log.sh`.
     one wger workout log per set. Each exercise is linked to the routine whose dates cover the
     day (the latest start wins) and its slot entry; an exercise that is not in the routine, or a
     day no routine covers, is still logged, without the link. It is idempotent per date and
-    exercise: wger already holding identical sets prints `unchanged`; holding different sets
-    exits 1 and writes nothing (correct those in the app). An exercise wger has no name for
+    exercise: wger already holding identical sets prints `unchanged`; holding only the first sets of the
+    line (a run cut short by a wger error) writes the rest, so sending the line again repairs it;
+    holding anything else (other reps, weight or unit) exits 1 and writes nothing (correct those
+    in the app). An exercise wger has no name for
     fails alone (exit 1, `wger_exercise` hint) while the others are written. The skill calls it
     only after `workout-claw summary` has shown the session; it never runs, reads or changes
     workout-claw, and a non-zero exit is reported in Kit's reply next to the "Logged" line.
