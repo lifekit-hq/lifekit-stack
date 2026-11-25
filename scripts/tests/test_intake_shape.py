@@ -332,6 +332,32 @@ def test_matrix_answer_is_recorded_as_auto_answered(env):
     assert "Decision: matrix auto-answered" in env.gh()["issues"][0]["body"]
 
 
+SETTLED = (
+    "Captain answered this call through matrix settlement by firstmate "
+    "(H4 server.root-installer + M4), not a captain answer.\n"
+    "Task: shape-abc\n"
+    "Answer: {answer}\n"
+    "Answer as shown to the captain: matrix-settled"
+)
+
+
+def test_matrix_settled_drop_files_nothing_and_does_not_ask_again(env):
+    answered(env, SETTLED.format(answer="drop: not worth shaping"))
+    assert env.run("answer") == 0
+    assert env.gh()["issues"] == []
+    assert env.rows()[0]["status"] == "dropped"
+    assert env.hub()["shape-abc"]["state"] == "closed"
+
+
+def test_matrix_settled_approve_files_the_proposed_shape(env):
+    answered(env, SETTLED.format(answer="approve"))
+    assert env.run("answer") == 0
+    [issue] = env.gh()["issues"]
+    assert "Decision: matrix auto-answered" in issue["body"]
+    assert "Owner repo: lifekit-hq/lifekit-stack" in issue["body"]
+    assert "- port the rubric" in issue["body"]
+
+
 def test_answer_overrides_repo_class_and_done_when(env):
     answered(env, "repo: lifekit-hq/clip\nclass: ops\ndone when: one clip ships")
     env.run("answer")
