@@ -1071,6 +1071,23 @@ def test_giving_up_names_the_last_exit_status_and_stderr_lines(q, monkeypatch):
     assert "KeyError: 'x'" in message
 
 
+def test_a_read_output_whose_turn_never_finished_is_not_blamed_on_the_handler(
+    q, monkeypatch
+):
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "1")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    _ran(jid)
+    assert jobq.next_job(now=1002.0)[0] == "ready"
+    assert jobq.output(jid, now=1003.0) != "NO_REPLY"
+    state, message = jobq.next_job(now=1003.0 + 31 * 60)
+    assert state == "ready"
+    result = jobq.get(jid)["result"]
+    assert "its output was read but the turn never finished the job" in result
+    assert "printed nothing" not in result and "printed nothing" not in message
+
+
 def test_a_runner_told_to_stop_records_it_and_its_handler_is_killed(q, monkeypatch):
     monkeypatch.setenv("FAKE_SLEEP", "60")
     _add_file()

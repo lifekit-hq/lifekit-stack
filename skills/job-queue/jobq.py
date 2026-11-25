@@ -740,6 +740,8 @@ def _never_reported(d: Path, job: dict) -> str:
     n = job["attempts"]
     reason = f"its last {n} runs never reported back"
     run = job.get("run") or {}
+    if "read_at" in run:
+        return f"{reason} (its output was read but the turn never finished the job)"
     if job.get("last_error"):
         return f"{reason} (last error: {job['last_error']})"
     if "ran_at" in run:
