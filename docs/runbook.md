@@ -3563,8 +3563,9 @@ vice-footage: waiting, oldest age, buffer days, egress, stalled; README "Clip qu
 are read by the publisher's existing run, read-only, from the directory of
 `FLEET_CLIP_STATS_FEED` (the clip queue's `daily-check.json`, `egress.json`,
 `queue-run.json`; a missing input shows as unavailable, never zero) and, for the scout,
-`FLEET_SCOUT_STATE` (its state dir). Neither variable is set by the unit: point them with
-the same systemd drop-in as the clip stats feed; unset, the page says `read: false`.
+`FLEET_SCOUT_STATE` (its state dir). The installer sets the first (above); the unit never
+sets `FLEET_SCOUT_STATE`, so point it with a systemd drop-in. Unset, the page says
+`read: false`.
 
 The same run writes `/var/lib/lifekit-fleet/taken-for-you.json`, the dashboard's
 "Taken for you" feed: the last 200 actions the fleet took under a standing
