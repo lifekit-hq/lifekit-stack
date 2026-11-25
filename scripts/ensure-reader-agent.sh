@@ -9,7 +9,9 @@
 #     its path (`openclaw approvals allowlist add --agent reader`, idempotent), and
 #     the script fails if the reader's allowlist holds anything else;
 #   - the checks that the live agent entry equals the shipped one, has no channel
-#     binding, and that no agent can message another (tools.agentToAgent off).
+#     binding, and that no agent can reach it: agent-to-agent off, or on with
+#     tools.agentToAgent.allow naming only the agents that use it (kit, finance =
+#     Ledger), which the script converges when it is on, and never the reader.
 #
 # What stays host state: the agent entry itself (agents.entries.reader). It is the
 # tool cap, so it is applied by hand from defaults/agents/reader/agent.json after
@@ -108,17 +110,55 @@ if bad:
     sys.exit("refusing: the live reader entry differs from defaults/agents/reader/agent.json: " + "; ".join(bad) + " - re-apply it (docs/runbook.md, \"Reader agent\")")
 ' "$shipped_entry" >&2
 
-# No agent can message another one, and nothing routes a channel to the reader.
-rc=0
-a2a="$(docker exec "$GATEWAY" openclaw config get tools.agentToAgent.enabled 2>&1)" || rc=$?
-if [ "$rc" != 0 ] && ! printf '%s' "$a2a" | grep -qiE "$absent_re"; then
-  echo "could not read tools.agentToAgent.enabled from the gateway: ${a2a}" >&2
-  exit 1
-fi
-if [ "$rc" = 0 ]; then
-  case "$(printf '%s' "$a2a" | tr -d '[:space:]"')" in
-    *true) echo "refusing: tools.agentToAgent.enabled is true; the reader must not be reachable by other agents" >&2; exit 1 ;;
+# What the reader can receive: agent-to-agent stays on for the agents that use it
+# (the Kit to Ledger exchange), narrowed to them by tools.agentToAgent.allow, and the
+# reader is left out of that list. Both the requester and the target must match the
+# list (OpenClaw 2026.11.4 schema), so an agent outside it cannot reach the reader.
+# Disabled is accepted too. Enabled with an absent or empty allow list means every
+# agent is reachable: refused. The ids are the repo's agent definitions
+# (defaults/agents/kit, and Ledger's workspace dir scripts/ledger-persona), never
+# live config values.
+a2a_agents='["kit","finance"]'
+read_cfg() { # $1 = config path; sets rc and got ("" when unset)
+  rc=0
+  got="$(docker exec "$GATEWAY" openclaw config get "$1" --json 2>&1)" || rc=$?
+  if [ "$rc" != 0 ] && ! printf '%s' "$got" | grep -qiE "$absent_re"; then
+    echo "could not read $1 from the gateway: ${got}" >&2
+    exit 1
+  fi
+  [ "$rc" = 0 ] || got=""
+  return 0
+}
+read_cfg tools.agentToAgent.enabled
+a2a_on=0
+if [ -n "$got" ]; then
+  case "$(printf '%s' "$got" | tr -d '[:space:]"')" in
+    *true) a2a_on=1 ;;
   esac
+fi
+if [ "$a2a_on" = 1 ]; then
+  # Converge the allow list to exactly the agents that use agent-to-agent (idempotent:
+  # nothing is written when it already is that set).
+  if [ "$check_only" = 0 ]; then
+    read_cfg tools.agentToAgent.allow
+    live_allow="$(printf '%s' "$got" | pick_json '[]')" || live_allow=null
+    printf '%s' "$live_allow" | A2A="$a2a_agents" python3 -c '
+import json, os, sys
+live, want = json.load(sys.stdin), sorted(json.loads(os.environ["A2A"]))
+sys.exit(0 if isinstance(live, list) and sorted(live) == want else 1)' \
+      || printf '{"tools":{"agentToAgent":{"allow":%s}}}' "$a2a_agents" \
+        | docker exec -i "$GATEWAY" openclaw config patch --stdin >/dev/null
+  fi
+  read_cfg tools.agentToAgent.allow
+  live_allow="$(printf '%s' "$got" | pick_json '[]')" || live_allow=null
+  printf '%s' "$live_allow" | python3 -c '
+import json, sys
+allow = json.load(sys.stdin)
+if not isinstance(allow, list) or not allow:
+    sys.exit("refusing: tools.agentToAgent.enabled is true with no allow list; the reader must not be reachable by other agents (set tools.agentToAgent.allow to the agents that use it, without the reader)")
+if any(a in ("reader", "*") or a.endswith("*") for a in allow):
+    sys.exit("refusing: tools.agentToAgent.allow " + repr(allow) + " reaches the reader; the reader must not be reachable by other agents")
+' >&2
 fi
 bindings="$(docker exec "$GATEWAY" openclaw agents list --json --bindings 2>/dev/null | pick_json '[]')" || bindings="[]"
 printf '%s' "$bindings" | python3 -c '
@@ -149,5 +189,5 @@ if patterns != [sys.argv[1]]:
     sys.exit("refusing: the reader exec allowlist is " + repr(patterns) + ", want exactly " + repr([sys.argv[1]]) + " (run scripts/ensure-reader-agent.sh to add the door script; openclaw approvals allowlist remove --agent reader <pattern> for anything else)")
 ' "$door" >&2
 
-echo "reader agent verified: shipped cap live, no bindings, exec allowlist = the door script only"
+echo "reader agent verified: shipped cap live, no bindings, not reachable by other agents, exec allowlist = the door script only"
 echo "verify: scripts/reader-canary/run.sh   # the cap, on a managed claude-cli turn"

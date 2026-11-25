@@ -2429,7 +2429,9 @@ The `reader` agent is the one agent that reads untrusted text: new mail and the 
 attached to it. Both reading crons run as it - `doc-door` and `needs-you-mail-reader` - so a
 hostile message or document meets an agent that holds no write, send, web or delegation tool,
 not Kit, which does (decided in #528, built in #556). It runs only from those two cron jobs: no
-channel is bound to it, nothing chats with it, `tools.agentToAgent.enabled` stays false.
+channel is bound to it, nothing chats with it, and no other agent can reach it: agent-to-agent
+stays on for the Kit to Ledger exchange but `tools.agentToAgent.allow` names only `kit` and
+`finance` (Ledger), never the reader.
 
 - **What it holds** (`defaults/agents/reader/agent.json`, the agent entry; the persona is
   `defaults/agents/reader/workspace/`): `tools.allow` is `exec` plus the two Gmail reads
@@ -2477,7 +2479,10 @@ leaves both crons on Kit, each with a note, so the merge changes nothing before 
 3. `scripts/ensure-reader-agent.sh` (the deploy runs it too): installs the contract into
    `/srv/openclaw/config/agents/reader/workspace`, allowlists the door script, and ends with
    `reader agent verified` only when the live entry equals the shipped one, nothing is bound to the
-   reader, `tools.agentToAgent` is off and the reader's allowlist is exactly the door script.
+   reader, the reader is unreachable by other agents (`tools.agentToAgent` off, or on with a
+   non-empty `tools.agentToAgent.allow` that excludes it; enabled with no allow list is refused, and
+   the script sets the list to `kit` and `finance` when it is on, a re-run changes nothing) and the
+   reader's allowlist is exactly the door script.
 4. `scripts/ensure-doc-door.sh`: installs the skill into the reader's workspace and moves the
    `doc-door` job to the reader. Then `scripts/ensure-needs-you-digest.sh`: moves
    `needs-you-mail-reader` to the reader (the digest stays on Kit; it is not run by the deploy). Each
