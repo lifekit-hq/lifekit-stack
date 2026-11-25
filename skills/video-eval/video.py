@@ -59,7 +59,8 @@ job. A report never filed is run again when the queue's lease runs out.
 
 Everything is kept on this host in a private directory (INTAKE_DIR, default
 ~/.life-state/intake, mode 0700): reports/ and index.md for good (index.md is
-appended to by this script only, never rewritten), transcripts/ and inbox/
+appended to by this script; the intake shape step only adds its two trailing
+status/ref cells to a row, in place under the same lock), transcripts/ and inbox/
 (files waiting for their run) VIDEO_RETENTION_DAYS (default 14) days, pruned
 at the start of every run. The owner's standing goals the judge reads are the
 section headings of the vault's goals page (GOALS_PAGE, default
@@ -253,6 +254,8 @@ INDEX_COLUMNS = (
     "rubric",
     "report",
 )
+# Written only by scripts/intake-shape: `shaping <item>` / `handed-off <issue url>`.
+SHAPE_MARKS = ("status", "ref")
 INDEX_HEAD = (
     "# Intake index\n\n"
     "Every item judged, one row each, appended by skills/video-eval/video.py and\n"
@@ -1565,8 +1568,11 @@ def read_index(root: Path) -> list[dict]:
         if not ln.startswith("| ") or ln.startswith("| date |"):
             continue
         cells = [c.strip() for c in ln.strip().strip("|").split("|")]
-        if len(cells) == len(INDEX_COLUMNS) and set(cells) != {"---"}:
-            rows.append(dict(zip(INDEX_COLUMNS, cells)))
+        # A row the shape step handed on carries two trailing cells (status, ref).
+        if len(cells) in (len(INDEX_COLUMNS), len(INDEX_COLUMNS) + 2) and set(
+            cells
+        ) != {"---"}:
+            rows.append(dict(zip(INDEX_COLUMNS + SHAPE_MARKS, cells)))
     return rows
 
 

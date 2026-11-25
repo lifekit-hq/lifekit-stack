@@ -35,3 +35,7 @@ Behaviour worth knowing:
   reads the 0700 intake directory), and commits as memory-sync does.
 
 Tests: `scripts/tests/test_intake_to_vault.py`.
+
+What happens next is the [intake shape step](../intake-shape/intake_shape.py) (runbook "Intake
+shape step"): an `adopt` or `accept` row also gets a captain-held shaping item, and the owner's
+answer files the issue and sets `ready`. This job's vault step is unchanged.

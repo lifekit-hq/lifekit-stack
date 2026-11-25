@@ -2083,8 +2083,9 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
   i.e. `/var/lib/lifekit/intake/` on the host (mode 0700, files 0600):
   - `index.md` is the index: one markdown table row per item, columns `date`, `kind`,
     `origin`, `category`, `source`, `title`, `gist`, `verdict`, `reason`, `project`,
-    `recheck`, `next step or why`, `rubric` and `report`. It is append-only (one locked
-    `O_APPEND` write per row) and idempotent per source URL and rubric version. It is the
+    `recheck`, `next step or why`, `rubric` and `report`. Rows are appended (one locked
+    `O_APPEND` write per row; the intake shape step only adds its `status`/`ref` cells to a row,
+    in place under the same lock) and the index is idempotent per source URL and rubric version. It is the
     shared store any producer reads.
   - `reports/<key>.v<rubric version>.md` holds the reports, kept for good.
   - `transcripts/<key>.txt` holds the transcripts, and `inbox/` the backfilled files waiting
@@ -3810,7 +3811,7 @@ The software half of "take the knowledge from a judged video as reference" (no m
 `scripts/intake-to-vault/` files each accepted video-eval report into the memory vault, in
 the vault README's shape for raw evidence and through its `bin/` gates.
 `lifekit-intake-to-vault.timer` (hourly, as `lifekit`) runs `intake_to_vault.py`, which for
-each report under `/var/lib/lifekit/intake/reports/` whose `Verdict:` is `accept` writes:
+each report under `/var/lib/lifekit/intake/reports/` whose `Verdict:` is `adopt` or `accept` writes:
 
 - one immutable source page `sources/<judged date>-video-<key>-v<rubric>.md`: clipper
   frontmatter (`title`, `url`, `author`, `captured`, `type: other`, `summary`), then the report
@@ -3863,6 +3864,75 @@ sudo rm -r /usr/local/libexec/lifekit-intake-to-vault
 ```
 
 Pages already filed stay: they are vault sources like any other and rotate under its rules.
+
+## Intake shape step
+
+The gate between an accepted idea and a build hand-off ("Intake to vault" files the evidence;
+this decides what happens next). `scripts/intake-shape/intake_shape.py sweep`, run every 10
+minutes by `lifekit-intake-shape.timer` (as the admin account, which owns the firstmate home,
+has `gh` logged in and can write `/var/lib/lifekit/intake`), does two things with no model turn:
+
+1. **Open.** Every intake row whose verdict is `adopt` or `accept` (both route the same way:
+   `adopt` is "take it as it is", still shaped before anything is built) gets a **shaping
+   item**: a captain-held task `shape-<key>` (`fm-captain-hold.sh hold`) shown on the Calls
+   page. Its reason carries the proposed shape (owner repo from the report's `Project:`, class
+   `dev`, done-when from its next step) and the options. One item per source: a repeat (the
+   same source judged again) adds `(seen Nx)` to the open item's title; a repeat of an
+   answered item opens `shape-<key>-2` whose reason names the earlier one. The row gets
+   `shaping <item>` in two trailing cells, `status` and `ref`. Only rows dated on or after a
+   cutoff open items, so the ideas accepted before the step existed are never asked about: the
+   first run records its UTC date in `.shape-since` in the intake directory, and
+   `intake_shape.py open --since YYYY-MM-DD` sets it (as the admin account). The next id and
+   the "repeat of" reference come from the intake rows, since the hub archives closed items.
+2. **Answer.** When the owner's answer is recorded on the item, the step files ONE issue in the
+   owning repo (a registered project from `INTAKE_SHAPE_REPOS`) with a `## Done when` section,
+   `Owner repo:`, `Class:` and `Decision: owner ruled` (or `matrix auto-answered` when the
+   answer starts `matrix:`), then sets the `ready` label. **Only this step sets `ready`**, and
+   only after reading the filed issue back and finding all four. The row becomes
+   `handed-off <issue url>`; from then on the issue owns the item and the hub keeps the
+   reference. Answer `approve` to file as proposed, `drop` to file nothing, or send
+   `repo:` / `class:` / `done when:` lines to change the proposal. An answer that cannot be
+   filed (unreadable, no registered repo, a failed check) is logged once and does not end the
+   item: the same item is reopened under its hold with the reason in its text, the rows stay
+   `shaping`, and the step waits for the owner's next answer on it.
+
+The same shape is the issue template `.github/ISSUE_TEMPLATE/shaped-work.md` for filing by
+hand; other registered projects copy it. The devclaw side (refusing a goal on an issue without
+`ready`) is separate.
+
+**Install (root step under the host-change rule, run with `sudo` by `denys`).** The gateway's
+`video.py` chmods the intake directory and its lock on every run, which clears the ACL mask,
+so a one-off `setfacl` does not last. The installed unit carries a root
+`ExecStartPre=+/usr/bin/setfacl -R -m u:<admin>:rwX,m::rwX,d:u:<admin>:rwX,d:m::rwX` that
+re-applies the ACL (access and default) on `/var/lib/lifekit/intake` before every sweep, so
+the install needs no manual `setfacl`; the installer renders the admin account into it
+(`ADMIN_USER`, default `denys`):
+
+```bash
+sudo INTAKE_SHAPE_FM_HOME=/home/denys/fm-vps \
+  INTAKE_SHAPE_REPOS="lifekit-stack=lifekit-hq/lifekit-stack" \
+  bash /srv/lifekit-stack/scripts/intake-shape/install-intake-shape.sh
+```
+
+Only rows dated from the install day on open items; to include earlier ones, run
+`intake_shape.py open --since YYYY-MM-DD` once.
+
+**Reading a failure.** Exit 1: an unreadable intake index, lock or `.shape-since` (a one-line
+`intake-shape: <intake dir>: <error>` in the journal - never a silent empty run); otherwise the journal names the item and why (the hold or `gh` refused,
+an issue failed the label check, an answer the step cannot read, a `shaping` row whose hub
+item is gone - the answer was lost with it, so re-ask by hand and mark the row; an answer that cannot be filed is not a failure state, the item is reopened and waits). Every step is checked first,
+so the next run completes a half-done one and files nothing twice: the issue carries a hidden
+`intake-shape: <item>` marker the step searches before creating. Exit 2: no firstmate home.
+
+**Undo:**
+
+```bash
+sudo systemctl disable --now lifekit-intake-shape.timer
+sudo rm /etc/systemd/system/lifekit-intake-shape.{service,timer} && sudo systemctl daemon-reload
+sudo rm -r /usr/local/libexec/lifekit-intake-shape
+```
+
+Filed issues and index marks stay.
 
 ## Host unit gauge
 
