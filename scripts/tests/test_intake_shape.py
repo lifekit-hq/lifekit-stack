@@ -4,7 +4,7 @@ What this file pins: an accept creates exactly one shaping item (a repeat adds a
 count to it, a repeat of a closed one opens a new item referencing it); the
 owner's answer files exactly one issue with the `ready` label and marks the
 intake row `handed-off` with the issue as `ref`; an issue missing `## Done when`
-is refused the label; a drop or an unreadable answer files nothing. All
+is refused the label; a drop files nothing and an unfilable answer reopens the same item. All
 fixtures are synthetic.
 """
 
@@ -38,7 +38,13 @@ if a[0] == "open":
     sys.exit({{"open": 0, "closed": 1, None: 3}}[st])
 if a[0] == "hold":
     opt = dict(zip(a[2::2], a[3::2]))
-    d[a[1]] = {{"state": "open", "title": opt["--title"], "reason": opt["--reason"]}}
+    old = d.get(a[1], {{}})
+    d[a[1]] = {{
+        "state": "open",
+        "title": opt.get("--title", old.get("title")),
+        "reason": opt["--reason"],
+        "holds": old.get("holds", 0) + 1,
+    }}
     json.dump(d, open(s, "w"))
 """
 TASKS = """#!{py}
@@ -48,6 +54,10 @@ d = json.load(open(s))
 a = sys.argv[1:]
 if a[0] == "update":
     d[a[1]]["title"] = a[3]
+    json.dump(d, open(s, "w"))
+if a[0] == "reopen":
+    d[a[1]]["state"] = "queued"
+    d[a[1]].pop("decision", None)
     json.dump(d, open(s, "w"))
 if a[0] == "show":
     text = d[a[1]].get("decision")
@@ -390,13 +400,30 @@ def test_unreadable_answer_and_unregistered_repo_file_nothing(env):
     answered(env, "let me think about it")
     assert env.run("answer") == 1
     assert env.gh()["issues"] == []
-    assert env.rows()[0]["status"] == "refused"
+    assert env.rows()[0]["status"] == "shaping"
+    assert env.hub()["shape-abc"]["state"] == "open"
 
 
-def test_unregistered_project_needs_a_repo_in_the_answer(env):
+def test_refused_answer_reopens_the_same_item_and_waits_for_a_new_one(env):
     answered(env, "approve", project="unknown-thing")
     assert env.run("answer") == 1
+    item = env.hub()["shape-abc"]
+    assert (item["state"], item["holds"]) == ("open", 2)
+    assert "not a registered project" in item["reason"].split("Intake accepted")[0]
+    assert "repo none registered - name one" in item["reason"]
+    assert list(env.hub()) == ["shape-abc"]
+    assert env.rows()[0]["status"] == "shaping"
+    for _ in range(2):
+        assert env.run("sweep") == 0
+    assert env.hub()["shape-abc"]["holds"] == 2
     assert env.gh()["issues"] == []
+    env.set_hub("shape-abc", state="closed", decision="repo: lifekit-hq/clip")
+    assert env.run("sweep") == 0
+    [issue] = env.gh()["issues"]
+    assert issue["url"] == "https://github.com/lifekit-hq/clip/issues/1"
+    assert env.gh()["labels"] == [[issue["url"], "ready"]]
+    [r] = env.rows()
+    assert (r["status"], r["ref"]) == ("handed-off", issue["url"])
 
 
 def test_open_item_waits(env):

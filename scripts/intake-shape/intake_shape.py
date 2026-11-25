@@ -23,8 +23,10 @@ is completed by the next one and nothing is filed twice.
 
 An intake row gets two trailing cells, `status` and `ref`, that the original
 14-column rows lack: `shaping <item id>` while the item waits, then
-`handed-off <issue url>`, or `dropped` / `refused` with the item id when the
-answer files nothing. These marks are the only thing this step writes to the
+`handed-off <issue url>`, or `dropped` with the item id when the answer drops it.
+An answer that cannot be filed (unreadable, no registered repo, a failed check)
+does not end the item: it is reopened under its hold with the reason in its
+text and the rows stay `shaping`, so the owner answers the same item again. These marks are the only thing this step writes to the
 intake index (rewritten in place under video.py's lock, so the file keeps its
 owner and mode); no other store is added. A row still `shaping` whose hub item
 is gone (closed and archived before the answer was read) is logged and fails
@@ -221,14 +223,24 @@ class Hub:
             )
         return states[res.returncode]
 
-    def hold(self, item: str, title: str, reason: str) -> None:
-        res = self.run(
-            [self.hold_cmd, "hold", item, "--title", title, "--reason", reason]
-        )
+    def hold(self, item: str, title: str | None, reason: str) -> None:
+        argv = [self.hold_cmd, "hold", item, "--reason", reason]
+        if title:
+            argv += ["--title", title]
+        res = self.run(argv)
         if res.returncode != 0:
             raise RuntimeError(
                 f"fm-captain-hold hold {item} exit {res.returncode}: {one_line(res.stderr)[:200]}"
             )
+
+    def reopen(self, item: str, reason: str) -> None:
+        """Put a closed item back under its hold with a new reason."""
+        res = self.run([*self.tasks, "reopen", item])
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"tasks-axi reopen {item} exit {res.returncode}: {one_line(res.stderr)[:200]}"
+            )
+        self.hold(item, None, reason)
 
     def retitle(self, item: str, title: str) -> None:
         res = self.run([*self.tasks, "update", item, "--title", title])
@@ -544,6 +556,16 @@ def set_ready(gh: Gh, url: str) -> list[str]:
     return problems
 
 
+def ask_again(hub: Hub, item: str, row: Row, why: str) -> None:
+    """An answer that files nothing does not end the item: the same item goes
+    back under its hold, its text saying why, and the rows stay `shaping`. A
+    reopened item is no longer closed, so the next run does not read the
+    refused answer again; the owner's next answer is a new one."""
+    reason = one_line(f"Not filed: {why}. Answer this item again. ")
+    hub.reopen(item, (reason + item_reason(row, None))[:REASON_MAX])
+    log(f"{item}: not filed ({why}); item reopened for a new answer")
+
+
 def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
     """File the issue for every shaping item the owner has answered."""
     failed = 0
@@ -563,8 +585,8 @@ def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
                 continue
             text = hub.decision(item)
             if text is None:
-                log(f"{item}: closed without a recorded answer, nothing filed")
-                mark_rows(intake, dict.fromkeys(keys, ("refused", item)))
+                ask_again(hub, item, row, "the item closed without a recorded answer")
+                failed += 1
                 continue
             shape = parse_answer(text, row)
             if shape == "drop":
@@ -572,8 +594,12 @@ def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
                 log(f"{item}: dropped by the answer")
                 continue
             if shape is None:
-                log(f"{item}: the answer reads as neither approve, drop nor a shape")
-                mark_rows(intake, dict.fromkeys(keys, ("refused", item)))
+                ask_again(
+                    hub,
+                    item,
+                    row,
+                    "the answer reads as neither approve, drop nor a shape",
+                )
                 failed += 1
                 continue
             body = issue_body(shape, row, item)
@@ -583,8 +609,7 @@ def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
                     f"{shape.repo or 'no repo'} is not a registered project"
                 )
             if problems:
-                log(f"{item}: not filed: {'; '.join(problems)}")
-                mark_rows(intake, dict.fromkeys(keys, ("refused", item)))
+                ask_again(hub, item, row, "; ".join(problems))
                 failed += 1
                 continue
             url = gh.find(shape.repo, item) or gh.create(

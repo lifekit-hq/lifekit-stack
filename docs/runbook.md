@@ -3886,8 +3886,10 @@ has `gh` logged in and can write `/var/lib/lifekit/intake`), does two things wit
    only after reading the filed issue back and finding all four. The row becomes
    `handed-off <issue url>`; from then on the issue owns the item and the hub keeps the
    reference. Answer `approve` to file as proposed, `drop` to file nothing, or send
-   `repo:` / `class:` / `done when:` lines to change the proposal. Anything else is logged and
-   the row marked `refused`.
+   `repo:` / `class:` / `done when:` lines to change the proposal. An answer that cannot be
+   filed (unreadable, no registered repo, a failed check) is logged once and does not end the
+   item: the same item is reopened under its hold with the reason in its text, the rows stay
+   `shaping`, and the step waits for the owner's next answer on it.
 
 The same shape is the issue template `.github/ISSUE_TEMPLATE/shaped-work.md` for filing by
 hand; other registered projects copy it. The devclaw side (refusing a goal on an issue without
@@ -3913,7 +3915,7 @@ Only rows dated from the install day on open items; to include earlier ones, run
 **Reading a failure.** Exit 1: an unreadable intake index, lock or `.shape-since` (a one-line
 `intake-shape: <intake dir>: <error>` in the journal - never a silent empty run); otherwise the journal names the item and why (the hold or `gh` refused,
 an issue failed the label check, an answer the step cannot read, a `shaping` row whose hub
-item is gone - the answer was lost with it, so re-ask by hand and mark the row). Every step is checked first,
+item is gone - the answer was lost with it, so re-ask by hand and mark the row; an answer that cannot be filed is not a failure state, the item is reopened and waits). Every step is checked first,
 so the next run completes a half-done one and files nothing twice: the issue carries a hidden
 `intake-shape: <item>` marker the step searches before creating. Exit 2: no firstmate home.
 
