@@ -2467,7 +2467,8 @@ stays on for the Kit to Ledger exchange but `tools.agentToAgent.allow` names onl
   claude binary against a mock model API that issues 16 tool calls, and a stub Workspace MCP and
   door script that record what reaches them. It passes only when the model was offered nothing beyond the
   tools the allow-list grants (Claude Code's inert `DeferredToolPlaceholder` stub and its `ToolSearch` deferred-tool loader, each matched on its whole
-  shape, are not counted; a lookalike still fails), the five allowed calls (both Gmail reads, `door.py scan`, `show` and
+  shape, are not counted; a lookalike still fails; the allowed tools may be deferred behind `ToolSearch`
+  and so absent from the catalogue, which the five allowed calls running covers), the five allowed calls (both Gmail reads, `door.py scan`, `show` and
   `report`) ran, and each of the eleven denied calls (Gmail send and draft, any other command, a
   chained command, an interpreter one-liner, native file write and read, web fetch, and the message, cron and
   sessions tools) was refused and left no trace in the stub or the filesystem. A run that
