@@ -145,9 +145,10 @@ def parse_row(line: str) -> Row | None:
 
 
 def read_rows(intake: Path) -> list[Row]:
+    """The index's rows; no index yet is no rows, an unreadable one raises."""
     try:
         text = (intake / "index.md").read_text(encoding="utf-8")
-    except OSError:
+    except FileNotFoundError:
         return []
     return [r for r in map(parse_row, text.splitlines()) if r]
 
@@ -332,7 +333,7 @@ def since_cutoff(intake: Path, override: str | None) -> str:
     `--since`, else the date the first run recorded in `.shape-since`."""
     path = intake / ".shape-since"
     if override is None:
-        with contextlib.suppress(OSError):
+        with contextlib.suppress(FileNotFoundError):
             recorded = path.read_text(encoding="utf-8").strip()
             if DATE.fullmatch(recorded):
                 return recorded
@@ -634,7 +635,11 @@ def main(argv: list[str]) -> int:
             log(f"{intake}: {error}")
             failed += 1
     if command in ("answer", "sweep"):
-        failed += answer_items(intake, hub, Gh())
+        try:
+            failed += answer_items(intake, hub, Gh())
+        except OSError as error:
+            log(f"{intake}: {error}")
+            failed += 1
     return 1 if failed else 0
 
 

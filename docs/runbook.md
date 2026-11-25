@@ -3893,8 +3893,13 @@ The same shape is the issue template `.github/ISSUE_TEMPLATE/shaped-work.md` for
 hand; other registered projects copy it. The devclaw side (refusing a goal on an issue without
 `ready`) is separate.
 
-**Install (operator, `denys`)**, once the admin account can read and write the intake
-directory (`sudo setfacl -R -m u:denys:rwX /var/lib/lifekit/intake`):
+**Install (root step under the host-change rule, run with `sudo` by `denys`).** The gateway's
+`video.py` chmods the intake directory and its lock on every run, which clears the ACL mask,
+so a one-off `setfacl` does not last. The installed unit carries a root
+`ExecStartPre=+/usr/bin/setfacl -R -m u:<admin>:rwX,m::rwX,d:u:<admin>:rwX,d:m::rwX` that
+re-applies the ACL (access and default) on `/var/lib/lifekit/intake` before every sweep, so
+the install needs no manual `setfacl`; the installer renders the admin account into it
+(`ADMIN_USER`, default `denys`):
 
 ```bash
 sudo INTAKE_SHAPE_FM_HOME=/home/denys/fm-vps \
@@ -3905,7 +3910,8 @@ sudo INTAKE_SHAPE_FM_HOME=/home/denys/fm-vps \
 Only rows dated from the install day on open items; to include earlier ones, run
 `intake_shape.py open --since YYYY-MM-DD` once.
 
-**Reading a failure.** Exit 1: the journal names the item and why (the hold or `gh` refused,
+**Reading a failure.** Exit 1: an unreadable intake index, lock or `.shape-since` (a one-line
+`intake-shape: <intake dir>: <error>` in the journal - never a silent empty run); otherwise the journal names the item and why (the hold or `gh` refused,
 an issue failed the label check, an answer the step cannot read, a `shaping` row whose hub
 item is gone - the answer was lost with it, so re-ask by hand and mark the row). Every step is checked first,
 so the next run completes a half-done one and files nothing twice: the issue carries a hidden

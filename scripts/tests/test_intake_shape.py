@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shlex
 import stat
 import sys
 from pathlib import Path
@@ -454,6 +456,18 @@ def test_installer_renders_the_unit(tmp_path):
     unit = (root / "etc/systemd/system/lifekit-intake-shape.service").read_text()
     assert "User=ops" in unit and "INTAKE_SHAPE_FM_HOME=/home/ops/fm" in unit
     assert "__" not in unit
+    pre = [
+        line.split("=", 1)[1]
+        for line in unit.splitlines()
+        if line.startswith("ExecStartPre=")
+    ]
+    [acl] = [p for p in pre if "setfacl" in p]
+    assert acl.startswith("+"), "must run as root though the service runs as ops"
+    argv = shlex.split(acl[1:])
+    assert argv[0].endswith("/setfacl") and "-R" in argv
+    assert argv[-1] == "/var/lib/lifekit/intake"
+    entries = argv[argv.index("-m") + 1].split(",")
+    assert {"u:ops:rwX", "m::rwX", "d:u:ops:rwX", "d:m::rwX"} <= set(entries)
     assert (root / "usr/local/libexec/lifekit-intake-shape/intake_shape.py").is_file()
 
 
@@ -483,3 +497,40 @@ def test_issue_template_filled_in_passes_and_unfilled_or_incomplete_is_refused()
     assert shape.check_issue_body(body)
     problems = shape.check_issue_body(fill(body).replace("## Done when", "## Notes"))
     assert len(problems) == 1 and "Done when" in problems[0]
+
+
+@pytest.mark.parametrize("how", ["directory", "mode-000"])
+@pytest.mark.parametrize("cmd", ["open", "answer", "sweep"])
+def test_unreadable_index_exits_1_with_one_stderr_line(env, how, cmd, capfd):
+    if how == "mode-000" and os.geteuid() == 0:
+        pytest.skip("root reads mode 000")
+    env.index(row("abc"))
+    assert env.run("open") == 0
+    capfd.readouterr()
+    index = env.intake / "index.md"
+    saved = index.read_bytes()
+    index.unlink()
+    if how == "directory":
+        index.mkdir()
+    else:
+        index.write_bytes(saved)
+        index.chmod(0)
+    hub_before, gh_before = env.hub(), env.gh()
+    assert env.run(cmd) == 1
+    err = [ln for ln in capfd.readouterr().err.splitlines() if ln.strip()]
+    assert err and all(ln.startswith("intake-shape: ") for ln in err)
+    assert (env.hub(), env.gh()) == (hub_before, gh_before)
+
+
+def test_unreadable_since_file_exits_1_instead_of_resetting_the_cutoff(env, capfd):
+    since = env.intake / ".shape-since"
+    since.unlink()
+    since.mkdir()
+    env.index()
+    assert env.run("open") == 1
+    assert "intake-shape:" in capfd.readouterr().err
+    assert since.is_dir()
+
+
+def test_missing_index_is_no_rows_not_a_failure(env):
+    assert env.run("sweep") == 0

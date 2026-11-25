@@ -36,7 +36,7 @@ UNIT_DIR="$INSTALL_ROOT/etc/systemd/system"
 BIN_DIR="$INSTALL_ROOT/usr/local/libexec/lifekit-intake-shape"
 install -d -m 755 "$BIN_DIR" "$UNIT_DIR"
 install -m 755 "$HERE/intake_shape.py" "$BIN_DIR/intake_shape.py"
-sed -e "s|__ADMIN_USER__|${ADMIN_USER}|" -e "s|__FM_HOME__|${FM_HOME}|" \
+sed -e "s|__ADMIN_USER__|${ADMIN_USER}|g" -e "s|__FM_HOME__|${FM_HOME}|" \
   -e "s|__REPOS__|${REPOS}|" "$HERE/lifekit-intake-shape.service" \
   > "$UNIT_DIR/lifekit-intake-shape.service"
 chmod 644 "$UNIT_DIR/lifekit-intake-shape.service"

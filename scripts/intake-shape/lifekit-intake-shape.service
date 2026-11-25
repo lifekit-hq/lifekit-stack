@@ -4,10 +4,13 @@ Description=Intake shape step: a shaping item per accepted idea, a ready issue p
 [Service]
 Type=oneshot
 # The account that owns the firstmate home (the captain hold), has gh logged in
-# and can read and write the intake directory (docs/runbook.md "Intake shape
-# step"). scripts/intake-shape/install-intake-shape.sh substitutes the
-# placeholders.
+# and reaches the intake directory through an ACL (docs/runbook.md "Intake shape
+# step"). The gateway's video.py chmods that directory and its lock on every
+# run, which clears the ACL mask, so the root ExecStartPre (the `+` prefix)
+# re-applies the ACL, access and default, before every sweep.
+# scripts/intake-shape/install-intake-shape.sh substitutes the placeholders.
 User=__ADMIN_USER__
+ExecStartPre=+/usr/bin/setfacl -R -m u:__ADMIN_USER__:rwX,m::rwX,d:u:__ADMIN_USER__:rwX,d:m::rwX /var/lib/lifekit/intake
 Environment="INTAKE_SHAPE_FM_HOME=__FM_HOME__" "INTAKE_SHAPE_INTAKE=/var/lib/lifekit/intake" "INTAKE_SHAPE_REPOS=__REPOS__"
 ExecStart=/usr/bin/python3 /usr/local/libexec/lifekit-intake-shape/intake_shape.py sweep
 TimeoutStartSec=300
