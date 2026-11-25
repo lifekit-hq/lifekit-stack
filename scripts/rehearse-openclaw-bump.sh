@@ -226,6 +226,25 @@ write_env() {
     } | awk -F= '!seen[$1]++' >"${out}")
 }
 
+# In trusted-proxy mode the gateway refuses to start while a shared token is
+# set, so the live deploy overlays the token away (compose/openclaw/
+# trusted-proxy.yml; an empty value counts as unset). Follow the copied
+# config's mode the same way: blank the placeholder token. Only the mode
+# string is read; no value leaves python.
+match_token_to_auth_mode() {
+  python3 - "${DEST}/config/openclaw.json" "${DEST}/env.rehearsal" <<'PY'
+import json, sys
+try:
+    mode = json.load(open(sys.argv[1]))["gateway"]["auth"]["mode"]
+except Exception:
+    sys.exit(0)
+if mode == "trusted-proxy":
+    lines = open(sys.argv[2]).read().splitlines()
+    lines = ["OPENCLAW_GATEWAY_TOKEN=" if ln.startswith("OPENCLAW_GATEWAY_TOKEN=") else ln for ln in lines]
+    open(sys.argv[2], "w").write("\n".join(lines) + "\n")
+PY
+}
+
 # oc <config-dir> <workspace-dir> <secret-dir> <mount-suffix> -- openclaw args
 oc() {
   local cfg="$1" ws="$2" sec="$3" sfx="$4"
@@ -321,6 +340,21 @@ TOLERATED = {
     # if gateway.auth ever gains a token/password SecretRef.
     "machine_client_auth": ("core/doctor/node-hosting-preconditions",
                             {"requirement": r"^machine-client-auth$", "path": r"^gateway\.auth$"}),
+    # Live state, not a bump effect: the reader agent ships tools.deny for the
+    # filesystem write tools plus exec in allowlist mode with one allowlisted
+    # path, canary-proven (docs/openclaw-agent-design.md). The doctor's policy
+    # check cannot see the exec allowlist, so it flags every such agent. Only
+    # the reader is tolerated; any other agent's entry stays red.
+    "reader_exec_policy": ("core/doctor/security",
+                           {"requirement": r"^doctor\.exec_filesystem_policy$",
+                            "message": r"agents\.entries\.reader\.tools: "}),
+    # An upstream default, not a bump effect: 2026.11.9 flags
+    # browser.extensionRelay.allowLegacyAuth, which defaults to true during
+    # the deprecation window. The fleet pairs no browser extension and runs no
+    # external CDP client; the finding has no path or requirement, hence the
+    # anchored message prefix.
+    "browser_legacy_relay_auth": ("core/doctor/browser",
+                                  {"message": r"Legacy Browser Relay Authentication is enabled "}),
 }
 OK = {"info", "ok", "pass", "passed", "debug"}
 try:
@@ -491,6 +525,7 @@ fi
 say "copying state"
 copy_state
 cp "${DEST}/config/openclaw.json" "${DEST}/config.before.json" 2>/dev/null || true
+match_token_to_auth_mode
 
 say "clearing the copied gateway ownership record"
 LOCK_RC=0

@@ -131,7 +131,29 @@ MACHINE_AUTH = {
     "path": "gateway.auth",
     "requirement": "machine-client-auth",
 }
-CLEAN_LINT = {"findings": [MCP_UNRESOLVED, CLAUDE_LOGGED_OUT, LAN_BIND, MACHINE_AUTH]}
+READER_EXEC = {
+    "checkId": "core/doctor/security",
+    "severity": "warning",
+    "message": "agents.entries.reader.tools: filesystem write tools are disabled, "
+    "but exec is still available.",
+    "requirement": "doctor.exec_filesystem_policy",
+}
+LEGACY_RELAY = {
+    "checkId": "core/doctor/browser",
+    "severity": "warning",
+    "message": "Legacy Browser Relay Authentication is enabled "
+    "(browser.extensionRelay.allowLegacyAuth=true).",
+}
+CLEAN_LINT = {
+    "findings": [
+        MCP_UNRESOLVED,
+        CLAUDE_LOGGED_OUT,
+        LAN_BIND,
+        MACHINE_AUTH,
+        READER_EXEC,
+        LEGACY_RELAY,
+    ]
+}
 # `docker compose config --no-interpolate` for the gateway: raw ${...} refs.
 COMPOSE = {
     "services": {
@@ -382,6 +404,26 @@ def test_env_file_carries_keys_with_placeholders_only(rig):
     assert (rig["dest"] / "env.rehearsal").stat().st_mode & 0o777 == 0o600
 
 
+def test_trusted_proxy_mode_blanks_the_placeholder_token(rig):
+    # The gateway refuses to start in trusted-proxy mode while a shared token
+    # is set; the live overlay (compose/openclaw/trusted-proxy.yml) blanks it.
+    live = {"gateway": {"auth": {"mode": "trusted-proxy"}}}
+    (rig["state"] / "before.json").write_text(json.dumps(live))
+    assert run(rig, "--keep").returncode == 0
+    lines = (rig["dest"] / "env.rehearsal").read_text().splitlines()
+    assert "OPENCLAW_GATEWAY_TOKEN=" in lines
+    assert "OTHER_KEY=rehearsal-placeholder" in lines
+    assert (rig["dest"] / "env.rehearsal").stat().st_mode & 0o777 == 0o600
+
+
+def test_token_mode_keeps_the_placeholder_token(rig):
+    live = {"gateway": {"auth": {"mode": "token"}}}
+    (rig["state"] / "before.json").write_text(json.dumps(live))
+    assert run(rig, "--keep").returncode == 0
+    lines = (rig["dest"] / "env.rehearsal").read_text().splitlines()
+    assert "OPENCLAW_GATEWAY_TOKEN=rehearsal-placeholder" in lines
+
+
 def test_env_carries_compose_derived_refs_not_literals(rig):
     assert run(rig, "--keep").returncode == 0
     lines = (rig["dest"] / "env.rehearsal").read_text().splitlines()
@@ -414,8 +456,8 @@ def test_rehearsal_only_classes_are_tolerated_by_check_id(rig):
     out = run(rig)
     assert out.returncode == 0, out.stderr
     assert (
-        "mcp_resolution=1 claude_auth=1 gateway_bind=1 machine_client_auth=1"
-        in out.stdout
+        "mcp_resolution=1 claude_auth=1 gateway_bind=1 machine_client_auth=1 "
+        "reader_exec_policy=1 browser_legacy_relay_auth=1" in out.stdout
     )
     assert "untolerated finding ids: -" in out.stdout
 
@@ -442,6 +484,11 @@ def test_rehearsal_only_classes_are_tolerated_by_check_id(rig):
         {**MACHINE_AUTH, "requirement": "machine-client-auth-extra"},
         {**MACHINE_AUTH, "path": "gateway.auth.token"},
         {**MACHINE_AUTH, "requirement": "other-precondition"},
+        # The exec policy is tolerated for the reader agent only.
+        {**READER_EXEC, "message": "agents.entries.finance.tools: exec is available."},
+        {**READER_EXEC, "requirement": "doctor.exec_approvals_require_cwd_renewal"},
+        # Any other browser finding stays red.
+        {**LEGACY_RELAY, "message": "Browser readiness: no Chrome found."},
     ],
 )
 def test_near_misses_of_tolerated_classes_stay_red(rig, finding):
