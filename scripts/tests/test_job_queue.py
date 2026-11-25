@@ -1090,9 +1090,7 @@ def test_a_read_output_whose_turn_never_finished_is_not_blamed_on_the_handler(
     assert "printed nothing" not in result and "printed nothing" not in message
 
 
-def test_a_final_silent_run_is_not_blamed_for_an_earlier_attempts_error(
-    q, monkeypatch
-):
+def test_a_final_silent_run_is_not_blamed_for_an_earlier_attempts_error(q, monkeypatch):
     monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "2")
     monkeypatch.setenv("FAKE_MODE", "noisy")
     _add_file()
