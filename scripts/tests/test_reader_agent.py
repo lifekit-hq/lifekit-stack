@@ -39,6 +39,8 @@ a = sys.argv[1:]
 if a[0] == "ps":
     print("gw")
     sys.exit(0)
+if a[:2] == ["exec", "-i"]:
+    a = ["exec"] + a[2:]
 assert a[:2] == ["exec", "gw"], a
 if a[2] != "openclaw":
     sys.exit(0)  # the door skill's own installs (venv, rclone): nothing to model
@@ -108,6 +110,16 @@ if cmd[:2] == ["config", "get"]:
         if load("a2a_noise"):
             print("[gateway] noise before the value")
         print(json.dumps(load("a2a", False)))
+    elif cmd[2] == "tools.agentToAgent.allow":
+        allow = load("a2a_allow")
+        if allow is None:
+            print("Config path not found: tools.agentToAgent.allow", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(allow))
+elif cmd[:2] == ["config", "patch"]:
+    log_call(cmd)
+    patch = json.load(sys.stdin)
+    save("a2a_allow", patch["tools"]["agentToAgent"]["allow"])
 elif cmd[:2] == ["agents", "list"]:
     rows = [{"id": "main", "bindings": 0}]
     if load("entry") is not None:
@@ -270,17 +282,90 @@ def test_a_channel_binding_is_refused(box):
     assert done.returncode == 1 and "channel binding" in done.stderr
 
 
-def test_agent_to_agent_messaging_is_refused(box):
+A2A_AGENTS = ["kit", "finance"]
+
+
+def patches(box):
+    return [c for c in box.calls() if c[:2] == ["config", "patch"]]
+
+
+def test_agent_to_agent_on_with_no_allow_list_converges_to_the_users_only(box):
+    # enabled with no allow list reaches every agent: the script narrows it, then passes
     box.put("entry", ENTRY)
     box.put("a2a", True)
-    assert box.run().returncode == 1
+    done = box.run()
+    assert done.returncode == 0, done.stderr
+    assert box.get("a2a_allow") == A2A_AGENTS and "reader" not in box.get("a2a_allow")
 
 
-def test_agent_to_agent_messaging_is_refused_through_log_noise(box):
+def test_agent_to_agent_on_with_no_allow_list_is_refused_by_check(box):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    done = box.run("--check")
+    assert done.returncode == 1 and "no allow list" in done.stderr
+    assert "reachable by other agents" in done.stderr and patches(box) == []
+
+
+def test_agent_to_agent_on_with_an_empty_allow_list_is_refused_by_check(box):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("a2a_allow", [])
+    done = box.run("--check")
+    assert done.returncode == 1 and "no allow list" in done.stderr
+
+
+@pytest.mark.parametrize("allow", [["kit", "reader"], ["*"], ["kit", "rea*"]])
+def test_an_allow_list_that_reaches_the_reader_is_refused_by_check(box, allow):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("a2a_allow", allow)
+    done = box.run("--check")
+    assert done.returncode == 1 and "reaches the reader" in done.stderr
+    assert patches(box) == []
+
+
+def test_converge_removes_the_reader_from_the_allow_list(box):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("a2a_allow", ["kit", "finance", "reader"])
+    assert box.run().returncode == 0
+    assert box.get("a2a_allow") == A2A_AGENTS
+
+
+def test_an_allow_list_that_excludes_the_reader_passes_and_is_left_alone(box):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("a2a_allow", list(reversed(A2A_AGENTS)))
+    for args in ((), ("--check",)):
+        done = box.run(*args)
+        assert done.returncode == 0 or "exec allowlist" in done.stderr, done.stderr
+        assert "allow list" not in done.stderr
+    assert patches(box) == []
+
+
+def test_disabled_agent_to_agent_passes_and_is_not_turned_on(box):
+    box.put("entry", ENTRY)
+    box.put("a2a", False)
+    done = box.run()
+    assert done.returncode == 0, done.stderr
+    assert patches(box) == [] and box.get("a2a") is not True
+
+
+def test_the_allow_list_converge_is_idempotent(box):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    assert box.run().returncode == 0
+    assert len(patches(box)) == 1
+    again = box.run()
+    assert again.returncode == 0, again.stderr
+    assert len(patches(box)) == 1 and box.get("a2a_allow") == A2A_AGENTS
+
+
+def test_agent_to_agent_enabled_is_read_through_log_noise(box):
     box.put("entry", ENTRY)
     box.put("a2a_noise", True)
     box.put("a2a", True)
-    done = box.run()
+    done = box.run("--check")
     assert done.returncode == 1 and "agentToAgent" in done.stderr
     box.put("a2a", False)
     assert box.run().returncode == 0
