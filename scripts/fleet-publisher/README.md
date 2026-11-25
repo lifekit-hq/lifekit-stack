@@ -162,6 +162,12 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
   which the installer carries into the unit like `FM_HOMES`
   (`sudo FM_HOMES="..." FLEET_PLAN_MAP="<repo>=<project> ..." bash install-fleet-publisher.sh`),
   and a re-install without it leaves the unit with none.
+- **Clip stats feed**: `FLEET_CLIP_STATS_FEED` (absolute path of clip's
+  `stats.jsonl`; only its parent directory is read) switches on the clip queue
+  rows. It is host config the installer carries into the unit the same way
+  (`sudo FM_HOMES="..." FLEET_CLIP_STATS_FEED=/home/denys/clip-data/queue/stats.jsonl bash install-fleet-publisher.sh`,
+  plain characters `[A-Za-z0-9._/-]` only); a re-install without it leaves the
+  unit with none and the rows `null`.
 - **Open PRs**: `FLEET_GH` (default `gh`; empty skips) `pr list -R <owner/name>
   --state open`, cached per repo for `FLEET_PR_TTL` seconds (default 600) in
   `status-open-prs.json`. Refreshes share a 15 s budget per run; a failed or
