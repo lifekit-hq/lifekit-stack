@@ -407,11 +407,48 @@ class Shape:
     ruled: str  # "matrix auto-answered" | "owner ruled"
 
 
+SETTLEMENT = re.compile(
+    r"^Captain answered this call through matrix settlement\b", re.I
+)
+
+
+def settlement_answer(body: str) -> str | None:
+    """The answer inside a matrix-settlement record (the `matrix:` line, else
+    the `Answer:` line plus any override lines under it), else None for a plain
+    owner answer."""
+    if not SETTLEMENT.match(body):
+        return None
+    lines = body.splitlines()
+    for i, ln in enumerate(lines):
+        m = re.match(r"^\s*matrix\s*:\s*(.*)$", ln, re.I)
+        if m:
+            return "matrix: " + "\n".join([m[1], *_answer_tail(lines[i + 1 :])]).strip()
+    for i, ln in enumerate(lines):
+        m = re.match(r"^\s*Answer\s*:\s*(.*)$", ln, re.I)
+        if m:
+            return "\n".join([m[1], *_answer_tail(lines[i + 1 :])]).strip()
+    return ""
+
+
+def _answer_tail(lines: list[str]) -> list[str]:
+    out = []
+    for ln in lines:
+        if re.match(r"^\s*Answer as shown to the captain\s*:", ln, re.I):
+            break
+        out.append(ln)
+    return out
+
+
 def parse_answer(text: str, row: Row) -> Shape | str | None:
     """The shape the owner's answer files; the string `drop` when it files
     nothing; None when the answer cannot be read as either."""
     ruled = "owner ruled"
     body = text.strip()
+    settled = settlement_answer(body)
+    if settled is not None:
+        body = (
+            settled if settled.lower().startswith("matrix:") else f"matrix: {settled}"
+        )
     if body.lower().startswith("matrix:"):
         ruled, body = "matrix auto-answered", body[len("matrix:") :].strip()
     first = re.split(r"[\s,.:;!]+", body.lower(), maxsplit=1)[0]
