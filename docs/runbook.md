@@ -319,7 +319,7 @@ it.
 #### Inbound hooks and the finance pulse (in the platform file since 2026-09-18)
 
 The same file turns on OpenClaw's inbound HTTP hooks for two callers and two
-agents, and gives the finance agent a heartbeat:
+agents:
 
 - `hooks`: enabled, `allowedAgentIds: ["finance", "kit"]` (the second is the
   firstmate-reply mapping below; it also lets a token holder target kit
@@ -530,7 +530,8 @@ session, and its `delivery` block is tracked per run (`deliveryStatus`:
 uses.
 
 The fix retires the heartbeat tick (`agents.entries.finance.heartbeat.every`
-set to `"0m"` in the platform file, deployed) and replaces it with a new
+set to `"0m"` in the platform file, deployed; the key itself is gone since
+2026.11.9, see "Inbound hooks and the finance pulse") and replaces it with a new
 cron row, `ledger-pulse`, that mirrors `ledger-opportunity`'s shape: isolated
 session target, Telegram announce delivery, and a prompt that requires either
 exactly one delivered message or a bare `NO_REPLY` with no other output. Both
@@ -584,7 +585,7 @@ run, never the old `agent:finance:main:heartbeat`) and `deliveryStatus` is
 `not-requested` there is correct, not a failure). `openclaw cron show <id>`
 should report the row `enabled` with `sessionTarget: "isolated"`.
 
-**Rollback:** restore `agents.entries.finance.heartbeat` to its pre-fs-685
+**Rollback** (on 2026.11.8 or older; 2026.11.9 rejects the key): restore `agents.entries.finance.heartbeat` to its pre-fs-685
 shape (`every: "6h"`, the same `activeHours`/`model`/`lightContext`/
 `isolatedSession`/`target`/`to`/`accountId`/`timeoutSeconds` this file carried
 before, from git history) and disable or remove the `ledger-pulse` row
@@ -809,7 +810,7 @@ image tag and compose env changed, recreates the gateway once.
   host cannot assemble-before-prompt, compact or call the runtime LLM. The `claude-cli` boundary
   stays.
 - `hooks.defaultSessionKey: "hook:lifekit"` (security audit warn; mappings are all `isolated`).
-- `agents.defaults.model`, `heartbeat.model`, `subagents.model` and `modelPolicy.allow` on
+- `agents.defaults.model`, `subagents.model` and `modelPolicy.allow` on
   `anthropic/claude-sonnet-5-5` (plus `anthropic/claude-opus-5-5` allowed for Kit's own chat).
   `ensure-needs-you-digest.sh` defaults to the same Sonnet.
 - `channels.telegram.accounts.reading.enabled: false`; learnclaw answers through Kit only. (Re-enabled on its own token by the daily LeetCode problem, #594; see "Daily LeetCode problem".)
