@@ -546,7 +546,7 @@ and atomically, the images first, beside `home-summary.json`. Nothing is pushed.
   `after-<name>.png`, named exactly as the feed lists them. The dashboard serves
   only what the feed lists.
 - **Cache**: what was fetched per PR head commit is kept in
-  `FLEET_STATE_DIR/screen-changes-cache.json`, so a minute with no new push costs
+  `FLEET_STATE_DIR/screen-changes-cache.json`, so a run with no new push costs
   one `gh pr list` per repo. A run has a 40 s gh budget; a PR not reached is
   picked up on the next run.
 - **Failure**: gh failing on the PR list, or a credential-looking item (withheld),
@@ -555,7 +555,7 @@ and atomically, the images first, beside `home-summary.json`. Nothing is pushed.
 
 ## Activity journal and retro board (`OUT_DIR/journal/`)
 
-`activity_journal.py` (installed as `lifekit-fleet-journal.py`, `FLEET_JOURNAL` overrides) runs at the end of every publisher run. The store is `OUT_DIR/journal/activity.jsonl` (schema `fleet-activity-journal.v1`), on the box's disk under `/var/lib/lifekit-fleet`, never in the vault, so it outlives a publisher restart. The dashboard reads it from there.
+`activity_journal.py` (installed as `lifekit-fleet-journal.py`, `FLEET_JOURNAL` overrides) runs at the end of a publisher run, every `FLEET_JOURNAL_EVERY` seconds (see "Run cadence"). The store is `OUT_DIR/journal/activity.jsonl` (schema `fleet-activity-journal.v1`), on the box's disk under `/var/lib/lifekit-fleet`, never in the vault, so it outlives a publisher restart. The dashboard reads it from there.
 
 - **One row per finished UTC day**, written once the day has been over for `FLEET_JOURNAL_DELAY` seconds (default 7200, after the day's fleet metrics exist). A date that already has a row is never written again, so a rerun adds nothing. After downtime the missing days since the last row are appended (at most 14); the very first run writes yesterday only.
 - **Fields**, all counts or identifiers (no free text): `merged_prs_by_repo` (`{owner/name: n}` from the ledgers' `task.merged` PR URLs), `decisions_owner` (ledger `resolved` lines that carry a decision key), `decisions_taken_for_owner` (`{total, by_ruling}` from `taken-for-you.json`, which keeps the last 200 actions), `failed_tasks` (distinct ledger tasks with a `failed` status), `red_ci_runs` (failed `main` workflow runs through gh over `FLEET_JOURNAL_REPOS`, default the repos the ledger merged into in the prior 14 days), `stalled_task_hours` and `fleet_weighted_tokens` (the day's final non-partial fleet metrics row), `devclaw_sessions`, `openclaw_runs` and `openclaw_errors` (Prometheus `increase` over the day, `FLEET_PROM_URL`), and `clip_stats` (the numeric top-level fields of the JSON at `FLEET_CLIP_STATS`, a path or URL; see below).
