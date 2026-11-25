@@ -40,6 +40,7 @@ EXERCISES = {  # English translation name -> wger exercise (base) id
     "Squats": 615,
     "Bench Press": 192,
     "Hack Squat": 300,
+    "Biceps Curls With Dumbbell": 92,
 }
 NAMES = {v: k for k, v in EXERCISES.items()}
 LOGS = [
@@ -150,6 +151,7 @@ class FakeWger(BaseHTTPRequestHandler):
     store: dict[str, list[dict]] = {}  # what POSTs created, per endpoint
     profile: dict = {}
     logs: list[dict] = []
+    sessions: list[dict] = []  # wger makes one per day when the first log of it lands
 
     def _send(self, code: int, body: object) -> None:
         raw = json.dumps(body).encode()
@@ -244,6 +246,25 @@ class FakeWger(BaseHTTPRequestHandler):
                 r for r in type(self).routines if str(r["id"]) != path.split("/")[1]
             ]
             return self._send(204, None)
+        if method == "DELETE" and path.split("/")[0] in (
+            "workoutlog",
+            "workoutsession",
+        ):
+            kind, rid = path.split("/")
+            if kind == "workoutlog":
+                type(self).logs = [r for r in type(self).logs if str(r["id"]) != rid]
+            else:
+                type(self).sessions = [
+                    r for r in type(self).sessions if str(r["id"]) != rid
+                ]
+            return self._send(204, None)
+        if path == "workoutsession" and method == "GET":
+            rows = [
+                r
+                for r in type(self).sessions
+                if r["datetime_start"][:10] == query.get("datetime_start__date")
+            ]
+            return self._send(200, {"count": len(rows), "next": None, "results": rows})
         if method == "POST":
             n = type(self).posted[path] = type(self).posted.get(path, 0) + 1
             if type(self).fail_on == (path, n):
@@ -255,6 +276,18 @@ class FakeWger(BaseHTTPRequestHandler):
             if path in LISTS:
                 type(self).store.setdefault(path, []).append(created)
             if path == "workoutlog":
+                day = body["date"][:10]
+                session = next(
+                    (x for x in type(self).sessions if x["datetime_start"][:10] == day),
+                    None,
+                )
+                if session is None:
+                    session = {
+                        "id": f"uuid-{len(type(self).sessions) + 1}",
+                        "datetime_start": f"{day}T12:00:00+00:00",
+                    }
+                    type(self).sessions.append(session)
+                created["session"] = session["id"]
                 type(self).logs.append(created)
             return self._send(201, created)
         if path in ("workoutlog", "workoutsession") and "routine" in query:
@@ -266,6 +299,8 @@ class FakeWger(BaseHTTPRequestHandler):
             rows = list(type(self).logs)
             if "exercise" in query:
                 rows = [r for r in rows if r["exercise"] == int(query["exercise"])]
+            if "session" in query:
+                rows = [r for r in rows if r.get("session") == query["session"]]
             # Page the answer so the client has to follow `next`.
             offset = int(query.get("offset", 0))
             page = rows[offset : offset + 4]
@@ -306,6 +341,7 @@ def wger():
     FakeWger.fail_on, FakeWger.posted = None, {}
     FakeWger.store = {}
     FakeWger.profile = {"username": "owner", "weight_unit": "kg", "height": None}
+    FakeWger.sessions = []
     FakeWger.logs = [
         {
             "id": i,
@@ -1250,3 +1286,88 @@ def test_the_schema_check_rejects_what_wger_would_not_accept():
     assert post("repetitions-config/", {**cfg, "value": 8})  # a decimal is a string
     assert post("sets-config/", {**cfg, "value": 51})
     assert schema_errors("GET", "exercise-translation/", {"language": "2"}, None)
+
+
+# --- biceps curl spellings and log-delete -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "line", ["bicep curl 3x10@12kg", "biceps curl 3x10@12kg", "Biceps Curls 3x10@12kg"]
+)
+def test_a_biceps_curl_line_resolves_to_wgers_dumbbell_curl(wger, line):
+    r = wger("log-write", line, "--date", "2026-11-25")
+    assert r.returncode == 0, r.stderr
+    assert "3 set(s) written" in r.stdout
+    assert [b["exercise"] for b in log_posts()] == [92, 92, 92]
+    assert not FakeWger.rejected
+
+
+def write_curl(wger, day="2026-11-25"):
+    r = wger("log-write", "biceps curl 3x10@12kg", "--date", day)
+    assert r.returncode == 0, r.stderr
+    FakeWger.log.clear()
+
+
+def deletes():
+    return [w for w in FakeWger.log if w["method"] == "DELETE"]
+
+
+def test_log_delete_removes_the_logs_and_the_empty_session(wger):
+    write_curl(wger)
+    assert len(logs_on("2026-11-25")) == 3 and len(FakeWger.sessions) == 1
+    r = wger("log-delete", "2026-11-25", "biceps curl")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == (
+        "2026-11-25 biceps-curl: removed 3 log(s) and 1 empty workout session(s)"
+    )
+    assert logs_on("2026-11-25") == [] and FakeWger.sessions == []
+    assert not FakeWger.rejected
+    assert len(FakeWger.logs) == len(LOGS)  # other days untouched
+
+
+def test_log_delete_twice_is_a_no_op(wger):
+    write_curl(wger)
+    wger("log-delete", "2026-11-25", "biceps curl")
+    FakeWger.log.clear()
+    r = wger("log-delete", "2026-11-25", "biceps curl")
+    assert r.returncode == 0 and "nothing to remove" in r.stdout
+    assert deletes() == []
+
+
+def test_log_delete_dry_run_removes_nothing(wger):
+    write_curl(wger)
+    r = wger("log-delete", "2026-11-25", "biceps curl", "--dry-run")
+    assert r.returncode == 0, r.stderr
+    assert "dry-run" in r.stdout and "would remove 3 log(s) and 1 empty" in r.stdout
+    assert len(logs_on("2026-11-25")) == 3 and len(FakeWger.sessions) == 1
+    assert deletes() == []
+
+
+def test_log_delete_keeps_a_session_that_still_holds_another_exercises_logs(wger):
+    wger(
+        "log-write",
+        "biceps curl 2x10@12kg, hack squat 3x10@60kg",
+        "--date",
+        "2026-11-25",
+    )
+    r = wger("log-delete", "2026-11-25", "biceps curl")
+    assert r.returncode == 0, r.stderr
+    assert "removed 2 log(s) and 0 empty" in r.stdout
+    assert {b["exercise"] for b in logs_on("2026-11-25")} == {300}
+    assert len(FakeWger.sessions) == 1
+
+
+def test_log_delete_sweeps_a_session_a_cut_short_run_left_empty(wger):
+    write_curl(wger)
+    FakeWger.logs = [b for b in FakeWger.logs if not b["date"].startswith("2026-11-25")]
+    r = wger("log-delete", "2026-11-25", "biceps curl")
+    assert r.returncode == 0, r.stderr
+    assert "removed 0 log(s) and 1 empty" in r.stdout and FakeWger.sessions == []
+
+
+def test_log_delete_an_unknown_exercise_or_bad_date_fails_before_deleting(wger):
+    write_curl(wger)
+    r = wger("log-delete", "2026-11-25", "zercher squat")
+    assert r.returncode == 1 and "no wger exercise named" in r.stderr
+    assert wger("log-delete", "25-11-2026", "biceps curl").returncode == 1
+    assert len(logs_on("2026-11-25")) == 3

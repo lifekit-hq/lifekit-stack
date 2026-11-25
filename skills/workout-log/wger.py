@@ -7,6 +7,7 @@
   wger.py nutrition <plan.json> [--dry-run]
   wger.py profile [--birthdate YYYY-MM-DD] [--height CM] [--weight KG] [--date YYYY-MM-DD] [--dry-run]
   wger.py log-write "<exercises>" [--date YYYY-MM-DD] [--dry-run]
+  wger.py log-delete <YYYY-MM-DD> <exercise> [--dry-run]
 
 `routine` writes Kit's routine definition (routines/gym.json, the file Kit keeps in its
 workspace) into wger as a routine: one wger day per program day, one slot per exercise, one
@@ -26,6 +27,12 @@ entry, and an exercise that already has logs on that date is never written twice
 unchanged; the first sets of the line, left by an interrupted run: the rest is written;
 any other difference: exit 1, nothing overwritten). workout-claw stays the record of the
 session; a wger failure here never touches it.
+
+`log-delete` takes back what `log-write` wrote for one exercise on one date: every workout log
+of that exercise that day, then the workout sessions wger made for the day that no longer hold
+a log. It reports what it removed, says "nothing to remove" when there is nothing (so running
+it again is safe), and with --dry-run only says what it would remove. It never touches another
+exercise's logs or a session that still holds one.
 
 `routine` builds the whole new routine first and deletes the old one (`--replace`) only after
 it is complete; a failed build deletes the half-built routine and leaves the old one. Deleting
@@ -169,12 +176,25 @@ def name_candidates(name: str) -> list[str]:
     return seen
 
 
+# Spellings an owner types that wger does not carry as a name, tried after the name itself and
+# the entry's own aliases: slug of the typed name -> wger English names. wger has several curls
+# (barbell, dumbbell, SZ-bar, cable, machine); the plain "biceps curl" is the dumbbell one.
+BUILTIN_ALIASES = {
+    slug(spelling): ["Biceps Curls With Dumbbell"]
+    for spelling in ("bicep curl", "biceps curl", "bicep curls", "biceps curls")
+}
+
+
 def resolve_exercise(w: Wger, ex: dict, cache: dict[str, int]) -> int:
     """The wger exercise (base) id for one program exercise: explicit id, else an exact
     English name match on the exercise's name or aliases. Never a guess."""
     if isinstance(ex.get("wger_exercise"), int):
         return ex["wger_exercise"]
-    names = [ex["name"], *[a for a in ex.get("aliases", []) if isinstance(a, str)]]
+    names = [
+        ex["name"],
+        *[a for a in ex.get("aliases", []) if isinstance(a, str)],
+        *BUILTIN_ALIASES.get(slug(ex["name"]), []),
+    ]
     for name in names:
         for cand in name_candidates(name):
             if cand in cache:
@@ -917,6 +937,46 @@ def cmd_log_write(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_log_delete(args: argparse.Namespace) -> int:
+    day = parse_date(args.date, "date")
+    w = client()
+    label = slug(args.exercise)
+    eid = resolve_exercise(w, {"name": args.exercise}, {})
+    logs = [
+        r
+        for r in w.pages(
+            "workoutlog/",
+            {
+                "date__gte": day,
+                "date__lte": day + "T23:59:59",
+                "exercise": str(eid),
+                "ordering": "date",
+            },
+        )
+        if str(r.get("date", ""))[:10] == day and r.get("exercise") == eid
+    ]
+    gone = {r["id"] for r in logs}
+    empty = []
+    for s in w.pages("workoutsession/", {"datetime_start__date": day}):
+        held = w.pages("workoutlog/", {"session": str(s["id"])})
+        if all(r["id"] in gone for r in held):
+            empty.append(s["id"])
+    if not logs and not empty:
+        print(f"{day} {label}: nothing to remove")
+        return 0
+    verb = "would remove" if args.dry_run else "removed"
+    if not args.dry_run:
+        for r in logs:
+            w.call("DELETE", f"workoutlog/{r['id']}/")
+        for sid in empty:
+            w.call("DELETE", f"workoutsession/{sid}/")
+    print(
+        f"{'dry-run: ' if args.dry_run else ''}{day} {label}: {verb} "
+        f"{len(logs)} log(s) and {len(empty)} empty workout session(s)"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="wger.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -953,6 +1013,13 @@ def main(argv: list[str] | None = None) -> int:
     lw.add_argument("--date")
     lw.add_argument("--dry-run", action="store_true")
     lw.set_defaults(fn=cmd_log_write)
+    ld = sub.add_parser("log-delete")
+    ld.add_argument("date", help="YYYY-MM-DD, the day the logs were written for")
+    ld.add_argument(
+        "exercise", help='the exercise as typed to log-write, e.g. "biceps curl"'
+    )
+    ld.add_argument("--dry-run", action="store_true")
+    ld.set_defaults(fn=cmd_log_delete)
     args = p.parse_args(argv)
     try:
         return args.fn(args)

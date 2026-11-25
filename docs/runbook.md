@@ -5680,8 +5680,8 @@ as in the Off-box backup restore steps. Then run the exercise sync again if the
 
 Kit's `workout-log` skill talks to wger with `wger.py` (`skills/workout-log/`): `routine`
 writes Kit's `routines/gym.json` into wger as a routine, `logs` reads the workout logs back
-(date range, exercise, sets, reps, weight), `nutrition`, `profile` and `log-write` fill the app
-("Fill the app" below), `check` proves the URL and the token. No new
+(date range, exercise, sets, reps, weight), `nutrition`, `profile`, `log-write` and `log-delete`
+fill the app and take a mirror back ("Fill the app" below), `check` proves the URL and the token. No new
 service: the same skill, installed by `scripts/ensure-workout-log.sh`.
 
 - **Base URL.** `WGER_BASE_URL` for the skill's run; the script's default is
@@ -5752,7 +5752,7 @@ service: the same skill, installed by `scripts/ensure-workout-log.sh`.
 - **Fill the app: `nutrition`, `profile`, `log-write`.** The three commands that put the
   owner's numbers into wger so the app and Kit agree. All three take `--dry-run` (reads wger,
   writes nothing, says what it would do), all three are safe to run again, and none of them
-  deletes anything.
+  deletes anything (`log-delete`, below, is the one command that does).
   - `wger.py nutrition <plan.json>`: one nutrition plan, `{"name": "Cut 85 kg", "kcal": 2300,
     "protein": 190, "carbs": 220, "fat": 70}` (optional `fiber`, `start`, `end`; `start`
     defaults to today). The name is wger's plan `description` (80 characters at most) and is the
@@ -5776,6 +5776,14 @@ service: the same skill, installed by `scripts/ensure-workout-log.sh`.
     fails alone (exit 1, `wger_exercise` hint) while the others are written. The skill calls it
     only after `workout-claw summary` has shown the session; it never runs, reads or changes
     workout-claw, and a non-zero exit is reported in Kit's reply next to the "Logged" line.
+  - `wger.py log-delete <YYYY-MM-DD> <exercise> [--dry-run]`: takes back a mirror (a wrong or
+    test one): deletes that exercise's workout logs for the date, then the workout sessions wger
+    made for the day that hold no log any more (a session still holding another exercise's logs
+    stays), and prints what it removed; run again it says `nothing to remove`. `--dry-run` only
+    says what it would remove. `bicep(s) curl` is a built-in spelling of wger's `Biceps Curls With
+    Dumbbell` (the plain curl; another curl needs `wger_exercise` or an alias in `gym.json`).
+    The two DELETE endpoints are not in the OpenAPI fixture wger generated, so the fixture
+    carries them by hand until it is regenerated.
   - Failures: a value wger refuses (HTTP 400, for instance a height outside its limits) is exit 4
     with wger's message; exit 2, 3 and 4 otherwise mean what they mean for every command (no
     token, token rejected, wger unreachable). The payloads are checked against the schema
