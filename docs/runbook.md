@@ -5853,7 +5853,11 @@ service: the same skill, installed by `scripts/ensure-workout-log.sh`.
   - `wger.py log-write "<exercises>" [--date YYYY-MM-DD]`: the line Kit gave `workout-claw log`
     (`hack squat 3x10@60kg, bench press 8,8,6@60kg`; `@bw`, `lb` and uneven sets work) becomes
     one wger workout log per set. Each exercise is linked to the routine whose dates cover the
-    day (the latest start wins) and its slot entry; an exercise that is not in the routine, or a
+    day (the latest start wins) and its slot entry; a typed name resolves to the routine's own
+    exercise when it matches that exercise's name or alias (so `biceps curl` logs to the
+    routine's `Dumbbell Curl`, 1931, not wger's other curls) and falls back to the built-in
+    alias map only when the routine has none; `--dry-run` prints the exercise id and whether it
+    is a routine slot; an exercise that is not in the routine, or a
     day no routine covers, is still logged, without the link. It is idempotent per date and
     exercise: wger already holding identical sets prints `unchanged`; holding only the first sets of the
     line (a run cut short by a wger error) writes the rest, so sending the line again repairs it;
@@ -5867,8 +5871,8 @@ service: the same skill, installed by `scripts/ensure-workout-log.sh`.
     held one of those logs and is empty afterwards (a session still holding another exercise's
     logs, or one that held none of the deleted logs, such as an app-made session with notes,
     stays), and prints what it removed; run again it says `nothing to remove`. `--dry-run` only
-    says what it would remove. `bicep(s) curl` is a built-in spelling of wger's `Biceps Curls With
-    Dumbbell` (the plain curl; another curl needs `wger_exercise` or an alias in `gym.json`).
+    says what it would remove. `bicep(s) curl` is a built-in spelling of wger's `Dumbbell Curl`
+    (1931, the plain curl; another curl needs `wger_exercise` or an alias in `gym.json`).
     The two DELETE endpoints are not in the OpenAPI fixture wger generated, so the fixture
     carries them by hand until it is regenerated.
   - Failures: a value wger refuses (HTTP 400, for instance a height outside its limits) is exit 4

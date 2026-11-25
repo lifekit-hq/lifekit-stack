@@ -41,6 +41,7 @@ EXERCISES = {  # English translation name -> wger exercise (base) id
     "Bench Press": 192,
     "Hack Squat": 300,
     "Biceps Curls With Dumbbell": 92,
+    "Dumbbell Curl": 1931,
 }
 NAMES = {v: k for k, v in EXERCISES.items()}
 LOGS = [
@@ -1294,12 +1295,96 @@ def test_the_schema_check_rejects_what_wger_would_not_accept():
 @pytest.mark.parametrize(
     "line", ["bicep curl 3x10@12kg", "biceps curl 3x10@12kg", "Biceps Curls 3x10@12kg"]
 )
-def test_a_biceps_curl_line_resolves_to_wgers_dumbbell_curl(wger, line):
+def test_a_biceps_curl_line_falls_back_to_the_dumbbell_curl_without_a_routine(
+    wger, line
+):
     r = wger("log-write", line, "--date", "2026-11-25")
     assert r.returncode == 0, r.stderr
     assert "3 set(s) written" in r.stdout
-    assert [b["exercise"] for b in log_posts()] == [92, 92, 92]
+    assert [b["exercise"] for b in log_posts()] == [1931, 1931, 1931]
     assert not FakeWger.rejected
+
+
+@pytest.fixture
+def curl_routine(tmp_path):
+    p = tmp_path / "curl.json"
+    p.write_text(
+        json.dumps(
+            {
+                "name": "Curls",
+                "days": [
+                    {
+                        "day": "wed",
+                        "name": "arms",
+                        "exercises": [
+                            {"name": "dumbbell curl", "sets": 3, "reps": 10},
+                            {"name": "squat", "sets": 5, "reps": 5},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    return p
+
+
+def test_a_biceps_curl_line_logs_to_the_routines_curl_slot(wger, curl_routine):
+    make_routine(wger, curl_routine)
+    entry = next(e for e in FakeWger.store["slot-entry"] if e["exercise"] == 1931)
+    r = wger("log-write", "biceps curl 3x10@12kg", "--date", "2026-11-25")
+    assert r.returncode == 0, r.stderr
+    assert "exercise 1931, in the routine" in r.stdout
+    posts = log_posts()
+    assert [b["exercise"] for b in posts] == [1931] * 3
+    assert all(b["slot_entry"] == entry["id"] for b in posts)
+
+
+def test_a_name_the_routine_uses_is_not_rerouted_by_the_alias_map(wger, tmp_path):
+    p = tmp_path / "old.json"
+    p.write_text(
+        json.dumps(
+            {
+                "name": "Old",
+                "days": [
+                    {
+                        "day": "wed",
+                        "name": "arms",
+                        "exercises": [
+                            {
+                                "name": "biceps-curls-with-dumbbell",
+                                "sets": 3,
+                                "reps": 10,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    make_routine(wger, p)
+    r = wger(
+        "log-write", "biceps curls with dumbbell 3x10@12kg", "--date", "2026-11-25"
+    )
+    assert r.returncode == 0, r.stderr
+    assert [b["exercise"] for b in log_posts()] == [92, 92, 92]
+    assert all(b.get("slot_entry") for b in log_posts())
+
+
+def test_log_write_dry_run_names_the_exercise_and_whether_it_is_a_routine_slot(
+    wger, curl_routine
+):
+    make_routine(wger, curl_routine)
+    r = wger(
+        "log-write",
+        "biceps curl 3x10@12kg, bench press 3x8@60kg",
+        "--date",
+        "2026-11-25",
+        "--dry-run",
+    )
+    assert r.returncode == 0, r.stderr
+    assert "exercise 1931 (a routine slot;" in r.stdout
+    assert "exercise 192 (not a routine slot;" in r.stdout
+    assert not writes()
 
 
 def write_curl(wger, day="2026-11-25"):
