@@ -734,18 +734,19 @@ def give_up_message(job: dict, reason: str) -> str:
 
 
 def _never_reported(d: Path, job: dict) -> str:
-    """Why a stale job's runs never reported back, from what they left: the
-    last error a run recorded, else that the runner itself died, with its
-    stderr (a crash's traceback) when it left one."""
+    """Why a stale job's runs never reported back, from the final run's own
+    evidence: its recorded exit, else that the runner itself died, with its
+    stderr (a crash's traceback) when it left one. An older attempt's error
+    is only ever labelled as earlier."""
     n = job["attempts"]
     reason = f"its last {n} runs never reported back"
     run = job.get("run") or {}
     if "read_at" in run:
         return f"{reason} (its output was read but the turn never finished the job)"
-    if job.get("last_error"):
-        return f"{reason} (last error: {job['last_error']})"
     if "ran_at" in run:
-        return f"{reason} (the handler exited {run.get('exit')} and printed nothing)"
+        if run.get("exit") == 0:
+            return f"{reason} (the handler exited 0 and printed nothing)"
+        return f"{reason} (last error: {job.get('last_error')})"
     try:
         tail = _tail(_err(d, job["id"]).read_text(errors="replace"))
     except OSError:
@@ -753,10 +754,12 @@ def _never_reported(d: Path, job: dict) -> str:
     gone = (
         f"runner pid {run['pid']} was gone before it recorded an exit"
         if run
-        else ("no runner was started for it")
+        else "no runner was started for it"
     )
+    earlier = f"; earlier error: {job['last_error']}" if job.get("last_error") else ""
     return (
-        f"{reason} ({gone}{'; its stderr: ' + tail if tail else '; it left no stderr'})"
+        f"{reason} ({gone}"
+        f"{'; its stderr: ' + tail if tail else '; it left no stderr'}{earlier})"
     )
 
 

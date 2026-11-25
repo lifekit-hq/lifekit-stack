@@ -56,6 +56,8 @@ elif mode == "noisy":
     sys.exit(3)
 elif mode == "oom":
     os.kill(os.getpid(), signal.SIGKILL)
+elif mode == "silent":
+    pass
 """
 HANDLER = [sys.executable, "-c", FAKE_HANDLER, "run"]
 
@@ -1086,6 +1088,25 @@ def test_a_read_output_whose_turn_never_finished_is_not_blamed_on_the_handler(
     result = jobq.get(jid)["result"]
     assert "its output was read but the turn never finished the job" in result
     assert "printed nothing" not in result and "printed nothing" not in message
+
+
+def test_a_final_silent_run_is_not_blamed_for_an_earlier_attempts_error(
+    q, monkeypatch
+):
+    monkeypatch.setenv("JOBQ_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("FAKE_MODE", "noisy")
+    _add_file()
+    jid = "video-file-AAA111"
+    jobq.next_job(now=1001.0)
+    assert _ran(jid)["last_error"].startswith("exit 3")
+    monkeypatch.setenv("FAKE_MODE", "silent")
+    assert jobq.next_job(now=1002.0) == ("started", "")
+    assert _ran(jid)["attempts"] == 2
+    state, message = jobq.next_job(now=1002.0 + 31 * 60)
+    assert state == "ready"
+    result = jobq.get(jid)["result"]
+    assert "the handler exited 0 and printed nothing" in result
+    assert "KeyError" not in result and "KeyError" not in message
 
 
 def test_a_runner_told_to_stop_records_it_and_its_handler_is_killed(q, monkeypatch):
