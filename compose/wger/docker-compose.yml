@@ -22,7 +22,8 @@
 #
 # Settings come from the host env file (scripts/lib/deploy-common.sh passes
 # --env-file); only names are here. scripts/deploy.sh brings the project up
-# only once WGER_SECRET_KEY and WGER_DB_PASSWORD are in it. An ad-hoc call:
+# only once WGER_SECRET_KEY and WGER_DB_PASSWORD are in it (and fails it when
+# WGER_JWT_PRIVATE_KEY / WGER_JWT_PUBLIC_KEY are not, check-wger-compose.py). An ad-hoc call:
 #   docker compose -p wger --env-file /srv/lifekit-secrets/stack.env \
 #     -f compose/wger/docker-compose.yml ps
 #
@@ -110,6 +111,12 @@ services:
       lifekit.contract: "none"  # upstream app, not a product (scripts/platform-contract.py)
     environment:
       SECRET_KEY: ${WGER_SECRET_KEY:-}
+      # The RS256 keypair the mobile app's token login (allauth headless JWT)
+      # signs with: wger's `manage.py generate-jwt-keys` output, each a
+      # single-line base64url JWK, so it survives the env file and compose
+      # interpolation as is. Never the image default.
+      JWT_PRIVATE_KEY: ${WGER_JWT_PRIVATE_KEY:-}
+      JWT_PUBLIC_KEY: ${WGER_JWT_PUBLIC_KEY:-}
       # The public URL (https://<host>.<tailnet>.ts.net:8480). deploy.sh
       # derives it from the tailnet name unless WGER_SITE_URL is set.
       SITE_URL: ${WGER_SITE_URL:-}

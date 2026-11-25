@@ -294,8 +294,13 @@ reminder_bot_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 wger_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
-# Pinned images, persistent database and media, loopback-only ports.
-wger_compose config --format json | python3 "${REPO_DIR}/scripts/check-wger-compose.py" -
+# Pinned images, persistent database and media, loopback-only ports; and, once
+# wger is meant to be up (its signing key is rendered), its secrets all set.
+WGER_CHECK_ARGS=()
+if grep -qE '^[[:space:]]*WGER_SECRET_KEY=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}" 2>/dev/null; then
+  WGER_CHECK_ARGS=(--require-secrets)
+fi
+wger_compose config --format json | python3 "${REPO_DIR}/scripts/check-wger-compose.py" "${WGER_CHECK_ARGS[@]}" -
 study_door_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 

@@ -13,6 +13,10 @@ stdin) and fails (exit 1, one line per problem) when:
   - `nginx` is not on `wger-gateway` (the gateway's route to wger, docs/runbook.md
     "Kit and wger"), any other service joins it, any service joins the wide
     `lifekit-shared` network, or `wger-gateway` is not a declared external network.
+  - with --require-secrets (deploy.sh passes it once WGER_SECRET_KEY is in the
+    env file, i.e. wger is meant to be up): `web` has an empty SECRET_KEY,
+    DJANGO_DB_PASSWORD, JWT_PRIVATE_KEY or JWT_PUBLIC_KEY. Without the JWT
+    pair the mobile app's token login answers a server error.
 
 Pure mechanism, no Docker. scripts/deploy.sh runs it before `up`; the tests
 (scripts/tests/test_wger_compose.py) hold the blocked and the allowed case.
@@ -30,6 +34,14 @@ PERSISTENT = {
     "db": "/var/lib/postgresql/data",
     "web": "/home/wger/media",
 }
+# web's secret settings (resolved by `docker compose config`, so an unset
+# host variable shows up as an empty string).
+REQUIRED_SECRETS = (
+    "SECRET_KEY",
+    "DJANGO_DB_PASSWORD",
+    "JWT_PRIVATE_KEY",
+    "JWT_PUBLIC_KEY",
+)
 # An exact tag has a digit-dotted version in it: 2.7.0, 17.10-alpine3.22.
 EXACT_TAG = re.compile(r"^\d+\.\d+(\.\d+)?([.-].+)?$")
 # nginx is the only wger service on the network shared with the OpenClaw gateway;
@@ -39,7 +51,7 @@ GATEWAY_SERVICE = "nginx"
 WIDE_NETWORK = "lifekit-shared"
 
 
-def check(config: dict) -> list[str]:
+def check(config: dict, require_secrets: bool = False) -> list[str]:
     problems: list[str] = []
     services = config.get("services") or {}
     volumes = config.get("volumes") or {}
@@ -90,13 +102,20 @@ def check(config: dict) -> list[str]:
             problems.append(f"{name}: {path} is not on a named volume")
         elif mounts[0]["source"] not in volumes:
             problems.append(f"{name}: volume {mounts[0]['source']} is not declared")
+    if require_secrets:
+        env = (services.get("web") or {}).get("environment") or {}
+        for key in REQUIRED_SECRETS:
+            if not env.get(key):
+                problems.append(f"web: {key} is empty (docs/secrets.md, WGER_ rows)")
     return problems
 
 
 def main(argv: list[str]) -> int:
-    src = argv[1] if len(argv) > 1 else "-"
+    args = [a for a in argv[1:] if a != "--require-secrets"]
+    require_secrets = len(args) != len(argv) - 1
+    src = args[0] if args else "-"
     raw = sys.stdin.read() if src == "-" else Path(src).read_text(encoding="utf-8")
-    problems = check(json.loads(raw))
+    problems = check(json.loads(raw), require_secrets)
     for p in problems:
         print(f"check-wger-compose: {p}", file=sys.stderr)
     return 1 if problems else 0

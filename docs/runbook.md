@@ -5462,19 +5462,41 @@ its REST API. Four containers, all `lifekit.contract: none` (an upstream app):
 `wger-db-1` (Postgres) and `wger-cache-1` (Redis, nothing to back up). Images
 are pinned to exact versions; `scripts/check-wger-compose.py` fails the deploy
 before `up` if one is not, if the database or media leave their named volumes
-(`postgres_data`, `media`), if a port is not loopback-bound, or if the network rules for
+(`postgres_data`, `media`), if a port is not loopback-bound, if one of `web`'s four
+secrets is empty once wger is meant to be up, or if the network rules for
 Kit's route to wger break ("Kit and wger" below).
 
-**Setup.** Both secrets (`WGER_SECRET_KEY`, `WGER_DB_PASSWORD`) are keys in the master
+**Setup.** The secrets (`WGER_SECRET_KEY`, `WGER_DB_PASSWORD` and the sign-in pair below) are keys in the master
 file with inventory rows in `docs/secrets.md`, so the next deploy renders them into the
-env file and brings the project up; until both are present `deploy.sh` prints a warning
-and skips it. Values never in git. To rotate one, set a fresh value and redeploy (the
+env file and brings the project up; until `WGER_SECRET_KEY` and `WGER_DB_PASSWORD` are
+present `deploy.sh` prints a warning and skips it. Values never in git. To rotate one, set a fresh value and redeploy (the
 database password also needs the role changed, see the inventory row):
 
 ```bash
 openssl rand -hex 32 | scripts/set-secret.sh master WGER_SECRET_KEY
 openssl rand -hex 32 | scripts/set-secret.sh master WGER_DB_PASSWORD
 ```
+
+**App sign-in keys.** The mobile app signs in with a token (allauth headless
+JWT), signed with an RS256 keypair: `WGER_JWT_PRIVATE_KEY` and `WGER_JWT_PUBLIC_KEY`
+in the master file (inventory rows in `docs/secrets.md`), passed to `web` as
+`JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY`. Each is a single-line base64url JWK, so it
+passes the env file render and compose interpolation unchanged. Without them the
+app's login answers a server error (`Unable to load PEM file`) while the web
+sign-in still works; with either empty, `check-wger-compose.py` fails the deploy.
+The image's default keys are refused, so generate a fresh pair with wger's own
+command and store both lines through `scripts/secrets/edit.sh master` (never
+printed, never in git or a PR):
+
+```bash
+docker run --rm --entrypoint python3 -e DJANGO_DB_ENGINE=django.db.backends.sqlite3 \
+  -e DJANGO_DB_DATABASE=/tmp/x -e SECRET_KEY=x -e DJANGO_DEBUG=True \
+  wger/server:2.7.0 manage.py generate-jwt-keys    # JWT_PRIVATE_KEY= / JWT_PUBLIC_KEY= lines
+```
+
+**Rotating the pair signs the app out:** every issued token stops verifying, so
+the app must log in again (the web session sign-in is unaffected). Always rotate
+the two keys together, then render and redeploy.
 
 The deploy derives `WGER_SITE_URL` (`https://<host>.<tailnet>.ts.net:8480`) from the
 tailnet name; set `WGER_SITE_URL` in the env file to override. The database
