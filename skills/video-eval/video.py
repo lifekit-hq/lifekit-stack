@@ -59,7 +59,8 @@ job. A report never filed is run again when the queue's lease runs out.
 
 Everything is kept on this host in a private directory (INTAKE_DIR, default
 ~/.life-state/intake, mode 0700): reports/ and index.md for good (index.md is
-appended to by this script only, never rewritten), transcripts/ and inbox/
+appended to by this script; the intake shape step only adds its two trailing
+status/ref cells to a row, in place under the same lock), transcripts/ and inbox/
 (files waiting for their run) VIDEO_RETENTION_DAYS (default 14) days, pruned
 at the start of every run. The owner's standing goals the judge reads are the
 section headings of the vault's goals page (GOALS_PAGE, default

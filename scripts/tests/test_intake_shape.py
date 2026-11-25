@@ -120,6 +120,7 @@ class Env:
         monkeypatch.setenv("INTAKE_SHAPE_REPOS", REPOS)
         monkeypatch.setenv("INTAKE_SHAPE_FM_HOME", str(self.home))
         monkeypatch.setenv("INTAKE_SHAPE_INTAKE", str(self.intake))
+        (self.intake / ".shape-since").write_text("2026-01-01\n")
 
     def index(self, *rows: str) -> None:
         (self.intake / "index.md").write_text(HEADER + "".join(rows))
@@ -144,8 +145,13 @@ class Env:
         p = self.state / "gh.json"
         return json.loads(p.read_text()) if p.exists() else {"issues": [], "labels": []}
 
-    def run(self, cmd="sweep") -> int:
-        return shape.main(["intake_shape.py", cmd])
+    def run(self, cmd="sweep", *extra) -> int:
+        return shape.main(["intake_shape.py", cmd, *extra])
+
+    def archive(self, item: str) -> None:
+        d = self.hub()
+        del d[item]
+        (self.state / "hub.json").write_text(json.dumps(d))
 
 
 @pytest.fixture
@@ -195,6 +201,90 @@ def test_closed_repeat_opens_a_new_item_referencing_it(env):
     assert sorted(hub) == ["shape-abc", "shape-abc-2"]
     assert hub["shape-abc-2"]["state"] == "open"
     assert "Repeat of shape-abc" in hub["shape-abc-2"]["reason"]
+
+
+def test_archived_closed_item_still_chains_the_repeat(env):
+    env.index(row("abc", rubric="v7"))
+    env.run("open")
+    env.set_hub("shape-abc", state="closed", decision="approve")
+    env.run("answer")
+    env.archive("shape-abc")
+    env.append(row("abc", rubric="v8"))
+    assert env.run("open") == 0
+    hub = env.hub()
+    assert list(hub) == ["shape-abc-2"]
+    assert "Repeat of shape-abc" in hub["shape-abc-2"]["reason"]
+    env.set_hub("shape-abc-2", state="closed", decision="drop")
+    env.archive("shape-abc-2")
+    env.append(row("abc", rubric="v9"))
+    env.run("open")
+    assert list(env.hub()) == ["shape-abc-3"]
+
+
+def test_shaping_row_whose_item_was_archived_is_surfaced_not_re_held(env):
+    env.index(row("abc"))
+    env.run("open")
+    env.archive("shape-abc")
+    assert env.run() == 1
+    assert env.hub() == {}
+    assert env.gh()["issues"] == []
+    assert env.rows()[0]["status"] == "shaping"
+
+
+def test_open_item_held_but_row_unmarked_is_joined_not_duplicated(env, monkeypatch):
+    def boom(*args):
+        raise OSError("disk full")
+
+    env.index(row("abc"))
+    with monkeypatch.context() as patched:
+        patched.setattr(shape, "mark_rows", boom)
+        with pytest.raises(OSError):
+            shape.open_items(env.intake, shape.Hub(str(env.home)), "2026-01-01")
+    assert env.rows()[0]["status"] == ""
+    assert env.run("open") == 0
+    assert list(env.hub()) == ["shape-abc"]
+    assert env.rows()[0]["ref"] == "shape-abc"
+
+
+def test_rows_before_the_cutoff_open_nothing(env):
+    (env.intake / ".shape-since").write_text("2026-11-21\n")
+    env.index(row("old"))
+    env.append(row("new").replace("2026-11-20", "2026-11-21"))
+    assert env.run("open") == 0
+    assert list(env.hub()) == ["shape-new"]
+    assert [r["status"] for r in env.rows()] == ["", "shaping"]
+
+
+def test_first_run_records_today_as_the_cutoff(env):
+    (env.intake / ".shape-since").unlink()
+    today = shape.datetime.now(shape.timezone.utc).strftime("%Y-%m-%d")
+    env.index(row("old"), row("new").replace("2026-11-20", today))
+    assert env.run("open") == 0
+    assert list(env.hub()) == ["shape-new"]
+    assert (env.intake / ".shape-since").read_text().strip() == today
+
+
+def test_since_option_sets_the_cutoff(env):
+    (env.intake / ".shape-since").write_text("2099-01-01\n")
+    env.index(row("old"))
+    assert env.run("open", "--since", "2026-11-01") == 0
+    assert list(env.hub()) == ["shape-old"]
+    assert (env.intake / ".shape-since").read_text().strip() == "2026-11-01"
+    assert env.run("open", "--since", "yesterday") == 2
+
+
+def test_marking_rewrites_in_place_keeping_the_inode_and_mode(env):
+    env.index(row("abc"))
+    path = env.intake / "index.md"
+    path.chmod(0o640)
+    before = path.stat()
+    env.run("open")
+    after = path.stat()
+    assert (after.st_ino, stat.S_IMODE(after.st_mode)) == (
+        before.st_ino,
+        0o640,
+    )
+    assert env.rows()[0]["status"] == "shaping"
 
 
 def answered(env, text, key="abc", **kw):
@@ -367,7 +457,29 @@ def test_installer_renders_the_unit(tmp_path):
     assert (root / "usr/local/libexec/lifekit-intake-shape/intake_shape.py").is_file()
 
 
-def test_issue_template_carries_the_required_shape():
+def template_body():
     text = (REPO / ".github/ISSUE_TEMPLATE/shaped-work.md").read_text()
-    for needle in ("## Done when", "Owner repo:", "Class:", "Decision:"):
-        assert needle in text
+    return text.split("---\n", 2)[2]
+
+
+def fill(body):
+    out = []
+    for line in body.splitlines():
+        if line.startswith("- <"):
+            line = "- the shape step files this issue"
+        elif line.startswith("Owner repo:"):
+            line = "Owner repo: lifekit-hq/lifekit-stack"
+        elif line.startswith("Class:"):
+            line = "Class: dev"
+        elif line.startswith("Decision:"):
+            line = "Decision: owner ruled"
+        out.append(line)
+    return "\n".join(out)
+
+
+def test_issue_template_filled_in_passes_and_unfilled_or_incomplete_is_refused():
+    body = template_body()
+    assert shape.check_issue_body(fill(body)) == []
+    assert shape.check_issue_body(body)
+    problems = shape.check_issue_body(fill(body).replace("## Done when", "## Notes"))
+    assert len(problems) == 1 and "Done when" in problems[0]

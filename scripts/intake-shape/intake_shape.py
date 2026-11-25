@@ -4,7 +4,8 @@
 An `accept` (or `adopt`) verdict at the intake door used to end in a vault page
 (scripts/intake-to-vault). This is the step after it, with no model turn:
 
-  open    every accepted intake row not yet shaping gets a SHAPING ITEM: a
+  open    every accepted intake row dated on or after the cutoff (below) and
+          not yet shaping gets a SHAPING ITEM: a
           captain-held task (fm-captain-hold.sh hold) carrying the proposed
           shape and the options, shown on the Calls page. One item per source
           (the intake key): a repeat adds a count to the open item's title, a
@@ -24,7 +25,14 @@ An intake row gets two trailing cells, `status` and `ref`, that the original
 14-column rows lack: `shaping <item id>` while the item waits, then
 `handed-off <issue url>`, or `dropped` / `refused` with the item id when the
 answer files nothing. These marks are the only thing this step writes to the
-intake index; no other store is added.
+intake index (rewritten in place under video.py's lock, so the file keeps its
+owner and mode); no other store is added. A row still `shaping` whose hub item
+is gone (closed and archived before the answer was read) is logged and fails
+the run, never re-held.
+
+Only rows dated on or after the cutoff open items, so the ideas accepted before
+this step existed are never asked about. The first run records its UTC date in
+`.shape-since` in the intake directory; `--since YYYY-MM-DD` sets it.
 
 The owner's answer is free text. `approve` (or yes/ok/ship) files the proposed
 shape; `drop` (or no/park/reject) files nothing; any answer may carry
@@ -39,6 +47,8 @@ Environment:
                          registered projects an issue may be filed in
   INTAKE_SHAPE_GH        the gh command (default `gh`)
   TASKS_AXI              the tasks-axi command (default `tasks-axi`)
+
+Usage: intake_shape.py [open|answer|sweep] [--since YYYY-MM-DD]
 
 Exit: 0 done or nothing to do; 1 something could not be done (the journal says
 what; the next run retries); 2 bad usage or configuration.
@@ -55,6 +65,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROUTED_VERDICTS = ("adopt", "accept")
@@ -75,6 +86,7 @@ COLUMNS = (
     "report",
 )
 MARKS = ("status", "ref")
+DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 CELL_LIMIT = 300
 CLASSES = ("dev", "ops", "finance", "life")
 READY = "ready"
@@ -158,24 +170,21 @@ def render_row(row: Row) -> str:
 
 
 def mark_rows(intake: Path, updates: dict[tuple[str, str], tuple[str, str]]) -> None:
-    """Set (status, ref) on the rows named by (source, rubric), in place and
-    atomically, under the index lock video.py appends under."""
-    path = intake / "index.md"
-    with index_lock(intake):
-        lines = path.read_text(encoding="utf-8").splitlines()
+    """Set (status, ref) on the rows named by (source, rubric), rewriting the
+    file in place under the index lock video.py appends under, so its owner and
+    mode (the gateway's appends keep working) survive."""
+    with index_lock(intake), open(intake / "index.md", "r+", encoding="utf-8") as f:
         out = []
-        for line in lines:
+        for line in f.read().splitlines():
             row = parse_row(line)
             hit = row and updates.get((row["source"], row["rubric"]))
             if row and hit:
                 row.cells["status"], row.cells["ref"] = hit
                 line = render_row(row)
             out.append(line)
-        tmp = path.with_name("index.md.shape-tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write("\n".join(out) + "\n")
-        os.replace(tmp, path)
+        f.seek(0)
+        f.write("\n".join(out) + "\n")
+        f.truncate()
 
 
 # ---------------------------------------------------------------- the hub
@@ -296,80 +305,79 @@ def item_reason(row: Row, previous: str | None) -> str:
     return one_line(text)[:REASON_MAX]
 
 
-def chain(hub: Hub, base: str) -> list[tuple[str, str]]:
-    """(id, state) for base, base-2, base-3 ... up to the first absent id."""
-    out = []
-    n = 1
-    while True:
-        item = base if n == 1 else f"{base}-{n}"
-        state = hub.state(item)
-        if state == "absent":
-            return out
-        out.append((item, state))
-        n += 1
+def item_id(base: str, n: int) -> str:
+    return base if n == 1 else f"{base}-{n}"
 
 
-def next_item(hub: Hub, base: str) -> tuple[str, str | None, bool]:
+def next_item(
+    hub: Hub, base: str, key: str, marked: list[Row]
+) -> tuple[str, str | None, bool]:
     """(the item an arriving accept belongs to, the closed item it repeats,
-    whether it must be created)."""
-    existing = chain(hub, base)
-    if not existing:
+    whether it must be created). How many items this source has had comes from
+    the intake rows already marked for it (the hub archives closed items) or
+    the hub's own chain, whichever is longer."""
+    seen = len({r["ref"] for r in marked if r.key == key})
+    while hub.state(item_id(base, seen + 1)) != "absent":
+        seen += 1
+    if seen == 0:
         return base, None, True
-    last, state = existing[-1]
-    if state == "open":
+    last = item_id(base, seen)
+    if hub.state(last) == "open":
         return last, None, False
-    return f"{base}-{len(existing) + 1}", last, True
+    return item_id(base, seen + 1), last, True
 
 
-def open_items(intake: Path, hub: Hub) -> int:
-    """Give every accepted row a shaping item; returns the failures."""
+def since_cutoff(intake: Path, override: str | None) -> str:
+    """The first date (UTC YYYY-MM-DD) whose accepted rows open a shaping item:
+    `--since`, else the date the first run recorded in `.shape-since`."""
+    path = intake / ".shape-since"
+    if override is None:
+        with contextlib.suppress(OSError):
+            recorded = path.read_text(encoding="utf-8").strip()
+            if DATE.fullmatch(recorded):
+                return recorded
+        override = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    path.write_text(override + "\n", encoding="utf-8")
+    return override
+
+
+def open_items(intake: Path, hub: Hub, since: str) -> int:
+    """Give every accepted row dated on or after `since` a shaping item;
+    returns the failures. The item is held before its rows are marked, so a
+    run that stopped between the two finds the open item and joins it."""
     failed = 0
     rows = read_rows(intake)
-    pending = [
-        r for r in rows if r["verdict"].lower() in ROUTED_VERDICTS and not r["status"]
-    ]
-    # Rows marked `shaping` on an earlier run whose hold never landed are
-    # completed below, so a crash between the mark and the hold loses nothing.
+    marked = [r for r in rows if r["status"]]
+    groups: dict[str, list[Row]] = {}
+    for r in rows:
+        if (
+            r["verdict"].lower() in ROUTED_VERDICTS
+            and not r["status"]
+            and DATE.fullmatch(r["date"])
+            and r["date"] >= since
+        ):
+            groups.setdefault(f"shape-{slug(r.key)}", []).append(r)
     marks: dict[tuple[str, str], tuple[str, str]] = {}
-    previous: dict[str, str | None] = {}
-    claimed: dict[str, str] = {}  # intake key -> item id taken in this run
-    for r in pending:
-        base = f"shape-{slug(r.key)}"
+    for base, members in groups.items():
         try:
-            if base in claimed:
-                item = claimed[base]
+            item, repeat, create = next_item(hub, base, members[0].key, marked)
+            seen = len(members) + sum(
+                1 for r in marked if r["status"] == "shaping" and r["ref"] == item
+            )
+            title = item_title(members[0], seen)
+            if create:
+                hub.hold(item, title, item_reason(members[0], repeat))
+                log(f"{item}: shaping item opened for {members[0].key}")
             else:
-                item, repeat, _ = next_item(hub, base)
-                claimed[base] = item
-                previous[item] = repeat
+                hub.retitle(item, title)
         except (RuntimeError, OSError, subprocess.SubprocessError) as error:
-            log(f"{r.key}: {error}")
+            log(f"{base}: {error}")
             failed += 1
             continue
-        marks[(r["source"], r["rubric"])] = ("shaping", item)
+        for m in members:
+            marks[(m["source"], m["rubric"])] = ("shaping", item)
     if marks:
         mark_rows(intake, marks)
-    items: dict[str, list[Row]] = {}
-    for r in read_rows(intake):
-        if r["status"] == "shaping":
-            items.setdefault(r["ref"], []).append(r)
-    for item, members in sorted(items.items()):
-        try:
-            state = hub.state(item)
-            if state == "absent":
-                hub.hold(
-                    item,
-                    item_title(members[0], len(members)),
-                    item_reason(members[0], previous.get(item)),
-                )
-                log(f"{item}: shaping item opened for {members[0].key}")
-            elif state == "open":
-                want = item_title(members[0], len(members))
-                if marks and any((m["source"], m["rubric"]) in marks for m in members):
-                    hub.retitle(item, want)
-        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
-            log(f"{item}: {error}")
-            failed += 1
     return failed
 
 
@@ -546,7 +554,11 @@ def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
         row = members[0]
         keys = [(m["source"], m["rubric"]) for m in members]
         try:
-            if hub.state(item) != "closed":
+            state = hub.state(item)
+            if state == "absent":
+                log(f"{item}: shaping row without its hub item, answer lost")
+                failed += 1
+            if state != "closed":
                 continue
             text = hub.decision(item)
             if text is None:
@@ -594,9 +606,20 @@ def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
 
 
 def main(argv: list[str]) -> int:
-    command = argv[1] if len(argv) > 1 else "sweep"
-    if command not in ("open", "answer", "sweep"):
-        print("usage: intake_shape.py [open|answer|sweep]", file=sys.stderr)
+    args, since = argv[1:], None
+    if "--since" in args:
+        i = args.index("--since")
+        since = args[i + 1] if i + 1 < len(args) else ""
+        del args[i : i + 2]
+        if not DATE.fullmatch(since):
+            print("usage: --since YYYY-MM-DD", file=sys.stderr)
+            return 2
+    command = args[0] if args else "sweep"
+    if command not in ("open", "answer", "sweep") or len(args) > 1:
+        print(
+            "usage: intake_shape.py [open|answer|sweep] [--since YYYY-MM-DD]",
+            file=sys.stderr,
+        )
         return 2
     home = os.environ.get("INTAKE_SHAPE_FM_HOME", "")
     if not home or not (Path(home) / "bin" / "fm-captain-hold.sh").is_file():
@@ -605,7 +628,11 @@ def main(argv: list[str]) -> int:
     intake = Path(os.environ.get("INTAKE_SHAPE_INTAKE", "/var/lib/lifekit/intake"))
     hub, failed = Hub(home), 0
     if command in ("open", "sweep"):
-        failed += open_items(intake, hub)
+        try:
+            failed += open_items(intake, hub, since_cutoff(intake, since))
+        except OSError as error:
+            log(f"{intake}: {error}")
+            failed += 1
     if command in ("answer", "sweep"):
         failed += answer_items(intake, hub, Gh())
     return 1 if failed else 0

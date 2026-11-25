@@ -2083,8 +2083,9 @@ sees the message ("Video drop door"); a link inside prose still reaches Kit, whi
   i.e. `/var/lib/lifekit/intake/` on the host (mode 0700, files 0600):
   - `index.md` is the index: one markdown table row per item, columns `date`, `kind`,
     `origin`, `category`, `source`, `title`, `gist`, `verdict`, `reason`, `project`,
-    `recheck`, `next step or why`, `rubric` and `report`. It is append-only (one locked
-    `O_APPEND` write per row) and idempotent per source URL and rubric version. It is the
+    `recheck`, `next step or why`, `rubric` and `report`. Rows are appended (one locked
+    `O_APPEND` write per row; the intake shape step only adds its `status`/`ref` cells to a row,
+    in place under the same lock) and the index is idempotent per source URL and rubric version. It is the
     shared store any producer reads.
   - `reports/<key>.v<rubric version>.md` holds the reports, kept for good.
   - `transcripts/<key>.txt` holds the transcripts, and `inbox/` the backfilled files waiting
@@ -3873,7 +3874,11 @@ has `gh` logged in and can write `/var/lib/lifekit/intake`), does two things wit
    `dev`, done-when from its next step) and the options. One item per source: a repeat (the
    same source judged again) adds `(seen Nx)` to the open item's title; a repeat of an
    answered item opens `shape-<key>-2` whose reason names the earlier one. The row gets
-   `shaping <item>` in two trailing cells, `status` and `ref`.
+   `shaping <item>` in two trailing cells, `status` and `ref`. Only rows dated on or after a
+   cutoff open items, so the ideas accepted before the step existed are never asked about: the
+   first run records its UTC date in `.shape-since` in the intake directory, and
+   `intake_shape.py open --since YYYY-MM-DD` sets it (as the admin account). The next id and
+   the "repeat of" reference come from the intake rows, since the hub archives closed items.
 2. **Answer.** When the owner's answer is recorded on the item, the step files ONE issue in the
    owning repo (a registered project from `INTAKE_SHAPE_REPOS`) with a `## Done when` section,
    `Owner repo:`, `Class:` and `Decision: owner ruled` (or `matrix auto-answered` when the
@@ -3897,8 +3902,12 @@ sudo INTAKE_SHAPE_FM_HOME=/home/denys/fm-vps \
   bash /srv/lifekit-stack/scripts/intake-shape/install-intake-shape.sh
 ```
 
+Only rows dated from the install day on open items; to include earlier ones, run
+`intake_shape.py open --since YYYY-MM-DD` once.
+
 **Reading a failure.** Exit 1: the journal names the item and why (the hold or `gh` refused,
-an issue failed the label check, an answer the step cannot read). Every step is checked first,
+an issue failed the label check, an answer the step cannot read, a `shaping` row whose hub
+item is gone - the answer was lost with it, so re-ask by hand and mark the row). Every step is checked first,
 so the next run completes a half-done one and files nothing twice: the issue carries a hidden
 `intake-shape: <item>` marker the step searches before creating. Exit 2: no firstmate home.
 
