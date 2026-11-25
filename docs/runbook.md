@@ -3805,7 +3805,7 @@ The software half of "take the knowledge from a judged video as reference" (no m
 `scripts/intake-to-vault/` files each accepted video-eval report into the memory vault, in
 the vault README's shape for raw evidence and through its `bin/` gates.
 `lifekit-intake-to-vault.timer` (hourly, as `lifekit`) runs `intake_to_vault.py`, which for
-each report under `/var/lib/lifekit/intake/reports/` whose `Verdict:` is `accept` writes:
+each report under `/var/lib/lifekit/intake/reports/` whose `Verdict:` is `adopt` or `accept` writes:
 
 - one immutable source page `sources/<judged date>-video-<key>-v<rubric>.md`: clipper
   frontmatter (`title`, `url`, `author`, `captured`, `type: other`, `summary`), then the report
@@ -3858,6 +3858,59 @@ sudo rm -r /usr/local/libexec/lifekit-intake-to-vault
 ```
 
 Pages already filed stay: they are vault sources like any other and rotate under its rules.
+
+## Intake shape step
+
+The gate between an accepted idea and a build hand-off ("Intake to vault" files the evidence;
+this decides what happens next). `scripts/intake-shape/intake_shape.py sweep`, run every 10
+minutes by `lifekit-intake-shape.timer` (as the admin account, which owns the firstmate home,
+has `gh` logged in and can write `/var/lib/lifekit/intake`), does two things with no model turn:
+
+1. **Open.** Every intake row whose verdict is `adopt` or `accept` (both route the same way:
+   `adopt` is "take it as it is", still shaped before anything is built) gets a **shaping
+   item**: a captain-held task `shape-<key>` (`fm-captain-hold.sh hold`) shown on the Calls
+   page. Its reason carries the proposed shape (owner repo from the report's `Project:`, class
+   `dev`, done-when from its next step) and the options. One item per source: a repeat (the
+   same source judged again) adds `(seen Nx)` to the open item's title; a repeat of an
+   answered item opens `shape-<key>-2` whose reason names the earlier one. The row gets
+   `shaping <item>` in two trailing cells, `status` and `ref`.
+2. **Answer.** When the owner's answer is recorded on the item, the step files ONE issue in the
+   owning repo (a registered project from `INTAKE_SHAPE_REPOS`) with a `## Done when` section,
+   `Owner repo:`, `Class:` and `Decision: owner ruled` (or `matrix auto-answered` when the
+   answer starts `matrix:`), then sets the `ready` label. **Only this step sets `ready`**, and
+   only after reading the filed issue back and finding all four. The row becomes
+   `handed-off <issue url>`; from then on the issue owns the item and the hub keeps the
+   reference. Answer `approve` to file as proposed, `drop` to file nothing, or send
+   `repo:` / `class:` / `done when:` lines to change the proposal. Anything else is logged and
+   the row marked `refused`.
+
+The same shape is the issue template `.github/ISSUE_TEMPLATE/shaped-work.md` for filing by
+hand; other registered projects copy it. The devclaw side (refusing a goal on an issue without
+`ready`) is separate.
+
+**Install (operator, `denys`)**, once the admin account can read and write the intake
+directory (`sudo setfacl -R -m u:denys:rwX /var/lib/lifekit/intake`):
+
+```bash
+sudo INTAKE_SHAPE_FM_HOME=/home/denys/fm-vps \
+  INTAKE_SHAPE_REPOS="lifekit-stack=lifekit-hq/lifekit-stack" \
+  bash /srv/lifekit-stack/scripts/intake-shape/install-intake-shape.sh
+```
+
+**Reading a failure.** Exit 1: the journal names the item and why (the hold or `gh` refused,
+an issue failed the label check, an answer the step cannot read). Every step is checked first,
+so the next run completes a half-done one and files nothing twice: the issue carries a hidden
+`intake-shape: <item>` marker the step searches before creating. Exit 2: no firstmate home.
+
+**Undo:**
+
+```bash
+sudo systemctl disable --now lifekit-intake-shape.timer
+sudo rm /etc/systemd/system/lifekit-intake-shape.{service,timer} && sudo systemctl daemon-reload
+sudo rm -r /usr/local/libexec/lifekit-intake-shape
+```
+
+Filed issues and index marks stay.
 
 ## Host unit gauge
 

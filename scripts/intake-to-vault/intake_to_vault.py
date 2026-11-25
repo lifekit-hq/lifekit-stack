@@ -26,6 +26,9 @@ exists (and names the same source), the index lists it, a log (living or
 archived) links it. The page is never rewritten. memory-sync commits the page
 and the index like any vault edit; bin/log.sh commits its own line.
 
+An accept also opens a shaping item for the owner; that is the separate
+scripts/intake-shape step (docs/runbook.md "Intake shape step"), not this job.
+
 Like memory-sync and vault-door, it does nothing while the vault's weekly
 model pass holds `.model-pass` (under an hour old).
 

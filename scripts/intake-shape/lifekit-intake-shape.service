@@ -1,0 +1,14 @@
+[Unit]
+Description=Intake shape step: a shaping item per accepted idea, a ready issue per owner answer
+
+[Service]
+Type=oneshot
+# The account that owns the firstmate home (the captain hold), has gh logged in
+# and can read and write the intake directory (docs/runbook.md "Intake shape
+# step"). scripts/intake-shape/install-intake-shape.sh substitutes the
+# placeholders.
+User=__ADMIN_USER__
+Environment="INTAKE_SHAPE_FM_HOME=__FM_HOME__" "INTAKE_SHAPE_INTAKE=/var/lib/lifekit/intake" "INTAKE_SHAPE_REPOS=__REPOS__"
+ExecStart=/usr/bin/python3 /usr/local/libexec/lifekit-intake-shape/intake_shape.py sweep
+TimeoutStartSec=300
+Nice=10
