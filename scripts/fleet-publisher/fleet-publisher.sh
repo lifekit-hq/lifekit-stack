@@ -78,7 +78,25 @@
 #   fleet_home_summary_valid{home}                the same per home; 0 for one not published
 #   fleet_home_summary_generated_timestamp_seconds{home}
 #   fleet_publisher_last_success_timestamp_seconds
-# Both files are replaced atomically. A home whose summary is missing,
+# Both files are replaced atomically. Every run owns a private working
+# directory under OUT_DIR (.work.*), never /tmp, so nothing else on a busy host
+# can clear it mid-run; one a killed run left behind is removed after a day.
+# Cadence: the summary, fleet.prom (the freshness stamp), daily metrics, quota and
+# the taken feed run every run, status_page is rebuilt every run too. The two
+# slow helpers run on a slower cadence, after the stamp is already written:
+# the screen changes feed (gh, tens of seconds) every FLEET_SCREENS_EVERY seconds
+# (default 300) and the activity journal (a row per finished day) every
+# FLEET_JOURNAL_EVERY seconds (default 900); neither starts once the run is
+# FLEET_SLOW_BUDGET seconds old (default 120), it stays due for the next run.
+# A section not due leaves its previous output as it was. Cadence stamps live in
+# the state dir (cadence-<section>), measured on the run's own clock (FLEET_NOW in
+# tests). A run that dies before fleet.prom is replaced still refreshes
+# its freshness gauges (fleet_summary_valid, fleet_summary_generated_*,
+# fleet_home_summary_*) in place from each readable home's own summary, so a
+# failed publish never leaves the stamp to age out on its own. Each run ends
+# with one stderr "timings_ms" line (seconds per section, and which sections the
+# cadence or the budget skipped), which lands in the unit's journal.
+# A home whose summary is missing,
 # malformed, or looks like it carries a credential is left out and listed in
 # homes[] as unpublished; the others still publish, and the run exits nonzero
 # so the unit's failure shows. When no home can be published nothing is
@@ -98,6 +116,11 @@ DAILY_MAX_BYTES=4194304
 ASK_MAX_BYTES=65536
 PC_HOME_ID="${PC_HOME_ID:-pc}"
 PC_STALE_SECONDS="${PC_STALE_SECONDS:-1200}"
+STATE_DIR="${FLEET_STATE_DIR:-${STATE_DIRECTORY:-$HOME/.local/state/lifekit-fleet-publisher}}"
+SCREENS_EVERY="${FLEET_SCREENS_EVERY:-300}"
+JOURNAL_EVERY="${FLEET_JOURNAL_EVERY:-900}"
+SLOW_BUDGET="${FLEET_SLOW_BUDGET:-120}"
+WORK_STALE_MINUTES=1440
 
 read -r -a homes <<< "${FM_HOMES:-${FM_HOME:-}}"
 if ((${#homes[@]} == 0)); then
@@ -121,11 +144,130 @@ for home in "${homes[@]}"; do
   ids+=("$id")
 done
 
+# summary_problem <summary file>: why the summary cannot be published, else nothing.
+summary_problem() {
+  if ! jq -e '(.schema // "" | startswith("fm-secondmate-home-summary.")) and (.generated_epoch | type == "number")' \
+    "$1" > /dev/null 2>&1; then
+    echo "summary is missing or not a home summary"
+  # The summary carries task names and reasons only. Refuse to publish
+  # world-readable if a credential ever lands in it.
+  elif grep -Eq "$CREDENTIAL_RE" "$1"; then
+    echo "summary looks like it holds a credential"
+  fi
+}
+
+# Per-section timing and cadence (header "Cadence"). tick <section> closes the
+# section that began at the previous tick; a section that did not run is listed
+# in skipped as <section>:<why>.
+timings=() skipped=()
+last_tick="${EPOCHREALTIME/[.,]/}"
+run_start="$last_tick"
+tick() {
+  local n="${EPOCHREALTIME/[.,]/}"
+  timings+=("$1 $(((n - last_tick) / 1000))")
+  last_tick="$n"
+}
+# section_due <section> <every seconds>: true when it last started at least that
+# long ago on the run's clock (never, or a stamp from the future, counts as due).
+section_due() {
+  local last=0
+  [[ ! -r "$STATE_DIR/cadence-$1" ]] || read -r last < "$STATE_DIR/cadence-$1" || true
+  [[ "$last" =~ ^[0-9]+$ ]] || last=0
+  ((NOW - last >= $2 || last > NOW))
+}
+# run_slow <screens|journal> <every seconds>: runs the section's function when it is
+# due and the run is still inside SLOW_BUDGET seconds, and returns its
+# status; otherwise records the skip and returns 0, leaving the section's
+# previous output in place. The cadence stamp is written when the section starts,
+# so a failing helper is retried on cadence, not every minute.
+run_slow() {
+  local section="$1" every="$2" status=0
+  if ! section_due "$section" "$every"; then
+    skipped+=("$section:cadence")
+  elif ((SECONDS > SLOW_BUDGET)); then
+    skipped+=("$section:budget")
+  else
+    if install -d -m 700 "$STATE_DIR"; then printf '%s\n' "$NOW" > "$STATE_DIR/cadence-$section" || true; fi
+    case "$section" in
+      screens) publish_screens || status=$? ;;
+      journal) publish_journal || status=$? ;;
+    esac
+  fi
+  tick "$section"
+  return "$status"
+}
+
+# refresh_stamp: a run that dies before fleet.prom is replaced still moves the
+# freshness gauges. They are rewritten in place from each readable home's own
+# summary (its real generated_epoch, so a home whose loop died still ages);
+# every other line, and fleet_publisher_last_success, stay as the last good run
+# left them. With no home readable nothing changes, so the stale-file rules fire.
+# shellcheck disable=SC2317,SC2329 # runs from the EXIT trap
+refresh_stamp() {
+  local prom="$TEXTFILE_DIR/fleet.prom" tmp i src id problem epoch min="" all_valid=1 lines=()
+  [[ -r "$prom" ]] || return 0
+  for i in "${!homes[@]}"; do
+    src="${homes[$i]}/state/home-summary.json"
+    ((i != 0)) || src="${SUMMARY_FILE:-$src}"
+    id="${ids[$i]}"
+    problem="$(summary_problem "$src")"
+    if [[ -n "$problem" ]]; then
+      all_valid=0
+      lines+=("fleet_home_summary_valid{home=\"$id\"} 0")
+      continue
+    fi
+    epoch="$(jq -r '.generated_epoch | floor' "$src")"
+    if [[ "$(jq -r '.valid == true' "$src")" == true ]]; then
+      lines+=("fleet_home_summary_valid{home=\"$id\"} 1")
+    else
+      all_valid=0
+      lines+=("fleet_home_summary_valid{home=\"$id\"} 0")
+    fi
+    lines+=("fleet_home_summary_generated_timestamp_seconds{home=\"$id\"} $epoch")
+    [[ -n "$min" ]] && ((min <= epoch)) || min="$epoch"
+  done
+  [[ -n "$min" ]] || return 0
+  tmp="$(mktemp "$TEXTFILE_DIR/.fleet.XXXXXX")" || return 0
+  {
+    grep -Ev '^fleet_(summary_valid|summary_generated_timestamp_seconds|home_summary_valid\{|home_summary_generated_timestamp_seconds\{)' "$prom" || true
+    printf 'fleet_summary_valid %s\n' "$all_valid"
+    printf 'fleet_summary_generated_timestamp_seconds %s\n' "$min"
+    printf '%s\n' "${lines[@]}"
+  } > "$tmp"
+  if chmod 644 "$tmp" && mv -f "$tmp" "$prom"; then :; else rm -f "$tmp"; fi
+  echo "fleet-publisher: the run ended before fleet.prom was replaced; its freshness gauges were refreshed from the homes' own summaries" >&2
+}
+
+# write_timings: one stderr line for the unit's journal.
+# shellcheck disable=SC2317,SC2329 # runs from the EXIT trap
+write_timings() {
+  local entry total=$(((${EPOCHREALTIME/[.,]/} - run_start) / 1000))
+  local line="fleet-publisher: timings_ms total=$total"
+  for entry in "${timings[@]}"; do line+=" ${entry% *}=${entry##* }"; done
+  ((${#skipped[@]} == 0)) || line+=" skipped=$(IFS=,; echo "${skipped[*]}")"
+  echo "$line" >&2
+}
+
+# The run owns everything it creates, from the first line to its exit: the
+# working directory sits beside the output, where no /tmp cleaner reaches it.
+summary_tmp="" prom_tmp="" work="" reports_tmp="" core_done=0
+# shellcheck disable=SC2317,SC2329 # runs from the EXIT trap
+on_exit() {
+  local status=$?
+  trap - EXIT
+  set +e
+  ((core_done)) || refresh_stamp
+  write_timings
+  rm -rf "$summary_tmp" "$prom_tmp" "$work" "$reports_tmp"
+  exit "$status"
+}
+trap 'on_exit' EXIT
+find "$OUT_DIR" -maxdepth 1 \( -name '.work.*' -o -name '.reports.*' -o -name '.home-summary.*' \) \
+  -mmin "+$WORK_STALE_MINUTES" -exec rm -rf {} + 2> /dev/null || true
+work="$(mktemp -d "$OUT_DIR/.work.XXXXXX")"
 summary_tmp="$(mktemp "$OUT_DIR/.home-summary.XXXXXX")"
 prom_tmp="$(mktemp "$TEXTFILE_DIR/.fleet.XXXXXX")"
-work="$(mktemp -d)"
 reports_tmp="$(mktemp -d "$OUT_DIR/.reports.XXXXXX")"
-trap 'rm -rf "$summary_tmp" "$prom_tmp" "$work" "$reports_tmp"' EXIT
 { [[ -r "$LAVISH_STATE" ]] && jq -c 'objects' "$LAVISH_STATE" 2> /dev/null; } > "$work/lavish.json" || true
 for f in homes.jsonl published.jsonl metrics.jsonl reports.tsv daily-source.jsonl quota-source.jsonl; do : > "$work/$f"; done
 
@@ -500,17 +642,6 @@ unpublished() { # <home id> <home dir> <exit code> <reason>
     >> "$work/homes.jsonl"
   ((rc = $3 > rc ? $3 : rc)) || true
 }
-# summary_problem <summary file>: why the summary cannot be published, else nothing.
-summary_problem() {
-  if ! jq -e '(.schema // "" | startswith("fm-secondmate-home-summary.")) and (.generated_epoch | type == "number")' \
-    "$1" > /dev/null 2>&1; then
-    echo "summary is missing or not a home summary"
-  # The summary carries task names and reasons only. Refuse to publish
-  # world-readable if a credential ever lands in it.
-  elif grep -Eq "$CREDENTIAL_RE" "$1"; then
-    echo "summary looks like it holds a credential"
-  fi
-}
 # Paths of the homes this run publishes, so a parent's decisions about one of
 # them are dropped only while that child's own summary is going out.
 sources=() problems=()
@@ -545,6 +676,7 @@ for i in "${!homes[@]}"; do
   publish_home "$home" "$id" "$summary_file" "$ledger_file" "$data_dir" "$hold" "$report_root"
 done
 [[ -s "$work/published.jsonl" ]] || exit "$rc"
+tick homes
 
 # A remote home (the PC) is not a fleet home this host owns: a fleet home
 # caches its secondmate summary, and only its state and last-seen time are
@@ -614,7 +746,7 @@ publish_status_page() {
     [[ -n "${homes[$i]}" ]] && args+=(--home "${ids[$i]}=${homes[$i]}")
   done
   CREDENTIAL_RE="$CREDENTIAL_RE" TASKS_AXI="$TASKS_AXI" timeout 50 python3 "$helper" "${args[@]}" \
-    --now "$NOW" --state-dir "${FLEET_STATE_DIR:-${STATE_DIRECTORY:-$HOME/.local/state/lifekit-fleet-publisher}}" \
+    --now "$NOW" --state-dir "$STATE_DIR" \
     --daily "$OUT_DIR/metrics/daily.jsonl" --daily "$work/daily-source.jsonl" \
     --remote "$work/remote-status.json" > "$work/status.out" || {
     echo "fleet-publisher: fleet_status.py failed; status_page not published" >&2
@@ -628,6 +760,7 @@ publish_status_page() {
   fi
 }
 publish_status_page
+tick status_page
 
 # One home: its summary as-is. More: the lists concatenated, and the fields
 # that describe the whole fleet aggregated over every home.
@@ -690,6 +823,8 @@ else
 fi
 mv -f "$summary_tmp" "$OUT_DIR/home-summary.json"
 mv -f "$prom_tmp" "$TEXTFILE_DIR/fleet.prom"
+core_done=1
+tick publish
 
 # Daily metrics: the rows already published plus this run's, one per (date,
 # home), the later row winning, sorted by date. Nothing read this run leaves the
@@ -720,6 +855,7 @@ if ! publish_daily_metrics; then
   echo "fleet-publisher: daily metrics were not published" >&2
   ((rc != 0)) || rc=1
 fi
+tick daily
 # Quota history and snapshot, beside the daily metrics. Percentages, reset
 # times and a slot number only: no account key, email, plan detail or error
 # text. Slot numbers are stable (assign_quota_slots). The
@@ -778,6 +914,7 @@ if ! publish_quota; then
   echo "fleet-publisher: quota metrics were not published" >&2
   ((rc != 0)) || rc=1
 fi
+tick quota
 # The "Taken for you" feed, beside home-summary.json: taken_feed.py beside this
 # script (FLEET_TAKEN overrides; installed as lifekit-fleet-taken.py) reads the
 # fleet-policy audit logs in FLEET_POLICY_DIR (default
@@ -817,6 +954,7 @@ if ! publish_taken; then
   echo "fleet-publisher: the taken feed was not published" >&2
   ((rc != 0)) || rc=1
 fi
+tick taken
 # The "Screen changes" feed, beside home-summary.json: screen_changes.py beside
 # this script (FLEET_SCREENS overrides; installed as lifekit-fleet-screens.py)
 # lists the open (and last 7 days' merged) PRs of the FLEET_SCREEN_REPOS repos through gh, copies the
@@ -839,11 +977,11 @@ publish_screens() {
     return 0
   }
   CREDENTIAL_RE="$CREDENTIAL_RE" timeout 60 python3 -I "$helper" --now "$NOW" --out-dir "$OUT_DIR" \
-    --state-dir "${FLEET_STATE_DIR:-${STATE_DIRECTORY:-$HOME/.local/state/lifekit-fleet-publisher}}" \
+    --state-dir "$STATE_DIR" \
     --home-id "${FLEET_SCREEN_HOME:-${ids[0]}}" || status=$?
   ((status == 0 || status == 3))
 }
-if ! publish_screens; then
+if ! run_slow screens "$SCREENS_EVERY"; then
   echo "fleet-publisher: the screen changes feed was not published" >&2
   ((rc != 0)) || rc=1
 fi
@@ -870,7 +1008,7 @@ publish_journal() {
   CREDENTIAL_RE="$CREDENTIAL_RE" timeout 120 python3 -I "$helper" --now "$NOW" --out-dir "$OUT_DIR" \
     --daily "$OUT_DIR/metrics/daily.jsonl" "${args[@]}"
 }
-if ! publish_journal; then
+if ! run_slow journal "$JOURNAL_EVERY"; then
   echo "fleet-publisher: the activity journal was not written" >&2
   ((rc != 0)) || rc=1
 fi

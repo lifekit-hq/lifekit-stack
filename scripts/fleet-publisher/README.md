@@ -110,6 +110,45 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
   `reason`, `counts` or `generated_epoch`, never fails the run, and is left out of the `fleet_home_summary_*` metrics: a PC
   that is off is normal.
 
+## Run cadence and what a loaded host does
+
+The timer fires every minute, and a run that outlasts a minute delays the next
+one, so a heavily loaded host cannot be allowed to turn the slow helpers into
+the stamp's critical path. Order and cadence of a run:
+
+| Section | Cadence | Writes | Unloaded cost (live host) |
+| --- | --- | --- | --- |
+| homes (read each home, join boards, reports, hold origins) | every run | the merged summary | 8 s |
+| `status_page` (`fleet_status.py`) | every run | `status_page` in the summary | 3 s |
+| publish (the summary, `fleet.prom`) | every run | `home-summary.json`, `fleet.prom` | under 1 s |
+| daily metrics, quota history and snapshot | every run | `metrics/` | under 1 s |
+| taken-for-you feed | every run | `taken-for-you.json` | under 1 s |
+| screen changes feed (`screen_changes.py`, gh) | every `FLEET_SCREENS_EVERY` s (default 300) | `screen-changes.json`, `screen-changes/` | 18 s |
+| activity journal (`activity_journal.py`) | every `FLEET_JOURNAL_EVERY` s (default 900) | `journal/` | 19 s |
+
+- **The stamp comes first.** `fleet.prom` (`fleet_summary_generated_timestamp_seconds`,
+  `fleet_publisher_last_success_timestamp_seconds`) is replaced before either slow
+  helper starts, so a slow helper never delays it.
+- **A section that is not due leaves its previous output as it was.** Cadence stamps
+  are the files `cadence-<section>` in the publisher's state directory, kept on the
+  run's own clock (`FLEET_NOW` when pinned); a stamp from the future counts as due.
+  A helper that fails is retried on its cadence, not every minute.
+- **A run budget.** A slow section does not start once the run is `FLEET_SLOW_BUDGET`
+  seconds old (default 120); it keeps no stamp, so it is due again next run.
+- **A run that fails still refreshes the freshness gauges.** If a run dies before
+  `fleet.prom` is replaced, the four freshness gauges (`fleet_summary_valid`,
+  `fleet_summary_generated_timestamp_seconds`, `fleet_home_summary_valid{home}`,
+  `fleet_home_summary_generated_timestamp_seconds{home}`) are rewritten in place from
+  each home's own summary; every other line, and the last-success time, stay the
+  last good run's. The value is the home's real `generated_epoch`, so a home whose
+  own loop died still ages. With no readable home nothing is touched, so the
+  stale-file rules fire.
+- **The run owns its working directory.** It is `OUT_DIR/.work.*` (mode 700), not a
+  `/tmp/tmp.*`, so no temp cleaner on a busy host can remove it between two steps.
+  A directory a killed run left is removed once it is a day old.
+- **Timings.** Every run ends with one stderr line in the unit's journal, e.g.
+  `fleet-publisher: timings_ms total=19950 homes=14560 status_page=3907 publish=189 ... skipped=screens:cadence,journal:cadence`.
+
 ## Status page sections (`status_page`)
 
 `fleet_status.py` (beside the script; installed as
@@ -507,7 +546,7 @@ and atomically, the images first, beside `home-summary.json`. Nothing is pushed.
   `after-<name>.png`, named exactly as the feed lists them. The dashboard serves
   only what the feed lists.
 - **Cache**: what was fetched per PR head commit is kept in
-  `FLEET_STATE_DIR/screen-changes-cache.json`, so a minute with no new push costs
+  `FLEET_STATE_DIR/screen-changes-cache.json`, so a run with no new push costs
   one `gh pr list` per repo. A run has a 40 s gh budget; a PR not reached is
   picked up on the next run.
 - **Failure**: gh failing on the PR list, or a credential-looking item (withheld),
@@ -516,7 +555,7 @@ and atomically, the images first, beside `home-summary.json`. Nothing is pushed.
 
 ## Activity journal and retro board (`OUT_DIR/journal/`)
 
-`activity_journal.py` (installed as `lifekit-fleet-journal.py`, `FLEET_JOURNAL` overrides) runs at the end of every publisher run. The store is `OUT_DIR/journal/activity.jsonl` (schema `fleet-activity-journal.v1`), on the box's disk under `/var/lib/lifekit-fleet`, never in the vault, so it outlives a publisher restart. The dashboard reads it from there.
+`activity_journal.py` (installed as `lifekit-fleet-journal.py`, `FLEET_JOURNAL` overrides) runs at the end of a publisher run, every `FLEET_JOURNAL_EVERY` seconds (see "Run cadence"). The store is `OUT_DIR/journal/activity.jsonl` (schema `fleet-activity-journal.v1`), on the box's disk under `/var/lib/lifekit-fleet`, never in the vault, so it outlives a publisher restart. The dashboard reads it from there.
 
 - **One row per finished UTC day**, written once the day has been over for `FLEET_JOURNAL_DELAY` seconds (default 7200, after the day's fleet metrics exist). A date that already has a row is never written again, so a rerun adds nothing. After downtime the missing days since the last row are appended (at most 14); the very first run writes yesterday only.
 - **Fields**, all counts or identifiers (no free text): `merged_prs_by_repo` (`{owner/name: n}` from the ledgers' `task.merged` PR URLs), `decisions_owner` (ledger `resolved` lines that carry a decision key), `decisions_taken_for_owner` (`{total, by_ruling}` from `taken-for-you.json`, which keeps the last 200 actions), `failed_tasks` (distinct ledger tasks with a `failed` status), `red_ci_runs` (failed `main` workflow runs through gh over `FLEET_JOURNAL_REPOS`, default the repos the ledger merged into in the prior 14 days), `stalled_task_hours` and `fleet_weighted_tokens` (the day's final non-partial fleet metrics row), `devclaw_sessions`, `openclaw_runs` and `openclaw_errors` (Prometheus `increase` over the day, `FLEET_PROM_URL`), and `clip_stats` (the numeric top-level fields of the JSON at `FLEET_CLIP_STATS`, a path or URL; see below).

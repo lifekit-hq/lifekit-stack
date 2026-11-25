@@ -3241,7 +3241,8 @@ def screen_feed(fleet):
 
 def run_screens(fleet, gh, **env):
     fleet.write(summary())
-    env = {"FLEET_SCREEN_REPOS": SCREEN_REPO, **env}
+    # Every call is a fresh run of the feed: its cadence is covered on its own.
+    env = {"FLEET_SCREEN_REPOS": SCREEN_REPO, "FLEET_SCREENS_EVERY": "0", **env}
     return fleet.run(FLEET_GH=gh, FLEET_SCREEN_HOME="fm-vps", **env)
 
 
@@ -3870,7 +3871,8 @@ def test_publisher_writes_the_activity_journal_once_per_day(fleet):
     store = fleet.out / "journal/activity.jsonl"
     (row,) = [json.loads(x) for x in store.read_text().splitlines()]
     assert row["date"] == "2027-01-14" and row["openclaw_runs"] == "unavailable"
-    assert fleet.run(FLEET_NOW=str(NOW + 60)).returncode == 0
+    again = fleet.run(FLEET_NOW=str(NOW + 60), FLEET_JOURNAL_EVERY="0")
+    assert again.returncode == 0
     assert len(store.read_text().splitlines()) == 1
 
 
@@ -4324,3 +4326,240 @@ def test_an_unset_scout_or_clip_feed_is_said_not_guessed(homes):
     assert page["clip_queue"] is None
     assert page["stalled_sources"]["clip"]["read"] is False
     assert page["stalled_sources"]["scout"]["read"] is False
+
+
+# --- load: a busy host must not starve the stamp ------------------------------
+
+SLOW_STUB = """\
+import os, time
+log = os.environ["SLOW_LOG"]
+prom = open(os.environ["PROM_FILE"]).read()
+fresh = f"fleet_publisher_last_success_timestamp_seconds {os.environ['FLEET_NOW']}" in prom
+with open(log, "a") as f:
+    f.write(f"{os.environ['SLOW_NAME']} {os.environ['FLEET_NOW']} stamp={'fresh' if fresh else 'old'}\\n")
+time.sleep(float(os.environ.get("SLOW_SLEEP", "0")))
+"""
+
+
+def slow_helpers(fleet, sleep="0"):
+    """Stand-ins for the two slow helpers: they log each start and whether the
+    freshness stamp was already published when they began."""
+    log = fleet.tmp / "slow.log"
+    env = {
+        "SLOW_LOG": str(log),
+        "SLOW_SLEEP": sleep,
+        "PROM_FILE": str(fleet.prom / "fleet.prom"),
+    }
+    for name, var in (("screens", "FLEET_SCREENS"), ("journal", "FLEET_JOURNAL")):
+        path = fleet.tmp / f"{name}_stub.py"
+        path.write_text(SLOW_STUB.replace("os.environ['SLOW_NAME']", repr(name)))
+        env[var] = str(path)
+
+    def starts():
+        return log.read_text().splitlines() if log.exists() else []
+
+    return env, starts
+
+
+def timings(result):
+    (line,) = [
+        ln
+        for ln in result.stderr.splitlines()
+        if ln.startswith("fleet-publisher: timings_ms")
+    ]
+    return line
+
+
+def test_slow_sections_follow_their_cadence_and_start_after_the_stamp(fleet):
+    fleet.write(summary())
+    env, starts = slow_helpers(fleet)
+
+    def run(offset):
+        result = fleet.run(FLEET_NOW=str(NOW + offset), **env)
+        assert result.returncode == 0, result.stderr
+        return result
+
+    run(0)
+    assert starts() == [f"screens {NOW} stamp=fresh", f"journal {NOW} stamp=fresh"]
+    skipped = run(60)  # inside both cadences: neither helper starts
+    assert len(starts()) == 2
+    assert "skipped=screens:cadence,journal:cadence" in timings(skipped)
+    run(300)  # the screens cadence (300 s) is due, the journal's (900 s) is not
+    assert starts()[2:] == [f"screens {NOW + 300} stamp=fresh"]
+    run(900)
+    assert starts()[3:] == [
+        f"screens {NOW + 900} stamp=fresh",
+        f"journal {NOW + 900} stamp=fresh",
+    ]
+    # Every run, skipped sections or not, published its stamp.
+    assert (
+        fleet.metrics()["fleet_publisher_last_success_timestamp_seconds"] == NOW + 900
+    )
+
+
+def test_cadence_is_configurable_and_a_clock_step_back_runs_the_section(fleet):
+    fleet.write(summary())
+    env, starts = slow_helpers(fleet)
+    env.update(FLEET_SCREENS_EVERY="30", FLEET_JOURNAL_EVERY="100000")
+    for offset in (0, 30, 40):
+        assert fleet.run(FLEET_NOW=str(NOW + offset), **env).returncode == 0
+    names = [s.split()[0] for s in starts()]
+    assert names == ["screens", "journal", "screens"]
+    # A cadence stamp from the future (the clock stepped back) counts as due:
+    # screens last started at NOW + 40, the journal's stamp is NOW (not due).
+    assert fleet.run(FLEET_NOW=str(NOW), **env).returncode == 0
+    assert [s.split()[0] for s in starts()][3:] == ["screens"]
+
+
+def test_a_run_past_its_slow_budget_skips_the_slow_sections_and_keeps_them_due(fleet):
+    fleet.write(summary())
+    env, starts = slow_helpers(fleet)
+    late = fleet.run(FLEET_SLOW_BUDGET="-1", **env)
+    assert late.returncode == 0, late.stderr
+    assert starts() == []
+    assert "skipped=screens:budget,journal:budget" in timings(late)
+    assert fleet.metrics()["fleet_publisher_last_success_timestamp_seconds"] == NOW
+    # A budget skip leaves no cadence stamp, so the next run starts them.
+    assert fleet.run(**env).returncode == 0
+    assert [s.split()[0] for s in starts()] == ["screens", "journal"]
+
+
+def test_cheap_path_stays_small_when_the_slow_sections_are_skipped(fleet):
+    fleet.write(summary())
+    env, starts = slow_helpers(fleet, sleep="60")  # a loaded host's slow helper
+    state = fleet.tmp / "state"
+    state.mkdir()
+    for name in ("screens", "journal"):
+        (state / f"cadence-{name}").write_text(f"{NOW}\n")
+    began = time.monotonic()
+    result = fleet.run(**env)
+    elapsed = time.monotonic() - began
+    assert result.returncode == 0, result.stderr
+    assert starts() == []
+    assert elapsed < 20, f"cheap path took {elapsed:.1f}s"
+    total_ms = int(timings(result).split("total=")[1].split()[0])
+    assert total_ms < 20_000
+    assert fleet.metrics()["fleet_publisher_last_success_timestamp_seconds"] == NOW
+
+
+def test_every_section_is_timed_on_the_timings_line(fleet):
+    fleet.write(summary())
+    line = timings(fleet.run())
+    for section in (
+        "homes",
+        "status_page",
+        "publish",
+        "daily",
+        "quota",
+        "taken",
+        "screens",
+        "journal",
+    ):
+        assert f" {section}=" in line
+
+
+# --- the run owns its working directory ----------------------------------------
+
+SWEEPS_TMP = (
+    'rm -rf "$SWEEP_DIR"/tmp.* "$SWEEP_DIR"/.[!.]* 2>/dev/null\n'
+    'case "$1 $2" in "binding lavish-bound"|"binding lavish-wrong") echo "(any)";; *) exit 1;; esac'
+)
+
+
+def test_a_tmp_cleaner_cannot_take_the_working_directory_mid_run(fleet):
+    # The failure seen on a busy host: something cleared /tmp/tmp.* while the run
+    # was between two steps, and the next write into it died on "No such file".
+    scratch = fleet.tmp / "scratch"
+    scratch.mkdir()
+    hold = stub(fleet.tmp / "hold.sh", SWEEPS_TMP)
+    tasks = stub(fleet.tmp / "tasks.sh", TASKS_AXI_ONLY_FROM_FM_HOME)
+    bound_board_fleet(fleet)
+    result = fleet.run(
+        CAPTAIN_HOLD=hold,
+        TASKS_AXI=tasks,
+        FM_HOME=str(fleet.tmp),
+        EXPECTED_PWD=str(fleet.tmp),
+        TMPDIR=str(scratch),
+        SWEEP_DIR=str(scratch),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "bound.tsv" not in result.stderr
+    urls = {d["id"]: d["board_url"] for d in fleet.published()["decisions_open"]}
+    assert urls == {
+        "held-call": "http://board/bound",
+        "other-call": "http://board/bound",
+    }
+    # Nothing was made in the shared temp dir, and the run's own dir is gone.
+    assert list(scratch.iterdir()) == []
+    assert not [p for p in fleet.out.iterdir() if p.name.startswith(".")]
+
+
+def test_a_working_directory_a_killed_run_left_behind_is_removed_after_a_day(fleet):
+    fleet.write(summary())
+    old, fresh = fleet.out / ".work.old123", fleet.out / ".work.new456"
+    for d in (old, fresh):
+        d.mkdir()
+        (d / "bound.tsv").write_text("x")
+    two_days_ago = time.time() - 2 * 86400
+    os.utime(old, (two_days_ago, two_days_ago))
+    assert fleet.run().returncode == 0
+    assert not old.exists()
+    assert fresh.exists()  # could belong to a run still going
+
+
+# --- a failed run still moves the stamp ----------------------------------------
+
+
+def write_a_summary_whose_publish_fails(fleet, **overrides):
+    """The home's own file is fine, but the board address it joins in looks like a
+    credential, so the run refuses the merged summary (exit 3) after reading
+    everything and before it replaces fleet.prom."""
+    data = fleet.tmp / "data"
+    fleet.write(
+        summary(decisions_open=[decision("d1")], **overrides),
+        lavish=[session(f"{data}/d1/board.html", "http://board/ghp_" + "a" * 24)],
+    )
+
+
+def test_a_failed_run_does_not_leave_the_previous_stamp_to_age(fleet):
+    fleet.write(summary(generated_epoch=NOW - 3000))
+    assert fleet.run(FLEET_NOW=str(NOW - 600)).returncode == 0
+    assert fleet.metrics()["fleet_summary_generated_timestamp_seconds"] == NOW - 3000
+    # The home refreshes its own summary; the next publish then fails.
+    write_a_summary_whose_publish_fails(fleet, generated_epoch=NOW - 20)
+    result = fleet.run()
+    assert result.returncode == 3
+    assert "freshness gauges were refreshed" in result.stderr
+    m = fleet.metrics()
+    home = fleet.tmp.name
+    assert m["fleet_summary_generated_timestamp_seconds"] == NOW - 20
+    assert (
+        m[f'fleet_home_summary_generated_timestamp_seconds{{home="{home}"}}']
+        == NOW - 20
+    )
+    assert m["fleet_summary_valid"] == 1
+    # Everything else is the last good run's, including its success time.
+    assert m["fleet_publisher_last_success_timestamp_seconds"] == NOW - 600
+    assert m['fleet_workers{state="working"}'] == 2
+    assert not [p for p in fleet.prom.iterdir() if p.name != "fleet.prom"]
+
+
+def test_a_failed_run_reports_an_invalid_home_invalid_not_fresh(fleet):
+    fleet.write(summary())
+    assert fleet.run(FLEET_NOW=str(NOW - 600)).returncode == 0
+    write_a_summary_whose_publish_fails(
+        fleet, generated_epoch=NOW - 20, valid=False, reason="stuck"
+    )
+    assert fleet.run().returncode == 3
+    m = fleet.metrics()
+    assert m["fleet_summary_valid"] == 0
+    assert m["fleet_summary_generated_timestamp_seconds"] == NOW - 20
+
+
+def test_a_failed_run_with_no_readable_home_leaves_fleet_prom_alone(fleet):
+    fleet.write(summary())
+    assert fleet.run().returncode == 0
+    before = (fleet.prom / "fleet.prom").read_text()
+    fleet.write("not json")
+    assert fleet.run(FLEET_NOW=str(NOW + 600)).returncode != 0
+    assert (fleet.prom / "fleet.prom").read_text() == before
