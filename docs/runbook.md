@@ -6228,7 +6228,7 @@ old sessions.
   mtime stays honest for `textfile-collector-stale`), prints one journal line and exits
   0 while that file is younger than 30 minutes (`OPENCLAW_SPEND_STALE_SECONDS`, three
   passes). A gateway down longer than that, no metric file at all, or any real read
-  error (e.g. "gateway busy" after the bounded retries) exits 2 and fails the unit.
+  error (a config read that still fails after the bounded retries) exits 2 and fails the unit.
 - **Alerts** (Grafana group `openclaw`, existing Telegram contact point; only
   `critical` pages the phone, the rest reach the fleet inbox):
   `openclaw-api-credit-50` (warning), `openclaw-api-credit-75` and

@@ -27,8 +27,8 @@ runtime default applies), not an unreadable one. A gateway that is restarting
 (container not running, exec refused; auth-mode.sh exits 3) is tolerated: the pass
 leaves the last metric file untouched (so it is not stamped fresh), prints one
 line and exits 0 while that file is younger than STALE_SECONDS (30 min, three
-passes); older than that, or on any real read error, it exits 2. When only the mode cannot be read (auth-mode.sh retries its reads
-first) the pass still writes a fresh textfile - openclaw_api_auth_mode{mode=
+passes); older than that, or on any real read error, it exits 2.
+When only the mode cannot be read (auth-mode.sh retries its reads first) the pass still writes a fresh textfile - openclaw_api_auth_mode{mode=
 "unreadable"} 1, no billing sample, the spend metrics when the estimate worked -
 so the metric is not stale, and exits 2. A broken config file writes nothing.
 
