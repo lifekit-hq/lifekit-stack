@@ -41,7 +41,14 @@
 #      AUTH_MODE_SLEEP (5 s poll), SPEND_GUARD (path of spend_guard.py),
 #      AUTH_MODE_READ_TRIES (3), AUTH_MODE_READ_TIMEOUT (120 s per attempt),
 #      AUTH_MODE_READ_RETRY_SLEEP (5 s) - the bounded retry of each live config read.
-# Exit: 0 done, 1 failed or rolled back, 2 cannot run or refused.
+# Exit: 0 done, 1 failed or rolled back, 2 cannot run or refused, 3 the gateway is
+#       not reachable right now (container missing, restarting or refusing exec: a
+#       deploy restart takes a minute or two; the spend guard holds its last metric
+#       on 3 instead of failing its unit).
+# A config path OpenClaw reports as "valid but unset" (auth, when never written) is a
+# valid read: the runtime default applies. It reads as {}, the mode is resolved from the
+# agents as usual, and the one line "auth config unset ... runtime default applies" says
+# so on stderr (status --json: authSource "default").
 set -euo pipefail
 
 DOCKER="${DOCKER:-docker}"
@@ -83,7 +90,10 @@ done
 cid="$("$DOCKER" ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)" ||
   die "docker ps failed"
-[[ -n "$cid" ]] || die "no running openclaw-gateway container"
+if [[ -z "$cid" ]]; then
+  say "gateway unavailable: no running openclaw-gateway container"
+  exit 3
+fi
 
 oc() { "$DOCKER" exec -i "$cid" openclaw "$@"; }
 work="$(mktemp -d)"
@@ -96,13 +106,19 @@ trap 'rm -rf "$work"' EXIT
 # then (slow SQLite transactions), so each read is retried a bounded number of
 # times, each attempt under a timeout, and the last error is kept for the message.
 #
-# read_config KEY -> $work/KEY.json; on failure $work/KEY.err holds the last error
+# read_config KEY -> $work/KEY.json; on failure $work/KEY.err holds the last error.
+# A path that is "valid but unset" reads as {} (marker $work/KEY.unset) and is not retried.
 read_config() {
   local key="$1" try=1 rc=0
   while :; do
     timeout "$READ_TIMEOUT" "$DOCKER" exec -i "$cid" openclaw config get "$key" \
       > "$work/$key.json" 2> "$work/$key.err" && return 0
     rc=$?
+    if grep -q 'valid but unset' "$work/$key.err"; then
+      echo '{}' > "$work/$key.json"
+      : > "$work/$key.unset"
+      return 0
+    fi
     ((rc != 124)) || echo "timed out after ${READ_TIMEOUT}s" >> "$work/$key.err"
     ((try < READ_TRIES)) || return 1
     sleep "$READ_RETRY_SLEEP"
@@ -113,18 +129,36 @@ read_config() {
 # last_error KEY -> the last non-empty line of the read's stderr, one line
 last_error() { grep -v '^[[:space:]]*$' "$work/$1.err" 2> /dev/null | tail -n 1 | cut -c1-300 || true; }
 
+# read_failed KEY -> exit 3 when the last error says the gateway is restarting or
+# refusing exec (container not running), else exit 2 for a real read error
+read_failed() {
+  local key="$1" msg
+  msg="cannot read the live $key config through the gateway (after $READ_TRIES tries): $(last_error "$key")"
+  if grep -qiE 'Error response from daemon|is not running|is restarting|No such container' "$work/$key.err"; then
+    say "gateway unavailable: $msg"
+    exit 3
+  fi
+  die "$msg"
+}
+
 # live_config -> the agents + auth halves of the live config, as one JSON object
+# (authSource: "default" when auth was unset and the runtime default applies)
 live_config() {
-  local pa pb
+  local pa pb source=config
+  rm -f "$work/agents.unset" "$work/auth.unset"
   read_config agents &
   pa=$!
   read_config auth &
   pb=$!
-  wait "$pa" || die "cannot read the live agents config through the gateway (after $READ_TRIES tries): $(last_error agents)"
-  wait "$pb" || die "cannot read the live auth config through the gateway (after $READ_TRIES tries): $(last_error auth)"
-  jq -n -c --slurpfile agents "$work/agents.json" --slurpfile auth "$work/auth.json" \
+  wait "$pa" || read_failed agents
+  wait "$pb" || read_failed auth
+  if [[ -e "$work/auth.unset" ]]; then
+    source=default
+    say "auth config unset: the runtime default applies; the mode is resolved from the agents' runtimes"
+  fi
+  jq -n -c --arg source "$source" --slurpfile agents "$work/agents.json" --slurpfile auth "$work/auth.json" \
     'if ($agents[0] | type) == "object" and ($auth[0] | type) == "object"
-     then {agents: $agents[0], auth: $auth[0]} else error("not objects") end' ||
+     then {agents: $agents[0], auth: $auth[0], authSource: $source} else error("not objects") end' ||
     die "the live config read through the gateway is not valid"
 }
 
@@ -178,10 +212,10 @@ spend_json() {
 
 build_state() {
   local live agents_state
-  live="$(live_config)" || exit 2
+  live="$(live_config)" || exit $?
   agents_state="$(key_states "$live")" || exit 2
   jq -c -n --argjson live "$live" --arg mode "$(mode_of "$live")" --argjson agents "$agents_state" '
-    {mode: $mode,
+    {mode: $mode, authSource: ($live.authSource // "config"),
      runtimes: ([ ($live.agents.defaults.models // {}), (($live.agents.entries // {}) | to_entries[] | .value.models // {}) ]
        | map(to_entries[] | select(.key | startswith("anthropic/")) | (.value.agentRuntime.id // "default"))
        | group_by(.) | map({key: .[0], value: length}) | from_entries),
@@ -210,7 +244,7 @@ cmd_status() {
   jq -r '
     "mode: \(.mode)",
     "anthropic model runtimes: " + ([.runtimes | to_entries[] | "\(.key) x\(.value)"] | join(", ")),
-    "auth.order.anthropic: " + (if (.authOrder | length) == 0 then "(empty)" else (.authOrder | join(", ")) end),
+    "auth.order.anthropic: " + (if .authSource == "default" then "(auth unset, runtime default applies)" elif (.authOrder | length) == 0 then "(empty)" else (.authOrder | join(", ")) end),
     (.agents[] | "agent \(.agent): key profile \(if .profile then "present" else "missing" end)" +
        (if (.disabled | length) > 0 then ", DISABLED (\(.disabled | join(", ")))" else "" end)),
     (if .probe then "key probe: \(.probe.result)" + (if .probe.http then " (http \(.probe.http))" else "" end) else empty end),
@@ -337,7 +371,7 @@ provider_of() { [[ "$1" == api ]] && echo anthropic || echo claude-cli; }
 # returns 3 when none lacks it. Names only the ref id, never a value.
 build_plan() {
   local live states a missing targets="[]"
-  live="$(live_config)" || exit 2
+  live="$(live_config)" || exit $?
   states="$(key_states "$live")" || exit 2
   mapfile -t missing < <(jq -r '.[] | select(.profile | not) | .agent' <<< "$states")
   if ((${#missing[@]} == 0)); then
@@ -446,7 +480,7 @@ offline_profiles() {
 # switch_to api|subscription
 switch_to() {
   local target="$1" live patch rollback pending changed=0
-  live="$(live_config)" || exit 2
+  live="$(live_config)" || exit $?
   patch="$(patch_for "$target" "$live")"
   rollback="$(rollback_for "$patch" "$live")"
   pending="$(pending_paths "$patch" "$live")"
@@ -502,7 +536,7 @@ cmd_api() {
 case "$cmd" in
   status) cmd_status ;;
   mode)
-    live="$(live_config)" || exit 2
+    live="$(live_config)" || exit $?
     mode_of "$live"
     ;;
   probe) probe_key ;;
