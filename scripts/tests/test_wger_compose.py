@@ -231,6 +231,7 @@ def test_rendered_keypair_loads_as_pem_and_round_trips(tmp_path):
     pytest.importorskip("cryptography")
     import jwt
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     priv, pub = _jwk_pair()
     # The render writes `NAME=value` lines (sops dotenv -> stack.env); compose
@@ -244,10 +245,11 @@ def test_rendered_keypair_loads_as_pem_and_round_trips(tmp_path):
 
     private_pem = _jwk_b64_to_pem(rendered["WGER_JWT_PRIVATE_KEY"])
     public_pem = _jwk_b64_to_pem(rendered["WGER_JWT_PUBLIC_KEY"])
-    assert private_pem.startswith(b"-----BEGIN PRIVATE KEY-----")
-    assert public_pem.startswith(b"-----BEGIN PUBLIC KEY-----")
-    serialization.load_pem_private_key(private_pem, password=None)
-    serialization.load_pem_public_key(public_pem)
+    assert isinstance(
+        serialization.load_pem_private_key(private_pem, password=None),
+        rsa.RSAPrivateKey,
+    )
+    assert isinstance(serialization.load_pem_public_key(public_pem), rsa.RSAPublicKey)
 
     token = jwt.encode({"sub": "owner"}, private_pem, algorithm="RS256")
     assert jwt.decode(token, public_pem, algorithms=["RS256"])["sub"] == "owner"
