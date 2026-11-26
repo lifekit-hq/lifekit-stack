@@ -196,9 +196,8 @@ sys.stdout.write("\n")
     fi
     read_body
     status=0
-    # Nothing inherited here either; tasks-axi's own dir leads PATH so its
-    # interpreter (node) resolves the way it does for the operator.
-    env -i HOME="$HOME" PATH="${TASKS_AXI_BIN%/*}:/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 \
+    # Nothing inherited here either; kit_held.py puts tasks-axi's dir first on PATH.
+    env -i HOME="$HOME" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
       FM_HOME="$FM_HOME" TASKS_AXI="$TASKS_AXI_BIN" KIT_HELD_STATE="$HELD_STATE" \
       python3 "$HELD_BIN" file --request-id "$rid" <"$tmp" || status=$?
     say_log "hold rid=$rid bytes=$size sha256=$sha exit=$status$HOME_LOG"

@@ -143,6 +143,29 @@ class Hub:
         d[item]["state"] = "closed"
         (self.state / "hub.json").write_text(json.dumps(d))
 
+    def archive(self, item: str) -> None:
+        """Done retention moves an answered item out of the backlog; the
+        hub's `open` predicate then reads it as absent (exit 3)."""
+        d = self.items()
+        del d[item]
+        (self.state / "hub.json").write_text(json.dumps(d))
+
+    def calls(self) -> list[list[str]]:
+        path = self.state / "calls.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    def need_tasks_axi_on_path(self) -> None:
+        """fm-captain-hold.sh finds tasks-axi through PATH, as the real one does."""
+        hold = self.home / "bin/fm-captain-hold.sh"
+        hold.rename(self.home / "bin/hold-stub")
+        write_exec(
+            hold,
+            "#!/bin/sh\ncommand -v tasks-axi >/dev/null || exit 127\n"
+            f'exec "{self.home}/bin/hold-stub" "$@"\n',
+        )
+
 
 @pytest.fixture
 def hub(tmp_path):
@@ -197,6 +220,37 @@ def test_a_repeat_of_an_answered_item_opens_a_new_one_naming_it(hub):
     assert r["repeat_of"] == "held-coach-learnclaw-context"
     new = hub.items()["held-coach-learnclaw-context-2"]
     assert "Repeat of held-coach-learnclaw-context" in new["reason"]
+
+
+def test_a_repeat_of_an_answered_and_archived_item_still_names_it(hub):
+    receipt(hub.file(held()))
+    hub.close("held-coach-learnclaw-context")
+    hub.archive("held-coach-learnclaw-context")
+    r = receipt(hub.file(held()))
+    assert r["id"] == "held-coach-learnclaw-context-2"
+    assert r["state"] == "submitted"
+    assert r["repeat_of"] == "held-coach-learnclaw-context"
+    second = hub.items()["held-coach-learnclaw-context-2"]
+    assert "Repeat of held-coach-learnclaw-context" in second["reason"]
+    hub.close("held-coach-learnclaw-context-2")
+    hub.archive("held-coach-learnclaw-context-2")
+    third = receipt(hub.file(held()))
+    assert third["id"] == "held-coach-learnclaw-context-3"
+    assert third["repeat_of"] == "held-coach-learnclaw-context-2"
+
+
+def test_filing_finds_tasks_axi_through_its_absolute_path(hub):
+    hub.need_tasks_axi_on_path()
+    env = {**hub.env, "PATH": "/usr/bin:/bin"}
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT), "file"],
+        input=held(),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert receipt(r)["id"] == "held-coach-learnclaw-context"
 
 
 @pytest.mark.parametrize("owner", ["kit", "Kit", "me", "self"])
@@ -257,7 +311,7 @@ def test_no_home_is_exit_78(hub):
 NOW = int(dt.datetime(2026, 11, 26, 12, tzinfo=dt.timezone.utc).timestamp())
 
 
-def check(hub, notes: Path, *extra: str) -> list[dict]:
+def check(hub, notes: Path, *extra: str, env: dict | None = None) -> list[dict]:
     r = subprocess.run(
         [
             sys.executable,
@@ -271,7 +325,7 @@ def check(hub, notes: Path, *extra: str) -> list[dict]:
             str(hub.tmp / "seen.json"),
             *extra,
         ],
-        env=hub.env,
+        env=env or hub.env,
         capture_output=True,
         text=True,
         check=False,
@@ -324,6 +378,38 @@ def test_the_check_keeps_the_first_seen_time_and_drops_a_filed_item(hub, tmp_pat
     )
     assert check(hub, notes, "--now", str(NOW + 31 * 3600)) == []
     assert json.loads((hub.tmp / "seen.json").read_text()) == {}
+
+
+def test_the_check_does_not_list_a_line_whose_item_was_answered_and_archived(
+    hub, tmp_path
+):
+    receipt(hub.file(held()))
+    hub.close("held-coach-learnclaw-context")
+    hub.archive("held-coach-learnclaw-context")
+    notes = tmp_path / "memory"
+    notes.mkdir()
+    (notes / "2026-11-25.md").write_text(
+        "- [ ] for firstmate: share the coach context"
+        " (shaping: held-coach-learnclaw-context)\n"
+    )
+    before = len(hub.calls())
+    assert check(hub, notes, "--now", str(NOW + 48 * 3600)) == []
+    assert hub.calls()[before:] == []
+
+
+def test_the_check_asks_the_hub_once_per_mark_with_tasks_axi_off_path(hub, tmp_path):
+    hub.need_tasks_axi_on_path()
+    notes = tmp_path / "memory"
+    notes.mkdir()
+    (notes / "2026-11-25.md").write_text(
+        "- [ ] for firstmate: one (shaping: held-nothing)\n"
+        "- [ ] for devclaw: two (shaping: held-nothing)\n"
+    )
+    found = check(
+        hub, notes, "--now", str(NOW), env={**hub.env, "PATH": "/usr/bin:/bin"}
+    )
+    assert [f["title"] for f in found] == ["for firstmate: one", "for devclaw: two"]
+    assert hub.calls() == [["hold", "open", "held-nothing", "--distinguish-absent"]]
 
 
 def test_the_check_reads_only_recent_notes(hub, tmp_path):

@@ -2451,14 +2451,18 @@ daily-note template in Kit's `AGENTS.md` ("Daily notes").
   and the six envelope fields. The same fingerprint while it is open retitles it with
   `(seen <n>x)` and files nothing new (receipt `working`); once the owner has answered it,
   the next repeat opens `held-<fingerprint>-2` whose reason names the first. The same text
-  sent again the same UTC day is a replay: same receipt, no count.
+  sent again the same UTC day is a replay: same receipt, no count. Each filing is kept in
+  `filed.json` of the state dir (item base, fingerprint, chain length, filed date), since
+  the hub archives an answered item and then reads it as absent; the repeat chain and the
+  check both read it.
 - **A reminder to Kit itself** (owner `kit`, `me`, `self`) is refused with exit 65 by the
   client and the host alike; it stays in the note as a `for kit:` line.
 - **The safety net.** `kit_held.py check --notes <Kit's memory dir> --home <home> [--home
   <home>] --seen <state file>` lists the open lines of the last 7 days of daily notes (an
   unchecked `- [ ]` line or a `Next:` line) that name a fleet task (`for <owner>:` with an
   owner other than Kit, or a mention of firstmate, the second mate, devclaw, the fleet or a
-  `task:` note) and carry no `(shaping: <id>)` of an item that exists in one of the homes.
+  `task:` note) and carry no `(shaping: <id>)` of an item in `filed.json` or in one of the
+  homes.
   The fleet publisher reads it through `FLEET_KIT_HELD_CMD` and marks each one stalled after
   `kit_held.hours` (24) of `fleet-stalled.json` (scripts/fleet-publisher/README.md, "Stalled
   items").
@@ -2476,9 +2480,12 @@ daily-note template in Kit's `AGENTS.md` ("Daily notes").
 2. Point the fleet publisher at the check with a systemd drop-in on its unit:
    ```ini
    [Service]
-   Environment="FLEET_KIT_HELD_CMD=python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py check --notes /srv/memory/agents/kit/memory --home <second-mate home> --home <main home> --seen /var/lib/lifekit-fleet/kit-held-seen.json"
+   Environment="FLEET_KIT_HELD_CMD=python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py check --notes /srv/memory/agents/kit/memory --home <main home> --home <second-mate home> --seen /var/lib/lifekit-fleet/kit-held-seen.json"
    ```
-   The unit's `TASKS_AXI` already reaches the check. Unset, `stalled_sources.kit_held` says
+   The unit's `TASKS_AXI` already reaches the check, and the unit runs as the admin
+   account, the relay's account too, so the check reads the same
+   `~/.local/state/lifekit-kit-held/filed.json` the hold verb writes. The main home leads
+   because Kit holds there (`relay.sh hold ... firstmate`). Unset, `stalled_sources.kit_held` says
    `read: false`.
 
 Verify: `relay.sh hold` with the six flags prints `"state":"submitted"` and the item shows

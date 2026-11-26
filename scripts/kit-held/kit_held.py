@@ -30,7 +30,10 @@ look (lifekit-stack#684, gap G1 of vault decision 0019). Two verbs:
           receipt `{"id","url","state","count"}`; state `submitted` for a new
           item, `working` for a repeat or a replay. A request id seen before
           (`--request-id`, the relay's retry of the same text) is a replay: the
-          same receipt, no second count.
+          same receipt, no second count. Every filing is kept in the record
+          `filed.json` (KIT_HELD_STATE): per item base its fingerprint, chain
+          length and filed date, because the hub archives answered items and
+          its own state then reads them as absent.
 
   check   the safety net. Lists the open items in Kit's daily notes
           (`--notes`, the dir of `YYYY-MM-DD.md` files) that name a fleet task
@@ -45,12 +48,15 @@ look (lifekit-stack#684, gap G1 of vault decision 0019). Two verbs:
           owner other than Kit, or mentions firstmate, the second mate,
           devclaw, the fleet or a `task:` note. `for kit:` (or `for me:`) is a
           reminder to Kit itself and never listed. It has a shaping item when
-          it carries `(shaping: <item id>)` and that item exists in one of the
-          homes (`--home`, repeatable; closed counts, it was answered).
+          it carries `(shaping: <item id>)` and that item is in the record
+          or exists in one of the homes (`--home`, repeatable; closed counts,
+          it was answered).
 
 Environment: FM_HOME (file: the firstmate home holding the hold), TASKS_AXI
-(the tasks-axi command, default `tasks-axi`), KIT_HELD_STATE (file: where the
-seen request ids live, default ~/.local/state/lifekit-kit-held).
+(the tasks-axi command, default `tasks-axi`; an absolute one puts its directory
+first on PATH, where fm-captain-hold.sh finds it), KIT_HELD_STATE (where the
+seen request ids and the record live, default ~/.local/state/lifekit-kit-held;
+`check` reads the record, so it runs with the same one).
 
 Usage: kit_held.py file [--request-id ID]           (held item on stdin)
        kit_held.py check --notes DIR --home DIR [--home DIR ...] [--seen FILE]
@@ -189,6 +195,29 @@ def state_dir() -> Path:
     )
 
 
+def load_filed() -> dict[str, dict[str, object]]:
+    """The record of filed items: base id -> {fingerprint, chain, filed}."""
+    try:
+        loaded = json.loads((state_dir() / "filed.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    if not isinstance(loaded, dict):
+        raise ValueError("filed.json is not a JSON object")
+    return {
+        k: v
+        for k, v in loaded.items()
+        if isinstance(v, dict) and isinstance(v.get("chain"), int)
+    }
+
+
+def filed_ids(record: dict[str, dict[str, object]]) -> set[str]:
+    return {
+        item_id(base, n)
+        for base, entry in record.items()
+        for n in range(1, int(entry["chain"]) + 1)
+    }
+
+
 def file_item(raw: str, hub: Hub, request_id: str | None) -> dict[str, object]:
     """Open or count the shaping item; returns the receipt."""
     env, text = parse_item(raw)
@@ -199,7 +228,8 @@ def file_item(raw: str, hub: Hub, request_id: str | None) -> dict[str, object]:
             known = json.loads(marker.read_text(encoding="utf-8"))
             return {**known, "state": "working", "replay": True}
     base = "held-" + slug(env["fingerprint"])[:60].strip("-")
-    seen = 0
+    record = load_filed()
+    seen = int(record.get(base, {}).get("chain", 0))
     while hub.state(item_id(base, seen + 1)) != "absent":
         seen += 1
         if seen >= MAX_CHAIN:
@@ -214,10 +244,17 @@ def file_item(raw: str, hub: Hub, request_id: str | None) -> dict[str, object]:
         state = "working"
     else:
         previous = item_id(base, seen) if seen else None
-        item = item_id(base, seen + 1)
+        seen += 1
+        item = item_id(base, seen)
         count = 1
         hub.hold(item, held_title(env, text, 1), held_reason(env, text, previous))
         state = "submitted"
+    record[base] = {
+        "fingerprint": env["fingerprint"],
+        "chain": seen,
+        "filed": dt.datetime.now(dt.timezone.utc).date().isoformat(),
+    }
+    write_json(state_dir() / "filed.json", record)
     receipt: dict[str, object] = {
         "id": item,
         "url": f"calls:{Path(hub.home).name}/{item}",
@@ -227,11 +264,15 @@ def file_item(raw: str, hub: Hub, request_id: str | None) -> dict[str, object]:
     if previous:
         receipt["repeat_of"] = previous
     if marker is not None:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        tmp = marker.with_suffix(".tmp")
-        tmp.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
-        tmp.replace(marker)
+        write_json(marker, receipt)
     return receipt
+
+
+def write_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 def cmd_file(args: argparse.Namespace) -> int:
@@ -294,10 +335,6 @@ def note_items(path: Path, day: str) -> list[dict[str, str]]:
     return out
 
 
-def has_item(hubs: list[Hub], item: str) -> bool:
-    return any(h.state(item) != "absent" for h in hubs)
-
-
 def cmd_check(args: argparse.Namespace) -> int:
     now = int(args.now if args.now is not None else time.time())
     notes = Path(args.notes)
@@ -319,8 +356,9 @@ def cmd_check(args: argparse.Namespace) -> int:
             log(f"{seen_path}: {error.__class__.__name__}; starting a new record")
     try:
         files = sorted(p for p in notes.iterdir() if NOTE_RE.match(p.name))
-    except OSError as error:
-        log(f"{notes}: {error}")
+        known = {ref: True for ref in filed_ids(load_filed())}
+    except (OSError, ValueError) as error:
+        log(f"{error}")
         return 1
     found = []
     failed = False
@@ -335,8 +373,11 @@ def cmd_check(args: argparse.Namespace) -> int:
             failed = True
             continue
         for it in items:
+            ref = it["ref"]
             try:
-                if it["ref"] and has_item(hubs, it["ref"]):
+                if ref and ref not in known:
+                    known[ref] = any(h.state(ref) != "absent" for h in hubs)
+                if ref and known[ref]:
                     continue
             except (RuntimeError, OSError, subprocess.SubprocessError) as error:
                 log(str(error))
@@ -353,10 +394,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         live = {it["id"] for it in found}
         kept = {k: v for k, v in seen.items() if k in live}
         try:
-            seen_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = seen_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(kept, sort_keys=True) + "\n", encoding="utf-8")
-            tmp.replace(seen_path)
+            write_json(seen_path, kept)
         except OSError as error:
             log(f"{seen_path}: {error}")
     print(json.dumps(found, separators=(",", ":")))
@@ -378,6 +416,9 @@ def main(argv: list[str]) -> int:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return 64 if exc.code else 0
+    tasks = os.environ.get("TASKS_AXI", "")
+    if os.path.isabs(tasks):
+        os.environ["PATH"] = f"{os.path.dirname(tasks)}:{os.environ.get('PATH', '')}"
     return cmd_file(args) if args.verb == "file" else cmd_check(args)
 
 
