@@ -4218,6 +4218,10 @@ def test_a_healthy_clip_channel_is_published_not_stalled(homes):
         "stalled": False,
         "stalled_reason": None,
         "unavailable": [],
+        "owner": "clip",
+        "class": "ops",
+        "store": "clip-queue",
+        "ref": "cosmos",
     }
     assert [
         i for g in page["stalled"] for i in g["items"] if i["source"] == "clip"
@@ -4326,6 +4330,137 @@ def test_an_unset_scout_or_clip_feed_is_said_not_guessed(homes):
     assert page["clip_queue"] is None
     assert page["stalled_sources"]["clip"]["read"] is False
     assert page["stalled_sources"]["scout"]["read"] is False
+
+
+# --- queue items: the 0019 envelope on finance, needs-you and clip records -------
+
+
+def test_every_clip_channel_row_carries_the_envelope_and_no_acceptance(homes):
+    env = clip_world(homes, {"cosmos": clip_channel()})
+    _, rows = clip_rows(homes, env)
+    for name, row in rows.items():
+        assert row["owner"] == "clip" and row["class"] == "ops"
+        assert row["store"] == "clip-queue" and row["ref"] == name
+        assert "acceptance" not in row
+
+
+def items_by_id(page):
+    return {i["id"]: i for i in page["items"]}
+
+
+def test_finance_items_carry_the_envelope_and_their_own_acceptance(homes):
+    feed = homes.tmp / "finance.json"
+    feed.write_text(
+        json.dumps(
+            [
+                {
+                    "kind": "thesis-revision",
+                    "id": 41,
+                    "title": "Revise  the thesis\nfor ACME",
+                    "acceptance": "The revised thesis is confirmed or rejected",
+                    "url": "https://finance.example/research/thesis-revisions/41",
+                    "since": "2027-01-14T08:00:00Z",
+                },
+                {"kind": "alert", "id": "a-7", "title": "Balance below floor"},
+                {"kind": "not-a-kind", "id": "x", "title": "skipped"},
+                {"kind": "recommendation", "title": "no id: skipped"},
+                "garbage",
+            ]
+        )
+    )
+    env = {"FLEET_NOW": str(NOW), "FLEET_FINANCE_CMD": f"cat {feed}"}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["finance"] == {"read": True, "reason": None}
+    got = items_by_id(page)
+    assert set(got) == {
+        "finance-db:thesis-revision/41",
+        "finance-db:alert/a-7",
+    }
+    assert got["finance-db:thesis-revision/41"] == {
+        "id": "finance-db:thesis-revision/41",
+        "source": "finance",
+        "kind": "thesis-revision",
+        "title": "Revise the thesis for ACME",
+        "owner": "finance",
+        "class": "finance",
+        "store": "finance-db",
+        "ref": "https://finance.example/research/thesis-revisions/41",
+        "since": NOW - DAY,  # NOW is 2027-01-15T08:00:00Z
+        "acceptance": "The revised thesis is confirmed or rejected",
+    }
+    # No acceptance and no URL in the source: published without the key, ref the
+    # native id, never a failure.
+    alert = got["finance-db:alert/a-7"]
+    assert "acceptance" not in alert
+    assert alert["ref"] == "alert/a-7" and alert["since"] is None
+    assert alert["owner"] == "finance" and alert["class"] == "finance"
+    assert page["errors"] == []
+
+
+def test_needs_you_decisions_are_kits_life_items_without_acceptance(homes):
+    ledger = homes.tmp / "kit/needs-you/open.json"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "dentist-slot",
+                    "ask": "Book the Tuesday or the Friday dentist slot?",
+                    "options": ["Tuesday", "Friday"],
+                    "origin": "telegram",
+                    "opened": "2027-01-10",
+                },
+                {"ask": "no id: skipped"},
+            ]
+        )
+    )
+    before = ledger.read_bytes()
+    env = {"FLEET_NOW": str(NOW), "FLEET_NEEDS_YOU_LEDGER": str(ledger)}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["needs_you"] == {"read": True, "reason": None}
+    assert page["items"] == [
+        {
+            "id": "needs-you:dentist-slot",
+            "source": "needs-you",
+            "kind": "decision",
+            "title": "Book the Tuesday or the Friday dentist slot?",
+            "owner": "kit",
+            "class": "life",
+            "store": "needs-you",
+            "ref": "dentist-slot",
+            "since": NOW - 5 * DAY - 8 * 3600,  # 2027-01-10
+            "origin": "telegram",
+        }
+    ]
+    assert ledger.read_bytes() == before  # read-only
+
+
+def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
+    assert homes.run(side_home(homes), FLEET_NOW=str(NOW)).returncode == 0
+    page = status(homes)
+    assert page["schema"] == "fleet-status-page.v1"
+    assert page["items"] == []
+    assert page["item_sources"] == {
+        "finance": {"read": False, "reason": "FLEET_FINANCE_CMD is not set"},
+        "needs_you": {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"},
+    }
+    assert page["errors"] == []
+
+
+def test_a_missing_ledger_is_empty_and_a_broken_source_is_an_error(homes):
+    env = {
+        "FLEET_NOW": str(NOW),
+        "FLEET_NEEDS_YOU_LEDGER": str(homes.tmp / "nowhere/open.json"),
+        "FLEET_FINANCE_CMD": "false",
+    }
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["items"] == []
+    assert page["item_sources"]["needs_you"] == {"read": True, "reason": None}
+    assert page["item_sources"]["finance"]["read"] is False
+    assert any("finance items unreadable" in e for e in page["errors"])
 
 
 # --- load: a busy host must not starve the stamp ------------------------------

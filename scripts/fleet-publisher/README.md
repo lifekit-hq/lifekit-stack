@@ -175,6 +175,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | The side-hustle lines and week-sheet rows (below): `{channels[], lines[], week_rows[], credential, brief_day, week_of, feed_read}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
 | `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
+| `items[]`, `item_sources` | One record per open finance item and needs-you decision, with the item envelope (see "Queue items"), and each source's `{read, reason}` |
 | `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
 | `follow_ups[]` | The owner pages still to be written |
 | `errors[]` | One line per source that could not be read this run |
@@ -361,7 +362,9 @@ Nothing is written to them and clip is not changed.
   age of the oldest waiting source (`null` when nothing waits), `buffer_days` as
   clip counts it, `egress` the queue-wide state (`up`, `pc-down`, `relay-down`,
   `bot-check`, `cookies-stale`), `stalled` the flag the stalled sources use
-  (`stalled_reason` `no-post` or `buffer-short`).
+  (`stalled_reason` `no-post` or `buffer-short`). Each row also carries the item
+  envelope (see "Queue items"): `owner: "clip"` (the clip pipeline), `class:
+  "ops"`, `store: "clip-queue"`, `ref` the channel name; no `acceptance`.
 - **Unavailable, never zero.** A missing or unreadable input, or a channel absent
   from it, gives `null` for the numbers it feeds and names them in the row's
   `unavailable[]`; a real zero stays `0`. `status` is `unavailable` when the channel
@@ -369,6 +372,32 @@ Nothing is written to them and clip is not changed.
   unreadable input files, with one `errors[]` line.
 - **Section.** `{schema: "fleet-clip-queue.v1", channels[], egress: {state, since},
   queue_run: {at, age_s}, unavailable[]}`.
+
+## Queue items (`status_page.items`)
+
+One record per open item of the low-volume queues that have no record of their
+own on the page, each carrying the item envelope of decision 0019 (it extends
+0016's): who owns the next move, the class, and the one store that owns the item,
+so the dashboard can link through. Read-only; neither store is written.
+
+| Source | Read from | `owner` / `class` | `store` | `ref` |
+| --- | --- | --- | --- | --- |
+| `finance` | `FLEET_FINANCE_CMD`, a command printing a JSON list of `{kind, id, title, acceptance, url, since}` (`kind` one of `alert`, `companion-event`, `thesis-revision`, `recommendation`; the last three keys optional) | `finance` / `finance` | `finance-db` | `url`, else `<kind>/<id>` |
+| `needs-you` | `FLEET_NEEDS_YOU_LEDGER`, the path of Kit's `needs-you/open.json` (`kind` `decision`; a missing file is an empty ledger) | `kit` / `life` | `needs-you` | the entry `id` |
+
+- **Shape.** `items[]` is `[{id, source, kind, title, owner, class, store, ref,
+  since, acceptance?, origin?}]`: `id` is `<store>:<native id>`, `since` the item's
+  own time (epoch, `null` when it has none), `acceptance` its one-line done-when and
+  `origin` its door. Both are present only when the source holds them: a record
+  without one publishes without the key, never fails. The needs-you ledger holds no
+  acceptance line, so its records carry none; they carry the entry's `origin`.
+- **Sources.** `item_sources` is `{finance, needs_you}`, each `{read, reason}`
+  like `stalled_sources`: unset, the source is `read: false` and says so. An
+  unreadable source adds an `errors[]` line; an item matching `CREDENTIAL_RE` is
+  withheld and counted in `errors[]`.
+- **Schema.** Still `fleet-status-page.v1`: `items`, `item_sources` and the clip
+  rows' envelope keys are new optional keys, and a consumer that ignores them is
+  unchanged. The dashboard's rendering is its own issue.
 
 ## Delivered decisions (`status_page.delivered`)
 

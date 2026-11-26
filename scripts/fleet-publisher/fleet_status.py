@@ -24,6 +24,9 @@ sections"). Everything is read from structured sources, never from prose:
   clip_queue    one row per clip channel from the clip queue's own outputs
                 (daily-check.json, egress.json, queue-run.json beside the stats
                 feed, read-only): waiting, oldest age, buffer days, egress, stalled
+  items         one record per open finance item (FLEET_FINANCE_CMD) and per
+                needs-you decision (Kit's ledger), each with the item envelope
+                (owner, class, store, ref, and acceptance when the source has one)
   problems      the three oldest stalled items by first-seen age, one brief line
   side_hustles  per-channel numbers from the clip stats feed (stats.jsonl), as
                 the Monday/Thursday brief lines and the Monday week-sheet rows
@@ -40,6 +43,8 @@ project> ..." where the names differ), FLEET_INTAKE_CMD (overrides the gateway
 the stalled check reads; empty skips them, unset skips them too when
 FLEET_INTAKE_CMD is set),
 FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: none reachable),
+FLEET_FINANCE_CMD (prints finance's open items as JSON; unset: not read),
+FLEET_NEEDS_YOU_LEDGER (Kit's needs-you/open.json; unset: not read),
 FLEET_SCOUT_STATE (the scout's state dir, `candidates/<date>.txt` inside; unset:
 the scout is not read),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
@@ -1072,6 +1077,13 @@ def thread_stalls(
 
 CLIP_CHANNELS = ("cosmos", "mind", "neural", "yc", "vice-footage")
 CLIP_FILES = ("daily-check.json", "egress.json", "queue-run.json")
+# The 0019 item envelope each adapter stamps on its records: who owns the next
+# move, its class (0016), and the one store that owns the item. `ref` is the
+# item's native id (or URL) in that store.
+CLIP_ENVELOPE = {"owner": "clip", "class": "ops", "store": "clip-queue"}
+FINANCE_ENVELOPE = {"owner": "finance", "class": "finance", "store": "finance-db"}
+NEEDS_YOU_ENVELOPE = {"owner": "kit", "class": "life", "store": "needs-you"}
+FINANCE_KINDS = ("alert", "companion-event", "thesis-revision", "recommendation")
 SCOUT_CANDIDATES = "candidates"
 ADDED_RE = re.compile(r"^added:\s*(\S+)\s*$", re.M)
 
@@ -1177,6 +1189,8 @@ def clip_channel_row(
         "stalled": stalled,
         "stalled_reason": reason,
         "unavailable": unavailable,
+        **CLIP_ENVELOPE,
+        "ref": name,
     }
     out = None
     if reason and cfg is not None:
@@ -1250,6 +1264,106 @@ def clip_queue(
     else:
         source = {"read": True, "reason": None}
     return section, stalled_rows, source
+
+
+def envelope_item(
+    envelope: dict[str, str],
+    source: str,
+    kind: str,
+    native: str,
+    *,
+    title: Any,
+    ref: Any = None,
+    since: Any = None,
+    acceptance: Any = None,
+    origin: Any = None,
+) -> dict[str, Any]:
+    """One item record (0019): `id` is `<store>:<native id>`, `ref` the item's URL
+    when the source gives one, else its native id. `acceptance` and `origin` are
+    present only when the source holds them: an item without one still publishes."""
+    item = {
+        "id": f"{envelope['store']}:{native}",
+        "source": source,
+        "kind": kind,
+        "title": one_line(title, TITLE_CUT),
+        **envelope,
+        "ref": ref if isinstance(ref, str) and ref else native,
+        "since": parse_time(since),
+    }
+    if line := one_line(acceptance, TITLE_CUT):
+        item["acceptance"] = line
+    if line := one_line(origin, TITLE_CUT):
+        item["origin"] = line
+    return item
+
+
+def finance_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Finance's open items (alerts, companion events, thesis revisions,
+    recommendations) from FLEET_FINANCE_CMD, a command printing a JSON list of
+    `{kind, id, title, acceptance, url, since}` (acceptance, url and since
+    optional). Unset, the source says so: nothing is guessed."""
+    argv = shlex.split(os.environ.get("FLEET_FINANCE_CMD") or "")
+    if not argv:
+        return [], {"read": False, "reason": "FLEET_FINANCE_CMD is not set"}
+    try:
+        doc = json.loads(run(argv, timeout=15))
+        assert isinstance(doc, list)
+    except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as exc:
+        errors.append(f"finance items unreadable ({exc.__class__.__name__})")
+        return [], {"read": False, "reason": "finance items unreadable"}
+    items = []
+    for e in doc:
+        if not isinstance(e, dict) or e.get("kind") not in FINANCE_KINDS:
+            continue
+        native = e.get("id")
+        if isinstance(native, bool) or not isinstance(native, (str, int)):
+            continue
+        items.append(
+            envelope_item(
+                FINANCE_ENVELOPE,
+                "finance",
+                e["kind"],
+                f"{e['kind']}/{native}",
+                title=e.get("title"),
+                ref=e.get("url"),
+                since=e.get("since"),
+                acceptance=e.get("acceptance"),
+            )
+        )
+    return items, {"read": True, "reason": None}
+
+
+def needs_you_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Kit's open needs-you decisions, read-only from its ledger file
+    (`needs-you/open.json`, named by FLEET_NEEDS_YOU_LEDGER): one record per
+    entry. The ledger holds no acceptance line, so its records carry none."""
+    path = os.environ.get("FLEET_NEEDS_YOU_LEDGER", "")
+    if not path:
+        return [], {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"}
+    try:
+        doc = json.loads(Path(path).read_text())
+        assert isinstance(doc, list)
+    except FileNotFoundError:
+        return [], {"read": True, "reason": None}  # Kit creates it on first use
+    except (OSError, ValueError, UnicodeDecodeError, AssertionError) as exc:
+        errors.append(f"needs-you ledger unreadable ({exc.__class__.__name__})")
+        return [], {"read": False, "reason": "needs-you ledger unreadable"}
+    items = []
+    for e in doc:
+        if not isinstance(e, dict) or not isinstance(e.get("id"), str) or not e["id"]:
+            continue
+        items.append(
+            envelope_item(
+                NEEDS_YOU_ENVELOPE,
+                "needs-you",
+                "decision",
+                e["id"],
+                title=e.get("ask"),
+                since=e.get("opened"),
+                origin=e.get("origin"),
+            )
+        )
+    return items, {"read": True, "reason": None}
 
 
 def scout_stalls(
@@ -1953,6 +2067,17 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     side = side_hustles(
         args.now, decisions_config(errors)["brief"]["tz"], errors, pattern
     )
+    items: list[dict[str, Any]] = []
+    item_sources: dict[str, dict[str, Any]] = {}
+    for name, read in (("finance", finance_items), ("needs_you", needs_you_items)):
+        got, item_sources[name] = read(errors)
+        safe = [i for i in got if not withheld(i, pattern)]
+        if len(safe) < len(got):
+            errors.append(
+                f"{len(got) - len(safe)} {name} item(s) withheld: they look like"
+                " they hold a credential"
+            )
+        items.extend(safe)
     save_cache(state / "status-records.json", record_cache)
     save_cache(state / "status-open-prs.json", pr_cache)
     return {
@@ -1970,6 +2095,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "problems": problem_list,
         "side_hustles": side,
         "clip_queue": clip_section,
+        "items": items,
+        "item_sources": item_sources,
         "follow_ups": [
             f"owner page for {h['title'].lower()}" for h in how if not h["url"]
         ],
