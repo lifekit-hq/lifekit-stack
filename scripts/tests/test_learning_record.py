@@ -305,7 +305,7 @@ def test_ensure_writes_the_git_contract_over_the_live_one(tmp_path):
     # deploy puts back after the copy (scripts/ensure-dev-problem-block.sh).
     shared = "\n\n".join(
         (REPO / f"defaults/agents/shared/{n}.md").read_text().strip("\n")
-        for n in ("dev-problems", "a2a-envelope")
+        for n in ("dev-problems", "a2a-envelope", "receipts")
     )
     assert (ws / "SOUL.md").read_text() == (
         (CONTRACT / "SOUL.md").read_text().rstrip("\n") + "\n\n" + shared + "\n"
