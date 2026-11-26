@@ -3603,7 +3603,11 @@ mechanical age check over every queue; the thresholds are the one
 `scripts/fleet-publisher/fleet-stalled.json` (installed beside the helper), so
 changing a number is a PR to that file and a re-install, never a code change.
 The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
-publisher can reach exists; the page says so.
+publisher can reach exists; the page says so. The queue items
+(`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD` and
+`FLEET_NEEDS_YOU_LEDGER`; neither the installer nor the unit sets them, so point
+them with a systemd drop-in. Unset, `item_sources` says `read: false` and
+`items` stays empty.
 Clip and scout are two more stalled sources (`clip`, `scout` blocks of the same file:
 `buffer_floor_days`, `slot_window_hours`, `idle_hours`), and
 `status_page.clip_queue` publishes one row per clip channel (cosmos, mind, neural, yc,
