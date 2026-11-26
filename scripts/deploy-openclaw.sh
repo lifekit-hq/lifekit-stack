@@ -469,6 +469,16 @@ say "fleet gate plugin -> ${OPENCLAW_CONFIG_DIR}/extensions"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-fleet-gate.sh" \
   || fail_later "fleet gate plugin install failed (output above)"
 
+# ─── intake door plugin files ────────────────────────────────────────────────
+#
+# compose/openclaw-gateway/plugins/intake-door (docs/runbook.md, "Intake door")
+# carries the `file_intake` tool every agent files through. Its files go in
+# before the platform patch for the same reason as the two above; its tool joins
+# the allow lists after the agent installs (below).
+say "intake door plugin files -> ${OPENCLAW_CONFIG_DIR}/extensions"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-intake-door.sh" --files \
+  || fail_later "intake door plugin install failed (output above)"
+
 # ─── OpenClaw platform config: the repo's half of openclaw.json ──────────────
 #
 # openclaw.json is host state (agents.entries, channels, auth profiles, MCP
@@ -830,6 +840,19 @@ OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-learncl
 say "study-panel agent contract -> ${OPENCLAW_CONFIG_DIR}/agents/study-panel/workspace"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-study-panel.sh" \
   || fail_later "study-panel agent install failed (output above)"
+
+# ─── intake door allow lists ─────────────────────────────────────────────────
+#
+# compose/openclaw-gateway/plugins/intake-door is the one intake door every
+# agent files through: its `file_intake` tool hands an item to devclaw and,
+# when that fails, holds it in a local spool it retries, so the door never
+# refuses (docs/runbook.md, "Intake door"). Its files went in before the
+# platform patch, which allows and enables it; this adds the tool to the global
+# allow list and to each installed agent with a door, after the agent installs
+# so a new agent's entry is there to receive it.
+say "intake door allow lists -> file_intake"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-intake-door.sh" \
+  || fail_later "intake door install failed (output above)"
 
 # ─── Skill CLIs (workout-claw, life-state) ───────────────────────────────────
 #

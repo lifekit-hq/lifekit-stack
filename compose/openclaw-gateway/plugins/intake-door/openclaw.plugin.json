@@ -1,0 +1,16 @@
+{
+  "id": "intake-door",
+  "name": "Intake door",
+  "description": "The file_intake tool: files to devclaw intake, spools and retries a failed hand-off",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": ["file_intake"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

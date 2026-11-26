@@ -1001,11 +1001,13 @@ def post_up_ytt(env, tmp_path, ensure=None, curl_fail=False):
     for name in ("ensure-video-eval.sh", "ensure-job-queue.sh", "ensure-learnclaw.sh"):
         shutil.copy(REPO / "scripts" / name, fake / "scripts" / name)
     # The doc-door script drives the gateway container; its own tests cover it.
-    # So does the reader agent's (its own tests: test_reader_agent.py).
+    # So does the reader agent's (its own tests: test_reader_agent.py), and the
+    # intake door's (test_intake_door.py).
     for name in (
         "ensure-doc-door.sh",
         "ensure-reader-agent.sh",
         "ensure-study-panel.sh",
+        "ensure-intake-door.sh",
     ):
         (fake / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
         (fake / "scripts" / name).chmod(0o755)
@@ -1331,6 +1333,8 @@ GATE_REF = "refs/lifekit/last-deployed"
         ("scripts/ensure-dev-problem-block.sh", True),
         ("compose/openclaw-gateway/plugins/video-drop-door/index.js", True),
         ("compose/openclaw-gateway/plugins/fleet-gate/index.js", True),
+        ("compose/openclaw-gateway/plugins/intake-door/door.js", True),
+        ("scripts/ensure-intake-door.sh", True),
         ("scripts/openclaw-smoke-verdict.py", True),
         ("skills/youtube-transcript/transcript.py", True),
         ("skills/youtube-transcript/media.py", True),

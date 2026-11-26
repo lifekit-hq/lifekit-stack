@@ -35,7 +35,8 @@
       "telegram",
       "web-readability",
       "video-drop-door",
-      "fleet-gate"
+      "fleet-gate",
+      "intake-door"
     ],
     "slots": {
       "contextEngine": null
@@ -48,6 +49,9 @@
         "enabled": true
       },
       "fleet-gate": {
+        "enabled": true
+      },
+      "intake-door": {
         "enabled": true
       },
       "diagnostics-prometheus": {

@@ -17,6 +17,8 @@ sections"). Everything is read from structured sources, never from prose:
   queue         the open queued records, and the 7-day throughput from the
                 fleet-metrics daily rows
   intake        the shared job queue's depth (`jobq.py depth` in the gateway)
+  intake_spool  hand-offs the intake door holds for retry (`spool.mjs count`
+                in the gateway): pending, oldest_epoch
   how_it_works  one owner page per workflow, linked only once it exists
   stalled       items whose state has not changed for their queue's threshold
                 (fleet-stalled.json beside this script): GitHub issues of the
@@ -41,7 +43,9 @@ default 600), FLEET_VAULT (default /srv/memory), FLEET_PLAN_MAP ("<repo>=<vault
 project> ..." where the names differ), FLEET_INTAKE_CMD (overrides the gateway
 `docker exec`; empty skips intake), FLEET_JOBS_CMD (the same for the job ages
 the stalled check reads; empty skips them, unset skips them too when
-FLEET_INTAKE_CMD is set),
+FLEET_INTAKE_CMD is set), FLEET_INTAKE_SPOOL_CMD (the same for the intake
+door's spool count; empty skips it, unset skips it too when FLEET_INTAKE_CMD is
+set),
 FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: none reachable),
 FLEET_FINANCE_CMD (prints finance's open items as JSON; unset: not read),
 FLEET_NEEDS_YOU_LEDGER (Kit's needs-you/open.json; unset: not read),
@@ -107,6 +111,7 @@ GATEWAY_LABELS = (
     "label=com.docker.compose.service=openclaw-gateway",
 )
 GATEWAY_JOBQ = "/home/node/.openclaw/skills/job-queue/jobq.py"
+GATEWAY_SPOOL = "/home/node/.openclaw/extensions/intake-door/spool.mjs"
 # The workflows the page explains, each by its vault owner page. A page missing
 # from the vault leaves the link out and lists it under `follow_ups`.
 WORKFLOWS = (
@@ -751,21 +756,20 @@ def queue(records: list[dict[str, Any]], paths: list[str], now: int) -> dict[str
     }
 
 
+def gateway() -> str:
+    found = run(
+        ["docker", "ps", "-q", *(a for f in GATEWAY_LABELS for a in ("--filter", f))],
+        timeout=10,
+    ).split()
+    if not found:
+        raise OSError("no running openclaw-gateway container")
+    return found[0]
+
+
 def intake() -> dict[str, Any]:
     cmd = os.environ.get("FLEET_INTAKE_CMD")
     if cmd is None:
-        found = run(
-            [
-                "docker",
-                "ps",
-                "-q",
-                *(a for f in GATEWAY_LABELS for a in ("--filter", f)),
-            ],
-            timeout=10,
-        ).split()
-        if not found:
-            raise OSError("no running openclaw-gateway container")
-        argv = ["docker", "exec", found[0], "python3", GATEWAY_JOBQ, "depth"]
+        argv = ["docker", "exec", gateway(), "python3", GATEWAY_JOBQ, "depth"]
     else:
         argv = shlex.split(cmd)
     doc = json.loads(run(argv, timeout=15))
@@ -775,6 +779,32 @@ def intake() -> dict[str, Any]:
     ):
         raise ValueError("not a jobq depth document")
     return {k: doc[k] for k in keys}
+
+
+def spool_cmd() -> list[str] | None:
+    """FLEET_INTAKE_SPOOL_CMD as argv; [] for the gateway default; None to skip.
+    Unset, it is the default only while FLEET_INTAKE_CMD is unset too, as for
+    the job ages."""
+    cmd = os.environ.get("FLEET_INTAKE_SPOOL_CMD")
+    if cmd is None:
+        return [] if "FLEET_INTAKE_CMD" not in os.environ else None
+    return shlex.split(cmd) or None
+
+
+def intake_spool(argv: list[str]) -> dict[str, Any]:
+    """The intake door's spool: hand-offs that failed and wait for the retry
+    (docs/runbook.md, "Intake door")."""
+    if not argv:
+        argv = ["docker", "exec", gateway(), "node", GATEWAY_SPOOL, "count"]
+    doc = json.loads(run(argv, timeout=15))
+    if not isinstance(doc, dict) or doc.get("schema") != "intake-spool-count.v1":
+        raise ValueError("not an intake spool count")
+    pending, oldest = doc.get("pending"), doc.get("oldest_epoch")
+    if not isinstance(pending, int) or pending < 0:
+        raise ValueError("not an intake spool count")
+    if oldest is not None and not (isinstance(oldest, int) and oldest > 0):
+        raise ValueError("not an intake spool count")
+    return {"pending": pending, "oldest_epoch": oldest}
 
 
 # --- stalled ---------------------------------------------------------------------
@@ -2114,6 +2144,13 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             depth = intake()
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             errors.append(f"intake depth unreadable ({exc.__class__.__name__})")
+    spool: dict[str, Any] | None = None
+    spool_argv = spool_cmd()
+    if spool_argv is not None:
+        try:
+            spool = intake_spool(spool_argv)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            errors.append(f"intake spool unreadable ({exc.__class__.__name__})")
     vault = Path(os.environ.get("FLEET_VAULT") or "/srv/memory")
     how = []
     for wid, title, page in WORKFLOWS:
@@ -2147,6 +2184,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "capacity": caps,
         "queue": queue(records, args.daily, args.now),
         "intake": depth,
+        "intake_spool": spool,
         "how_it_works": how,
         "stalled": stalled,
         "stalled_sources": sources,

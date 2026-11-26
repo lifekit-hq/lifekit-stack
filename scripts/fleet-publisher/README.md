@@ -220,6 +220,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `capacity[]` | Per on-host home: `home_id`, `machine`, `running` (lanes), `allowed` (the declared cap, `null` when none is), `cap_status` (`ok`, `none` for no cap declared, which the page shows as "no cap declared", or `invalid`), `quota` (runway status or `null`), `generated_epoch`, `idle_reason`; then one PC row (below) |
 | `queue` | `count` (open queued records, all homes), `held`, `held_external` (as in `projects[]`), `top` (10: `id`, `home_id`, `title`, `repo`, `priority`, `blocked`, `stalled`), `throughput` (`{days: 7, from, to, days_with_data, merged_prs, runs}` over the 7 whole UTC days before today, from the daily metrics), from which the dashboard computes an ETA |
 | `intake` | The shared job queue's depth: `{waiting, running, done_24h, failed_24h}`, or `null` |
+| `intake_spool` | The intake door's held hand-offs: `{pending, oldest_epoch}` (`pending` = occurrences waiting for the retry, `oldest_epoch` = when the oldest was spooled, `null` when none is), or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
 | `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`): `{read, reason}` (`kit_held` adds `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
@@ -287,6 +288,10 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 - **Intake** runs `jobq.py depth` in the running `openclaw-gateway` container
   (found by compose labels) with `docker exec`; `FLEET_INTAKE_CMD` replaces
   that command (empty skips intake). Counts only: no job, label or result.
+- **Intake spool** runs `node spool.mjs count` from the gateway's
+  `intake-door` plugin the same way (`docs/runbook.md`, "Intake door");
+  `FLEET_INTAKE_SPOOL_CMD` replaces it (empty skips it; unset skips it too when
+  `FLEET_INTAKE_CMD` is set). Counts only: no item text.
 - **Failure** of any source empties its own part and adds an `errors` line.
   The helper is bounded to 50 s; if it fails, overruns, prints no JSON object,
   or prints anything matching a credential pattern, `status_page` is `null` and
