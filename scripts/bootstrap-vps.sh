@@ -143,6 +143,15 @@ else
   sudo -u "$LIFEKIT_USER" git clone --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
 fi
 
+# ─── Admin account in the lifekit group ───────────────────────────────────────
+# The dirs above are lifekit:lifekit 0750; the admin account runs the release
+# gauge and installers without sudo, so it must be in the lifekit group to read
+# the checkout and write install stamps. Adds the membership, then fails the
+# bootstrap if it is still missing.
+
+say "Adding $ADMIN_USER to the $LIFEKIT_USER group"
+ADMIN_USER="$ADMIN_USER" LIFEKIT_GROUP="$LIFEKIT_USER" bash "$REPO_DIR/scripts/admin-group/ensure-admin-group.sh"
+
 # ─── Host firewall (nftables) ─────────────────────────────────────────────────
 # One nftables table, inet lifekit, loaded at boot by lifekit-firewall.service
 # (scripts/host-firewall.sh, ruleset in scripts/firewall/lifekit-firewall.nft):

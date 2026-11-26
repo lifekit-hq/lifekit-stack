@@ -4371,7 +4371,10 @@ Both halves need the `lifekit` group: `/srv/lifekit-stack` and `/var/lib/lifekit
 `lifekit:lifekit 0750`, so the account the release gauge runs as (the admin account) must be in
 the `lifekit` group to read the checkout, or the drift read must run as `lifekit`; an installer
 run without sudo (e.g. `install-yt-tunnel.sh`) needs the same group membership to write
-`/var/lib/lifekit/installed`. Bootstrap does not add it; both fail with an error naming it.
+`/var/lib/lifekit/installed`. `scripts/bootstrap-vps.sh` adds the admin account to the group
+through `scripts/admin-group/ensure-admin-group.sh` and stops if the membership is still missing;
+`ensure-admin-group.sh --check` (with `ADMIN_USER` set) verifies an existing host. Without it,
+both halves fail with an error naming the group.
 The manifest lists only what each installer renders or copies onto the host, never code a unit
 runs straight from the checkout, which goes live with the deploy.
 
