@@ -1759,11 +1759,11 @@ not a notification channel and adds no rule.
   with owner `external` (firstmate sets the hold), which the fleet page shows as a held item
   (`records[].hold.owner: "external"`, counted in `projects[].held_external` and
   `queue.held_external`, see `scripts/fleet-publisher/README.md`), not a message.
-- **Dependency:** the intake tool lives in devclaw, not here. It must exist, be idempotent
-  by repo plus fingerprint (a repeat adds a count to the open issue), and be in the gateway's
-  `tools.allow`; until it is, an agent that follows the block states that filing failed and
-  carries on. Check by filing one test intake from the main agent and reading the
-  issue or queue reference it returns.
+- **The door:** `file_intake` is the intake door ("Intake door" below), which installs its
+  tool in the allow lists and spools a hand-off devclaw refuses or cannot take; devclaw's own
+  `file_intake` behind it is idempotent by repo plus fingerprint (a repeat adds a count to the
+  open issue). Check by filing one test intake from the main agent and reading the receipt it
+  returns.
 - **Week sheet:** the line counting items routed and resolved without the owner against items
   that reached the owner is drafted by firstmate in the vault, not produced by this repo.
 
@@ -2577,8 +2577,7 @@ Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
   filing; it is still not applied. If per-agent enforcement is ever verified under
   `claude-cli` for that agent (not enforced when last tried, 2026-05-25; enforced on 2026.11.4
   for the `reader` agent's shape only, `scripts/reader-canary`; `docs/openclaw-agent-design.md`), scope it
-  to the other devclaw tools: deny `devclaw__*` except the intake tool, and give a stop row to
-  the rest.
+  to the devclaw tools: deny `devclaw__*` and give them a stop row.
 - **Rehearse:** `scripts/rehearse-fleet-gate.sh` loads the repo's plugin in node with a
   scratch table and state dir and a recording `ssh`, plays one `A`, one `L` and one `S`
   call, and prints what each returned and what was filed (a class the given table has no
