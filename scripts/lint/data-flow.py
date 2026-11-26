@@ -328,7 +328,10 @@ def _ancestors(path: str) -> list[str]:
     return ["/".join(parts[:i]) or "/" for i in range(len(parts), 0, -1)]
 
 
-def store_matches_row(store: Store, row: Row, ctx: Context) -> bool:
+def store_matches_row(
+    store: Store, row: Row, ctx: Context, parents: bool = True
+) -> bool:
+    """`parents=False` drops the store-is-a-parent-of-the-row match (the stale check's view)."""
     if row.remote:
         return False
     if store.kind == "volume":
@@ -348,10 +351,10 @@ def store_matches_row(store: Store, row: Row, ctx: Context) -> bool:
             if glob_reaches(anc, g):
                 return True  # equal, or the store sits under the row's path
         prefix = literal_prefix(g)
-        if prefix.startswith(store.path.rstrip("/") + "/") or (
-            prefix == store.path and prefix != g
-        ):
-            return True  # the store is a parent of a documented row (or holds a documented glob)
+        if prefix == store.path and prefix != g:
+            return True  # the store holds a documented glob (an empty inbox is not stale)
+        if parents and prefix.startswith(store.path.rstrip("/") + "/"):
+            return True  # the store is a parent of a documented row
     return False
 
 
@@ -382,22 +385,32 @@ def stale_rows(
     rows: list[Row],
     stores: list[Store],
     ctx: Context,
-    volumes: set[str],
-    containers: set[str],
+    volumes: set[str] | None,
+    containers: set[str] | None,
 ) -> tuple[list[Row], list[Row]]:
-    """(stale, unverifiable): rows nothing discovered matches and the host lacks."""
+    """(stale, unverifiable): rows nothing discovered matches and the host lacks.
+
+    `volumes`/`containers` is None when docker could not list them: a row naming
+    one is then unverifiable, not stale.
+    """
     stale, unknown = [], []
     for row in rows:
         if row.remote:
             continue
-        if any(store_matches_row(s, row, ctx) for s in stores):
+        # A parent store (a bind of all of /var/lib/lifekit) does not discover the
+        # rows beneath it: those still need their own path on the host.
+        if any(store_matches_row(s, row, ctx, parents=False) for s in stores):
             continue
         if row.volumes:
-            if not any(v in volumes for v in row.volumes):
+            if volumes is None:
+                unknown.append(row)
+            elif not any(v in volumes for v in row.volumes):
                 stale.append(row)
             continue
         if row.containers:
-            if not any(c in containers for c in row.containers):
+            if containers is None:
+                unknown.append(row)
+            elif not any(c in containers for c in row.containers):
                 stale.append(row)
             continue
         globs = row_globs(row, ctx)
@@ -690,26 +703,30 @@ def unit_violations(units: list[Path], repo: Path) -> list[str]:
 # live discovery (the host)
 
 
-def _run(cmd: list[str]) -> str:
+def _run(cmd: list[str]) -> str | None:
+    """The command's stdout, or None when it could not run or failed."""
     try:
         res = subprocess.run(
             cmd, capture_output=True, text=True, timeout=CMD_TIMEOUT, check=False
         )
     except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return res.stdout if res.returncode == 0 else ""
+        return None
+    return res.stdout if res.returncode == 0 else None
 
 
 def discover_live_docker(
     notes: list[str],
-) -> tuple[list[Store], list[Mount], set[str], set[str]]:
-    ids = _run([DOCKER, "ps", "-aq"]).split()
-    volumes = set(_run([DOCKER, "volume", "ls", "-q"]).split())
+) -> tuple[list[Store], list[Mount], set[str] | None, set[str] | None]:
+    """Stores, mounts, volume names, container names; a listing docker refused is None."""
+    listed = _run([DOCKER, "ps", "-aq"])
+    vols = _run([DOCKER, "volume", "ls", "-q"])
+    volumes = None if vols is None else set(vols.split())
+    ids = (listed or "").split()
     if not ids:
         notes.append(
             "docker: no containers listed (docker unreachable or none present)"
         )
-        return [], [], volumes, set()
+        return [], [], volumes, None if listed is None else set()
     raw = _run([DOCKER, "inspect", *ids])
     try:
         info = json.loads(raw) if raw else []
@@ -754,8 +771,11 @@ def discover_live_docker(
 
 def _lifekit_units(repo: Path) -> list[str]:
     names = {p.name for p in (repo / "scripts").rglob("*.service")}
-    for ln in _run(
-        [SYSTEMCTL, "list-unit-files", "--type=service", "--no-legend", "lifekit*"]
+    for ln in (
+        _run(
+            [SYSTEMCTL, "list-unit-files", "--type=service", "--no-legend", "lifekit*"]
+        )
+        or ""
     ).splitlines():
         if ln.split():
             names.add(ln.split()[0])
@@ -767,14 +787,17 @@ def discover_live_systemd(
 ) -> tuple[list[Store], list[str], list[str]]:
     """Stores from system units, plus the admin homes and firstmate homes they name."""
     units = _lifekit_units(repo)
-    out = _run(
-        [
-            SYSTEMCTL,
-            "show",
-            "-p",
-            "Id,User,LoadState,StateDirectory,ReadWritePaths,Environment",
-            *units,
-        ]
+    out = (
+        _run(
+            [
+                SYSTEMCTL,
+                "show",
+                "-p",
+                "Id,User,LoadState,StateDirectory,ReadWritePaths,Environment",
+                *units,
+            ]
+        )
+        or ""
     )
     if not out:
         notes.append("systemd: systemctl show returned nothing")

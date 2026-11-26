@@ -359,6 +359,53 @@ def test_a_stale_row_is_reported(tmp_path):
     assert "`kept`" not in text and "`pc`" not in text
 
 
+def test_a_parent_bind_does_not_hide_a_stale_row_under_it(tmp_path):
+    # On the host the gateway binds all of /var/lib/lifekit: that parent store must
+    # not count as discovering every row beneath it, or none of them can go stale.
+    live = tmp_path / "var-lib-lifekit"
+    (live / "kept").mkdir(parents=True)
+    rows = df.parse_table(
+        map_with(
+            [
+                f"| kept | `{live}/kept` | json | a | a | file | x |",
+                f"| gone | `{live}/retired-store` | json | a | a | file | x |",
+            ]
+        )
+    )
+    stores = [df.Store("bind", str(live))]
+    text = df.render(
+        stores, rows, df.Context(), set(), set(), [], TODAY, {"stores": {}}
+    )
+    assert "### Stores with no row (0)" in text  # the parent is still documented
+    assert "### Stale rows (1)" in text
+    assert "`gone`" in text and "`kept`" not in text
+
+
+def test_rows_naming_volumes_or_containers_are_unverifiable_when_docker_is_unreachable(
+    monkeypatch,
+):
+    # Unreadable sources are reported, not guessed: a docker that refuses to list
+    # anything is no evidence that a volume or a container is gone.
+    monkeypatch.setattr(df, "DOCKER", "false")
+    notes: list[str] = []
+    stores, mounts, volumes, containers = df.discover_live_docker(notes)
+    rows = df.parse_table(
+        map_with(
+            [
+                "| vol | `old_volume:/data` | sqlite | a | a | private | x |",
+                "| db | `dashboard-db / dashboard` | pg | a | a | private | x |",
+            ]
+        )
+    )
+    text = df.render(
+        stores, rows, df.Context(mounts=mounts), volumes, containers, notes,
+        TODAY, {"stores": {}},
+    )
+    assert "### Stale rows (0)" in text
+    assert "### Rows this account cannot verify (2)" in text
+    assert "docker unreachable" in text
+
+
 def test_the_live_report_never_fails_its_caller(tmp_path):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--live", "--map", str(tmp_path / "missing.md")],
