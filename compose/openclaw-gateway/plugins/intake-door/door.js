@@ -13,7 +13,7 @@
 // occurrence, so a repeat that waited in the spool still lands as a count on
 // the same issue rather than a second issue. An item whose project devclaw
 // does not know is filed under `fleet` with that said in its body. A file that
-// keeps failing stays and is counted as stuck; nothing is ever dropped.
+// keeps failing stays and is retried again; nothing is ever dropped.
 
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -21,7 +21,6 @@ import path from "node:path";
 
 export const CLASSES = ["dev", "ops", "finance", "life", "unclear"];
 export const FALLBACK_PROJECT = "fleet";
-export const STUCK_AFTER = 6; // failed retries before a spooled item counts as stuck
 const LOCK_STALE_MS = 15 * 60_000;
 const NO_ACCEPTANCE = "unclear: the filer gave no done-when; shape it before work starts";
 
@@ -116,12 +115,15 @@ function parseRpc(raw) {
   throw new Error("no JSON-RPC result in the response");
 }
 
-// One devclaw `file_intake` call. Resolves { ok, receipt } or
-// { ok: false, reason, unknownProject }; never throws.
+// One devclaw `file_intake` call: the MCP handshake (initialize, then
+// notifications/initialized, echoing the session id when the server hands one
+// out) and the tools/call, all within the one timeout. Resolves
+// { ok, receipt } or { ok: false, reason, unknownProject }; never throws.
 export async function callDevclaw(args, cfg = settings()) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), cfg.timeoutMs);
-  try {
+  let session = "";
+  const post = async (msg) => {
     const res = await fetch(cfg.url, {
       method: "POST",
       signal: ctl.signal,
@@ -129,15 +131,23 @@ export async function callDevclaw(args, cfg = settings()) {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         ...(cfg.token ? { authorization: `Bearer ${cfg.token}` } : {}),
+        ...(session ? { "mcp-session-id": session } : {}),
       },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name: "file_intake", arguments: args },
-      }),
+      body: JSON.stringify({ jsonrpc: "2.0", ...msg }),
     });
-    const raw = await res.text();
+    return { res, raw: await res.text() };
+  };
+  try {
+    const init = await post({
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "lifekit-intake-door", version: "1" } },
+    });
+    if (!init.res.ok) return { ok: false, reason: `devclaw answered HTTP ${init.res.status}` };
+    session = init.res.headers.get("mcp-session-id") || "";
+    const ack = await post({ method: "notifications/initialized" });
+    if (!ack.res.ok) return { ok: false, reason: `devclaw answered HTTP ${ack.res.status}` };
+    const { res, raw } = await post({ id: 2, method: "tools/call", params: { name: "file_intake", arguments: args } });
     if (!res.ok) return { ok: false, reason: `devclaw answered HTTP ${res.status}` };
     const msg = parseRpc(raw);
     if (msg.error) return { ok: false, reason: `devclaw error: ${line(msg.error.message).slice(0, 200)}` };
@@ -274,9 +284,9 @@ export async function retry(cfg = settings()) {
   return summary;
 }
 
-// What the fleet page shows: occurrences waiting, and how many of them stuck.
+// What the fleet page shows: occurrences waiting, and the oldest one's age.
 export function count(cfg = settings()) {
-  const out = { schema: "intake-spool-count.v1", pending: 0, stuck: 0, oldest_epoch: null };
+  const out = { schema: "intake-spool-count.v1", pending: 0, oldest_epoch: null };
   for (const name of spoolFiles(cfg.spool)) {
     out.pending += 1;
     let doc = null;
@@ -285,7 +295,6 @@ export function count(cfg = settings()) {
     } catch {
       // still pending; its age comes from the name
     }
-    if ((doc?.attempts || 0) >= STUCK_AFTER) out.stuck += 1;
     const at = Math.floor((doc?.spooled_at || Number.parseInt(name, 10) || 0) / 1000);
     if (at && (out.oldest_epoch === null || at < out.oldest_epoch)) out.oldest_epoch = at;
   }

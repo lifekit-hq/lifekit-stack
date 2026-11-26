@@ -18,7 +18,7 @@ sections"). Everything is read from structured sources, never from prose:
                 fleet-metrics daily rows
   intake        the shared job queue's depth (`jobq.py depth` in the gateway)
   intake_spool  hand-offs the intake door holds for retry (`spool.mjs count`
-                in the gateway): pending, stuck, oldest_epoch
+                in the gateway): pending, oldest_epoch
   how_it_works  one owner page per workflow, linked only once it exists
   stalled       items whose state has not changed for their queue's threshold
                 (fleet-stalled.json beside this script): GitHub issues of the
@@ -791,25 +791,18 @@ def spool_cmd() -> list[str] | None:
 
 def intake_spool(argv: list[str]) -> dict[str, Any]:
     """The intake door's spool: hand-offs that failed and wait for the retry
-    (docs/runbook.md, "Intake door"). `stuck` ones failed every retry so far."""
+    (docs/runbook.md, "Intake door")."""
     if not argv:
         argv = ["docker", "exec", gateway(), "node", GATEWAY_SPOOL, "count"]
     doc = json.loads(run(argv, timeout=15))
     if not isinstance(doc, dict) or doc.get("schema") != "intake-spool-count.v1":
         raise ValueError("not an intake spool count")
-    pending, stuck, oldest = (
-        doc.get("pending"),
-        doc.get("stuck"),
-        doc.get("oldest_epoch"),
-    )
-    if (
-        not all(isinstance(v, int) and v >= 0 for v in (pending, stuck))
-        or stuck > pending
-    ):
+    pending, oldest = doc.get("pending"), doc.get("oldest_epoch")
+    if not isinstance(pending, int) or pending < 0:
         raise ValueError("not an intake spool count")
     if oldest is not None and not (isinstance(oldest, int) and oldest > 0):
         raise ValueError("not an intake spool count")
-    return {"pending": pending, "stuck": stuck, "oldest_epoch": oldest}
+    return {"pending": pending, "oldest_epoch": oldest}
 
 
 # --- stalled ---------------------------------------------------------------------
@@ -2099,12 +2092,6 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             spool = intake_spool(spool_argv)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             errors.append(f"intake spool unreadable ({exc.__class__.__name__})")
-        else:
-            if spool["stuck"]:
-                errors.append(
-                    f"{spool['stuck']} intake hand-off(s) stuck in the spool:"
-                    " every retry failed (docs/runbook.md, Intake door)"
-                )
     vault = Path(os.environ.get("FLEET_VAULT") or "/srv/memory")
     how = []
     for wid, title, page in WORKFLOWS:

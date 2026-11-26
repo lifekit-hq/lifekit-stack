@@ -2936,22 +2936,18 @@ def test_intake_spool_is_the_door_s_held_hand_offs(homes):
     vps = status_home(homes.tmp, "fm-vps", [])
     count = stub(
         homes.tmp / "spool",
-        'echo \'{"schema":"intake-spool-count.v1","pending":2,"stuck":0,"oldest_epoch":1799999000}\'\n',
+        'echo \'{"schema":"intake-spool-count.v1","pending":2,"oldest_epoch":1799999000}\'\n',
     )
     assert homes.run(vps, FLEET_INTAKE_SPOOL_CMD=count).returncode == 0
     got = status(homes)
-    assert got["intake_spool"] == {"pending": 2, "stuck": 0, "oldest_epoch": 1799999000}
+    assert got["intake_spool"] == {"pending": 2, "oldest_epoch": 1799999000}
     assert got["errors"] == []
-    stuck = stub(
-        homes.tmp / "stuck",
-        'echo \'{"schema":"intake-spool-count.v1","pending":3,"stuck":1,"oldest_epoch":1799990000}\'\n',
+    empty = stub(
+        homes.tmp / "empty",
+        'echo \'{"schema":"intake-spool-count.v1","pending":0,"oldest_epoch":null}\'\n',
     )
-    assert homes.run(vps, FLEET_INTAKE_SPOOL_CMD=stuck).returncode == 0
-    got = status(homes)
-    assert got["intake_spool"]["stuck"] == 1
-    assert got["errors"] == [
-        "1 intake hand-off(s) stuck in the spool: every retry failed (docs/runbook.md, Intake door)"
-    ]
+    assert homes.run(vps, FLEET_INTAKE_SPOOL_CMD=empty).returncode == 0
+    assert status(homes)["intake_spool"] == {"pending": 0, "oldest_epoch": None}
     junk = stub(homes.tmp / "junk", "echo '{\"pending\": 1}'\n")
     assert homes.run(vps, FLEET_INTAKE_SPOOL_CMD=junk).returncode == 0
     assert status(homes)["intake_spool"] is None

@@ -4,7 +4,10 @@ lands in the spool, the retry files it once, and a repeat adds a count.
 
 The plugin runs under node against a fake devclaw MCP server that answers like
 devclaw's `file_intake`: one issue per repo + fingerprint, a repeat bumps its
-count, an unknown project is rejected, and it can be taken down.
+count, an unknown project is rejected, and it can be taken down. Like a
+stateful MCP streamable-HTTP server, it hands out a session id on `initialize`
+and answers a `tools/call` without that `Mcp-Session-Id` with HTTP 400; set
+`stateless` and it hands out none and takes calls without one.
 """
 
 from __future__ import annotations
@@ -44,6 +47,8 @@ class FakeDevclaw:
 
     def __init__(self):
         self.down = False
+        self.stateless = False
+        self.sessions: dict[str, bool] = {}
         self.calls: list[dict] = []
         self.issues: dict[tuple[str, str], dict] = {}
         fake = self
@@ -58,6 +63,38 @@ class FakeDevclaw:
                     self.send_response(503)
                     self.end_headers()
                     self.wfile.write(b"github unavailable")
+                    return
+                sid = self.headers.get("mcp-session-id")
+                if req.get("method") == "initialize":
+                    self.send_response(200)
+                    self.send_header("content-type", "application/json")
+                    if not fake.stateless:
+                        sid = f"s{len(fake.sessions) + 1}"
+                        fake.sessions[sid] = False
+                        self.send_header("mcp-session-id", sid)
+                    self.end_headers()
+                    init = {"protocolVersion": "2025-03-26", "capabilities": {}}
+                    self.wfile.write(
+                        json.dumps(
+                            {"jsonrpc": "2.0", "id": req["id"], "result": init}
+                        ).encode()
+                    )
+                    return
+                if not fake.stateless and sid not in fake.sessions:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b"Bad Request: Missing session ID")
+                    return
+                if req.get("method") == "notifications/initialized":
+                    if sid:
+                        fake.sessions[sid] = True
+                    self.send_response(202)
+                    self.end_headers()
+                    return
+                if not fake.stateless and not fake.sessions[sid]:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b"Bad Request: session not initialized")
                     return
                 args = req["params"]["arguments"]
                 fake.calls.append({"auth": self.headers.get("authorization"), **args})
@@ -292,7 +329,6 @@ def test_a_refused_hand_off_lands_in_the_spool_and_the_retry_files_it_once(
     assert step(tmp_path, devclaw.url, "count") == {
         "schema": "intake-spool-count.v1",
         "pending": 0,
-        "stuck": 0,
         "oldest_epoch": None,
     }
 
@@ -311,14 +347,38 @@ def test_an_unknown_project_is_spooled_then_filed_under_fleet(tmp_path, devclaw)
 
 
 @needs_node
-def test_an_unreachable_devclaw_is_spooled_and_counted_stuck(tmp_path):
+def test_an_unreachable_devclaw_is_spooled_and_kept_through_failed_retries(tmp_path):
     url = "http://127.0.0.1:9/mcp"  # nothing listens
     got = step(tmp_path, url, "file", params=item("devclaw"), agent="kit")
     assert got["spooled"] is True and "unreachable" in got["reason"]
-    for _ in range(6):
-        step(tmp_path, url, "retry")
+    for _ in range(8):
+        assert step(tmp_path, url, "retry")["failed"] == 1
     c = step(tmp_path, url, "count")
-    assert c["pending"] == 1 and c["stuck"] == 1 and isinstance(c["oldest_epoch"], int)
+    assert set(c) == {"schema", "pending", "oldest_epoch"}
+    assert c["pending"] == 1 and isinstance(c["oldest_epoch"], int)
+    (held,) = (tmp_path / "spool").glob("*.json")
+    assert json.loads(held.read_text())["attempts"] == 8
+
+
+@needs_node
+def test_the_door_completes_the_mcp_handshake_before_the_call(tmp_path, devclaw):
+    got = step(tmp_path, devclaw.url, "file", params=item("devclaw"), agent="kit")
+    assert got["spooled"] is False and got["id"] == "lifekit-hq/devclaw#1"
+    assert devclaw.sessions == {"s1": True}
+    # Each call opens its own session, the spool retry included.
+    devclaw.down = True
+    step(tmp_path, devclaw.url, "file", params=item("vault"), agent="kit")
+    devclaw.down = False
+    assert step(tmp_path, devclaw.url, "retry")["filed"] == 1
+    assert devclaw.sessions == {"s1": True, "s2": True}
+
+
+@needs_node
+def test_the_door_files_through_a_stateless_server(tmp_path, devclaw):
+    devclaw.stateless = True
+    got = step(tmp_path, devclaw.url, "file", params=item("fleet"), agent="kit")
+    assert got["spooled"] is False and got["id"] == "lifekit-hq/lifekit-stack#1"
+    assert devclaw.sessions == {}
 
 
 @needs_node
@@ -350,11 +410,8 @@ def test_the_spool_cli_prints_the_count(tmp_path, devclaw):
         check=True,
     )
     doc = json.loads(r.stdout)
-    assert (
-        doc["schema"] == "intake-spool-count.v1"
-        and doc["pending"] == 1
-        and doc["stuck"] == 0
-    )
+    assert doc["schema"] == "intake-spool-count.v1" and doc["pending"] == 1
+    assert set(doc) == {"schema", "pending", "oldest_epoch"}
 
 
 # --- platform patch, manifest, install --------------------------------------------
@@ -482,6 +539,22 @@ def test_ensure_installs_the_plugin_and_gives_every_agent_with_a_door_the_tool(
     assert live2 == live and "reload" not in docker and "patch" not in docker
     r, _, _ = _ensure(tmp_path, live, "--check")
     assert r.returncode == 0, r.stderr
+
+
+def test_ensure_files_installs_and_reloads_without_touching_the_allow_lists(
+    tmp_path,
+):
+    r, live, docker = _ensure(tmp_path, LIVE, "--files")
+    assert r.returncode == 0, r.stderr + r.stdout
+    dest = tmp_path / "config/extensions/intake-door"
+    assert (dest / "door.js").read_bytes() == (PLUGIN / "door.js").read_bytes()
+    assert "exec gw1 openclaw plugins reload intake-door" in docker
+    assert "config" not in docker and live == LIVE
+    # The plain run after it only converges the allow lists.
+    r, live, docker = _ensure(tmp_path, LIVE)
+    assert r.returncode == 0, r.stderr
+    assert "reload" not in docker
+    assert live["agents.entries"]["learnclaw"]["tools"]["alsoAllow"] == ["file_intake"]
 
 
 def test_ensure_check_names_each_list_without_the_tool(tmp_path):

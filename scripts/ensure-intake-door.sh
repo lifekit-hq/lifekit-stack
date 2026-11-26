@@ -18,10 +18,14 @@
 # text or answers in a parseable format, holds no write tool, and gets nothing
 # here, as with the shared persona blocks (scripts/ensure-dev-problem-block.sh).
 #
-# The deploy runs it (deploy-openclaw.sh, configure phase, after the platform
-# patch so the plugin is allowed when the allow lists name its tool). By hand,
-# on the VPS host as lifekit, from the repo checkout:
+# The deploy runs it twice (deploy-openclaw.sh, configure phase): `--files`
+# before the platform patch, beside fleet-gate, so the restart that patch asks
+# for when it first enables the plugin finds the files; then with no argument
+# after the agent installs, so a new agent's entry is there to receive the tool.
+# `--files` installs and reloads only, and needs neither the plugin enabled nor
+# a running gateway. By hand, on the VPS host as lifekit, from the repo checkout:
 #   /srv/lifekit-stack/scripts/ensure-intake-door.sh
+#   /srv/lifekit-stack/scripts/ensure-intake-door.sh --files   # files + reload only
 #   /srv/lifekit-stack/scripts/ensure-intake-door.sh --check   # read-only, exit 1 on drift
 #
 # The gateway loads a plugin only from files owned by its own uid or root and
@@ -41,7 +45,13 @@ config_dir="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
 src="${repo_root}/compose/openclaw-gateway/plugins/${PLUGIN}"
 dest="${config_dir}/extensions/${PLUGIN}"
 check_only=0
-[ "${1:-}" = "--check" ] && check_only=1
+files_only=0
+case "${1:-}" in
+  "") ;;
+  --check) check_only=1 ;;
+  --files) files_only=1 ;;
+  *) echo "usage: $0 [--files|--check]" >&2; exit 2 ;;
+esac
 
 changed=0
 for f in $FILES; do
@@ -70,6 +80,7 @@ if [ "$changed" = 1 ]; then
     && echo "reloaded $PLUGIN in the running gateway" \
     || echo "could not reload $PLUGIN (not enabled yet?); the platform patch's restart loads it"
 fi
+[ "$files_only" = 1 ] && exit 0
 
 # The CLI may interleave log lines with its JSON: keep the first JSON value of
 # the wanted shape ("{}" an object, "[]" a list).

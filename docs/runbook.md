@@ -2416,13 +2416,14 @@ refuses an unknown project, and a refusal came back to the owner as work to forw
   on. The plugin's service retries the spool every ten minutes, oldest first, one devclaw call
   per occurrence, so a repeat that waited still lands as a count, not a second issue. An item
   whose project devclaw does not know is filed under `fleet` with that said in its body. A filed
-  occurrence is deleted; one that fails again stays with its attempt count. Nothing is dropped:
-  after six failed retries it counts as `stuck` and is still retried.
+  occurrence is deleted; one that fails again stays with its attempt count and is retried on
+  every later run. Nothing is dropped.
 - **The fleet page:** the publisher's `intake_spool` field is `spool.mjs count` from the gateway
-  (`{pending, stuck, oldest_epoch}`, `scripts/fleet-publisher/README.md`); a stuck item also
-  adds an `errors[]` line.
-- **Install:** `platform.patch.json` allows and enables the plugin; `scripts/ensure-intake-door.sh`
-  (deploy, configure phase) installs its files, reloads it when they changed, and adds
+  (`{pending, oldest_epoch}`, `scripts/fleet-publisher/README.md`).
+- **Install:** `platform.patch.json` allows and enables the plugin. The deploy's configure phase
+  runs `scripts/ensure-intake-door.sh` twice. First `--files`, before the platform patch beside
+  the fleet gate, installs its files and reloads it when they changed, so the restart the patch
+  asks for on first enable loads it. Then, after the agent installs, the plain run adds
   `file_intake` to the global `tools.allow` when the live config has one and to each installed
   agent with a door (`tools.alsoAllow`, or `tools.allow` for an entry with an explicit list).
   It only adds; `--check` exits 1 naming each list without the tool. The agents with no door
