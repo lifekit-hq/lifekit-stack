@@ -53,6 +53,8 @@ FLEET_SCOUT_STATE (the scout's state dir, `candidates/<date>.txt` inside; unset:
 the scout is not read),
 FLEET_KIT_HELD_CMD (prints the held fleet tasks in Kit's daily notes that have
 no shaping item, as JSON - `kit_held.py check`; unset: not read),
+FLEET_INSTALLED_PROM (the release gauge's lifekit_installed.prom, which says
+per installed component whether it is behind main; unset: not read),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
 script), FLEET_CLIP_STATS_FEED (path of clip's stats.jsonl, whose directory is
 the clip queue's: unset: no side_hustles or clip_queue section, or clip source, an unreadable file: its "no data" line). A source that fails empties its own part
@@ -847,6 +849,7 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
             ("clip", ("buffer_floor_days", "slot_window_hours")),
             ("scout", ("idle_hours",)),
             ("kit_held", ("hours",)),
+            ("installed", ("behind_hours",)),
         ):
             if key in cfg:  # optional: absent leaves that source unread
                 block = cfg[key]
@@ -1489,6 +1492,65 @@ def held_stalls(
     return rows, {"read": True, "reason": None, "open": listed}
 
 
+INSTALLED_PROM_FRESH = 3600  # the gauge rewrites it every 5 minutes
+INSTALLED_LINE = re.compile(
+    r'^lifekit_component_behind(_since_seconds)?\{component="([a-z0-9][a-z0-9-]*)"\}'
+    r" (-?[0-9]+)$"
+)
+
+
+def installed_stalls(
+    cfg: dict[str, Any] | None, now: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """An installed component is stalled when origin/main has changed a path it
+    owns for longer than `installed.behind_hours` without its installer running
+    (issue 689). Read from the release gauge's textfile (FLEET_INSTALLED_PROM):
+    `lifekit_component_behind` 1 with `_since_seconds`, the commit time of the
+    oldest change not installed. A component with no stamp (-1) is unknown, not
+    stalled and not current; a file that is unset, unreadable or not rewritten
+    within the hour is unread: an age is never guessed."""
+    path = os.environ.get("FLEET_INSTALLED_PROM", "")
+    if cfg is None or "installed" not in cfg:
+        return [], {
+            "read": False,
+            "reason": "no installed thresholds in fleet-stalled.json",
+        }
+    if not path:
+        return [], {"read": False, "reason": "FLEET_INSTALLED_PROM is not set"}
+    try:
+        prom = Path(path)
+        age = now - int(prom.stat().st_mtime)
+        text = prom.read_text()
+    except (OSError, UnicodeDecodeError):
+        return [], {"read": False, "reason": "installed-commit gauge unreadable"}
+    if age > INSTALLED_PROM_FRESH:
+        return [], {"read": False, "reason": "installed-commit gauge is stale"}
+    behind: dict[str, int] = {}
+    since: dict[str, int] = {}
+    for line in text.splitlines():
+        m = INSTALLED_LINE.match(line.strip())
+        if m:
+            (since if m.group(1) else behind)[m.group(2)] = int(m.group(3))
+    window = int(cfg["installed"]["behind_hours"] * 3600)
+    owner = cfg["installed"].get("owner", "firstmate")
+    rows = [
+        {
+            "source": "installed",
+            "id": name,
+            "home_id": None,
+            "title": name,
+            "url": None,
+            "reason": "behind-main",
+            "since": since[name],
+            "threshold": window,
+            "owner": owner,
+        }
+        for name in sorted(behind)
+        if behind[name] == 1 and name in since and now - since[name] >= window
+    ]
+    return rows, {"read": True, "reason": None}
+
+
 def stalled_section(
     rows: list[dict[str, Any]], owners: list[str]
 ) -> list[dict[str, Any]]:
@@ -1522,6 +1584,7 @@ PROBLEM_SOURCE_KEY = {
     "clip": "clip",
     "scout": "scout",
     "held": "kit_held",
+    "installed": "installed",
 }
 PROBLEM_PHRASE = {
     "no-status-line": "silent",
@@ -1534,6 +1597,7 @@ PROBLEM_PHRASE = {
     "buffer-short": "buffer short",
     "no-output": "no output",
     "not-filed": "held, not filed",
+    "behind-main": "behind main",
 }
 
 
@@ -2120,8 +2184,16 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         threads, a2a = thread_stalls(cfg, args.now, errors)
         scout_rows, scout_source = scout_stalls(cfg, args.now)
         held_rows, held_source = held_stalls(cfg, args.now, errors)
+        installed_rows, installed_source = installed_stalls(cfg, args.now)
         stalled_rows = (
-            found + issues + jobs + threads + clip_rows + scout_rows + held_rows
+            found
+            + issues
+            + jobs
+            + threads
+            + clip_rows
+            + scout_rows
+            + held_rows
+            + installed_rows
         )
         stalled = stalled_section(stalled_rows, cfg["owners"])
         sources = {
@@ -2137,6 +2209,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "clip": clip_source,
             "scout": scout_source,
             "kit_held": held_source,
+            "installed": installed_source,
         }
     depth: dict[str, Any] | None = None
     if os.environ.get("FLEET_INTAKE_CMD") != "":

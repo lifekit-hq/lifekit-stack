@@ -45,3 +45,6 @@ install -m 644 "$HERE/memory-sync.service" "$UNIT_DIR/memory-sync.service"
 install -m 644 "$HERE/memory-sync.timer" "$UNIT_DIR/memory-sync.timer"
 systemctl daemon-reload
 systemctl enable --now memory-sync.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" memory-sync

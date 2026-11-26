@@ -99,6 +99,7 @@ job_id="$(field id)"
 if [ "$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["changed"])')" != "True" ]; then
   cron_check_agrees "$JOB_NAME" "$job_id"
   echo "'$JOB_NAME' ($job_id) already reads the solved count from learnclaw; unchanged"
+  [ "${DRY_RUN:-0}" = 1 ] || bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" goal-checkin-solved
   exit 0
 fi
 if [ "$CRON_CHECK" = 1 ]; then
@@ -119,3 +120,6 @@ args=(--message "$message")
 [ -z "$tools" ] || args+=(--tools "$tools")
 docker exec "$GATEWAY" openclaw cron edit "$job_id" "${args[@]}" >/dev/null
 echo "'$JOB_NAME' ($job_id) now reads the weekly solved count from learnclaw (python3 daily.py week)"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" goal-checkin-solved

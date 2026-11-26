@@ -96,3 +96,6 @@ case "$schedule" in
   unknown) echo "cron: could not read the gateway's cron list" ;;
   *) echo "cron: '$CRON_NAME' fires at '$schedule'" ;;
 esac
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" workout-log

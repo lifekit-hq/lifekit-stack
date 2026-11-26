@@ -191,6 +191,7 @@ if [ -n "$existing_id" ]; then
   docker exec "$GATEWAY" openclaw cron enable "$existing_id" >/dev/null
   echo "cron '$JOB_NAME' already existed (id $existing_id) — converged its agent, message, description, delivery (--no-deliver) and enabled; schedule left untouched"
   echo "verify: docker exec $GATEWAY openclaw cron show $existing_id   # delivery.mode should read \"none\""
+  bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" memory-vault-cleanup
   exit 0
 fi
 
@@ -215,3 +216,6 @@ else
   echo "could not parse job id from cron add output — find it with:" >&2
   echo "  docker exec $GATEWAY openclaw cron list --all --json | jq '.jobs[] | select(.name==\"$JOB_NAME\")'" >&2
 fi
+
+# Record the installed commit (issue 689; the release gauge reads it).
+[ -z "$job_id" ] || bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" memory-vault-cleanup

@@ -36,3 +36,6 @@ done
 systemctl daemon-reload
 systemctl enable --now host-group-gauge.timer tmp-usage-gauge.timer unit-gauge.timer \
   lifekit-release-gauge.timer lifekit-ledger-drift.timer lifekit-openclaw-spend-guard.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" host-gauges

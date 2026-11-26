@@ -20,3 +20,6 @@ sed "s/__LIFEKIT_USER__/${LIFEKIT_USER}/g" "$HERE/media-prune.service" \
 install -m 644 "$HERE/media-prune.timer" /etc/systemd/system/media-prune.timer
 systemctl daemon-reload
 systemctl enable --now media-prune.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" media-prune

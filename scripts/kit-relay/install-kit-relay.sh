@@ -100,3 +100,6 @@ if [[ -n "$HELD_BIN" ]]; then
 fi
 install -o root -g root -m 0755 "$rendered" "$DEST"
 echo "kit-relay installed -> $DEST (FM_HOME=$FM_HOME${FM_HOME_ALT:+ FM_HOME_ALT=$FM_HOME_ALT}${TASKS_AXI:+ TASKS_AXI=$TASKS_AXI, hold helper $HELD_BIN})"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" kit-relay

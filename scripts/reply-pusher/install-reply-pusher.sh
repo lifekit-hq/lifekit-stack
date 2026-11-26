@@ -83,3 +83,6 @@ chmod 644 "$UNIT_DIR/lifekit-reply-pusher.path"
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable lifekit-reply-pusher.service
 "$SYSTEMCTL" enable --now lifekit-reply-pusher.path
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" reply-pusher

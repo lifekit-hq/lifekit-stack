@@ -756,7 +756,10 @@ publish_status_page() {
   for i in "${!homes[@]}"; do
     [[ -n "${homes[$i]}" ]] && args+=(--home "${ids[$i]}=${homes[$i]}")
   done
-  CREDENTIAL_RE="$CREDENTIAL_RE" TASKS_AXI="$TASKS_AXI" timeout 50 python3 "$helper" "${args[@]}" \
+  # The release gauge's installed-vs-main file (issue 689) sits beside fleet.prom.
+  CREDENTIAL_RE="$CREDENTIAL_RE" TASKS_AXI="$TASKS_AXI" \
+    FLEET_INSTALLED_PROM="${FLEET_INSTALLED_PROM-$TEXTFILE_DIR/lifekit_installed.prom}" \
+    timeout 50 python3 "$helper" "${args[@]}" \
     --now "$NOW" --state-dir "$STATE_DIR" \
     --daily "$OUT_DIR/metrics/daily.jsonl" --daily "$work/daily-source.jsonl" \
     --remote "$work/remote-status.json" > "$work/status.out" || {

@@ -237,6 +237,7 @@ case "$status" in
     else
       echo "already runs with --light-context; nothing to do"
     fi
+    bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" today-brief-fleet
     exit 0
     ;;
   11)
@@ -252,3 +253,6 @@ docker exec "$GATEWAY" openclaw cron edit "$job_id" --message "$wanted" --light-
 echo "payload.message of '$JOB_NAME' ($job_id) now carries the fleet step and runs with --light-context"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
 echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # sends the brief to Telegram"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" today-brief-fleet

@@ -51,3 +51,6 @@ install -m 644 "$HERE/memory-rotate.service" "$UNIT_DIR/memory-rotate.service"
 install -m 644 "$HERE/memory-rotate.timer" "$UNIT_DIR/memory-rotate.timer"
 systemctl daemon-reload
 systemctl enable --now memory-rotate.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" memory-rotate

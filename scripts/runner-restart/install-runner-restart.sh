@@ -20,3 +20,6 @@ while read -r unit _; do
     > "$UNIT_DIR/${unit}.d/restart.conf"
 done < <("$SYSTEMCTL" list-unit-files 'actions.runner.*.service' --no-legend --no-pager)
 "$SYSTEMCTL" daemon-reload
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" runner-restart

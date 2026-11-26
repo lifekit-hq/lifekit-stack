@@ -1,0 +1,70 @@
+# Installed components and the repo paths each one owns (issue 689).
+#
+# One line per component: `<component> <path> [<path> ...]`, paths as git
+# pathspecs from the repo root. <component> is the name its installer stamps
+# (scripts/lib/install-stamp.sh <component>, into /var/lib/lifekit/installed/).
+# The release gauge (lifekit-release-gauge.sh) reads this file at origin/main and
+# reports a component behind when origin/main changed one of its paths after the
+# commit its stamp records.
+#
+# List only what the installer renders or copies onto the host: the installer
+# itself, the unit files it renders, and the binaries, config or workspace files
+# it copies. Never list code a unit runs straight from the deploy checkout
+# (__REPO_DIR__, /srv/lifekit-stack) or docs: those go live with the deploy's
+# `git reset --hard`, so a change to them must not read as install drift.
+# scripts/tests/test_release_gauge.py checks that
+# every install-*/ensure-* script that deploys a component stamps a name listed
+# here, and that every path exists.
+
+# Host units and helpers (scripts/<dir>/install-*.sh)
+alert-inbox scripts/alert-inbox/install-alert-inbox.sh scripts/alert-inbox/alert-inbox.service scripts/alert-inbox/alert-inbox.timer
+claude-home scripts/claude-home defaults/claude-home
+config-sync scripts/sync/install-config-sync.sh scripts/sync/openclaw-config-sync.service scripts/sync/openclaw-config-sync.sh scripts/sync/openclaw-config-sync.timer
+docker-weekly-prune scripts/docker-weekly-prune
+fleet-publisher scripts/fleet-publisher/install-fleet-publisher.sh scripts/fleet-publisher/fleet-publisher.sh scripts/fleet-publisher/fleet_status.py scripts/fleet-publisher/fleet-stalled.json scripts/fleet-publisher/fleet-decisions.json scripts/fleet-publisher/taken_feed.py scripts/fleet-publisher/screen_changes.py scripts/fleet-publisher/activity_journal.py scripts/fleet-publisher/scheduled.py scripts/fleet-publisher/lifekit-fleet-publisher.service scripts/fleet-publisher/lifekit-fleet-publisher.timer
+host-gauges scripts/host-gauge scripts/tmp-gauge scripts/unit-gauge scripts/release-gauge/lifekit-release-gauge.sh scripts/release-gauge/lifekit-release-gauge.service scripts/release-gauge/lifekit-release-gauge.timer scripts/ledger-drift scripts/openclaw-auth/lifekit-openclaw-spend-guard.sh scripts/openclaw-auth/lifekit-openclaw-spend-guard.service scripts/openclaw-auth/lifekit-openclaw-spend-guard.timer
+identity-backup scripts/identity-backup
+idle-lanes scripts/ensure-idle-lanes.sh scripts/idle-lanes
+intake-shape scripts/intake-shape
+intake-to-vault scripts/intake-to-vault/install-intake-to-vault.sh scripts/intake-to-vault/intake_to_vault.py scripts/intake-to-vault/lifekit-intake-to-vault.service scripts/intake-to-vault/lifekit-intake-to-vault.timer
+kit-relay scripts/kit-relay scripts/kit-held/kit_held.py scripts/intake-shape/intake_shape.py
+learnharness-sync scripts/learnharness-sync
+ledger-persona-check scripts/ledger-persona/install-ledger-persona-check.sh scripts/ledger-persona/lifekit-ledger-persona-check.service scripts/ledger-persona/lifekit-ledger-persona-check.timer
+media-prune scripts/media-prune
+memory-rotate scripts/rotate/install-memory-rotate.sh scripts/rotate/memory-rotate.sh scripts/rotate/memory-rotate.service scripts/rotate/memory-rotate.timer
+memory-sync scripts/sync/install-memory-sync.sh scripts/sync/memory-sync.service scripts/sync/memory-sync.sh scripts/sync/memory-sync.timer
+offbox-backup scripts/offbox-backup/install-offbox-backup.sh scripts/offbox-backup/lifekit-offbox-backup.service scripts/offbox-backup/lifekit-offbox-backup.timer scripts/offbox-backup/lifekit-offbox-verify.service scripts/offbox-backup/lifekit-offbox-verify.timer
+ops-door-escalate scripts/ops-door/install-ops-door.sh scripts/ops-door/ops-door-escalate.service scripts/ops-door/ops-door-escalate.timer
+reply-pusher scripts/reply-pusher/install-reply-pusher.sh scripts/reply-pusher/reply_pusher.py scripts/reply-pusher/lifekit-reply-pusher.service scripts/reply-pusher/lifekit-reply-pusher.path
+runner-restart scripts/runner-restart
+scout scripts/scout/install-scout.sh scripts/scout/lifekit-scout.service scripts/scout/lifekit-scout.timer
+vault-audit scripts/memory-audit/install-vault-audit.sh scripts/memory-audit/lifekit-vault-audit.service scripts/memory-audit/lifekit-vault-audit.timer
+vault-door scripts/vault-door/install-vault-door.sh scripts/vault-door/vault_door.py scripts/vault-door/lifekit-vault-door-bridge.service scripts/vault-door/lifekit-vault-door-bridge.timer
+workspace-pointers scripts/workspace-pointers defaults/workspace-pointers
+yt-tunnel scripts/yt-tunnel/install-yt-tunnel.sh scripts/yt-tunnel/yt-tunnel.service scripts/yt-tunnel/yt-relay.service
+
+# OpenClaw workspace pieces and gateway crons (scripts/ensure-*.sh)
+answer-shape scripts/ensure-answer-shape.sh defaults/agents/kit/workspace/SOUL.md
+dev-problem-block scripts/ensure-dev-problem-block.sh defaults/agents
+doc-door scripts/ensure-doc-door.sh skills/doc-door scripts/doc-door-gate/scan.js
+finance-pulse scripts/ensure-finance-pulse.sh scripts/finance-pulse-gate scripts/finance-pulse.md
+fleet-gate scripts/ensure-fleet-gate.sh compose/openclaw-gateway/plugins/fleet-gate
+goal-checkin-solved scripts/ensure-goal-checkin-solved.sh
+intake-door scripts/ensure-intake-door.sh compose/openclaw-gateway/plugins/intake-door defaults/agents
+job-queue scripts/ensure-job-queue.sh skills/job-queue
+kit-cron-models scripts/ensure-kit-cron-models.sh
+learnclaw scripts/ensure-learnclaw.sh defaults/agents/learnclaw skills/learning-record skills/leetcode-daily
+learnclaw-morning scripts/ensure-learnclaw-morning.sh
+learnclaw-weekcount scripts/ensure-learnclaw-weekcount.sh
+leetcode-daily scripts/ensure-leetcode-daily.sh
+memory-vault-cleanup scripts/ensure-memory-vault-cleanup.sh
+needs-you-digest scripts/ensure-needs-you-digest.sh scripts/doc-door-gate/mail.js
+planning-reminder scripts/ensure-planning-reminder.sh
+reader-agent scripts/ensure-reader-agent.sh defaults/agents scripts/ledger-persona/ledger-persona.py
+secondmate-relay scripts/ensure-secondmate-relay.sh skills/secondmate-relay
+study-panel scripts/ensure-study-panel.sh defaults/agents/study-panel
+today-brief-fleet scripts/ensure-today-brief-fleet.sh
+video-drop-door scripts/ensure-video-drop-door.sh compose/openclaw-gateway/plugins/video-drop-door
+video-eval scripts/ensure-video-eval.sh skills/video-eval
+workout-log scripts/ensure-workout-log.sh skills/workout-log
+youtube-transcript scripts/ensure-youtube-transcript.sh skills/youtube-transcript

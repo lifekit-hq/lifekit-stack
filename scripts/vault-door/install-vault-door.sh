@@ -44,3 +44,6 @@ chmod 644 "$UNIT_DIR/lifekit-vault-door-bridge.service"
 install -m 644 "$HERE/lifekit-vault-door-bridge.timer" "$UNIT_DIR/lifekit-vault-door-bridge.timer"
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable --now lifekit-vault-door-bridge.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" vault-door

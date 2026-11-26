@@ -27,3 +27,6 @@ sed "s/__LIFEKIT_USER__/${LIFEKIT_USER}/g" "$HERE/lifekit-identity-backup.servic
 install -m 644 "$HERE/lifekit-identity-backup.timer" "$UNIT_DIR/lifekit-identity-backup.timer"
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable --now lifekit-identity-backup.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" identity-backup

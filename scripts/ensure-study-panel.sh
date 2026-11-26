@@ -141,3 +141,6 @@ fi
 
 echo "study-panel agent verified: shipped cap live, no bindings, no skills, no agent-to-agent"
 echo "verify: scripts/study-panel-canary/run.sh   # the cap, on a managed claude-cli turn and through the HTTP endpoint"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+[ "$check_only" = 1 ] || bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" study-panel

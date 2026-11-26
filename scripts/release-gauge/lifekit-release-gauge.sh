@@ -19,6 +19,30 @@
 #       with both labels empty: a successful run (merged, or the "no pending
 #       release PR" no-op), or a PR opened after the failed run.
 #
+# The same run exports installed-vs-repo drift (issue 689) into
+# lifekit_installed.prom: each install-*/ensure-* script stamps
+# /var/lib/lifekit/installed/<component> with the commit it installed
+# (scripts/lib/install-stamp.sh), and this compares that commit with origin/main
+# of the deploy checkout for the paths the component owns
+# (scripts/release-gauge/components.txt, read at origin/main so a new row needs
+# no gauge re-install):
+#
+#   lifekit_component_behind{component}
+#       1 when a commit on origin/main that is not in the stamped commit changed
+#       a path the component owns (merged, never installed); 0 when none did;
+#       -1 unknown: no stamp, an unreadable stamp, or a commit the checkout
+#       does not have. Unknown is never current.
+#   lifekit_component_behind_since_seconds{component}
+#       for a behind component only: the commit time of the oldest such commit
+#       (squash merges, so the merge time), i.e. since when it has been behind.
+#
+# Drift inputs (env): RELEASE_STACK_REPO (the deploy checkout, default
+# /srv/lifekit-stack, read-only), RELEASE_STACK_REF (default origin/main; the
+# deploy fetches it on every merge), LIFEKIT_INSTALLED_DIR (default
+# /var/lib/lifekit/installed). It runs first and on its own temp file: an
+# unreadable checkout or manifest leaves lifekit_installed.prom untouched (it
+# goes stale) and fails the unit after the release part has run.
+#
 # Inputs (env): RELEASE_REPOS, the space-separated owner/name list (default the
 # four lifekit-hq repos that ship weekly-release.yml). If any read fails the
 # script exits nonzero without touching weekly_release.prom, so the unit goes
@@ -31,6 +55,73 @@ WORKFLOW=weekly-release.yml
 PENDING_LABEL="autorelease: pending"
 SLUG_RE='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
 URL_RE='^https://[^"\\[:space:]]+$'
+
+STACK_REPO="${RELEASE_STACK_REPO:-/srv/lifekit-stack}"
+STACK_REF="${RELEASE_STACK_REF:-origin/main}"
+STAMP_DIR="${LIFEKIT_INSTALLED_DIR:-/var/lib/lifekit/installed}"
+MANIFEST=scripts/release-gauge/components.txt
+COMPONENT_RE='^[a-z0-9][a-z0-9-]*$'
+
+stack_git() { git -c safe.directory="$STACK_REPO" -C "$STACK_REPO" "$@"; }
+
+# installed_drift <file>: the drift metrics into <file>; non-zero when the
+# checkout, its ref or the manifest cannot be read.
+installed_drift() {
+  local out="$1" manifest component paths_line commit since stamp line
+  local -a paths
+  manifest="$(stack_git show "$STACK_REF:$MANIFEST")" || {
+    echo "lifekit-release-gauge: cannot read $MANIFEST at $STACK_REF in $STACK_REPO as $(id -un); the account must be in the lifekit group (or run the drift read as lifekit)" >&2
+    return 1
+  }
+  local behind="" sinces=""
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    read -r component paths_line <<< "$line" || true
+    [[ -n "$component" ]] || continue
+    [[ "$component" =~ $COMPONENT_RE ]] || {
+      echo "lifekit-release-gauge: bad component name '$component' in $MANIFEST" >&2
+      return 1
+    }
+    read -r -a paths <<< "$paths_line"
+    ((${#paths[@]})) || {
+      echo "lifekit-release-gauge: $component owns no paths in $MANIFEST" >&2
+      return 1
+    }
+    stamp="$STAMP_DIR/$component"
+    commit=""
+    [[ -r "$stamp" ]] && commit="$(sed -nE 's/.*"commit": *"([0-9a-f]{40})".*/\1/p' "$stamp" | head -n 1)"
+    if [[ -z "$commit" ]] || ! stack_git cat-file -e "$commit^{commit}" 2> /dev/null; then
+      behind+="lifekit_component_behind{component=\"$component\"} -1"$'\n'
+      continue
+    fi
+    since="$(stack_git log --format=%ct "$commit..$STACK_REF" -- "${paths[@]}" \
+      | awk 'NR == 1 || $1 < m { m = $1 } END { if (NR) print m }')" || return 1
+    if [[ -z "$since" ]]; then
+      behind+="lifekit_component_behind{component=\"$component\"} 0"$'\n'
+    else
+      behind+="lifekit_component_behind{component=\"$component\"} 1"$'\n'
+      sinces+="lifekit_component_behind_since_seconds{component=\"$component\"} $since"$'\n'
+    fi
+  done <<< "$manifest"
+  {
+    echo "# HELP lifekit_component_behind 1 when origin/main changed a path the component owns after its install stamp, 0 current, -1 unknown (no or unreadable stamp)."
+    echo "# TYPE lifekit_component_behind gauge"
+    printf '%s' "$behind"
+    echo "# HELP lifekit_component_behind_since_seconds Commit time of the oldest origin/main change the behind component has not installed."
+    echo "# TYPE lifekit_component_behind_since_seconds gauge"
+    printf '%s' "$sinces"
+  } > "$out"
+}
+
+drift_rc=0
+drift_tmp="$(mktemp "$OUT_DIR/.lifekit_installed.XXXXXX")"
+if installed_drift "$drift_tmp"; then
+  chmod 644 "$drift_tmp"
+  mv -f "$drift_tmp" "$OUT_DIR/lifekit_installed.prom"
+else
+  rm -f "$drift_tmp"
+  drift_rc=1
+fi
 
 tmp="$(mktemp "$OUT_DIR/.weekly_release.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
@@ -75,3 +166,4 @@ for repo in $REPOS; do
 done
 chmod 644 "$tmp"
 mv -f "$tmp" "$OUT_DIR/weekly_release.prom"
+exit "$drift_rc"

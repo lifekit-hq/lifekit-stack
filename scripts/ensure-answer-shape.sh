@@ -118,4 +118,9 @@ for agent in "${agents[@]}"; do
     installed) echo "agent '$agent': answer shape block inserted -> $soul" ;;
   esac
 done
+# Record the installed commit (issue 689; the release gauge reads it) after a full
+# written run (no agent subset, not --dry-run) that passed.
+if [ "$rc" = 0 ] && [ -z "$dry" ] && [ "$#" -eq 0 ]; then
+  bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" answer-shape
+fi
 exit "$rc"

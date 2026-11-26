@@ -38,6 +38,7 @@ done
 chmod 0755 "$dest"
 if [ "$changed" -eq 0 ]; then
   echo "video drop door unchanged -> $dest"
+  bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" video-drop-door
   exit 0
 fi
 echo "video drop door installed -> $dest"
@@ -68,3 +69,6 @@ case "$allowed" in
     docker exec "$GATEWAY" openclaw plugins reload "$PLUGIN"
     ;;
 esac
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" video-drop-door

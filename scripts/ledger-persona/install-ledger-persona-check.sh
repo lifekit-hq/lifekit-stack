@@ -34,3 +34,6 @@ install -m 644 "$HERE/lifekit-ledger-persona-check.timer" "$UNIT_DIR/lifekit-led
 if [[ "$ENABLE" == "1" ]]; then
   "$SYSTEMCTL" enable --now lifekit-ledger-persona-check.timer
 fi
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" ledger-persona-check

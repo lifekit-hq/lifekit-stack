@@ -42,3 +42,6 @@ sed -e "s|__ALERT_INBOX_USER__|${ALERT_INBOX_USER}|g" -e "s|__REPO_DIR__|${REPO_
 install -m 644 "$HERE/alert-inbox.timer" /etc/systemd/system/alert-inbox.timer
 systemctl daemon-reload
 systemctl enable --now alert-inbox.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" alert-inbox

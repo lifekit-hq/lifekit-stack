@@ -3882,6 +3882,11 @@ are read by the publisher's existing run, read-only, from the directory of
 sets `FLEET_SCOUT_STATE`, so point it with a systemd drop-in. Unset, the page says
 `read: false`. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
 drop-in: "Held items become shaping items").
+Installed components are one more (`installed.behind_hours`, 24): the publisher reads
+the release gauge's `lifekit_installed.prom` from its textfile directory
+(`FLEET_INSTALLED_PROM` overrides), and a component
+behind main for longer than that is a stalled row under `ops` named by the component
+("Installed components behind main", below).
 
 The same run writes `/var/lib/lifekit-fleet/taken-for-you.json`, the dashboard's
 "Taken for you" feed: the last 200 actions the fleet took under a standing
@@ -4339,6 +4344,44 @@ cat /var/lib/node_exporter/textfile/weekly_release.prom
 
 The merge's deploy reloads Grafana provisioning, which loads the alert rule; until the timer is
 installed the rule sees no data and stays quiet.
+
+### Installed components behind main
+
+A merge reaches the host only when the component's installer runs, and several (the host
+`install-*` units, most `ensure-*` crons) are operator steps, so merged code can sit unapplied
+(issue 689). Each `install-*`/`ensure-*` script that deploys a component ends its success path
+with `scripts/lib/install-stamp.sh <component>`, which writes
+`/var/lib/lifekit/installed/<component>` as `{"commit": "<checkout HEAD>", "at": "<UTC>"}`.
+A `--check`, `--print` or dry run, a skip (no gateway, no agent), a subset run (agent
+arguments, `--files`) and a failed install write none, so the stamp only moves on a real install; a re-run at the same commit leaves it (and its
+`at`, the first install of that commit) as it was. `ensure-ops-door.sh` only checks, so it has
+no stamp.
+
+The same gauge run reads `scripts/release-gauge/components.txt` at `origin/main` of the deploy
+checkout (`/srv/lifekit-stack`; `RELEASE_STACK_REPO`, `RELEASE_STACK_REF` and
+`LIFEKIT_INSTALLED_DIR` override) - one line per component, the paths it owns - and writes
+`lifekit_installed.prom`: `lifekit_component_behind{component}` is 1 when origin/main changed one
+of those paths after the stamped commit (with `lifekit_component_behind_since_seconds`, the commit
+time of the oldest such change), 0 when current, and -1 when unknown (no stamp, an unreadable
+stamp, or a commit the checkout does not have). A manifest it cannot read leaves the previous file and exits nonzero.
+The fleet page shows a component behind for more than 24 hours as an `installed` stalled source
+("Fleet publisher", above).
+
+Both halves need the `lifekit` group: `/srv/lifekit-stack` and `/var/lib/lifekit` are
+`lifekit:lifekit 0750`, so the account the release gauge runs as (the admin account) must be in
+the `lifekit` group to read the checkout, or the drift read must run as `lifekit`; an installer
+run without sudo (e.g. `install-yt-tunnel.sh`) needs the same group membership to write
+`/var/lib/lifekit/installed`. Bootstrap does not add it; both fail with an error naming it.
+The manifest lists only what each installer renders or copies onto the host, never code a unit
+runs straight from the checkout, which goes live with the deploy.
+
+A new component is a line in `components.txt` and the stamp call in its installer;
+`scripts/tests/test_release_gauge.py` fails when an installer stamps a name the file does not
+list. To clear a behind component, run its installer (its section here names it); to see them:
+
+```bash
+grep -v ' 0$' /var/lib/node_exporter/textfile/lifekit_installed.prom
+```
 
 ## Runner restart drop-ins
 

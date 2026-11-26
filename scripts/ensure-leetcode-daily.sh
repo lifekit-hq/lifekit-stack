@@ -226,3 +226,6 @@ echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT 
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
 echo "        docker exec $GATEWAY python3 $DAILY next --push --date <a Tuesday>   # NO_REPLY on an office day (Tuesday), nothing recorded"
 echo "        docker exec $GATEWAY python3 $DAILY status"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" leetcode-daily

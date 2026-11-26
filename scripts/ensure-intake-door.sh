@@ -165,3 +165,7 @@ if [ "$check_only" = 0 ]; then
   fi
 fi
 compare check
+
+# Record the installed commit (issue 689; the release gauge reads it) after a
+# full run that converged; --check, --files and the no-gateway path never get here.
+[ "$check_only" = 1 ] || bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" intake-door

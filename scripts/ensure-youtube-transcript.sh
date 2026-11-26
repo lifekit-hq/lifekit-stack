@@ -74,3 +74,6 @@ for (const [id, a] of Object.entries((c.agents || {}).entries || {})) {
   console.log("allowlist: " + id + ": " + v);
 }
 ' 2>/dev/null || echo "allowlist: could not read the agents' skills lists"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" youtube-transcript

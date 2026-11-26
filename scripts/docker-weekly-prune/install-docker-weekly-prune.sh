@@ -26,3 +26,6 @@ install -m 644 "$HERE/lifekit-docker-weekly-prune.service" "$UNIT_DIR/lifekit-do
 install -m 644 "$HERE/lifekit-docker-weekly-prune.timer" "$UNIT_DIR/lifekit-docker-weekly-prune.timer"
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable --now lifekit-docker-weekly-prune.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" docker-weekly-prune

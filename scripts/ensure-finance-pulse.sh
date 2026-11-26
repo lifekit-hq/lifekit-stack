@@ -194,6 +194,7 @@ fi
 
 if [ "${#edit_args[@]}" -eq 0 ]; then
   echo "payload.message, timeoutSeconds ($TIMEOUT_SECONDS), model ($MODEL), gate and failure alert of '$JOB_NAME' ($job_id) already declared (${checklist#"${repo_root}/"}, ${gate_src#"${repo_root}/"}); nothing to do"
+  bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" finance-pulse
   exit 0
 fi
 
@@ -206,3 +207,6 @@ docker exec "$GATEWAY" openclaw cron edit "$job_id" "${edit_args[@]}" >/dev/null
 [ "$current_alert_to" = "$ALERT_CHAT" ] || echo "failure alert of '$JOB_NAME' ($job_id) set to announce on telegram"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
 echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # trigger a run"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" finance-pulse
