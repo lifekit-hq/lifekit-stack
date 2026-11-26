@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import shlex
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -12,6 +15,9 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 HELPER = REPO / "scripts/fleet-publisher/scheduled.py"
 SWEEP = REPO / "scripts/check-cron-declarations.sh"
+NOW = 1_800_000_000
+# The publisher passes three cadences of its default 300 s.
+MAX_AGE = 900
 
 # One timer, one cron row and one declared row that is not live.
 MANIFEST = {
@@ -48,7 +54,11 @@ CRON_LIST = {
             "agentId": "finance",
             "name": "ledger-pulse",
             "enabled": True,
-            "schedule": {"kind": "cron", "expr": "20 9,15,21 * * *", "tz": "Europe/Dublin"},
+            "schedule": {
+                "kind": "cron",
+                "expr": "20 9,15,21 * * *",
+                "tz": "Europe/Dublin",
+            },
             "delivery": {"mode": "announce", "channel": "telegram", "to": "4223"},
             "payload": {"kind": "agentTurn", "message": "the checklist"},
             "state": {
@@ -71,7 +81,7 @@ def box(tmp_path):
     systemctl.write_text(
         "#!/usr/bin/env bash\n"
         f'case "$1" in\n'
-        f'  list-timers) cat {tmp_path}/list-timers.json ;;\n'
+        f"  list-timers) cat {tmp_path}/list-timers.json ;;\n"
         "  show) printf 'Id=media-prune.service\\nResult=exit-code\\nActiveState=failed\\n\\n"
         "Id=apt-daily.service\\nResult=success\\nActiveState=inactive\\n' ;;\n"
         "  *) exit 9 ;;\n"
@@ -93,9 +103,12 @@ def helper(*args, **env):
     )
 
 
-def gateway_cache(box, intents=None, cron=CRON_LIST):
-    """Run the gateway read against stubbed CLI output and return the cache path."""
-    (box / "cron.out").write_text('{"level":"info","message":"noise"}\n' + json.dumps(cron))
+def gateway_cache(box, intents=None, cron=CRON_LIST, cron_read=NOW, intents_read=NOW):
+    """Run the gateway read against stubbed CLI output and return the cache path,
+    each part stamped with its read time the way the publisher caches it."""
+    (box / "cron.out").write_text(
+        '{"level":"info","message":"noise"}\n' + json.dumps(cron)
+    )
     (box / "intents.out").write_text(json.dumps(intents or []))
     r = helper(
         "gateway",
@@ -103,8 +116,10 @@ def gateway_cache(box, intents=None, cron=CRON_LIST):
         FLEET_INTENTS_CMD=f"cat {box / 'intents.out'}",
     )
     assert r.returncode == 0, r.stderr
+    doc = json.loads(r.stdout)
+    doc.update(cron_read_epoch=cron_read, intents_read_epoch=intents_read)
     cache = box / "gateway.json"
-    cache.write_text(r.stdout)
+    cache.write_text(json.dumps(doc))
     return cache
 
 
@@ -115,6 +130,10 @@ def build(box, cache, systemctl=None):
         str(box / "manifest.json"),
         "--gateway",
         str(cache),
+        "--now",
+        str(NOW),
+        "--max-age",
+        str(MAX_AGE),
         FLEET_SYSTEMCTL=str(box / "systemctl") if systemctl is None else systemctl,
     )
     assert r.returncode == 0, r.stderr
@@ -237,6 +256,92 @@ def test_a_side_that_could_not_be_read_is_unknown_not_missing(box):
         ("ledger-pulse", "unknown"),
         ("planning-reminder", "unknown"),
     }
+
+
+ARMED_INTENT = {
+    "id": "si-1",
+    "agent": "kit",
+    "description": "Remind me to confirm the rollback owner",
+    "trigger_keywords": "[]",
+    "status": "armed",
+}
+
+
+def test_stale_cron_rows_are_unknown_with_their_age_while_fresh_intents_stay_live(box):
+    cache = gateway_cache(
+        box, intents=[ARMED_INTENT], cron_read=NOW - 1000, intents_read=NOW - 60
+    )
+    states = {
+        e["name"]: (e["state"], e.get("stale_seconds", "absent"))
+        for e in build(box, cache)
+        if e["kind"] != "timer"
+    }
+    assert states == {
+        "ledger-pulse": ("unknown", 1000),
+        "planning-reminder": ("unknown", 1000),
+        "Remind me to confirm the rollback owner": ("live", "absent"),
+    }
+
+
+def test_stale_intents_are_unknown_with_their_age_while_fresh_cron_stays_live(box):
+    cache = gateway_cache(
+        box, intents=[ARMED_INTENT], cron_read=NOW - 900, intents_read=NOW - 901
+    )
+    states = {
+        e["name"]: (e["state"], e.get("stale_seconds", "absent"))
+        for e in build(box, cache)
+        if e["kind"] != "timer"
+    }
+    assert states == {
+        "ledger-pulse": ("live", "absent"),
+        "planning-reminder": ("missing", "absent"),
+        "Remind me to confirm the rollback owner": ("unknown", 901),
+    }
+
+
+def intent_reader():
+    spec = importlib.util.spec_from_file_location("scheduled", HELPER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.INTENT_READER
+
+
+def test_an_agent_without_a_store_or_table_does_not_hide_the_others_intents(tmp_path):
+    kit = tmp_path / "kit" / "agent.sqlite"
+    kit.parent.mkdir()
+    with sqlite3.connect(kit) as con:
+        con.execute(
+            "create table standing_intents (id text, description text,"
+            " trigger_keywords text, status text, expires_at integer,"
+            " last_fired_at integer, created_at integer)"
+        )
+        con.executemany(
+            "insert into standing_intents values (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    "si-1",
+                    "Confirm the rollback owner",
+                    '["launch"]',
+                    "armed",
+                    None,
+                    None,
+                    1,
+                ),
+                ("si-2", "Already done", "[]", "done", None, None, 2),
+            ],
+        )
+    tableless = tmp_path / "ops" / "agent.sqlite"
+    tableless.parent.mkdir()
+    sqlite3.connect(tableless).close()
+    template = str(tmp_path / "{agent}" / "agent.sqlite")
+    reader = ["python3", "-c", intent_reader(), template, "finance", "ops", "kit"]
+    r = helper("gateway", FLEET_CRON_CMD="", FLEET_INTENTS_CMD=shlex.join(reader))
+    assert r.returncode == 0, r.stderr
+    doc = json.loads(r.stdout)
+    assert doc["errors"] == []
+    assert [(i["agent"], i["id"], i["status"]) for i in doc["intents"]] == [
+        ("kit", "si-1", "armed")
+    ]
 
 
 def test_a_declared_timer_systemd_does_not_list_is_missing(box):

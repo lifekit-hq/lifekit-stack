@@ -1540,6 +1540,48 @@ def test_the_summary_carries_the_scheduled_list(fleet):
     assert "4223" not in (fleet.out / "home-summary.json").read_text()
 
 
+def test_a_failed_gateway_read_keeps_its_old_stamp_and_goes_unknown(fleet):
+    """Three cadences after the last good cron read, the cached rows are not live."""
+    manifest = fleet.tmp / "scheduled.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "timers": [],
+                "cron": [
+                    {
+                        "name": "ledger-pulse",
+                        "script": "scripts/ensure-finance-pulse.sh",
+                    },
+                    {
+                        "name": "planning-reminder",
+                        "script": "scripts/ensure-planning-reminder.sh",
+                    },
+                ],
+            }
+        )
+    )
+    cron = fleet.tmp / "cron.json"
+    cron.write_text(
+        json.dumps(
+            {"jobs": [{"name": "ledger-pulse", "agentId": "finance", "enabled": True}]}
+        )
+    )
+    fleet.write(summary())
+    env = {"FLEET_SCHEDULED_MANIFEST": str(manifest), "FLEET_SCHEDULED_EVERY": "300"}
+    assert fleet.run(**env, FLEET_CRON_CMD=f"cat {cron}").returncode == 0
+    # The gateway is gone from here on: every due read fails.
+    down = {**env, "FLEET_CRON_CMD": "false"}
+    assert fleet.run(**down, FLEET_NOW=str(NOW + 600)).returncode == 0
+    states = {e["name"]: e["state"] for e in fleet.published()["scheduled"]}
+    assert states == {"ledger-pulse": "live", "planning-reminder": "missing"}
+    assert fleet.run(**down, FLEET_NOW=str(NOW + 1000)).returncode == 0
+    scheduled = fleet.published()["scheduled"]
+    assert [(e["name"], e["state"], e["stale_seconds"]) for e in scheduled] == [
+        ("ledger-pulse", "unknown", 1000),
+        ("planning-reminder", "unknown", 1000),
+    ]
+
+
 def test_the_summary_scheduled_list_is_empty_without_a_manifest(fleet):
     fleet.write(summary())
     result = fleet.run()

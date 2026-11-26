@@ -776,7 +776,8 @@ tick status_page
 # Scheduled work (README "Scheduled work"): scheduled.py beside this script
 # (FLEET_SCHEDULED overrides; installed as lifekit-fleet-scheduled.py). Every
 # run joins the installed manifest of declared timers and cron rows to systemd
-# and to the gateway rows the slow "scheduled" section last cached; a helper
+# and to the gateway rows the slow "scheduled" section last cached; a cached
+# part read more than three cadences ago lists its rows as unknown. A helper
 # that fails, or output that looks like a credential, publishes [].
 scheduled_helper() {
   local here helper="${FLEET_SCHEDULED:-}"
@@ -799,7 +800,8 @@ publish_scheduled() {
     return 0
   }
   timeout 40 python3 -I "$helper" build --manifest "$manifest" \
-    --gateway "$STATE_DIR/scheduled-gateway.json" > "$work/scheduled.out" || {
+    --gateway "$STATE_DIR/scheduled-gateway.json" --now "$NOW" \
+    --max-age "$((3 * SCHEDULED_EVERY))" > "$work/scheduled.out" || {
     echo "fleet-publisher: scheduled.py failed; scheduled not published" >&2
     return 0
   }
@@ -1086,10 +1088,13 @@ refresh_scheduled_gateway() {
     echo "fleet-publisher: the gateway rows look like they hold a credential; not cached" >&2
     return 0
   fi
-  # This read's parts replace the cached ones; a part it could not read stays.
-  jq -s --argjson now "$NOW" '(.[1] // {} | objects) as $old | .[0]
-    | {read_epoch: $now} + ($old | with_entries(select(.key == "cron" or .key == "intents")))
-      + with_entries(select(.key == "cron" or .key == "intents"))' \
+  # This read's parts replace the cached ones, each stamped with this run's
+  # clock; a part it could not read stays with the stamp of its last read.
+  jq -s --argjson now "$NOW" '(.[1] // {} | objects) as $old | .[0] as $new
+    | reduce ("cron", "intents") as $k ({};
+        if $new | has($k) then .[$k] = $new[$k] | .[$k + "_read_epoch"] = $now
+        elif $old | has($k) then .[$k] = $old[$k] | .[$k + "_read_epoch"] = $old[$k + "_read_epoch"]
+        else . end)' \
     "$work/scheduled-gateway.out" <(cat "$cache" 2> /dev/null || true) > "$work/scheduled-gateway.json" 2> /dev/null &&
     mv -f "$work/scheduled-gateway.json" "$cache" ||
     echo "fleet-publisher: scheduled.py gateway printed no JSON object; the cached gateway rows stay" >&2

@@ -165,7 +165,8 @@ as `lifekit-fleet-scheduled.py`), sorted timers, cron rows, intents, then name:
 | `next_run_epoch`, `last_run_epoch` | From `systemctl list-timers` or the cron row's state; an intent's last run is its last firing and it has no next run; `null` when unknown |
 | `last_result` | The service's systemd `Result` (`running` while it runs), the cron row's last run status, or the intent's status (`pending`, `armed`, `fired`) |
 | `script` | The repo file that declares it: the `.timer` file, or the `scripts/ensure-*.sh` naming the cron row; `null` for a live row nothing in the repo declares, and for intents |
-| `state` | `live`; `disabled` (a cron row switched off); `missing` (declared in the repo but absent from systemd or the gateway); `unknown` (that side could not be read) |
+| `state` | `live`; `disabled` (a cron row switched off); `missing` (declared in the repo but absent from systemd or the gateway); `unknown` (that side could not be read, or its cached gateway rows are stale) |
+| `stale_seconds` | Cron rows and intents only, and only when `unknown` from the gateway side: how long ago that part was last read; `null` when it never was |
 | `expires_epoch`, `id` | Intents only: when it lapses, and its id |
 
 - **Declared comes from the checkout, at install.** The installer writes
@@ -178,13 +179,18 @@ as `lifekit-fleet-scheduled.py`), sorted timers, cron rows, intents, then name:
 - **Live comes from systemd every run, and from the gateway on cadence.**
   `openclaw cron list --all --json` takes about ten seconds, so the slow
   `scheduled` section caches it with the intents in the state directory, and
-  every run joins the cache. A read that fails keeps that part of the cache.
+  every run joins the cache. Each part (cron rows, intents) is stamped with
+  the time it was read; a read that fails keeps that part and its old stamp.
+  A part last read more than three cadences ago (`3 × FLEET_SCHEDULED_EVERY`)
+  lists its rows, and for cron the declared ones too, as `unknown` with
+  `stale_seconds`, never as `live` or `missing`.
 - **Standing intents** live in each agent's own SQLite store,
   `agents/<agent id>/agent/openclaw-agent.sqlite` under the gateway state
   directory, table `standing_intents` (OpenClaw docs, concepts/standing-intents).
   They are read read-only in the gateway container for the agents in
   `FLEET_INTENT_AGENTS` (default `kit finance`: Kit and Ledger); only `pending`,
-  `armed` and `fired` ones are listed.
+  `armed` and `fired` ones are listed. An agent whose store or table cannot be
+  read is skipped; the other agents' intents are still listed.
 - **Nothing private is kept.** Payloads, prompts, delivery targets, senders and
   cron row ids are dropped before the cache is written; the summary's credential
   check covers the list too.

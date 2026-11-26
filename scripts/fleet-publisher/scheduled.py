@@ -19,14 +19,20 @@ Three subcommands, each printing JSON to stdout (contract in README.md,
       results are kept: never a payload, prompt, delivery target or sender.
       FLEET_CRON_CMD and FLEET_INTENTS_CMD override the two reads (a command
       printing the CLI's JSON, or a JSON list of intent rows); empty skips one.
-      A read that fails is listed in `errors` and its key is absent.
+      A read that fails is listed in `errors` and its key is absent. An agent
+      whose store or `standing_intents` table cannot be read is skipped; the
+      other agents' intents are still listed.
 
-  build [--manifest FILE] [--gateway FILE]
+  build --now EPOCH --max-age SECONDS [--manifest FILE] [--gateway FILE]
       The array itself: the manifest's timers joined to `systemctl list-timers`
       (FLEET_SYSTEMCTL, default systemctl; empty skips), the gateway file's
       cron rows joined to the manifest's declared ones, and its intents. A
       declared timer or cron row the live side does not list is `missing`; one
-      whose live side could not be read is `unknown`.
+      whose live side could not be read is `unknown`. The gateway file stamps
+      each part it holds (`cron_read_epoch`, `intents_read_epoch`); a part read
+      more than --max-age seconds before --now, or never stamped, makes its
+      rows (for cron, the declared ones too) `unknown` with their age in
+      `stale_seconds` (null when never read).
 """
 
 from __future__ import annotations
@@ -57,12 +63,16 @@ import json, sqlite3, sys
 rows = []
 for agent in sys.argv[2:]:
     path = sys.argv[1].format(agent=agent)
-    con = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
-    for r in con.execute(
-        "select id, description, trigger_keywords, status, expires_at,"
-        " last_fired_at, created_at from standing_intents"
-        " where status in ('pending', 'armed', 'fired') order by created_at"
-    ):
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
+        found = con.execute(
+            "select id, description, trigger_keywords, status, expires_at,"
+            " last_fired_at, created_at from standing_intents"
+            " where status in ('pending', 'armed', 'fired') order by created_at"
+        ).fetchall()
+    except sqlite3.Error:
+        continue
+    for r in found:
         rows.append(dict(zip(
             ("id", "description", "trigger_keywords", "status", "expires_at",
              "last_fired_at", "created_at"), r), agent=agent))
@@ -204,7 +214,9 @@ def cron_rows(doc: dict[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             {
                 "name": job["name"],
-                "agent": job.get("agentId") if isinstance(job.get("agentId"), str) else None,
+                "agent": job.get("agentId")
+                if isinstance(job.get("agentId"), str)
+                else None,
                 "enabled": job.get("enabled") is True,
                 "schedule": cron_schedule(job.get("schedule")),
                 "next": epoch(state.get("nextRunAtMs")),
@@ -260,11 +272,18 @@ def gateway() -> dict[str, Any]:
 
     agents = os.environ.get("FLEET_INTENT_AGENTS", "kit finance").split()
     reads = (
-        ("cron", "FLEET_CRON_CMD", ["openclaw", "cron", "list", "--all", "--json"],
-         lambda text: cron_rows(first_object(text, "jobs"))),
-        ("intents", "FLEET_INTENTS_CMD",
-         ["python3", "-c", INTENT_READER, INTENT_DB, *agents],
-         lambda text: intent_rows(json.loads(text))),
+        (
+            "cron",
+            "FLEET_CRON_CMD",
+            ["openclaw", "cron", "list", "--all", "--json"],
+            lambda text: cron_rows(first_object(text, "jobs")),
+        ),
+        (
+            "intents",
+            "FLEET_INTENTS_CMD",
+            ["python3", "-c", INTENT_READER, INTENT_DB, *agents],
+            lambda text: intent_rows(json.loads(text)),
+        ),
     )
     for key, env, default, parse in reads:
         try:
@@ -296,12 +315,26 @@ def live_timers() -> dict[str, dict[str, Any]] | None:
             if isinstance(t, dict) and isinstance(t.get("unit"), str)
         }
         services = sorted(
-            {t["activates"] for t in timers.values() if isinstance(t.get("activates"), str)}
+            {
+                t["activates"]
+                for t in timers.values()
+                if isinstance(t.get("activates"), str)
+            }
         )
         results: dict[str, dict[str, str]] = {}
         if services:
             shown = run(
-                [systemctl, "show", "-p", "Id", "-p", "Result", "-p", "ActiveState", *services],
+                [
+                    systemctl,
+                    "show",
+                    "-p",
+                    "Id",
+                    "-p",
+                    "Result",
+                    "-p",
+                    "ActiveState",
+                    *services,
+                ],
                 timeout=15,
             )
             for block in re.split(r"\n\s*\n", shown.strip()):
@@ -334,7 +367,22 @@ def entry(kind: str, name: str, **fields: Any) -> dict[str, Any]:
     return {**base, **fields}
 
 
-def build(manifest_doc: dict[str, Any], gateway_doc: dict[str, Any]) -> list[dict[str, Any]]:
+def staleness(
+    gateway_doc: dict[str, Any], part: str, now: int, max_age: int
+) -> dict[str, Any]:
+    """Nothing while the part was read within max_age seconds; otherwise its
+    rows are unknown, with the part's age (None when it was never read)."""
+    read = gateway_doc.get(f"{part}_read_epoch")
+    if not isinstance(read, int) or isinstance(read, bool):
+        return {"state": "unknown", "stale_seconds": None}
+    if now - read <= max_age:
+        return {}
+    return {"state": "unknown", "stale_seconds": now - read}
+
+
+def build(
+    manifest_doc: dict[str, Any], gateway_doc: dict[str, Any], now: int, max_age: int
+) -> list[dict[str, Any]]:
     entries = []
     timers = live_timers()
     for t in manifest_doc.get("timers") or []:
@@ -362,6 +410,7 @@ def build(manifest_doc: dict[str, Any], gateway_doc: dict[str, Any]) -> list[dic
 
     declared = {c["name"]: c["script"] for c in manifest_doc.get("cron") or []}
     live_cron = gateway_doc.get("cron")
+    cron_stale = staleness(gateway_doc, "cron", now, max_age)
     seen = set()
     for row in live_cron or []:
         seen.add(row["name"])
@@ -375,20 +424,18 @@ def build(manifest_doc: dict[str, Any], gateway_doc: dict[str, Any]) -> list[dic
                 last_run_epoch=row.get("last"),
                 last_result=row.get("result"),
                 script=declared.get(row["name"]),
-                state="live" if row.get("enabled") else "disabled",
+                **{"state": "live" if row.get("enabled") else "disabled", **cron_stale},
             )
         )
     for name, script in declared.items():
         if name not in seen:
             entries.append(
                 entry(
-                    "cron",
-                    name,
-                    script=script,
-                    state="unknown" if live_cron is None else "missing",
+                    "cron", name, script=script, **(cron_stale or {"state": "missing"})
                 )
             )
 
+    intents_stale = staleness(gateway_doc, "intents", now, max_age)
     for it in gateway_doc.get("intents") or []:
         entries.append(
             entry(
@@ -400,6 +447,7 @@ def build(manifest_doc: dict[str, Any], gateway_doc: dict[str, Any]) -> list[dic
                 last_result=it.get("status"),
                 expires_epoch=it.get("expires"),
                 id=it.get("id"),
+                **intents_stale,
             )
         )
     entries.sort(key=lambda e: (KIND_ORDER[e["kind"]], e["name"], e["owner"] or ""))
@@ -425,13 +473,17 @@ def main() -> int:
     b = sub.add_parser("build")
     b.add_argument("--manifest")
     b.add_argument("--gateway")
+    b.add_argument("--now", required=True, type=int)
+    b.add_argument("--max-age", required=True, type=int)
     args = parser.parse_args()
     if args.cmd == "manifest":
         doc: Any = manifest(args.repo)
     elif args.cmd == "gateway":
         doc = gateway()
     else:
-        doc = build(read_json(args.manifest), read_json(args.gateway))
+        doc = build(
+            read_json(args.manifest), read_json(args.gateway), args.now, args.max_age
+        )
     json.dump(doc, sys.stdout)
     print()
     return 0
