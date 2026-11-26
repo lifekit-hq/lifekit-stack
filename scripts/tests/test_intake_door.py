@@ -4,7 +4,8 @@ lands in the spool, the retry files it once, and a repeat adds a count.
 
 The plugin runs under node against a fake devclaw MCP server that answers like
 devclaw's `file_intake`: one issue per repo + fingerprint, a repeat bumps its
-count, an unknown project is rejected, and it can be taken down. Like a
+count, an unknown project or a fingerprint outside `[a-z0-9._-]` is rejected,
+and it can be taken down. Like a
 stateful MCP streamable-HTTP server, it hands out a session id on `initialize`
 and answers a `tools/call` without that `Mcp-Session-Id` with HTTP 400; set
 `stateless` and it hands out none and takes calls without one.
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -48,6 +50,7 @@ class FakeDevclaw:
     def __init__(self):
         self.down = False
         self.stateless = False
+        self.projects = dict(PROJECTS)
         self.sessions: dict[str, bool] = {}
         self.calls: list[dict] = []
         self.issues: dict[tuple[str, str], dict] = {}
@@ -112,9 +115,9 @@ class FakeDevclaw:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def file(self, a):
-        repo = PROJECTS.get(a["project_id"])
+        repo = self.projects.get(a["project_id"])
         if repo is None:
-            reason = f"unknown project_id '{a['project_id']}'; valid projects: {', '.join(PROJECTS)}"
+            reason = f"unknown project_id '{a['project_id']}'; valid projects: {', '.join(self.projects)}"
             return {
                 "id": "",
                 "url": "",
@@ -127,6 +130,13 @@ class FakeDevclaw:
                 "url": "",
                 "state": "rejected",
                 "grade": {"ok": False, "reason": "bad envelope"},
+            }
+        if a["fingerprint"] and not re.fullmatch(r"[a-z0-9._-]+", a["fingerprint"]):
+            return {
+                "id": "",
+                "url": "",
+                "state": "rejected",
+                "grade": {"ok": False, "reason": "fingerprint must match [a-z0-9._-]+"},
             }
         fp = a["fingerprint"] or a["title"].lower()
         key = (repo, fp)
@@ -334,15 +344,37 @@ def test_a_refused_hand_off_lands_in_the_spool_and_the_retry_files_it_once(
 
 
 @needs_node
-def test_an_unknown_project_is_spooled_then_filed_under_fleet(tmp_path, devclaw):
-    got = step(
-        tmp_path, devclaw.url, "file", params=item("no-such-repo"), agent="learnclaw"
-    )
+def test_an_unknown_project_stays_spooled_until_devclaw_knows_it(tmp_path, devclaw):
+    got = step(tmp_path, devclaw.url, "file", params=item("career"), agent="career")
     assert got["spooled"] is True and "unknown project" in got["reason"]
+    # Still unknown: nothing is filed anywhere, and in particular not under fleet.
+    for _ in range(2):
+        out = step(tmp_path, devclaw.url, "retry")
+        assert out["filed"] == 0 and out["failed"] == 1
+    assert devclaw.issues == {}
+    assert {c["project_id"] for c in devclaw.calls} == {"career"}
+    assert step(tmp_path, devclaw.url, "count")["pending"] == 1
+    (held,) = (tmp_path / "spool").glob("*.json")
+    assert "unknown project_id 'career'" in json.loads(held.read_text())["last_reason"]
+
+    devclaw.projects["career"] = "example/career"
     out = step(tmp_path, devclaw.url, "retry")
-    assert out["filed"] == 1 and out["refiled_to_fleet"] == 1
-    issue = devclaw.issues[("lifekit-hq/lifekit-stack", "deploy-red")]
-    assert "no intake project `no-such-repo`" in issue["body"]
+    assert out["filed"] == 1 and out["failed"] == 0
+    assert list(devclaw.issues) == [("example/career", "deploy-red")]
+    assert devclaw.issues[("example/career", "deploy-red")]["count"] == 1
+    assert spooled(tmp_path) == []
+    assert step(tmp_path, devclaw.url, "retry")["filed"] == 0
+
+
+@needs_node
+def test_a_fingerprint_outside_the_set_is_fitted_and_filed_once(tmp_path, devclaw):
+    params = item("lifekit-stack", fp="  Deploy Red Gateway! ")
+    got = step(tmp_path, devclaw.url, "file", params=params, agent="kit")
+    assert got["spooled"] is False and got["state"] == "submitted"
+    assert devclaw.calls[0]["fingerprint"] == "deploy-red-gateway"
+    again = step(tmp_path, devclaw.url, "file", params=params, agent="kit")
+    assert again["id"] == got["id"] and again["count"] == 2
+    assert list(devclaw.issues) == [("lifekit-hq/lifekit-stack", "deploy-red-gateway")]
     assert spooled(tmp_path) == []
 
 

@@ -12,15 +12,16 @@
 // races the retry. retry() files the oldest first, one devclaw call per
 // occurrence, so a repeat that waited in the spool still lands as a count on
 // the same issue rather than a second issue. An item whose project devclaw
-// does not know is filed under `fleet` with that said in its body. A file that
-// keeps failing stays and is retried again; nothing is ever dropped.
+// does not know stays in the spool, counted and retried under that same
+// project until devclaw knows it; the door never files an item under a project
+// the filer did not name. A file that keeps failing stays and is retried
+// again; nothing is ever dropped.
 
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 export const CLASSES = ["dev", "ops", "finance", "life", "unclear"];
-export const FALLBACK_PROJECT = "fleet";
 const LOCK_STALE_MS = 15 * 60_000;
 const NO_ACCEPTANCE = "unclear: the filer gave no done-when; shape it before work starts";
 
@@ -45,10 +46,10 @@ export function normalize(params, agentId) {
   const title = line(p.title) || line(text(p.body).split("\n")[0]).slice(0, 120) || "untitled intake item";
   const cls = line(env.class).toLowerCase();
   return {
-    project: line(p.project).toLowerCase() || FALLBACK_PROJECT,
+    project: line(p.project).toLowerCase(),
     title,
     body: text(p.body),
-    fingerprint: line(p.fingerprint).toLowerCase(),
+    fingerprint: text(p.fingerprint).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, ""),
     envelope: {
       origin: line(env.origin) || line(agentId) || "unknown",
       owner: line(env.owner),
@@ -66,7 +67,7 @@ export function itemKey(item) {
   return createHash("sha256").update(`${item.project}|${fp}`).digest("hex").slice(0, 16);
 }
 
-function bodyFor(item, note) {
+function bodyFor(item) {
   const e = item.envelope;
   const rows = [
     "Filed through the lifekit intake door.",
@@ -79,20 +80,19 @@ function bodyFor(item, note) {
     `thread: ${e.thread}`,
     "```",
   ];
-  if (note) rows.push("", note);
   if (item.body) rows.push("", item.body);
   return rows.join("\n");
 }
 
 // devclaw grades `owner` as the target repo and takes class `dev` only; the
 // caller's own owner and class travel in the body's envelope block.
-function devclawArgs(item, project, note) {
+function devclawArgs(item) {
   return {
-    project_id: project,
+    project_id: item.project,
     title: item.title,
-    owner: project,
+    owner: item.project,
     acceptance: item.envelope.acceptance,
-    body: bodyFor(item, note),
+    body: bodyFor(item),
     fingerprint: item.fingerprint,
     origin: item.envelope.origin,
     class_: "dev",
@@ -118,7 +118,7 @@ function parseRpc(raw) {
 // One devclaw `file_intake` call: the MCP handshake (initialize, then
 // notifications/initialized, echoing the session id when the server hands one
 // out) and the tools/call, all within the one timeout. Resolves
-// { ok, receipt } or { ok: false, reason, unknownProject }; never throws.
+// { ok, receipt } or { ok: false, reason }; never throws.
 export async function callDevclaw(args, cfg = settings()) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), cfg.timeoutMs);
@@ -157,7 +157,7 @@ export async function callDevclaw(args, cfg = settings()) {
     if (!receipt || typeof receipt !== "object") return { ok: false, reason: "devclaw returned no receipt" };
     if (receipt.state === "rejected" || !receipt.id) {
       const why = line(receipt.grade?.reason) || "rejected with no reason";
-      return { ok: false, reason: `devclaw refused: ${why}`, unknownProject: /unknown project/i.test(why) };
+      return { ok: false, reason: `devclaw refused: ${why}` };
     }
     return { ok: true, receipt };
   } catch (err) {
@@ -207,7 +207,7 @@ function spooledReceipt(key, repeat, reason) {
 // The tool's whole job: file it, or spool it. Always a receipt.
 export async function file(params, agentId, cfg = settings()) {
   const item = normalize(params, agentId);
-  const got = await callDevclaw(devclawArgs(item, item.project), cfg);
+  const got = await callDevclaw(devclawArgs(item), cfg);
   if (got.ok) return { ...got.receipt, spooled: false };
   try {
     const { key, repeat } = spoolWrite(item, got.reason, cfg);
@@ -246,7 +246,7 @@ function lock(dir) {
 
 // File every spooled occurrence, oldest first. Returns a summary.
 export async function retry(cfg = settings()) {
-  const summary = { filed: 0, refiled_to_fleet: 0, failed: 0, busy: false, receipts: [] };
+  const summary = { filed: 0, failed: 0, busy: false, receipts: [] };
   if (!fs.existsSync(cfg.spool)) return summary;
   const held = lock(cfg.spool);
   if (!held) return { ...summary, busy: true };
@@ -260,12 +260,7 @@ export async function retry(cfg = settings()) {
         continue; // unreadable: left for a person, counted as pending
       }
       const item = doc.item;
-      let got = await callDevclaw(devclawArgs(item, item.project), cfg);
-      if (!got.ok && got.unknownProject && item.project !== FALLBACK_PROJECT) {
-        const note = `devclaw has no intake project \`${item.project}\`, so the door filed this under \`${FALLBACK_PROJECT}\` (${got.reason}).`;
-        got = await callDevclaw(devclawArgs(item, FALLBACK_PROJECT, note), cfg);
-        if (got.ok) summary.refiled_to_fleet += 1;
-      }
+      const got = await callDevclaw(devclawArgs(item), cfg);
       if (got.ok) {
         fs.rmSync(file, { force: true });
         summary.filed += 1;

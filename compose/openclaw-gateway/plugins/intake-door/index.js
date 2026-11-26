@@ -23,7 +23,7 @@ const PARAMETERS = {
     project: {
       type: "string",
       description:
-        "Where the item belongs: the devclaw intake project of the repository that owns it (lifekit-stack, finance-sentry, lifekit-dashboard, lifekit-common, devclaw, ...), `vault` for the memory vault, or `fleet` for the fleet's ops queue when the owner is unclear. An unknown project is still accepted and lands under `fleet`.",
+        "Where the item belongs: the devclaw intake project of the repository that owns it (lifekit-stack, finance-sentry, lifekit-dashboard, lifekit-common, devclaw, ...), `vault` for the memory vault, or `fleet` for the fleet's ops queue when the owner is unclear. An unknown project is still accepted: the item is held in the intake spool, counted, and filed under that project once devclaw knows it.",
     },
     title: { type: "string", description: "One line, free of per-run noise (ids, times)." },
     body: { type: "string", description: "What failed or what was asked, with the evidence (error text, id, time)." },

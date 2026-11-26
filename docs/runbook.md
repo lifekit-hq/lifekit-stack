@@ -2415,8 +2415,10 @@ refuses an unknown project, and a refusal came back to the owner as work to forw
   state `submitted`, or `working` when the same item is already waiting) with a note to carry
   on. The plugin's service retries the spool every ten minutes, oldest first, one devclaw call
   per occurrence, so a repeat that waited still lands as a count, not a second issue. An item
-  whose project devclaw does not know is filed under `fleet` with that said in its body. A filed
-  occurrence is deleted; one that fails again stays with its attempt count and is retried on
+  whose project devclaw does not know stays in the spool, counted and retried under that same
+  project until devclaw knows it; it is never refiled under `fleet`, a public repo. A fingerprint
+  is fitted to `[a-z0-9._-]` (lowercased, other runs made `-`) before it is sent, and a spooled
+  file's `last_reason` holds devclaw's refusal reason. A filed occurrence is deleted; one that fails again stays with its attempt count and is retried on
   every later run. Nothing is dropped.
 - **The fleet page:** the publisher's `intake_spool` field is `spool.mjs count` from the gateway
   (`{pending, oldest_epoch}`, `scripts/fleet-publisher/README.md`).
