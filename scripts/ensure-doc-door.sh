@@ -252,6 +252,12 @@ if sys.argv[6] and live_gate != sys.argv[6].strip():
     drift.append("trigger is not the scan.js gate")
 if not sys.argv[6] and live_gate:
     drift.append("trigger is set, want none (the gate is for the reader only)")
+sched = job.get("schedule") or {}
+live_expr = sched.get("expr") or sched.get("cron") or job.get("cron")
+if live_expr != sys.argv[8]:
+    drift.append("schedule " + repr(live_expr) + ", want " + repr(sys.argv[8]))
+if sched.get("tz") != sys.argv[9]:
+    drift.append("schedule.tz=" + repr(sched.get("tz")) + ", want " + repr(sys.argv[9]))
 if drift and sys.argv[7] == "0":
     print("note: the row is not the declared one yet: " + "; ".join(drift), file=sys.stderr)
 else:
@@ -260,7 +266,7 @@ if bad:
     sys.exit("refusing: the document door could do more than declared: " + "; ".join(bad))
 ' "$job_id" "$JOB_TOOLS" "$AGENT" "$MODEL" "$MESSAGE" \
   "$([ "$AGENT" = reader ] && cat "$gate_src/scan.js")" \
-  "$([ "$CRON_CHECK" = 1 ] && echo 1 || echo "$converged")" >&2
+  "$([ "$CRON_CHECK" = 1 ] && echo 1 || echo "$converged")" "$CRON_EXPR" "$CRON_TZ" >&2
 cron_check_agrees "$JOB_NAME" "$job_id"
 
 [ "$converged" = 1 ] || exit 0

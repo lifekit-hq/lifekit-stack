@@ -8,7 +8,9 @@
 # a missing row, `cron_check_agrees <name> <id>` after its fail-closed verify,
 # and `cron_check_fail <reason>` where it cannot look at the live row at all. The
 # verify itself is the same code in both modes, so `--check` compares the live
-# row with exactly what a converge would leave.
+# row's agent, schedule (expr and tz), enabled flag, payload, trigger and
+# delivery with what a converge sets; timeout, light-context and failure-alert
+# settings are not all compared.
 #
 # Exit codes in --check mode: 0 the live row agrees with the declaration; 1
 # drift (the row is missing, or the verify names a field that differs); 2 bad

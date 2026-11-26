@@ -5,9 +5,10 @@
 # Cron rows live in the gateway's store, not in git; each ensure-*.sh below is
 # the git-side declaration of one row (or, for ensure-kit-cron-models.sh, of a
 # policy over Kit's rows). This runs each one with `--check`, which writes
-# nothing and compares the live row with exactly what a converge would leave
-# (scripts/lib/cron-check.sh), prints one table line per script, and exits 1
-# when any of them reports drift or could not check. deploy.sh runs it on every
+# nothing and compares the live row's agent, schedule, enabled flag, payload,
+# trigger and delivery with what a converge sets (scripts/lib/cron-check.sh),
+# prints one table line per script, and exits 1 when any of them reports drift
+# or could not check. deploy.sh runs it on every
 # deploy and fails the deploy on a non-zero exit, so a declared job that is
 # missing, paused, on another agent, or carrying another prompt is a red deploy,
 # not prose in the runbook.

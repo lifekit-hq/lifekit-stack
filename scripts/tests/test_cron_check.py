@@ -113,6 +113,25 @@ def test_a_paused_row_is_drift_and_check_leaves_it_paused(
     assert json.loads(state.read_text())["jobs"][0]["enabled"] is False
 
 
+@pytest.mark.parametrize(
+    "field,value,needle",
+    [
+        ("expr", "0 3 * * 0", "schedule '0 3 * * 0', want"),
+        ("tz", "Pacific/Auckland", "schedule.tz='Pacific/Auckland', want"),
+    ],
+)
+@pytest.mark.parametrize("mod,script,job,extra", FULL, ids=[f[2] for f in FULL])
+def test_a_hand_moved_schedule_is_drift(
+    tmp_path, mod, script, job, extra, field, value, needle
+):
+    state, env = mod.fake_box(tmp_path, [], extra)
+    assert run(script, env).returncode == 0
+    data = json.loads(state.read_text())
+    data["jobs"][0]["schedule"][field] = value
+    state.write_text(json.dumps(data))
+    assert_drift(run(script, env, "--check"), needle)
+
+
 def test_an_agent_turn_leetcode_row_is_drift_not_replaced(tmp_path):
     old = {
         "id": "old1",
@@ -210,6 +229,43 @@ def test_a_reader_row_on_the_model_with_its_account_agrees(
     live["payload"]["model"] = ra.POLICY_MODEL + "@anthropic:other"
     reader_box.put("jobs", jobs)
     assert reader_box.script(script, "--check").returncode == 1
+
+
+@pytest.mark.parametrize(
+    "field,value,needle",
+    [
+        ("expr", "0 3 * * 0", "schedule '0 3 * * 0', want"),
+        ("tz", "Pacific/Auckland", "schedule.tz='Pacific/Auckland', want"),
+    ],
+)
+@pytest.mark.parametrize(
+    "script,row",
+    [
+        ("ensure-doc-door.sh", "doc-door"),
+        ("ensure-needs-you-digest.sh", "needs-you-mail-reader"),
+        ("ensure-needs-you-digest.sh", "needs-you-digest"),
+    ],
+)
+def test_a_hand_moved_reader_row_schedule_is_drift(
+    reader_box, script, row, field, value, needle
+):
+    assert reader_box.script("ensure-doc-door.sh").returncode == 0
+    assert reader_box.script(script).returncode == 0
+    jobs = reader_box.get("jobs")
+    (live,) = [j for j in jobs if j["name"] == row]
+    live["schedule"][field] = value
+    reader_box.put("jobs", jobs)
+    assert_drift(reader_box.script(script, "--check"), needle)
+
+
+def test_the_digest_without_an_owner_chat_id_cannot_check(reader_box, tmp_path):
+    env_file = tmp_path / "no-chat.env"
+    env_file.write_text("SOMETHING_ELSE=1\n")
+    no_chat = {"NEEDS_YOU_ALERT_CHAT": "", "ENV_FILE": str(env_file)}
+    r = reader_box.script("ensure-needs-you-digest.sh", "--check", **no_chat)
+    assert r.returncode == 3, (r.stdout, r.stderr)
+    assert "no owner chat id for the failure alert" in r.stderr
+    assert reader_box.script("ensure-needs-you-digest.sh", **no_chat).returncode == 1
 
 
 def test_a_refused_door_edit_is_still_drift_under_check(reader_box):

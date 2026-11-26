@@ -68,6 +68,8 @@ def apply(job, f):
         job["sessionTarget"] = f["--session"]
     if "--session-key" in f:
         job["sessionKey"] = f["--session-key"]
+    if "--cron" in f:
+        job["schedule"] = {"kind": "cron", "expr": f["--cron"], "tz": f.get("--tz")}
     job["delivery"] = {"mode": "none" if "--no-deliver" in f else "announce"}
     payload = job.setdefault("payload", {})
     if "--tools" in f:

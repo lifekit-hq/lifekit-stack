@@ -177,11 +177,8 @@ if [ -z "$ALERT_CHAT" ] && [ -r "$ENV_FILE" ]; then
   ALERT_CHAT="$(sed -nE 's/^[[:space:]]*LIFEKIT_TELEGRAM_CHAT=["'"'"']?([0-9-]+)["'"'"']?[[:space:]]*$/\1/p' \
     "$ENV_FILE" | head -1)"
 fi
-if [ -z "$ALERT_CHAT" ]; then
-  echo "no owner chat id for the failure alert: set NEEDS_YOU_ALERT_CHAT, or" >&2
-  echo "LIFEKIT_TELEGRAM_CHAT in $ENV_FILE. Without it a failed digest would be silent." >&2
-  exit 1
-fi
+[ -n "$ALERT_CHAT" ] || cron_check_fail "no owner chat id for the failure alert: set NEEDS_YOU_ALERT_CHAT, or
+LIFEKIT_TELEGRAM_CHAT in $ENV_FILE. Without it a failed digest would be silent."
 
 MARK_START="<<<MAIL-SECTION"
 MARK_END="MAIL-SECTION>>>"
@@ -326,10 +323,16 @@ if sys.argv[6] and live_gate != sys.argv[6].strip():
     bad.append("trigger is not the mail.js gate")
 if not sys.argv[6] and live_gate:
     bad.append("trigger is set, want none (the gate needs the reader)")
+sched = job.get("schedule") or {}
+live_expr = sched.get("expr") or sched.get("cron") or job.get("cron")
+if live_expr != sys.argv[7]:
+    bad.append("schedule " + repr(live_expr) + ", want " + repr(sys.argv[7]))
+if sched.get("tz") != sys.argv[8]:
+    bad.append("schedule.tz=" + repr(sched.get("tz")) + ", want " + repr(sys.argv[8]))
 if bad:
     sys.exit("refusing: the mail reader is not the declared row: " + "; ".join(bad))
 ' "$reader_id" "$READER_TOOLS" "$READER_AGENT" "$DIGEST_MODEL" "$READER_MESSAGE" \
-  "$([ "$READER_GATED" -eq 1 ] && cat "$gate_src")" >&2
+  "$([ "$READER_GATED" -eq 1 ] && cat "$gate_src")" "$READER_CRON" "$CRON_TZ" >&2
 
 MESSAGE="$(digest_message "$reader_id")"
 
@@ -407,7 +410,13 @@ if (job.get("payload") or {}).get("message") != sys.argv[5]:
     sys.exit("refusing: needs-you-digest payload.message is not the declared message")
 if job.get("trigger"):
     sys.exit("refusing: needs-you-digest has a trigger, want none")
-' "$job_id" "$SESSION_KEY" "$DIGEST_TOOLS" "$DIGEST_MODEL" "$MESSAGE" >&2
+sched = job.get("schedule") or {}
+live_expr = sched.get("expr") or sched.get("cron") or job.get("cron")
+if live_expr != sys.argv[6]:
+    sys.exit("refusing: needs-you-digest schedule " + repr(live_expr) + ", want " + repr(sys.argv[6]))
+if sched.get("tz") != sys.argv[7]:
+    sys.exit("refusing: needs-you-digest schedule.tz=" + repr(sched.get("tz")) + ", want " + repr(sys.argv[7]))
+' "$job_id" "$SESSION_KEY" "$DIGEST_TOOLS" "$DIGEST_MODEL" "$MESSAGE" "$CRON_EXPR" "$CRON_TZ" >&2
 if [ "$CRON_CHECK" = 1 ]; then
   echo "ok: cron '$READER_NAME' ($reader_id) agrees with $(basename "$0")"
 fi

@@ -1113,6 +1113,8 @@ elif cmd[:2] == ["cron", "edit"]:
                     job["payload"]["model"] = cmd[cmd.index("--model") + 1]
             if "--message" in cmd:
                 job.setdefault("payload", {})["message"] = cmd[cmd.index("--message") + 1]
+            if "--cron" in cmd:
+                job["schedule"] = {"expr": cmd[cmd.index("--cron") + 1], "tz": cmd[cmd.index("--tz") + 1]}
             job.update(json.loads(os.environ.get("FAKE_ROW_OVERRIDE", "{}")).get(job["id"], {}))
     state.write_text(json.dumps(data))
 else:

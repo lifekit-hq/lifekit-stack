@@ -3166,11 +3166,14 @@ with the gateway stopped) before starting the `:prev` image.
 ## Cron declarations check
 
 Cron rows live in the gateway's store, not in git. Each `scripts/ensure-*.sh` that adds or edits a row
-is that row's declaration, and accepts `--check`: it writes nothing, compares the live row with exactly
-what a converge would leave (agent, schedule, enabled, payload, trigger, delivery), and exits 0 when they
+is that row's declaration, and accepts `--check`: it writes nothing, compares the live row's agent,
+schedule (expression and time zone), enabled flag, payload, trigger and delivery with what a converge sets
+(the timeout, light-context and failure-alert settings a converge also sets are not all compared), and exits 0 when they
 agree (`ok: cron '<name>' ... agrees with <script>`), 1 on drift (`drift: ...` or `refusing: ...`, naming
 the field), 2 on bad usage, and 3 when it could not check (no gateway container, no owner chat id,
-unreadable cron list). The shared part is `scripts/lib/cron-check.sh`.
+unreadable cron list). The shared part is `scripts/lib/cron-check.sh`. The gateway records the inference
+account on live rows itself, so `--check` and the converges treat `<cron model>@anthropic:api-key` as the
+declared model (that one form only).
 
 `scripts/check-cron-declarations.sh` runs every declaration's `--check` and prints one line per script
 (`ok`, `drift` for exit 1, `error` for any other non-zero, with the script's last line); an `error` line

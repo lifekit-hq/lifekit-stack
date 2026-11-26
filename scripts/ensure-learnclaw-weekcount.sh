@@ -157,7 +157,7 @@ fi
 jobs="$(live_jobs)" || cron_check_fail "could not read the automation list from $GATEWAY"
 printf '%s' "$jobs" | python3 -c '
 import json, sys
-job_id, agent, account, chat, argv, expr = sys.argv[1:7]
+job_id, agent, account, chat, argv, expr, tz = sys.argv[1:8]
 job = next((j for j in json.load(sys.stdin)["jobs"] if j.get("id") == job_id), None)
 if job is None:
     sys.exit(f"verify: job {job_id} is not listed after converging")
@@ -176,6 +176,8 @@ sched = job.get("schedule") or {}
 live_expr = sched.get("expr") or sched.get("cron") or job.get("cron")
 if live_expr != expr:
     bad.append("schedule " + repr(live_expr) + ", want " + repr(expr))
+if sched.get("tz") != tz:
+    bad.append("schedule.tz=" + repr(sched.get("tz")) + ", want " + repr(tz))
 d = job.get("delivery") or {}
 if d.get("mode") != "announce":
     bad.append("delivery.mode=" + repr(d.get("mode")) + ", want announce")
@@ -187,7 +189,7 @@ if d.get("to") != chat:
     bad.append("delivery.to is not the owner chat")
 if bad:
     sys.exit("refusing: learnclaw-weekcount is not the declared row: " + "; ".join(bad))
-' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$ARGV" "$CRON_EXPR" >&2
+' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$ARGV" "$CRON_EXPR" "$CRON_TZ" >&2
 cron_check_agrees "$JOB_NAME" "$job_id"
 
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, command payload (no model turn), announce -> telegram:$ACCOUNT (verified), failure alert after 1 via telegram:default"
