@@ -435,8 +435,8 @@ fails when a script spells a model out or the policy model leaves the allow list
 per-script behavioral tests (`test_deploy_openclaw.py`, `test_kit_cron_models.py`, `test_reader_agent.py`,
 `test_finance_pulse.py`), which assert the policy model in the stubbed argv. Kit's chat model
 is a per-agent entry (host state) and is not covered. The scripts are host steps after the merge: the deploy runs
-`ensure-doc-door.sh`; run `ensure-kit-cron-models.sh`, `ensure-needs-you-digest.sh` and `ensure-finance-pulse.sh` as
-`lifekit` (each with `--check` first where it has one). No heartbeat runs (2026.11.9 retired the key;
+`ensure-doc-door.sh`, and only the `--check` of the others ("Cron declarations check"); run `ensure-kit-cron-models.sh`,
+`ensure-needs-you-digest.sh` and `ensure-finance-pulse.sh` as `lifekit` (each with `--check` first). No heartbeat runs (2026.11.9 retired the key;
 the finance pulse is the gated `ledger-pulse` row above), so it makes no model call.
 
 **Gates for the scheduled mail jobs.** Like `ledger-pulse` and `job-queue-drain`, the doc-door scan and the needs-you mail
@@ -2555,10 +2555,11 @@ last: the next deploy undoes it. To keep the jobs on Kit, retire the reader firs
 2. Move the jobs back: `DOC_DOOR_AGENT=kit scripts/ensure-doc-door.sh` and
    `NEEDS_YOU_READER_AGENT=kit scripts/ensure-needs-you-digest.sh` (Kit's copy of the door skill is
    installed by `ensure-doc-door.sh` on that run; both scripts also clear the reader-era `--trigger-script` from a
-   row that now runs as Kit, since the gate reads the reader's state). `ensure-needs-you-digest.sh` is not run by the deploy,
+   row that now runs as Kit, since the gate reads the reader's state). `ensure-needs-you-digest.sh` is not converged by the deploy,
    so its move stays; the `doc-door` move stays only while the reader entry is absent.
 
-The env overrides alone are a one-off for testing: the next deploy puts `doc-door` back on the reader.
+The env overrides alone are a one-off for testing: the next deploy puts `doc-door` back on the reader, and its
+`ensure-needs-you-digest.sh --check` reports the mail reader row on Kit as drift ("Cron declarations check").
 
 **A refused `cron.update`.** When the gateway answers the job edit with `invalid cron.update params: MCP
 authorization was disconnected or replaced` (the MCP authorization behind the job's stored creator
