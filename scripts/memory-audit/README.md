@@ -25,6 +25,12 @@ the default `/home/node/memory` is the gateway's mount for the cron), runs
 (delivery-required guard: a silent no-op is a failure), and prints the one-line summary. The
 report and `log.md` line are committed + pushed by the host `memory-sync.timer`.
 
+After a successful audit `run-vault-audit.py` also runs `../lint/data-flow.py --live` and appends
+its `## Data flow drift` section to `audits/latest.md`: stores on the host with no row in the
+vault's `## Data flow` table, and rows nothing on the host matches. It is soft: a failed or slow
+drift check is written as a note and never changes the exit status or the notification (see
+`docs/runbook.md` "Data-flow lint").
+
 Retired with this change: `vault-lint.py`, `vault-autofix.py`, `vault-rotate.py`,
 `gen-report.py` and their pytest suite (git history keeps them). `openclaw wiki compile` is no longer part of the audit: the
 typed layer it compiled (`claims[]`, entities/syntheses/reports) was retired from the vault.

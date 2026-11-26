@@ -14,10 +14,17 @@ which replaces the Telegram announce of the OpenClaw cron it succeeds:
             "host systemd unit is down or failed" rule alerts on - so a
             failure the relay cannot carry is still not silent.
 
+After a successful audit it appends the data-flow drift section
+(scripts/lint/data-flow.py --live: stores on the host with no row in the vault's
+`## Data flow` table, and stale rows) to `audits/latest.md`, which memory-sync
+commits with the report. The drift check is soft: whatever it does, it never
+changes the exit status or the envelope.
+
 A relay that does not accept the envelope is also exit 1. notify-relay is
 internal to the compose network, so the envelope is POSTed from inside its own
 container with `docker exec`, as scripts/ledger-persona/drift-alert.py does.
-WRAPPER and DOCKER override the wrapper path and the docker binary (tests).
+WRAPPER, DATA_FLOW and DOCKER override the wrapper path, the drift script and the
+docker binary (tests).
 """
 
 from __future__ import annotations
@@ -26,13 +33,19 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 WRAPPER = os.environ.get(
     "WRAPPER", str(Path(__file__).resolve().with_name("memory-vault-audit.sh"))
 )
+DATA_FLOW = os.environ.get(
+    "DATA_FLOW", str(Path(__file__).resolve().parents[1] / "lint" / "data-flow.py")
+)
 DOCKER = os.environ.get("DOCKER", "docker")
 AUDIT_TIMEOUT = 840
+# The unit allows 900s in all: the drift check only runs when the audit left room.
+DATA_FLOW_TIMEOUT = 45
 POST_TIMEOUT = 60
 HEADLINE_MAX = 700
 # Runs inside the notify-relay container (node, no curl): envelope on stdin.
@@ -66,6 +79,44 @@ def run_audit() -> tuple[bool, str, str]:
     elif res.returncode == 0 and not out:
         return False, "AUDIT FAIL: wrapper printed no summary", res.stderr.strip()
     return res.returncode == 0, out, res.stderr.strip()
+
+
+def data_flow_drift(vault: str, elapsed: float) -> None:
+    """Append the live data-flow drift section to the fresh report. Never raises."""
+    report = Path(vault) / "audits" / "latest.md"
+    if elapsed > AUDIT_TIMEOUT - DATA_FLOW_TIMEOUT:
+        section = (
+            "## Data flow drift\n\n- check skipped: the audit left no time for it\n"
+        )
+    else:
+        try:
+            res = subprocess.run(
+                [
+                    sys.executable,
+                    DATA_FLOW,
+                    "--live",
+                    "--map",
+                    str(Path(vault) / "system" / "system-map.md"),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=DATA_FLOW_TIMEOUT,
+                check=False,
+            )
+            section = res.stdout
+            if res.returncode != 0 or not section.strip():
+                tail = (res.stderr.strip().splitlines() or ["no output"])[-1][:300]
+                section = (
+                    "## Data flow drift\n\n"
+                    f"- check did not run: exit {res.returncode}: {tail}\n"
+                )
+        except Exception as err:  # noqa: BLE001 - the drift check never fails the timer
+            section = f"## Data flow drift\n\n- check did not run: {err}\n"
+    try:
+        with report.open("a", encoding="utf-8") as fh:
+            fh.write("\n" + section)
+    except OSError as err:
+        print(f"vault audit: data-flow drift not written: {err}", file=sys.stderr)
 
 
 def envelope(ok: bool, out: str, err: str) -> dict:
@@ -130,8 +181,12 @@ def post(env: dict) -> str | None:
 
 
 def main() -> int:
+    started = time.monotonic()
     ok, out, err = run_audit()
     print(out)
+    vault = os.environ.get("MEMORY_VAULT")
+    if ok and vault:
+        data_flow_drift(vault, time.monotonic() - started)
     if err:
         print(err, file=sys.stderr)
     refused = post(envelope(ok, out, err))

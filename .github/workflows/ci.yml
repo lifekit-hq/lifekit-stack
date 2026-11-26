@@ -136,6 +136,23 @@ jobs:
           sops --input-type dotenv --output-type dotenv --decrypt \
             secrets/lifekit-gateway.env.sops > /dev/null
 
+  data-flow:
+    name: Data flow (every store has a vault row, every unit sandboxes its writes)
+    # Pull requests only, and deploy does not need it: the gate reads the vault's
+    # `## Data flow` table (system/system-map.md, dsdevq/memory main) at run time,
+    # so a vault edit must never be able to stop a main deploy. Self-hosted because
+    # dsdevq/memory is private and the runner account holds the read credential.
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Store and unit gate
+        run: |
+          python3 -m venv "$RUNNER_TEMP/data-flow-venv"
+          "$RUNNER_TEMP/data-flow-venv/bin/pip" install --quiet pyyaml
+          "$RUNNER_TEMP/data-flow-venv/bin/python" scripts/lint/data-flow.py
+
   deploy:
     name: Deploy to VPS
     needs: [lint, pytest, notify-relay-tests, gitleaks-full, secrets-gateway-decrypt]

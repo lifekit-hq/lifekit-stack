@@ -979,6 +979,29 @@ that a notify-relay call only happened when that list changed.
 **Rollback:** `openclaw cron rm <id>` (or `cron edit <id> --disable`). Nothing else
 depends on this row - the weekly audit keeps running unchanged either way.
 
+### Data-flow lint
+
+Every durable store has a row in the vault's `## Data flow` table (`system/system-map.md`,
+dsdevq/memory): what writes it, where, and who reads it. `scripts/lint/data-flow.py` holds the
+discovery rules, exclusions and matching in its docstring. Two checks use it:
+
+- **PR gate** (CI job `data-flow`, self-hosted, pull requests only, not a deploy input). It
+  discovers stores in the repo: compose named volumes and read-write binds, unit
+  `StateDirectory=` / `ReadWritePaths=` / `*_DIR`, `*_STATE`, `*_FILE`, `*_FEED`, `*_LEDGER`
+  environment paths, and installer `install -d` targets. It fails on a store with no row, and
+  on a `scripts/**/*.service` that does not set `ProtectSystem=strict` plus `ReadWritePaths=` or
+  `StateDirectory=`. To fix it, add the row to the vault first (or sandbox the unit) and re-run
+  the job. `scripts/lint/data-flow-allowlist.yaml` holds the gaps that existed when the gate
+  landed, each with a `remove_by` date. The gate prints every entry, flags expired ones, and
+  says when one is no longer needed; a new store or unit never goes there. Run it locally with
+  `python3 scripts/lint/data-flow.py --map /srv/memory/system/system-map.md`.
+- **Live drift** (the weekly vault audit below). `--live` discovers the same stores on the host:
+  `docker inspect` mounts, `systemctl show` of the lifekit units, the admin account's user units,
+  and the first-level entries of `/var/lib/lifekit`, `/var/lib/lifekit-*`, `~/.local/state`,
+  `~/clip-data` and each firstmate home's `state/` and `data/`. It writes unmatched stores and
+  stale rows to `audits/latest.md`. It runs as `lifekit`, which cannot read the admin home, so
+  those roots are listed under "Not scanned" rather than guessed.
+
 ### Weekly vault audit (host timer)
 
 The mechanical half of the vault's upkeep: lint, index, rotation and the report
@@ -994,7 +1017,7 @@ unchanged.
 | Schedule | Sunday 03:30 `Europe/London` (the cron's slot; the model pass follows at 03:50), `Persistent=true`: a Sunday the box was off runs at the next boot |
 | Runs as | `lifekit` (owns `/srv/memory`; in the `docker` group for the notification) |
 | Command | `run-vault-audit.py` from the checkout in `/srv/lifekit-stack`, which runs the wrapper with `MEMORY_VAULT=/srv/memory`. A merge changes the next run; only the two unit files are installed |
-| Output | `audits/latest.md`, `audits/findings.json`, the rotation moves and one `audit` line in the vault `log.md`; `memory-sync.timer` commits and pushes them |
+| Output | `audits/latest.md` (with the `## Data flow drift` section appended, see "Data-flow lint"), `audits/findings.json`, the rotation moves and one `audit` line in the vault `log.md`; `memory-sync.timer` commits and pushes them |
 | Notification | one `info` envelope through notify-relay with the wrapper's summary line (`Vault audit \| 0 high / ...`); on failure an `act` envelope with the `AUDIT FAIL:` line and the service fails, which the unit gauge and the "host systemd unit is down or failed" rule report. The cron's Telegram announce and its failure alert are replaced by these two |
 
 What changed in the wrapper for the host: its temp file is a `mktemp` file instead of a fixed
