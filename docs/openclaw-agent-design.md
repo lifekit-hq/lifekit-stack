@@ -40,7 +40,7 @@ A domain that fails the test is a skill in kit, not an agent.
 
 | What | Where |
 | --- | --- |
-| Agent entries (identity, model, skills allowlist, tools, subagents) | `agents.entries.<id>` in the live `openclaw.json` (host state) |
+| Agent entries (identity, model, skills allowlist, tools, subagents) | `agents.entries.<id>` in the live `openclaw.json` (host state), except each agent's `tools.agentToAgent.send`, shipped in `defaults/agents/<id>/agent.json` and converged with the global allow list by `scripts/ensure-reader-agent.sh` (`docs/runbook.md`, "Reader agent") |
 | Routing | top-level `bindings` in the live `openclaw.json`; change with `openclaw agents bind` / `unbind` |
 | Telegram bots | `channels.telegram.accounts.<id>` in the live `openclaw.json` |
 | Cron jobs | the gateway's store, not `openclaw.json`; `openclaw cron add` / `edit` / `rm`. Git-side declarations where they exist: `scripts/ensure-*.sh` and `docs/runbook.md` |
