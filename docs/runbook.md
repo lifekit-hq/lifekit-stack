@@ -3169,11 +3169,12 @@ Cron rows live in the gateway's store, not in git. Each `scripts/ensure-*.sh` th
 is that row's declaration, and accepts `--check`: it writes nothing, compares the live row with exactly
 what a converge would leave (agent, schedule, enabled, payload, trigger, delivery), and exits 0 when they
 agree (`ok: cron '<name>' ... agrees with <script>`), 1 on drift (`drift: ...` or `refusing: ...`, naming
-the field), and another non-zero code when it could not check (no gateway, unreadable list). The shared
-part is `scripts/lib/cron-check.sh`.
+the field), 2 on bad usage, and 3 when it could not check (no gateway container, no owner chat id,
+unreadable cron list). The shared part is `scripts/lib/cron-check.sh`.
 
 `scripts/check-cron-declarations.sh` runs every declaration's `--check` and prints one line per script
-(`ok`, `drift` or `error`, with the script's last line). The deploy runs it on every deploy, path gate or
+(`ok`, `drift` for exit 1, `error` for any other non-zero, with the script's last line); an `error` line
+means the check did not run (a gateway restart, a missing env value), not that git and live disagree. The deploy runs it on every deploy, path gate or
 not, and fails the deploy at the end when any line is not `ok`. It never changes a row itself: a red
 deploy here means git and live disagree, and the fix is a decision, not a retry.
 

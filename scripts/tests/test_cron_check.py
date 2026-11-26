@@ -188,6 +188,30 @@ def test_a_mail_reader_without_its_gate_is_drift(reader_box):
     assert_drift(r, "trigger is not the mail.js gate")
 
 
+@pytest.mark.parametrize(
+    "script,row,job",
+    [
+        ("ensure-doc-door.sh", "doc-door", "doc-door"),
+        ("ensure-needs-you-digest.sh", "needs-you-mail-reader", "needs-you-digest"),
+        ("ensure-needs-you-digest.sh", "needs-you-digest", "needs-you-digest"),
+    ],
+)
+def test_a_reader_row_on_the_model_with_its_account_agrees(
+    reader_box, script, row, job
+):
+    # cron_model_account (scripts/lib/cron-model.sh): the same model, account recorded
+    assert reader_box.script("ensure-doc-door.sh").returncode == 0
+    assert reader_box.script(script).returncode == 0
+    jobs = reader_box.get("jobs")
+    (live,) = [j for j in jobs if j["name"] == row]
+    live["payload"]["model"] = ra.POLICY_MODEL + "@anthropic:api-key"
+    reader_box.put("jobs", jobs)
+    assert_agrees(reader_box.script(script, "--check"), job)
+    live["payload"]["model"] = ra.POLICY_MODEL + "@anthropic:other"
+    reader_box.put("jobs", jobs)
+    assert reader_box.script(script, "--check").returncode == 1
+
+
 def test_a_refused_door_edit_is_still_drift_under_check(reader_box):
     # converge tolerates the refusal (next deploy retries); --check names the drift
     reader_box.put(
@@ -354,31 +378,107 @@ def test_memory_vault_cleanup_check(tmp_path, mvc_env):
 # --- the sweep deploy.sh runs --------------------------------------------------------
 
 
-def declared_in_sweep() -> list[str]:
-    text = SWEEP.read_text()
-    block = text[
-        text.index("DECLARATIONS=(") : text.index(")", text.index("DECLARATIONS=("))
-    ]
-    return re.findall(r"ensure-[a-z0-9-]+\.sh", block)
+STUB_DOCKER = r"""#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["CALLS"], "a") as f:
+    f.write(json.dumps(args) + "\n")
+mode = os.environ.get("STUB_MODE", "")
+if args[:1] == ["ps"]:
+    if mode != "no-gateway":
+        print("gw1")
+    sys.exit(0)
+cmd = args[args.index("openclaw") + 1 :] if "openclaw" in args else args
+if cmd[:2] == ["cron", "list"]:
+    if mode == "list-fails":
+        sys.exit("gateway closed the connection")
+    print(json.dumps({"jobs": []}))
+    sys.exit(0)
+if cmd[:2] == ["config", "get"]:
+    sys.exit("Config path not found: " + cmd[2])
+sys.exit("stub: no such call")
+"""
 
 
-def test_every_cron_installing_script_is_in_the_sweep_and_takes_check():
-    installers = sorted(
+def stub_box(tmp_path: Path, mode: str = "") -> dict:
+    """A box the declarations have never touched: an empty cron list, no reader."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "docker").write_text(STUB_DOCKER)
+    (bindir / "docker").chmod(0o755)
+    (tmp_path / "stack.env").write_text("LIFEKIT_TELEGRAM_CHAT=4242\n")
+    (tmp_path / "config").mkdir()
+    return {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "CALLS": str(tmp_path / "calls.jsonl"),
+        "STUB_MODE": mode,
+        "ENV_FILE": str(tmp_path / "stack.env"),
+        "OPENCLAW_CONFIG_DIR": str(tmp_path / "config"),
+    }
+
+
+def stub_writes(tmp_path: Path) -> list[list[str]]:
+    calls = tmp_path / "calls.jsonl"
+    lines = calls.read_text().splitlines() if calls.exists() else []
+    out = []
+    for args in map(json.loads, lines):
+        cmd = args[args.index("openclaw") + 1 :] if "openclaw" in args else args
+        if cmd[:2] in WRITES or cmd[:2] == ["config", "patch"]:
+            out.append(args)
+    return out
+
+
+def sweep_table(r: subprocess.CompletedProcess) -> dict[str, str]:
+    """The sweep's own report: script name -> ok / drift / error."""
+    rows = [ln.split() for ln in r.stdout.splitlines()[1:]]
+    return {row[0]: row[1] for row in rows if row and row[0].endswith(".sh")}
+
+
+def cron_installers() -> list[str]:
+    return sorted(
         p.name
         for p in SCRIPTS.glob("ensure-*.sh")
         if re.search(r"openclaw cron (add|edit)\b|cron edit \"\$", p.read_text())
     )
-    assert installers, "no cron-installing script found; fix the pattern"
-    assert sorted(declared_in_sweep()) == installers
-    for name in installers:
-        text = (SCRIPTS / name).read_text()
-        assert 'cron_check_args "$@"' in text or "--check) check_only=1" in text, name
 
 
-def test_deploy_runs_the_sweep_and_fails_on_it():
-    deploy = (SCRIPTS / "deploy.sh").read_text()
-    call = deploy.index('bash "${REPO_DIR}/scripts/check-cron-declarations.sh"')
-    assert "|| fail_later" in deploy[call : call + 300]
+def test_the_sweep_checks_every_cron_installing_script_and_none_writes(tmp_path):
+    env = stub_box(tmp_path)
+    r = subprocess.run(["bash", str(SWEEP)], env=env, capture_output=True, text=True)
+    table = sweep_table(r)
+    assert cron_installers(), "no cron-installing script found; fix the pattern"
+    assert sorted(table) == cron_installers(), r.stdout
+    for name in table:
+        c = run(SCRIPTS / name, env, "--check")
+        assert c.returncode != 2, (name, c.stderr)
+        assert "usage:" not in c.stderr, (name, c.stderr)
+    assert stub_writes(tmp_path) == []
+    assert [p for p in (tmp_path / "config").rglob("*")] == []
+
+
+@pytest.mark.parametrize("mode", ["no-gateway", "list-fails"])
+def test_a_check_that_cannot_run_exits_3_and_the_sweep_calls_it_error(tmp_path, mode):
+    env = stub_box(tmp_path, mode)
+    r = subprocess.run(["bash", str(SWEEP)], env=env, capture_output=True, text=True)
+    assert r.returncode == 1
+    table = sweep_table(r)
+    # doc-door declares nothing until the reader agent exists, so it never reads
+    # the list on this box.
+    skipped = {"ensure-doc-door.sh"} if mode == "list-fails" else set()
+    assert {n: s for n, s in table.items() if n not in skipped} == {
+        n: "error" for n in cron_installers() if n not in skipped
+    }, r.stdout
+    for name in sorted(set(table) - skipped):
+        c = run(SCRIPTS / name, env, "--check")
+        assert c.returncode == 3, (name, c.stdout, c.stderr)
+    assert stub_writes(tmp_path) == []
+
+
+def test_without_a_gateway_a_converge_keeps_its_exit_code(tmp_path):
+    env = stub_box(tmp_path, "no-gateway")
+    assert run(SCRIPTS / "ensure-planning-reminder.sh", env).returncode == 1
+    assert run(SCRIPTS / "ensure-kit-cron-models.sh", env).returncode == 0
 
 
 def sweep(tmp_path, scripts: dict[str, int]):

@@ -119,7 +119,7 @@ cron_check_args "$@"
 # compose labels rather than a fixed container name.
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 JOB_NAME=needs-you-digest
 AGENT=kit
 # The mail reader job runs as the reader agent once the operator has applied it
@@ -133,7 +133,7 @@ if [ -z "$READER_AGENT" ]; then
   case "$rc" in
     0) READER_AGENT=reader ;;
     3) READER_AGENT=kit; echo "reader agent not installed: the mail reader job stays on kit (docs/runbook.md, \"Reader agent\")" ;;
-    *) exit "$rc" ;;
+    *) [ "$CRON_CHECK" = 0 ] || cron_check_fail "ensure-reader-agent.sh --check failed (exit $rc): the agent this job belongs on is unknown"; exit "$rc" ;;
   esac
 fi
 SESSION_KEY="agent:${AGENT}:main"
@@ -239,7 +239,7 @@ live_jobs() {
 }
 
 # 1. The mail reader: look it up, create it when absent, converge it.
-reader_id="$(find_job_id "$READER_NAME")"
+reader_id="$(find_job_id "$READER_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
 if [ -z "$reader_id" ]; then
   cron_check_absent "$READER_NAME"
   docker exec "$GATEWAY" openclaw cron add \
@@ -266,7 +266,7 @@ import json, sys
 for job in json.load(sys.stdin)["jobs"]:
     if job.get("id") == sys.argv[1]:
         print(((job.get("trigger") or {}).get("script") or "").strip(), end="")
-        break' "$reader_id")" || exit 1
+        break' "$reader_id")" || cron_check_fail "could not read the automation list from $GATEWAY"
 gate_args=()
 if [ "$READER_GATED" -eq 1 ]; then
   [ "$current_gate" = "$(cat "$gate_src")" ] \
@@ -291,7 +291,7 @@ fi
 # 2. Fail closed unless the reader's live row can call nothing but the Gmail
 #    read tools and delivers nothing (header: "Mail is read in a separate run").
 #    Checked before the digest is pointed at it.
-jobs="$(live_jobs)" || exit 1
+jobs="$(live_jobs)" || cron_check_fail "could not read the automation list from $GATEWAY"
 printf '%s' "$jobs" | python3 -c '
 import json, sys
 job_id, tools = sys.argv[1], sys.argv[2].split(",")
@@ -335,7 +335,7 @@ MESSAGE="$(digest_message "$reader_id")"
 
 # 3. The digest: look it up, and create it when absent. `cron add` has no
 #    failure-alert flags; step 4 sets the alert on new and existing jobs alike.
-job_id="$(find_job_id "$JOB_NAME")"
+job_id="$(find_job_id "$JOB_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
 if [ -z "$job_id" ]; then
   cron_check_absent "$JOB_NAME"
   docker exec "$GATEWAY" openclaw cron add \
@@ -374,7 +374,7 @@ fi
 # 5. Fail closed if the live delivery could resolve to Telegram (header: "Never
 #    Telegram"), or if the digest could call more than DIGEST_TOOLS. The
 #    failure alert is a separate field and is not checked here.
-jobs="$(live_jobs)" || exit 1
+jobs="$(live_jobs)" || cron_check_fail "could not read the automation list from $GATEWAY"
 printf '%s' "$jobs" | python3 -c '
 import json, sys
 job_id, session_key, tools, model = sys.argv[1], sys.argv[2], sys.argv[3].split(","), sys.argv[4]

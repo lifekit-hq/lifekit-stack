@@ -37,7 +37,7 @@ ${MARK_END}"
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 
 # The gateway CLI may interleave JSON log lines with its result: keep the first
 # JSON object that carries the wanted key.
@@ -60,7 +60,7 @@ sys.exit(1)' "$1"
 }
 
 jobs="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | pick_json jobs)" || {
-  echo "could not read the automation list from $GATEWAY" >&2; exit 1; }
+  cron_check_fail "could not read the automation list from $GATEWAY"; }
 
 # plan -> stdout: JSON {"id","message","tools"|null,"changed"}; exit 12 when no row.
 plan="$(printf '%s' "$jobs" | python3 -c '

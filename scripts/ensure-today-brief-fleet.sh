@@ -41,7 +41,7 @@ cron_check_args "$@"
 # compose labels rather than a fixed container name.
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 JOB_NAME=today-brief
 
 # The gateway image has no jq, and once logging.consoleStyle=json is live the
@@ -67,7 +67,7 @@ sys.exit(1)' "$1"
 
 # 1. Find the row by name (ids differ per box; never hardcode one).
 jobs="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | pick_json jobs)" || {
-  echo "could not read the automation list from $GATEWAY" >&2; exit 1; }
+  cron_check_fail "could not read the automation list from $GATEWAY"; }
 job_id="$(printf '%s' "$jobs" | python3 -c '
 import json, sys
 for job in json.load(sys.stdin)["jobs"]:

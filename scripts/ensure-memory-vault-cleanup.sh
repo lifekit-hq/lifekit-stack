@@ -88,7 +88,7 @@ cron_check_args "$@"
 # compose labels rather than a fixed container name.
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 JOB_NAME=memory-vault-cleanup
 AGENT=kit
 CRON_EXPR="${MEMORY_VAULT_CLEANUP_CRON:-50 3 * * 0}"
@@ -122,24 +122,43 @@ End with 'rm -f .model-pass' and a short plain-text summary: the commits you mad
 MSG
 )"
 
-# Converge, don't just skip, when the job already exists: this message,
-# description and delivery mode replace whatever an older run of this script
-# (or a manual edit) left; schedule and timeout stay as they are.
-existing_id="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null \
-  | jq -r --arg n "$JOB_NAME" '(if type == "array" then . else (.jobs // []) end) | map(select(.name == $n)) | first | .id // empty')"
+# The gateway CLI may interleave JSON log lines with its result: keep the first
+# JSON object that carries the wanted key.
+pick_json() { # $1 = key; stdin = CLI output
+  python3 -c '
+import json, sys
+key, text = sys.argv[1], sys.stdin.read()
+dec, i = json.JSONDecoder(), 0
+while (i := text.find("{", i)) != -1:
+    try:
+        obj, end = dec.raw_decode(text, i)
+    except ValueError:
+        i += 1
+        continue
+    if isinstance(obj, dict) and key in obj:
+        json.dump(obj, sys.stdout)
+        sys.exit(0)
+    i = end
+sys.exit(1)' "$1"
+}
 
 # --check: the row this script converges (agent, message, description, no
 # delivery, enabled) must already be live; its schedule and model are not this
 # script's (the model is ensure-kit-cron-models.sh's).
 if [ "$CRON_CHECK" = 1 ]; then
+  jobs="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | pick_json jobs)" \
+    || cron_check_fail "could not read the automation list from $GATEWAY"
+  existing_id="$(printf '%s' "$jobs" | python3 -c '
+import json, sys
+for job in json.load(sys.stdin)["jobs"]:
+    if job.get("name") == sys.argv[1]:
+        print(job["id"])
+        break' "$JOB_NAME")"
   [ -n "$existing_id" ] || cron_check_absent "$JOB_NAME"
-  docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | python3 -c '
+  printf '%s' "$jobs" | python3 -c '
 import json, sys
 job_id, agent, description, message = sys.argv[1:5]
-text = sys.stdin.read()
-data = json.loads(text[text.index("{"):]) if "{" in text else {}
-jobs = data if isinstance(data, list) else data.get("jobs", [])
-job = next((j for j in jobs if j.get("id") == job_id), None)
+job = next((j for j in json.load(sys.stdin)["jobs"] if j.get("id") == job_id), None)
 if job is None:
     sys.exit(f"verify: job {job_id} is not listed")
 bad = []
@@ -158,6 +177,12 @@ if bad:
 ' "$existing_id" "$AGENT" "$DESCRIPTION" "$MESSAGE" >&2
   cron_check_agrees "$JOB_NAME" "$existing_id"
 fi
+
+# Converge, don't just skip, when the job already exists: this message,
+# description and delivery mode replace whatever an older run of this script
+# (or a manual edit) left; schedule and timeout stay as they are.
+existing_id="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null \
+  | jq -r --arg n "$JOB_NAME" '(if type == "array" then . else (.jobs // []) end) | map(select(.name == $n)) | first | .id // empty')"
 
 if [ -n "$existing_id" ]; then
   docker exec "$GATEWAY" openclaw cron edit "$existing_id" --agent "$AGENT" \

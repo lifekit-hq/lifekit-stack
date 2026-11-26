@@ -57,7 +57,7 @@ TIMEOUT_SECONDS=300
 # compose labels rather than a fixed container name.
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 JOB_NAME="ledger-pulse"
 # The one cron model, from the repo's config (scripts/lib/cron-model.sh).
 # shellcheck source=scripts/lib/cron-model.sh
@@ -69,7 +69,7 @@ if [ -z "$ALERT_CHAT" ] && [ -r "$ENV_FILE" ]; then
   ALERT_CHAT="$(sed -nE 's/^[[:space:]]*LIFEKIT_TELEGRAM_CHAT=["'"'"']?([0-9-]+)["'"'"']?[[:space:]]*$/\1/p' \
     "$ENV_FILE" | head -1)"
 fi
-[ -n "$ALERT_CHAT" ] || { echo "no owner chat id for the failure alert: set FINANCE_PULSE_ALERT_CHAT or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE" >&2; exit 1; }
+[ -n "$ALERT_CHAT" ] || cron_check_fail "no owner chat id for the failure alert: set FINANCE_PULSE_ALERT_CHAT or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE"
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 checklist="${repo_root}/scripts/finance-pulse.md"
@@ -104,7 +104,7 @@ sys.exit(1)' "$1"
 
 # 1. Find the cron row by name (ids differ per box; never hardcode one).
 jobs="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | pick_json jobs)" || {
-  echo "could not read the automation list from $GATEWAY" >&2; exit 1; }
+  cron_check_fail "could not read the automation list from $GATEWAY"; }
 row="$(printf '%s' "$jobs" | python3 -c '
 import json, sys
 for job in json.load(sys.stdin)["jobs"]:

@@ -66,8 +66,7 @@ if [ -z "$CHAT" ] && [ -r "$ENV_FILE" ]; then
     "$ENV_FILE" | head -1)"
 fi
 if [ -z "$CHAT" ]; then
-  echo "no owner chat id: set LEETCODE_DAILY_CHAT, or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE." >&2
-  exit 1
+  cron_check_fail "no owner chat id: set LEETCODE_DAILY_CHAT, or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE."
 fi
 
 # Refuse a schedule that can fire on an office day or the rest day, before
@@ -93,7 +92,7 @@ PY
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 
 DAILY=/home/node/.openclaw/agents/learnclaw/workspace/skills/leetcode-daily/daily.py
 ARGV="$(python3 -c 'import json, sys; print(json.dumps(["python3", sys.argv[1], "next", "--record", "--push"]))' "$DAILY")"
@@ -133,7 +132,7 @@ for job in json.load(sys.stdin)["jobs"]:
         break' "$1"
 }
 
-job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
+job_id="$(live_jobs | find_job_id "$JOB_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
 
 # A row that is still the old agent turn cannot fail itself, so it is removed
 # and declared again as a command payload (a run history of the old turns goes
@@ -163,7 +162,7 @@ if [ -z "$job_id" ]; then
     --timeout-seconds 60 --no-output-timeout-seconds 30 --output-max-bytes 1000 \
     --announce --channel telegram --account "$ACCOUNT" --to "$CHAT" \
     --json >/dev/null
-  job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
+  job_id="$(live_jobs | find_job_id "$JOB_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
   [ -n "$job_id" ] || { echo "cron add ran but no '$JOB_NAME' job is listed" >&2; exit 1; }
   echo "created cron '$JOB_NAME' ($job_id)"
 fi
@@ -185,7 +184,8 @@ if [ "$CRON_CHECK" = 0 ]; then
 fi
 
 # Fail closed: re-read the live row.
-live_jobs | python3 -c '
+jobs="$(live_jobs)" || cron_check_fail "could not read the automation list from $GATEWAY"
+printf '%s' "$jobs" | python3 -c '
 import json, sys
 job_id, agent, account, chat, argv, expr = sys.argv[1:7]
 job = next((j for j in json.load(sys.stdin)["jobs"] if j.get("id") == job_id), None)

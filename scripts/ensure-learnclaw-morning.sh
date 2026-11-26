@@ -76,8 +76,7 @@ if [ -z "$CHAT" ] && [ -r "$ENV_FILE" ]; then
     "$ENV_FILE" | head -1)"
 fi
 if [ -z "$CHAT" ]; then
-  echo "no owner chat id: set LEARNCLAW_MORNING_CHAT, or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE." >&2
-  exit 1
+  cron_check_fail "no owner chat id: set LEARNCLAW_MORNING_CHAT, or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE."
 fi
 
 # Refuse a schedule that can fire on Sunday, before touching the gateway.
@@ -102,7 +101,7 @@ PY
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 
 MESSAGE="Morning learning message for the owner. Read only: use the read tool, and only on the vault page /home/node/memory/domains/learning.md, the weekly count file named in line 4, and the JSON files of the LearnHarness mirror under /home/node/.openclaw/agents/learnclaw/workspace/learnharness-mirror (the sessions and the knowledge graph). Read nothing else, write nothing anywhere, record no row, send nothing yourself, start no subagent, open no web page, run no command.
 Reply with at most 4 lines, plain text, no heading, no list marks, nothing before or after:
@@ -143,7 +142,7 @@ for job in json.load(sys.stdin)["jobs"]:
         break' "$1"
 }
 
-job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
+job_id="$(live_jobs | find_job_id "$JOB_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
 if [ -z "$job_id" ]; then
   cron_check_absent "$JOB_NAME"
   docker exec "$GATEWAY" openclaw cron add \
@@ -156,7 +155,7 @@ if [ -z "$job_id" ]; then
     --timeout-seconds 300 \
     --announce --channel telegram --account "$ACCOUNT" --to "$CHAT" \
     --json >/dev/null
-  job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
+  job_id="$(live_jobs | find_job_id "$JOB_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
   [ -n "$job_id" ] || { echo "cron add ran but no '$JOB_NAME' job is listed" >&2; exit 1; }
   echo "created cron '$JOB_NAME' ($job_id)"
 fi
@@ -178,7 +177,8 @@ if [ "$CRON_CHECK" = 0 ]; then
 fi
 
 # Fail closed: re-read the live row.
-live_jobs | python3 -c '
+jobs="$(live_jobs)" || cron_check_fail "could not read the automation list from $GATEWAY"
+printf '%s' "$jobs" | python3 -c '
 import json, sys
 job_id, agent, account, chat, expr, tz, tools, model, message = sys.argv[1:10]
 job = next((j for j in json.load(sys.stdin)["jobs"] if j.get("id") == job_id), None)
