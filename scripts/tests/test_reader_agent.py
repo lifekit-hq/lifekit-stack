@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -179,7 +180,7 @@ def box(tmp_path):
     return make_box(tmp_path)
 
 
-def make_box(tmp_path):
+def make_box(tmp_path, repo=REPO):
     state, bin_dir, conf = tmp_path / "state", tmp_path / "bin", tmp_path / "conf"
     for d in (state, bin_dir, conf):
         d.mkdir()
@@ -204,7 +205,7 @@ def make_box(tmp_path):
 
         def script(self, name, *args, **extra_env):
             return subprocess.run(
-                ["bash", str(REPO / "scripts" / name), *args],
+                ["bash", str(repo / "scripts" / name), *args],
                 env={
                     **env,
                     "DOC_DOOR_ALERT_CHAT": "1",
@@ -303,7 +304,29 @@ def test_a_channel_binding_is_refused(box):
     assert done.returncode == 1 and "channel binding" in done.stderr
 
 
-A2A_AGENTS = ["kit", "finance"]
+# Every agent the repo defines except the reader: the defaults/agents/<id> dirs with a
+# workspace, plus Ledger (finance), whose persona scripts/ledger-persona installs.
+A2A_AGENTS = sorted(
+    {
+        d.name
+        for d in (REPO / "defaults/agents").iterdir()
+        if (d / "workspace").is_dir() and d.name != "reader"
+    }
+    | {"finance"}
+)
+
+
+def a2a_repo(tmp_path):
+    """A copy of the pieces the script derives the allow list from, to add agents to."""
+    repo = tmp_path / "repo"
+    (repo / "scripts/ledger-persona").mkdir(parents=True)
+    shutil.copy(ENSURE, repo / "scripts/ensure-reader-agent.sh")
+    shutil.copy(
+        REPO / "scripts/ledger-persona/ledger-persona.py",
+        repo / "scripts/ledger-persona/ledger-persona.py",
+    )
+    shutil.copytree(REPO / "defaults/agents", repo / "defaults/agents")
+    return repo
 
 
 def patches(box):
@@ -317,6 +340,72 @@ def test_agent_to_agent_on_with_no_allow_list_converges_to_the_users_only(box):
     done = box.run()
     assert done.returncode == 0, done.stderr
     assert box.get("a2a_allow") == A2A_AGENTS and "reader" not in box.get("a2a_allow")
+
+
+def test_the_allow_list_is_every_defined_agent_but_the_reader():
+    # the agents that run today, each by its definition; never the reader or shared/
+    for agent in ("kit", "finance", "learnclaw", "career", "study-panel"):
+        assert agent in A2A_AGENTS
+    assert "reader" not in A2A_AGENTS and "shared" not in A2A_AGENTS
+
+
+def test_a_new_agent_definition_joins_the_allow_list(tmp_path):
+    repo = a2a_repo(tmp_path)
+    (repo / "defaults/agents/workout/workspace").mkdir(parents=True)
+    box = make_box(tmp_path, repo)
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("a2a_allow", A2A_AGENTS)
+    assert box.run("--check").returncode == 1
+    done = box.run()
+    assert done.returncode == 0 or "exec allowlist" in done.stderr, done.stderr
+    assert box.get("a2a_allow") == sorted([*A2A_AGENTS, "workout"])
+    assert "reader" not in box.get("a2a_allow")
+
+
+def test_the_reader_never_joins_the_allow_list(tmp_path):
+    # even with its definition present and Ledger's installer pointed at it
+    repo = a2a_repo(tmp_path)
+    ledger = repo / "scripts/ledger-persona/ledger-persona.py"
+    ledger.write_text(
+        ledger.read_text().replace(
+            "/agents/finance/workspace", "/agents/reader/workspace"
+        )
+    )
+    box = make_box(tmp_path, repo)
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    done = box.run()
+    assert done.returncode == 0 or "exec allowlist" in done.stderr, done.stderr
+    assert "reader" not in box.get("a2a_allow") and box.get("a2a_allow")
+
+
+def test_a_missing_ledger_id_fails_closed(tmp_path):
+    repo = a2a_repo(tmp_path)
+    ledger = repo / "scripts/ledger-persona/ledger-persona.py"
+    ledger.write_text(ledger.read_text().replace("DEFAULT_WORKSPACE = ", "OTHER = "))
+    box = make_box(tmp_path, repo)
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    done = box.run()
+    assert done.returncode == 1 and "Ledger's agent id" in done.stderr
+    assert patches(box) == []
+
+
+@pytest.mark.parametrize("allow", [["kit", "finance"], [*A2A_AGENTS, "ghost"]])
+def test_check_refuses_an_allow_list_that_differs_from_the_defined_agents(box, allow):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("a2a_allow", allow)
+    done = box.run("--check")
+    assert (
+        done.returncode == 1
+        and "differs from the agents the repo defines" in done.stderr
+    )
+    assert patches(box) == []
+    done = box.run()
+    assert done.returncode == 0 or "exec allowlist" in done.stderr, done.stderr
+    assert box.get("a2a_allow") == A2A_AGENTS
 
 
 def test_agent_to_agent_on_with_no_allow_list_is_refused_by_check(box):
