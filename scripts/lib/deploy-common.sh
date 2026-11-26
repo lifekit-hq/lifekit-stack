@@ -170,6 +170,20 @@ study_door_compose() {
   docker compose -p "${STUDY_DOOR_PROJECT}" --env-file "${ENV_FILE}" -f "${STUDY_DOOR_COMPOSE_FILE}" "$@"
 }
 
+# learn-mcp, the study coach's claude.ai connector (compose/learn-mcp/,
+# docs/runbook.md "learn-mcp (the study coach's connector)"), is compose
+# project `learn-mcp`, brought up by deploy.sh once LEARN_MCP_TOKEN is in
+# ENV_FILE. Until then the project is not touched: merging the files starts
+# nothing. Its targets file follows the study door's rule (rendered only while
+# it runs).
+LEARN_MCP_PROJECT="learn-mcp"
+LEARN_MCP_COMPOSE_FILE="${REPO_DIR}/compose/learn-mcp/docker-compose.yml"
+# shellcheck disable=SC2034 # used by deploy.sh, which sources this file
+LEARN_MCP_TARGETS_FILE="${REPO_DIR}/compose/observability/prometheus/learn-mcp-targets.json"
+learn_mcp_compose() {
+  docker compose -p "${LEARN_MCP_PROJECT}" --env-file "${ENV_FILE}" -f "${LEARN_MCP_COMPOSE_FILE}" "$@"
+}
+
 # CURRENT_STEP is read by the callers' EXIT traps.
 # shellcheck disable=SC2034
 CURRENT_STEP="startup"

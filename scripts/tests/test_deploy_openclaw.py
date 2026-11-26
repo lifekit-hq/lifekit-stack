@@ -172,6 +172,7 @@ DEPLOY_ORDER = [
     "contract-static",
     "contract-static",
     "contract-static",
+    "contract-static",
     "openclaw:build",
     "compose-up",
     "openclaw:up",
@@ -558,6 +559,53 @@ def test_edge_comes_up_after_identity_once_its_secrets_are_rendered(
         f"edge-check {issuer}",
     ]
     assert "redirects limited to box.example.ts.net:*" in r.stdout
+
+
+EDGE_CHECK_FAILS = """#!/bin/sh
+if [ "$1" = domains ]; then echo "EDGE_REDIRECT_DOMAINS=box.example.ts.net:*"; exit 0; fi
+echo "%s"
+exit 1
+"""
+
+
+@pytest.mark.parametrize(
+    ("finding", "pointer", "not_pointer"),
+    [
+        (
+            "  tailscale funnel :443/xui -> http://127.0.0.1:2053: "
+            "PUBLIC and not on the allowlist",
+            '"Public Funnel allowlist"',
+            '"Tailnet sign-in gate"',
+        ),
+        (
+            "  tailscale serve :3000: https -> http://127.0.0.1:3000, "
+            "not the sign-in gate (127.0.0.1:18890)",
+            '"Tailnet sign-in gate"',
+            '"Public Funnel allowlist"',
+        ),
+    ],
+)
+def test_a_failed_edge_check_points_at_the_runbook_section_for_its_finding(
+    env, tmp_path, finding, pointer, not_pointer
+):
+    r, _, _ = full_deploy(
+        env,
+        tmp_path,
+        env_text="LIFEKIT_TELEGRAM_CHAT=123\nLOGTO_DB_PASSWORD=abc\n" + EDGE_SECRETS,
+        identity=IDENTITY_STUB,
+        edge=EDGE_CHECK_FAILS % finding,
+    )
+    # Report-only either way: the finding is shown, the deploy stays green.
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert finding in r.stdout
+    assert pointer in r.stderr
+    assert not_pointer not in r.stderr
+    sections = {
+        line.removeprefix("## ").removeprefix("### ")
+        for line in (REPO / "docs/runbook.md").read_text().splitlines()
+        if line.startswith(("## ", "### "))
+    }
+    assert pointer.strip('"') in sections
 
 
 @pytest.mark.parametrize(
@@ -1871,4 +1919,61 @@ def test_study_door_that_does_not_come_up_goes_red_and_is_not_scraped(env, tmp_p
     assert r.returncode != 0
     assert "study-door: project study-door did not come up healthy" in r.stderr
     assert not targets_file(tmp_path).exists()
+    assert "builder-gc" in trace
+
+
+LEARN_MCP_PREFIX = "compose -p learn-mcp --env-file {env} -f {fake}/compose/learn-mcp/docker-compose.yml "
+LEARN_MCP_ENV = "LIFEKIT_TELEGRAM_CHAT=123\nLEARN_MCP_TOKEN=t\n"
+
+
+def learn_mcp_calls(env, trace, fake):
+    prefix = LEARN_MCP_PREFIX.format(env=env["ENV_FILE"], fake=fake)
+    return [line[len(prefix) :] for line in trace if line.startswith(prefix)]
+
+
+def learn_mcp_targets(tmp_path):
+    return tmp_path / "repo/compose/observability/prometheus/learn-mcp-targets.json"
+
+
+def test_learn_mcp_is_declared_but_not_touched_until_its_token_is_rendered(
+    env, tmp_path
+):
+    learn_mcp_targets(tmp_path).parent.mkdir(parents=True)
+    learn_mcp_targets(tmp_path).write_text("[]")
+    r, trace, fake = full_deploy(env, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert learn_mcp_calls(env, trace, fake) == ["config --format json"]
+    assert "learn-mcp: LEARN_MCP_TOKEN is not in" in r.stderr
+    assert not learn_mcp_targets(tmp_path).exists()
+
+
+def test_learn_mcp_comes_up_and_is_scraped_once_its_token_is_rendered(env, tmp_path):
+    learn_mcp_targets(tmp_path).parent.mkdir(parents=True)
+    r, trace, fake = full_deploy(env, tmp_path, env_text=LEARN_MCP_ENV)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert learn_mcp_calls(env, trace, fake) == [
+        "config --format json",
+        "up -d --build --wait --wait-timeout 120",
+    ]
+    assert json.loads(learn_mcp_targets(tmp_path).read_text()) == [
+        {"targets": ["learn-mcp:8099"]}
+    ]
+    assert "contract-enforce" in trace
+
+
+def test_learn_mcp_that_does_not_come_up_goes_red_and_is_not_scraped(env, tmp_path):
+    learn_mcp_targets(tmp_path).parent.mkdir(parents=True)
+    learn_mcp_targets(tmp_path).write_text("[]")
+    failing = {**env, "PATH": f"{tmp_path}/failbin:{env['PATH']}"}
+    (tmp_path / "failbin").mkdir()
+    docker = tmp_path / "failbin/docker"
+    docker.write_text(
+        '#!/bin/sh\ncase "$*" in *"-p learn-mcp"*" up "*) exit 1 ;; esac\n'
+        f'exec {tmp_path}/bin/docker "$@"\n'
+    )
+    docker.chmod(0o755)
+    r, trace, fake = full_deploy(failing, tmp_path, env_text=LEARN_MCP_ENV)
+    assert r.returncode != 0
+    assert "learn-mcp: project learn-mcp did not come up healthy" in r.stderr
+    assert not learn_mcp_targets(tmp_path).exists()
     assert "builder-gc" in trace

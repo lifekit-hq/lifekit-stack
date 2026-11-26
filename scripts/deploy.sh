@@ -304,6 +304,8 @@ fi
 wger_compose config --format json | python3 "${REPO_DIR}/scripts/check-wger-compose.py" "${WGER_CHECK_ARGS[@]}" -
 study_door_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
+learn_mcp_compose config --format json \
+  | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -491,6 +493,26 @@ else
   fail_later "study-door: project ${STUDY_DOOR_PROJECT} did not come up healthy (study_door_compose ps / logs study-door)"
 fi
 
+# ─── learn-mcp: compose project `learn-mcp`, up -d ──────────────────────────
+#
+# The study coach's claude.ai connector (compose/learn-mcp/, docs/runbook.md
+# "learn-mcp (the study coach's connector)"). Skipped with a warning until
+# LEARN_MCP_TOKEN is rendered into the env file, so merging its files starts
+# nothing; its targets file follows the study door's rule. Generating the
+# token and publishing the Funnel path are operator steps in the runbook; the
+# deploy never runs them. The edge check below reports what Funnel serves.
+say "learn-mcp (compose project ${LEARN_MCP_PROJECT})"
+if ! grep -qE '^[[:space:]]*LEARN_MCP_TOKEN=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}"; then
+  warn "learn-mcp: LEARN_MCP_TOKEN is not in ${ENV_FILE}; project ${LEARN_MCP_PROJECT} not brought up (docs/runbook.md \"learn-mcp (the study coach's connector)\")"
+  rm -f "${LEARN_MCP_TARGETS_FILE}"
+elif learn_mcp_compose up -d --build --wait --wait-timeout 120; then
+  printf '[{"targets": ["learn-mcp:8099"]}]\n' >"${LEARN_MCP_TARGETS_FILE}"
+  chmod 644 "${LEARN_MCP_TARGETS_FILE}"
+else
+  rm -f "${LEARN_MCP_TARGETS_FILE}"
+  fail_later "learn-mcp: project ${LEARN_MCP_PROJECT} did not come up healthy (learn_mcp_compose ps / logs learn-mcp)"
+fi
+
 # ─── OpenClaw: move out of the platform project (once), up -d ───────────────
 #
 # scripts/deploy-openclaw.sh, phase `up`. OpenClaw is its own compose project
@@ -604,7 +626,8 @@ STACK_PROJECT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" co
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')"
 python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" --enforce "${OPENCLAW_PROJECT}" \
   --enforce "${IDENTITY_PROJECT}" --enforce "${EDGE_PROJECT}" --enforce "${STUDY_DOOR_PROJECT}" \
-  || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT}, ${IDENTITY_PROJECT}, ${EDGE_PROJECT} or ${STUDY_DOOR_PROJECT} containers fail it (table above)"
+  --enforce "${LEARN_MCP_PROJECT}" \
+  || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT}, ${IDENTITY_PROJECT}, ${EDGE_PROJECT}, ${STUDY_DOOR_PROJECT} or ${LEARN_MCP_PROJECT} containers fail it (table above)"
 
 # ─── Ledger persona: install the pinned finance-sentry persona, then check ──
 #
@@ -767,13 +790,17 @@ fi
 # (`tailscale serve`) is the operator's cutover (docs/runbook.md "Tailnet
 # sign-in gate"): the deploy account cannot run it. It reports, in red, while
 # Serve still sends either surface straight to the app, when either port is
-# public through Funnel, or when the devclaw console's bearer is missing.
-# Same shape as the identity check above; skipped while the project is not up.
+# public through Funnel, or when the devclaw console's bearer is missing. A
+# public path off the Funnel allowlist points at the runbook's "Public Funnel
+# allowlist" instead. Same shape as the identity check above; skipped while the project is not up.
 if [[ "${EDGE_UP}" == 1 ]]; then
   say "sign-in gate (host facts, report-only)"
   EDGE_CHECK_STATUS=0
-  ENV_FILE="${ENV_FILE}" bash "${REPO_DIR}/scripts/deploy-edge.sh" check || EDGE_CHECK_STATUS=$?
-  if [[ "${EDGE_CHECK_STATUS}" != 0 ]]; then
+  EDGE_CHECK_OUT="$(ENV_FILE="${ENV_FILE}" bash "${REPO_DIR}/scripts/deploy-edge.sh" check)" || EDGE_CHECK_STATUS=$?
+  printf '%s\n' "${EDGE_CHECK_OUT}"
+  if [[ "${EDGE_CHECK_STATUS}" != 0 ]] && grep -q 'PUBLIC and not on the allowlist' <<<"${EDGE_CHECK_OUT}"; then
+    printf '\033[1;31m✗ public Funnel: a path or port off the allowlist is public (lines above); see docs/runbook.md "Public Funnel allowlist"\033[0m\n' >&2
+  elif [[ "${EDGE_CHECK_STATUS}" != 0 ]]; then
     printf '\033[1;31m✗ sign-in gate: not yet converged (lines above); apply the operator steps in docs/runbook.md "Tailnet sign-in gate"\033[0m\n' >&2
   fi
 fi

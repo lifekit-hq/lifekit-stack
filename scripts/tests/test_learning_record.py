@@ -10,9 +10,12 @@ Validation).
 
 from __future__ import annotations
 
+import fcntl
+import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -252,6 +255,86 @@ def test_a_page_without_the_record_table_is_refused(vault):
     (vault / "domains/learning.md").write_text("---\nupdatedAt: x\n---\n# Learning\n")
     r = record(vault, "status")
     assert r.returncode == 2 and "no '## Artefact record' section" in r.stderr
+
+
+# --- concurrent writers ---------------------------------------------------------------------
+
+DAILY = REPO / "skills/leetcode-daily/daily.py"
+# The stub lint, slowed so the writers overlap: a writer whose row the lint
+# refuses puts back the page it read, and without the lock that page predates
+# the rows the others wrote meanwhile, so they would be lost.
+SLOW_LINT = "#!/bin/sh\nsleep 0.5\n" + LINT.split("\n", 1)[1]
+
+
+def test_concurrent_appends_from_record_and_daily_all_land_and_the_lint_stays_green(
+    vault,
+):
+    (vault / "bin/lint.sh").write_text(SLOW_LINT)
+    env = {
+        **os.environ,
+        "LEARNING_VAULT": str(vault),
+        "LEARNING_TODAY": "2026-10-28",
+        "LEETCODE_TODAY": "2026-10-28",
+    }
+    patterns = json.loads((DAILY.parent / "problems.json").read_text())["patterns"]
+    slug = next(p["slug"] for pat in patterns for p in pat["problems"])
+
+    def start(cmd):
+        return subprocess.Popen(
+            cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+
+    refused = start(
+        [sys.executable, str(RECORD), "append", "--topic", "bad"]
+        + ["--artefact", "[[nowhere]]"]
+    )
+    time.sleep(0.25)  # the refused writer is inside its lint
+    good = [
+        start(
+            [sys.executable, str(RECORD), "append", "--topic", f"t{i}"]
+            + ["--artefact", "a"]
+        )
+        for i in range(3)
+    ] + [start([sys.executable, str(DAILY), "skip", slug])]
+    outs = [p.communicate(timeout=60) for p in good]
+    refused.communicate(timeout=60)
+    assert refused.returncode == 1
+    assert [p.returncode for p in good] == [0] * len(good), outs
+    rows = table_rows(vault)
+    assert {r.split(" | ")[1] for r in rows[1:]} == {
+        *(f"t{i}" for i in range(3)),
+        f"leetcode: {slug}",
+    }
+    assert len(rows) == 1 + len(good)
+    lint = subprocess.run(
+        ["sh", "bin/lint.sh"], cwd=vault, capture_output=True, text=True, check=True
+    )
+    page_findings = [
+        f.split("\t")[0]
+        for f in lint.stdout.splitlines()
+        if f.split("\t")[2:3] == ["domains/learning.md"]
+    ]
+    assert page_findings == ["low"]
+    assert [p.name for p in (vault / "domains").iterdir()] == ["learning.md"]
+
+
+def test_append_waits_for_a_writer_holding_the_page_lock(vault):
+    fd = os.open(vault / "domains", os.O_RDONLY)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        p = subprocess.Popen(
+            [sys.executable, str(RECORD), "append", "--topic", "x", "--artefact", "a"],
+            env={**os.environ, "LEARNING_VAULT": str(vault)},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        time.sleep(0.5)
+        assert p.poll() is None, "append ran while another writer held the lock"
+        assert len(table_rows(vault)) == 1
+    finally:
+        os.close(fd)
+    assert p.wait(timeout=30) == 0, p.stderr.read()
+    assert len(table_rows(vault)) == 2
 
 
 # --- the ensure script ---------------------------------------------------------------------

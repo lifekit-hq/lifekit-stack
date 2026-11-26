@@ -5592,6 +5592,8 @@ this before the change merged.
 | | anything else | 404 | - |
 | `study-door`, `127.0.0.1:18895` (published on loopback only; Serve's `:8098`) | `POST` or `OPTIONS` `/v1/turn` | the study door (not the gateway) | - (the door checks its own bearer and Origin) |
 | | any other method or path | 404 | - |
+| `learn-mcp`, `127.0.0.1:18896` (published on loopback only; Funnel's 443 `/learn-mcp`) | `POST`, `GET` or `DELETE` `/mcp` | learn-mcp (not the gateway) | no identity (any client-sent copy is removed); learn-mcp checks its own bearer and Anthropic's ranges against `X-Forwarded-For`, which this entrypoint keeps |
+| | any other method or path | 404 | - |
 | `openclaw-hook`, `127.0.0.1:18894` (published on loopback only) | `POST <hook path>/firstmate-reply` | the gateway | no identity (any client-sent copy is removed); the hook token, checked by the gateway |
 | | any other method or path | 404 | - |
 
@@ -6363,6 +6365,181 @@ the page text, and the spike that proves it can read a problem page on the
 owner's PC is a separate piece. The door's rejects are visible only as the
 `study_door_events_total{kind="reject"}` counter and the audit spool; there is
 no alert on them yet.
+
+## learn-mcp (the study coach's connector)
+
+learn-mcp is a claude.ai custom connector (an MCP server, streamable HTTP, the
+official MCP Python SDK) over learnclaw's learning record. The browser study
+coach in claude.ai uses it to read today's problem and the owner's gaps, and to
+save a row when the owner says so. It is the one public path this stack
+serves (the other Funnel entry is the existing 443 root; see "Public Funnel
+allowlist"), and it has exactly two tools:
+
+- **`learning_context`** (read only). It returns today's offered `leetcode:`
+  row, or on Tue/Thu/Sun "no problem today" with the next pick. It also returns
+  the open problems, the week line from `daily.py week`, the last few rows, the
+  learning page's In-progress lines, and the newest gaps from the LearnHarness
+  mirror (wrong, don't-know, skipped or low-confidence answers, and skipped
+  practice problems) with the mirror's newest session date. The mirror is
+  mounted read-only.
+- **`record_artefact`** (append). It runs `skills/learning-record/record.py
+  append` for today's date and nothing else. That is the same writer learnclaw
+  uses, under the same directory lock (`daily.py` calls it in-process), so two
+  writers never lose a row, and a row the vault lint refuses is rolled back.
+
+There is no other tool, no exec, and no path argument. The service
+(`compose/learn-mcp/`, compose project `learn-mcp`, container
+`learn-mcp-learn-mcp-1`, port 8099) runs as uid 1000 (the vault's owner, never
+root), with a read-only root filesystem, `/tmp` on tmpfs, every capability
+dropped, no Docker socket, and two host mounts:
+
+- **The vault, read-only** at `/vault`. `learning_context` reads the learning
+  page, and record.py's lint (the vault's `bin/lint.sh --changed`) reads the
+  rest of the vault and its git history. A read-only `.git` is enough for that.
+- **`domains/`, read-write**, mounted over it at `/vault/domains`. This is the
+  service's whole write surface. record.py needs the page's directory, not
+  only the page, for two reasons. It writes the row to a sibling temp file and
+  renames it over the page; a rename onto a single-file bind mount fails, and
+  a file mount would go stale when the vault sync replaces the page. It also
+  takes its lock on that directory. The page is pinned by `LEARNING_PAGE` in
+  the compose file and no tool argument can change it, so the other pages in
+  `domains/` are writable to the container but reachable by no tool. A test
+  calls both tools with path-shaped values on a fixture vault that is
+  read-only except `domains/`. The learning page is the only file that changes.
+
+The LearnHarness mirror is the third mount, read-only at `/mirror`.
+
+Path: claude.ai → `https://<host>.<tailnet>.ts.net/learn-mcp` (Funnel on 443,
+path `/learn-mcp`; Serve strips the prefix and sets `X-Forwarded-For` to the
+client address when it has one, replacing what the caller sent) → edge
+entrypoint `learn-mcp`, `127.0.0.1:18896` (`compose/edge/traefik/learn-mcp.yml`,
+`POST`/`GET`/`DELETE` on `/mcp` only; it keeps Funnel's header and appends its
+own hop) → the service. So the service sees `<client>, <edge hop>`, or only
+`<edge hop>` when Funnel passed no address. It then checks these in order,
+before any tool runs:
+
+1. when Funnel passed the client address, a client outside
+   `LEARN_MCP_ALLOW_CIDRS` (default: Anthropic's published outbound ranges
+   `160.79.104.0/21,153.61.208.0/20`) gets 403. When it passed none, there is
+   no refusal. The bearer alone decides, and the access log line carries
+   `"client_address": "absent"` (vault decision 0020);
+2. a request without the exact `Authorization: Bearer <LEARN_MCP_TOKEN>`
+   (constant-time compare) gets 401;
+3. more than `LEARN_MCP_RATE_PER_MIN` (60) requests a minute gets 429;
+4. a body over 64 KiB gets 413.
+
+`/health`, `/ready` and `/metrics` answer only unforwarded (in-network)
+callers; through the edge they are a 404. The access log is one JSON line per
+request: time, source IP, method, status, and the JSON-RPC method and tool
+name. Arguments and the token are never logged.
+
+**Off until the token exists.** Merging changes nothing for the service:
+`deploy.sh` brings the project up only once `LEARN_MCP_TOKEN` is non-empty in
+the rendered env file, and warns and skips otherwise. Its Prometheus targets
+file follows the study door's rule. The edge's entrypoint goes live on the
+merge deploy and answers 502 while the service is off. The deploy's sign-in
+gate report (`scripts/deploy-edge.sh check`) lists every public Funnel path
+and goes red on anything off its "Public Funnel allowlist" (below).
+
+**Apply (once, on the server).**
+
+1. Generate the token, from the admin account's own clone of this repo (not
+   `/srv/lifekit-stack`), with an operator age key:
+
+   ```bash
+   bash scripts/learn-mcp/token.sh
+   ```
+
+   It writes the token once to the owner-only file
+   `~/.config/lifekit/learn-mcp.token` (mode 0600). It hands the token on stdin
+   to `scripts/set-secret.sh master LEARN_MCP_TOKEN`, which opens the secrets
+   PR with auto-merge, and prints the token nowhere.
+2. After that PR merges, render the env and redeploy:
+   `sudo bash scripts/secrets/render-stack-env.sh`, then re-run the CI deploy.
+   Then `docker compose -p learn-mcp ps` should show the service healthy.
+3. Publish the path on the existing 443 Funnel (Funnel stays on for 443; this
+   adds one path):
+
+   ```bash
+   sudo tailscale serve --bg --https=443 --set-path=/learn-mcp http://127.0.0.1:18896/mcp
+   tailscale serve status        # 443: / and /learn-mcp, "(Funnel on)"
+   ```
+
+**Connect claude.ai (owner).** Settings → Connectors → add a custom connector:
+
+- URL: `https://<host>.<tailnet>.ts.net/learn-mcp`
+- request header: `Authorization: Bearer <the value in
+  ~/.config/lifekit/learn-mcp.token>`. Copy it from the file; do not paste it
+  anywhere else.
+- per-tool permissions: `learning_context` always allowed, `record_artefact`
+  ask every time. A save is then always the owner's call.
+
+**Verify.**
+
+```bash
+# No token, through the public path: 401, or 403 from outside Anthropic's ranges.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<host>.<tailnet>.ts.net/learn-mcp
+# The tools, from inside the container (its own token, no output of it):
+docker exec learn-mcp-learn-mcp-1 python -c 'import json,os,urllib.request as u; r=u.Request("http://127.0.0.1:8099/mcp", json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/list"}).encode(), {"Authorization":"Bearer "+os.environ["LEARN_MCP_TOKEN"],"Content-Type":"application/json","Accept":"application/json, text/event-stream"}); print([t["name"] for t in json.load(u.urlopen(r))["result"]["tools"]])'
+# ['learning_context', 'record_artefact']
+docker logs learn-mcp-learn-mcp-1 --tail 5    # src of claude.ai's calls is in 160.79.104.0/21 or 153.61.208.0/20
+```
+
+**Known gap to re-check: the client address.** The outbound-range limit
+holds only when Funnel passes the client address. Tailscale's serve proxy sets
+it from the connection's source; whether a Funnel connection's source is
+claude.ai's real address has not been seen on this box yet. After the first
+connector calls, read the access log. If the lines carry a `src` in
+Anthropic's ranges and no `client_address`, the limit is in force. If they
+carry `"client_address": "absent"`, or a `src` that is a Tailscale relay
+rather than Anthropic, only the bearer is guarding the path. Note it on the
+issue and re-check after each Tailscale upgrade.
+
+End to end, from the coach: in a claude.ai chat with the connector on, ask
+for today's problem; `learning_context` answers. Approve one save; the row
+appears in `domains/learning.md`, and a second `learning_context` shows it under
+the recent rows. After the vault sync the row is on the vault's `main`.
+
+**Rotate.** Run `bash scripts/learn-mcp/token.sh` again, then the render and
+redeploy, then paste the new file value into the connector's header. The old
+value stops working when the service is recreated.
+
+**Pause.** `sudo tailscale serve --https=443 --set-path=/learn-mcp off`. The
+path stops being public and the rest of 443 is untouched. To also stop the
+service, use `docker compose -p learn-mcp down`. The next deploy brings it back
+while the token is set.
+
+**Retire.** Pause as above. Empty `LEARN_MCP_TOKEN` in the master file
+(`scripts/secrets/edit.sh master`), render, and redeploy (the deploy then skips
+the project). The skip does not stop a running container, so stop it, with
+the old bearer in its env: `docker compose -p learn-mcp down`. Then remove the
+connector in claude.ai. The rows it saved stay:
+they are the owner's record.
+
+### Public Funnel allowlist
+
+Funnel (the public internet) is allowed on exactly two entries, both on 443:
+
+- 443 `/` → `http://127.0.0.1:3200`, the existing root;
+- 443 `/learn-mcp` → `http://127.0.0.1:18896/mcp`, this connector.
+
+Any other public path, a different target behind either path, or Funnel on any
+other port turns `scripts/deploy-edge.sh check` red. The deploy then prints
+`✗ public Funnel: … see docs/runbook.md "Public Funnel allowlist"`, with the
+offending `tailscale funnel :<port><path> -> <target>: PUBLIC and not on the
+allowlist` lines above it. To see the live set, run `tailscale serve status`.
+
+- **Remove an unapproved path** (the normal fix): `sudo tailscale serve
+  --https=<port> --set-path=<path> off`, or `sudo tailscale funnel
+  --https=<port> off` to take a whole port off Funnel. The next deploy's check
+  is green again.
+- **Add one deliberately**: only with the owner's approval. Add the
+  `(port, path)` entry and its target to `ALLOWED` in `scripts/deploy-edge.sh`
+  and to the test cases in `scripts/tests/test_deploy_edge.py`, and list it
+  here, in the same PR. Publish it after that PR merges.
+
+If the check is still red once no Funnel line is, the remaining lines are the
+sign-in gate's: see "Tailnet sign-in gate".
 
 ## Ledger persona from finance-sentry
 

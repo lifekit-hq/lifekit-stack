@@ -369,6 +369,39 @@ def test_study_door_entrypoint_is_loopback_published_and_trusts_no_forwarded_hea
     assert [p for p in traefik["ports"] if "18895" in p] == ["127.0.0.1:18895:18895"]
 
 
+def test_learn_mcp_route_passes_only_the_mcp_path_to_the_service():
+    r = ROUTERS["learn-mcp"]
+    assert r["entryPoints"] == ["learn-mcp"]
+    assert _rule("learn-mcp") == (
+        "Path(`/mcp`) && (Method(`POST`) || Method(`GET`) || Method(`DELETE`))"
+    )
+    # No sign-in, no identity: the service's bearer and range check are the gate.
+    assert r["middlewares"] == ["learn-mcp-no-identity"]
+    assert MIDDLEWARES["learn-mcp-no-identity"] == {
+        "headers": {
+            "customRequestHeaders": {
+                "X-Auth-Request-Email": "",
+                "X-Openclaw-Scopes": "",
+            }
+        }
+    }
+    assert HTTP["services"]["learn-mcp"] == {
+        "loadBalancer": {"servers": [{"url": "http://learn-mcp:8099"}]}
+    }
+    assert set(_entrypoint_routers("learn-mcp")) == {"learn-mcp"}
+
+
+def test_learn_mcp_entrypoint_is_loopback_published_and_keeps_funnels_client_address():
+    traefik = COMPOSE["services"]["traefik"]
+    cmd = traefik["command"]
+    assert "--entrypoints.learn-mcp.address=:18896" in cmd
+    assert "--entrypoints.learn-mcp.http.aliasHeadersStrategy=delete" in cmd
+    # Funnel sets X-Forwarded-For to the connecting address; the service's
+    # range check reads it, so this loopback-only entrypoint keeps it.
+    assert "--entrypoints.learn-mcp.forwardedHeaders.insecure=true" in cmd
+    assert [p for p in traefik["ports"] if "18896" in p] == ["127.0.0.1:18896:18896"]
+
+
 # --- node-host enrolment (#558) ------------------------------------------
 
 NODE_ROUTES = ("openclaw-node-join", "openclaw-node-socket", "openclaw-node-worker")

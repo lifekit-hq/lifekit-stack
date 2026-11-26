@@ -136,6 +136,50 @@ def test_check_flags_a_port_not_published(run, serve):
     assert "not published" in r.stdout or "unreadable" in r.stdout
 
 
+def with_public(paths, port=443):
+    """serve_json() plus a Funnel-enabled port serving `paths` {path: proxy}."""
+    cfg = json.loads(serve_json())
+    cfg["TCP"][str(port)] = {"HTTPS": True}
+    cfg["Web"][f"{NAME}:{port}"] = {
+        "Handlers": {p: {"Proxy": t} for p, t in paths.items()}
+    }
+    cfg["AllowFunnel"][f"{NAME}:{port}"] = True
+    return json.dumps(cfg)
+
+
+ROOT = {"/": "http://127.0.0.1:3200"}
+LEARN = {"/learn-mcp": "http://127.0.0.1:18896/mcp"}
+
+
+def test_check_reports_learn_mcp_as_the_only_public_addition(run):
+    r = run("check", serve=with_public({**ROOT, **LEARN}), env_lines=GOOD_ENV)
+    assert r.returncode == 0, r.stdout
+    assert "tailscale funnel: public paths :443/, :443/learn-mcp" in r.stdout
+
+
+def test_check_is_green_before_learn_mcp_is_published_and_says_so(run):
+    r = run("check", serve=with_public(ROOT), env_lines=GOOD_ENV)
+    assert r.returncode == 0, r.stdout
+    assert "public paths :443/; learn-mcp not published" in r.stdout
+
+
+@pytest.mark.parametrize(
+    "paths, port, shown",
+    [
+        ({**ROOT, "/other": "http://127.0.0.1:9999"}, 443, ":443/other"),
+        ({"/learn-mcp": "http://127.0.0.1:8099/mcp"}, 443, ":443/learn-mcp"),
+        ({"/learn-mcp": "http://127.0.0.1:18896/"}, 443, ":443/learn-mcp"),
+        (LEARN, 8443, ":8443/learn-mcp"),
+        (ROOT, 10000, ":10000/"),
+    ],
+)
+def test_check_goes_red_on_any_other_public_path_or_port(run, paths, port, shown):
+    r = run("check", serve=with_public(paths, port), env_lines=GOOD_ENV)
+    assert r.returncode == 1
+    assert f"tailscale funnel {shown} -> " in r.stdout
+    assert "PUBLIC and not on the allowlist" in r.stdout
+
+
 def test_check_flags_a_missing_devclaw_bearer(run):
     r = run("check")
     assert r.returncode == 1

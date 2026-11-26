@@ -71,6 +71,15 @@ scrape_configs:
       - files: ['/etc/prometheus/lifekit/study-door-targets.json']
         refresh_interval: 30s
 
+  # learn-mcp's request and tool-call counters (platform contract). Its own
+  # project, reached over lifekit-shared; file_sd for the study door's reason
+  # (off until its token is placed; scripts/deploy.sh writes the file).
+  - job_name: learn-mcp
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: ['/etc/prometheus/lifekit/learn-mcp-targets.json']
+        refresh_interval: 30s
+
   # lifekit-dashboard's /metrics (platform contract `scraped`). Its own
   # compose project, reachable here over the external `lifekit-shared` network.
   - job_name: lifekit-dashboard
