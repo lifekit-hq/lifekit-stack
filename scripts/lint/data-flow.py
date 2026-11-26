@@ -28,12 +28,15 @@ that are not data stores at all (/etc, /usr, /opt, /run, /tmp, unit and binary d
 Matching: a store matches a row when the row's Path equals the store or contains it
 (the store sits under the row's path), after normalising `~` (each admin home),
 `<home>` (each firstmate home), `<placeholder>` and `{a,b}` in the row, and container
-paths through the mount table. A store whose own path is a parent of documented rows
-(a bind of /var/lib/lifekit, say) is covered by those rows. A named volume matches a
-row that names it (`<volume>:<path>`), names the container that mounts it
-(`<container> / <db>`), or lists its project or first name word before `volumes`
-("prometheus, loki, tempo, grafana volumes"). A row nothing discovered matches, whose
-path no longer exists on the host, is stale (live mode).
+paths through the mount table. A wildcard from `~` or `<home>` never reaches into a
+service account's home (/home/lifekit, /root). A store whose own path is a parent of
+documented rows (a bind of /var/lib/lifekit, say) is covered by those rows. A named
+volume matches a row that names it (`<volume>:<path>`), names the container that
+mounts it (`<container> / <db>`), or lists its project or first name word before
+`volumes` ("prometheus, loki, tempo, grafana volumes"). A row nothing discovered
+matches, whose path no longer exists on the host, is stale (live mode); a parent store
+does not vouch for the rows beneath it. A row the host cannot check (an unreadable
+ancestor, or a volume/container row while docker cannot list them) is unverifiable.
 
 Modes:
   default (CI gate)  static discovery over the repo (sources 1, 2, 4) plus the unit
