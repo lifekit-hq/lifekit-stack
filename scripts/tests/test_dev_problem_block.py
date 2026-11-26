@@ -8,6 +8,7 @@ block and nothing else in SOUL.md moves.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -288,3 +289,57 @@ def test_an_unknown_option_is_refused(tmp_path):
     r = run(state(tmp_path), "--bogus")
     assert r.returncode == 2
     assert "unknown option" in r.stderr
+
+
+def definition(defs, agent, deny, send):
+    """An agent.json shaped like defaults/agents/<id>/agent.json."""
+    tools = {"deny": deny, "agentToAgent": {"send": send}}
+    path = defs / agent / "agent.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"agents": {"entries": {agent: {"tools": tools}}}}))
+
+
+def test_the_shipped_agents_with_no_door_get_no_block_and_pass_the_check(tmp_path):
+    # The reader and the study panel ship devclaw denied and send [], so neither
+    # door is reachable; their SOUL.md stays the git copy their own script installs.
+    capped = {
+        "reader": (REPO / "defaults/agents/reader/workspace/SOUL.md").read_text(),
+        "study-panel": (
+            REPO / "defaults/agents/study-panel/workspace/SOUL.md"
+        ).read_text(),
+    }
+    root = state(tmp_path, {"kit": PERSONAS["kit"], **capped})
+    r = run(root)
+    assert r.returncode == 0, r.stderr
+    for agent, before in capped.items():
+        assert soul(root, agent) == before
+        assert f"agent '{agent}': no door reachable" in r.stdout
+        assert f"agent '{agent}': receipts block" not in r.stdout
+    assert "agent 'kit': receipts block installed" in r.stdout
+    r = run(root, "--check")
+    assert r.returncode == 0, r.stderr
+    # Named explicitly, a capped agent is still skipped.
+    r = run(root, "reader")
+    assert r.returncode == 0, r.stderr
+    assert soul(root, "reader") == capped["reader"]
+
+
+def test_a_later_definition_decides_by_its_doors_not_its_name(tmp_path):
+    defs = tmp_path / "defs"
+    definition(defs, "mailbox", ["group:web", "devclaw__*"], [])
+    definition(defs, "sealed", ["*"], [])
+    definition(defs, "helper", ["group:web"], ["kit"])
+    # One door still open: devclaw intake is allowed even though it sends to no one.
+    definition(defs, "filer", ["group:web"], [])
+    personas = {
+        a: f"# SOUL.md - {a}\n" for a in ("mailbox", "sealed", "helper", "filer")
+    }
+    root = state(tmp_path, personas)
+    r = run(root, AGENT_DEFS_DIR=str(defs))
+    assert r.returncode == 0, r.stderr
+    for agent in ("mailbox", "sealed"):
+        assert soul(root, agent) == personas[agent]
+        assert f"agent '{agent}': no door reachable" in r.stdout
+    for agent in ("helper", "filer"):
+        assert soul(root, agent) == personas[agent] + "\n" + block_text() + "\n"
+    assert run(root, "--check", AGENT_DEFS_DIR=str(defs)).returncode == 0

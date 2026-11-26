@@ -1806,6 +1806,12 @@ decision 0019, at the persona level.
   any workspace (all of `agents/*/workspace`, so an agent defined later is covered) lacks a
   shared block, holds a different text between its markers, has no `SOUL.md` or has a marker
   problem; each failing block is named on stdout as `missing` or `differs`.
+- **Agents with no door:** an agent whose `defaults/agents/<id>/agent.json` denies the devclaw
+  intake tool and ships `tools.agentToAgent.send: []` (today the reader and the study panel) can
+  reach neither door and answers in a parseable format, so the script gives it none of the three
+  blocks and `--check` skips it (`no door reachable` on stdout). Its own ensure script rewrites
+  its `SOUL.md` from git on each deploy, which leaves `--check` green. Any other agent, including
+  one with no definition in the repo such as Ledger, gets the blocks.
 - **Dependency:** the doors themselves are not here: the agent-to-agent allow list (#683) and
   the devclaw intake projects. Until they exist, an agent following the block files the door
   failure as the block says.
@@ -1813,12 +1819,13 @@ decision 0019, at the persona level.
 Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
 
 ```bash
-sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh           # three lines per agent
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh           # three lines per agent with a door
 sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh --check   # exit 0, every block "unchanged"
 ```
 
 **Verify:** `--check` exits 0, and `grep -c 'lifekit:receipts:begin'
-/srv/openclaw/config/agents/*/workspace/SOUL.md` prints 1 for each. Then ask Kit for something
+/srv/openclaw/config/agents/*/workspace/SOUL.md` prints 1 for each agent with a door and 0 for
+the reader and the study panel. Then ask Kit for something
 reversible and confirm the same reply carries a receipt id and no "saved for later".
 **Rollback:** delete the text between and including the two `lifekit:receipts` marker lines in
 each `SOUL.md`.

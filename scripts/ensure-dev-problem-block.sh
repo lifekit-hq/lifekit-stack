@@ -19,6 +19,13 @@
 # is composed from finance-sentry and byte-compared by ledger-persona.py; its
 # SOUL.md is host state, so the block goes there.)
 #
+# An agent that can reach no door gets no block and is not checked: its
+# defaults/agents/<id>/agent.json denies the devclaw intake tool and ships
+# tools.agentToAgent.send []. Every block asks for one of those doors, and such
+# an agent (the reader, the study panel) has a parseable-reply contract and a
+# SOUL.md its own ensure script rewrites from git. An agent with no definition
+# there, Ledger included, gets the blocks.
+#
 # Run on the VPS host as lifekit, from the repo checkout:
 #   /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh [--check|--dry-run] [agent-id ...]
 # With no ids it covers every workspace found, so an agent defined later gets
@@ -38,11 +45,13 @@
 #   DEV_PROBLEM_BLOCK_FILE  the dev-problems block to install (default: the shared file)
 #   A2A_BLOCK_FILE          the a2a-envelope block to install (default: the shared file)
 #   RECEIPTS_BLOCK_FILE     the receipts block to install (default: the shared file)
+#   AGENT_DEFS_DIR          the agent definitions (default: the repo's defaults/agents)
 #   DRY_RUN=1               same as --dry-run: report what would change, write nothing
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 config_dir="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
+defs_dir="${AGENT_DEFS_DIR:-${repo_root}/defaults/agents}"
 mode=""
 [ -z "${DRY_RUN:-}" ] || mode=dry
 
@@ -75,6 +84,25 @@ if [ "${#agents[@]}" -eq 0 ]; then
   echo "no agent workspace under ${config_dir}/agents" >&2
   exit 1
 fi
+
+# stdout: the ids whose definition closes both doors, one per line.
+doorless="$(python3 - "$defs_dir" "${agents[@]}" <<'PY'
+import fnmatch, json, sys
+from pathlib import Path
+
+defs = Path(sys.argv[1])
+for agent in sys.argv[2:]:
+    f = defs / agent / "agent.json"
+    if not f.is_file():
+        continue
+    entry = json.loads(f.read_text())["agents"]["entries"].get(agent) or {}
+    tools = entry.get("tools") or {}
+    sends = (tools.get("agentToAgent") or {}).get("send")
+    intake = any(fnmatch.fnmatchcase("devclaw__file_intake", p) for p in tools.get("deny") or [])
+    if sends == [] and intake:
+        print(agent)
+PY
+)"
 
 # stdout: one "<label> <verb>" line per block, verb = installed | updated |
 # unchanged | would-install | would-update (dry run) | missing | differs
@@ -124,6 +152,10 @@ PY
 rc=0
 drift=0
 for agent in "${agents[@]}"; do
+  if grep -qxF -- "$agent" <<<"$doorless"; then
+    echo "agent '$agent': no door reachable (devclaw intake denied, agentToAgent.send []); no shared block"
+    continue
+  fi
   soul="${config_dir}/agents/${agent}/workspace/SOUL.md"
   if [ ! -f "$soul" ]; then
     echo "agent '$agent': no SOUL.md at $soul; block not installed" >&2
