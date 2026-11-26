@@ -390,4 +390,3 @@ def test_the_standing_intents_block_replaces_the_one_line_rule_in_place(tmp_path
     assert second.returncode == 0
     assert "standing-intents block unchanged" in second.stdout
     assert run(root, "--check").returncode == 0
-
