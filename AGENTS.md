@@ -3,7 +3,7 @@
 Reference deployment for a personal-AI stack: bash bootstrap + Docker Compose that put
 [OpenClaw](https://openclaw.ai/) + [lifekit](https://github.com/lifekit-hq/lifekit) + parameterized
 workspace skills on a fresh VPS (reference: arm64 VPS with 15.6 GiB RAM, Debian 13, Tailscale-only, loopback
-binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
+binds — no public ingress but learn-mcp's one Funnel path). Maintainer: Denys. Pre-release v0.x.
 
 | Piece | What | Where it runs |
 | --- | --- | --- |

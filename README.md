@@ -8,7 +8,7 @@
 - **[lifekit](https://github.com/lifekit-hq/lifekit)** — the Python framework that owns your `~/.life/` knowledge layer and the wizard.
 - **Workspace skills** — opt-in skills bundled with this template (morning brief, learning coach, brainstorm, calendar/gmail integration, and more — see [`skills/`](./skills/)).
 - **Docker Compose + a single bash bootstrap script** — infrastructure-as-code. Reproducible from `git clone`.
-- **Mesh-VPN + loopback-only** — no public ingress, no domain, no TLS to manage. Outbound long-polling only.
+- **Mesh-VPN + loopback-only** — no public ingress but one opt-in Tailscale Funnel path (learn-mcp, the study coach's connector), no domain, no TLS to manage. Outbound long-polling only.
 
 The design is provider-neutral by construction: every swappable component sits behind an adapter port — `RuntimeGateway`, `BuildEngine`, `Sandbox`, `LocalLLM` — documented in [`docs/architecture.md`](./docs/architecture.md). The [Reference deployment](#reference-deployment) section below names the exact tested combination, but each component is a swap-point, not a hard requirement.
 
@@ -74,7 +74,7 @@ Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded lo
 
 | Service | Image | Role |
 | --- | --- | --- |
-| `traefik` | `traefik:v3.7.14` | Forward-auth proxy. Loopback entrypoints `:18890` (dashboard) and `:18891` (devclaw), which Tailscale Serve's `18790` and `18791` point at after the cutover, and `:18892` (OpenClaw dashboard, behind Serve's `18789` after its cutover) plus an internal `openclaw-edge:18893` for Prometheus, finance-sentry and the study door, a loopback `:18894` that passes only POST to the reply-pusher hook, a loopback `:18895` that passes only `POST`/`OPTIONS` on `/v1/turn` to the study door (`docs/runbook.md` "Study panel and study door"), a loopback `:18896` that passes only `/mcp` to learn-mcp, the one path Funnel makes public (`docs/runbook.md` "learn-mcp (the study coach's connector)"), and an unpublished `:8083` Prometheus metrics entrypoint (job `traefik`). Routes in `compose/edge/traefik/dynamic.yml`, `openclaw.yml`, `study-door.yml` and `learn-mcp.yml`. |
+| `traefik` | `traefik:v3.7.14` | Forward-auth proxy. Loopback entrypoints `:18890` (dashboard) and `:18891` (devclaw), which Tailscale Serve's `18790` and `18791` point at after the cutover, and `:18892` (OpenClaw dashboard, behind Serve's `18789` after its cutover) plus an internal `openclaw-edge:18893` for Prometheus, finance-sentry and the study door, a loopback `:18894` that passes only POST to the reply-pusher hook, a loopback `:18895` that passes only `POST`/`OPTIONS` on `/v1/turn` to the study door (`docs/runbook.md` "Study panel and study door"), a loopback `:18896` that passes only `/mcp` to learn-mcp, the stack's one Funnel (public) path (`docs/runbook.md` "learn-mcp (the study coach's connector)"), and an unpublished `:8083` Prometheus metrics entrypoint (job `traefik`). Routes in `compose/edge/traefik/dynamic.yml`, `openclaw.yml`, `study-door.yml` and `learn-mcp.yml`. |
 | `oauth2-proxy` | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.5` | Confidential OIDC client of Logto. Answers Traefik's check from a 30-day session cookie that it refreshes against Logto hourly. Only users with the Logto role `admin` get through. Reaches Logto's token endpoints over `identity-oidc`. No host port; its metrics listener (`:44180`, job `oauth2-proxy`) is reachable only over `lifekit-shared`. |
 
 ## Monitoring

@@ -6325,8 +6325,9 @@ no alert on them yet.
 learn-mcp is a claude.ai custom connector (an MCP server, streamable HTTP, the
 official MCP Python SDK) over learnclaw's learning record. The browser study
 coach in claude.ai uses it to read today's problem and the owner's gaps, and to
-save a row when the owner says so. It is the one public path on the box, and it
-has exactly two tools:
+save a row when the owner says so. It is the one public path this stack
+serves (the other Funnel entry is the existing 443 root; see "Public Funnel
+allowlist"), and it has exactly two tools:
 
 - **`learning_context`** (read only). It returns today's offered `leetcode:`
   row, or on Tue/Thu/Sun "no problem today" with the next pick. It also returns
