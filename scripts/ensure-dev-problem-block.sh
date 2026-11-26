@@ -10,6 +10,13 @@
 #   receipts      (defaults/agents/shared/receipts.md): every owner ask or commitment
 #                 gets an intake-store receipt in the same turn, never "saved for later"
 #                 (docs/runbook.md, "Owner asks get a receipt in the same turn").
+#   standing-intents (defaults/agents/shared/standing-intents.md): Kit and Ledger
+#                 only (ids kit and finance, the agents that create standing
+#                 intents): every intent gets an end date, past it the intent
+#                 expires, renewing is one line (docs/runbook.md, "Standing
+#                 intents carry an end date"). Where the markers are absent and
+#                 the SOUL.md still holds the one-line rule this block grew from
+#                 (LEGACY below), the block replaces that line in place.
 #
 # One source per block: the text lives only in its shared file. The script
 # finds every workspace under <config>/agents/*/workspace and replaces each
@@ -45,6 +52,7 @@
 #   DEV_PROBLEM_BLOCK_FILE  the dev-problems block to install (default: the shared file)
 #   A2A_BLOCK_FILE          the a2a-envelope block to install (default: the shared file)
 #   RECEIPTS_BLOCK_FILE     the receipts block to install (default: the shared file)
+#   STANDING_INTENTS_BLOCK_FILE  the standing-intents block (default: the shared file)
 #   AGENT_DEFS_DIR          the agent definitions (default: the repo's defaults/agents)
 #   DRY_RUN=1               same as --dry-run: report what would change, write nothing
 set -euo pipefail
@@ -65,15 +73,30 @@ for arg in "$@"; do
   esac
 done
 
-# label|marker name|block file; the markers are <!-- lifekit:NAME:begin|end -->.
+# label|marker name|block file|agent ids (space-separated; empty = every agent
+# with a door); the markers are <!-- lifekit:NAME:begin|end -->.
 blocks=(
-  "dev-problem|dev-problems|${DEV_PROBLEM_BLOCK_FILE:-${repo_root}/defaults/agents/shared/dev-problems.md}"
-  "a2a-envelope|a2a-envelope|${A2A_BLOCK_FILE:-${repo_root}/defaults/agents/shared/a2a-envelope.md}"
-  "receipts|receipts|${RECEIPTS_BLOCK_FILE:-${repo_root}/defaults/agents/shared/receipts.md}"
+  "dev-problem|dev-problems|${DEV_PROBLEM_BLOCK_FILE:-${repo_root}/defaults/agents/shared/dev-problems.md}|"
+  "a2a-envelope|a2a-envelope|${A2A_BLOCK_FILE:-${repo_root}/defaults/agents/shared/a2a-envelope.md}|"
+  "receipts|receipts|${RECEIPTS_BLOCK_FILE:-${repo_root}/defaults/agents/shared/receipts.md}|"
+  "standing-intents|standing-intents|${STANDING_INTENTS_BLOCK_FILE:-${repo_root}/defaults/agents/shared/standing-intents.md}|kit finance"
 )
 for spec in "${blocks[@]}"; do
-  [ -f "${spec##*|}" ] || { echo "no block file at ${spec##*|}" >&2; exit 1; }
+  file="${spec%|*}"
+  file="${file##*|}"
+  [ -f "$file" ] || { echo "no block file at $file" >&2; exit 1; }
 done
+
+# The block specs (label|name|file) that apply to agent $1.
+blocks_for() {
+  local spec only
+  for spec in "${blocks[@]}"; do
+    only="${spec##*|}"
+    if [ -z "$only" ] || [[ " $only " == *" $1 "* ]]; then
+      printf '%s\n' "${spec%|*}"
+    fi
+  done
+}
 
 if [ "${#agents[@]}" -eq 0 ]; then
   for ws in "$config_dir"/agents/*/workspace; do
@@ -108,10 +131,17 @@ PY
 # unchanged | would-install | would-update (dry run) | missing | differs
 # (check). All blocks are checked before anything is written, so a lone or
 # reversed marker for any of them (exit 3) leaves the whole file untouched.
-splice() { # $1 = SOUL.md path
-  python3 - "$1" "$mode" "${blocks[@]}" <<'PY'
+splice() { # $1 = SOUL.md path, $2... = block specs
+  python3 - "$1" "$mode" "${@:2}" <<'PY'
 import os, sys, tempfile
 
+# The one-line rule a block grew from: replaced in place by the block when the
+# markers are absent, so the agent never holds both texts.
+LEGACY = {
+    "standing-intents": 'A "when X comes up, remind me" ask is a standing intent, not a note:'
+    " create it with the `intent` tool (trigger, what to say, expiry). A clock-time"
+    " reminder is a scheduled task instead.",
+}
 path, mode = sys.argv[1], sys.argv[2]
 dry = bool(mode)
 text = open(path, encoding="utf-8").read()
@@ -128,9 +158,15 @@ for spec in sys.argv[3:]:
     if (b < 0) != (e < 0) or new.count(BEGIN) > 1 or new.count(END) > 1 or (b >= 0 and e < b):
         print(f"lone, repeated or reversed {name} marker", file=sys.stderr)
         sys.exit(3)
+    legacy = LEGACY.get(name)
+    lines = new.split("\n")
     if b >= 0:
         after = new[:b] + block + new[e + len(END):]
         verb = "updated"
+    elif legacy and lines.count(legacy) == 1:
+        lines[lines.index(legacy)] = block
+        after = "\n".join(lines)
+        verb = "installed"
     else:
         after = new.rstrip("\n") + ("\n\n" if new.strip() else "") + block + "\n"
         verb = "installed"
@@ -162,7 +198,8 @@ for agent in "${agents[@]}"; do
     rc=1
     continue
   fi
-  if verbs="$(splice "$soul")"; then
+  mapfile -t specs < <(blocks_for "$agent")
+  if verbs="$(splice "$soul" "${specs[@]}")"; then
     while IFS= read -r line; do
       echo "agent '$agent': ${line% *} block ${line##* } -> $soul"
       case "${line##* }" in missing | differs) drift=1 ;; esac
