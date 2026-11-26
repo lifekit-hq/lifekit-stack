@@ -1710,7 +1710,7 @@ and the status read is an HTTP GET Kit could always make.
 
 #### Development-class problems: file and carry on
 
-The owner is never the messenger. Every OpenClaw agent carries the same persona block,
+The owner is never the messenger. Every OpenClaw agent with a door carries the same persona block,
 "Development-class problems": on a defect in a fleet app or tool, a data source or tool that
 keeps failing, or a gap in a repo it does not own, the agent files the problem through the
 devclaw intake tool (`file_intake`, over the `devclaw` MCP server), says so once in one line of
@@ -1762,12 +1762,12 @@ delete the text between and including the two marker lines in each `SOUL.md`.
 
 Agent-to-agent messages (`sessions_send`) are a door like any other: one envelope in, one receipt
 back. The rule is the vault build standard "Envelope and receipt at every door" (2026-11-16,
-decision 0016); this repo carries it into every agent's persona and does not restate it.
+decision 0016); this repo carries it into the persona of every agent with a door and does not restate it.
 
 - **One source:** `defaults/agents/shared/a2a-envelope.md`, between its `lifekit:a2a-envelope`
   marker lines, spliced into each workspace's `SOUL.md` by the same
-  `scripts/ensure-dev-problem-block.sh` as the block above (both blocks in one pass; a lone or
-  reversed marker for either leaves the whole file alone). `ensure-learnclaw.sh` re-applies it.
+  `scripts/ensure-dev-problem-block.sh` as the block above (all shared blocks in one pass; a lone or
+  reversed marker for any of them leaves the whole file alone). `ensure-learnclaw.sh` re-applies it.
   `scripts/tests/test_dev_problem_block.py` asserts the envelope fields and the ack text.
 - **Ledger:** its persona (finance-sentry `agent/ledger`, pinned by `scripts/ledger-persona/PIN`)
   carries a pointer to this block, not a second envelope text; the pin is at the commit that
@@ -1790,7 +1790,7 @@ the text between and including the two marker lines in each `SOUL.md`.
 #### Owner asks get a receipt in the same turn
 
 Nothing the owner asks for, and nothing an agent promises, is held in chat or agent memory for
-"later" or for a second go. Every agent carries the persona block "Owner asks and commitments: a
+"later" or for a second go. Every agent with a door carries the persona block "Owner asks and commitments: a
 receipt in the same turn": the ask or commitment is filed in the intake store in the turn it is
 said, with the decision 0016 envelope (`origin`, `owner`, `class`, `fingerprint`, `acceptance`,
 `thread`), and the reply shows the owner the receipt id. Reversible work needs no second go
