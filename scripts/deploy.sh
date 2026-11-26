@@ -633,6 +633,20 @@ else
   fail_later "ledger persona: install failed (output above); the live persona is not the pinned one"
 fi
 
+# ─── Cron declarations: every declared job matches what runs live ──────────
+#
+# scripts/check-cron-declarations.sh runs every cron-installing ensure-*.sh
+# with --check (writes nothing) and prints one line per declaration. It runs on
+# every deploy, path gate or not: a live row can drift without a repo change
+# (paused by hand, moved to another agent, a refused edit). Drift, or a check
+# that could not run, goes red after the rest of the deploy like the contract
+# above; the fix is the named script run without --check, or a change to it
+# (docs/runbook.md, "Cron declarations check").
+say "cron declarations: declared jobs match live"
+ENV_FILE="${ENV_FILE}" OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" \
+  bash "${REPO_DIR}/scripts/check-cron-declarations.sh" \
+  || fail_later "cron declarations: a declared cron job does not match live (table above); run the named ensure script or fix its declaration per docs/runbook.md \"Cron declarations check\""
+
 # ─── Docker builder cache cap: host fact the repo owns, report-only ──────────
 #
 # scripts/docker-builder-gc.sh carries the cap (builder.gc in daemon.json),

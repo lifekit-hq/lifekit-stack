@@ -80,6 +80,10 @@
 #                               memory_vault_audit)
 set -euo pipefail
 
+# shellcheck source=scripts/lib/cron-check.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
+cron_check_args "$@"
+
 # The gateway container of the `openclaw` compose project, found by its
 # compose labels rather than a fixed container name.
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
@@ -124,10 +128,43 @@ MSG
 existing_id="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null \
   | jq -r --arg n "$JOB_NAME" '(if type == "array" then . else (.jobs // []) end) | map(select(.name == $n)) | first | .id // empty')"
 
+# --check: the row this script converges (agent, message, description, no
+# delivery, enabled) must already be live; its schedule and model are not this
+# script's (the model is ensure-kit-cron-models.sh's).
+if [ "$CRON_CHECK" = 1 ]; then
+  [ -n "$existing_id" ] || cron_check_absent "$JOB_NAME"
+  docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | python3 -c '
+import json, sys
+job_id, agent, description, message = sys.argv[1:5]
+text = sys.stdin.read()
+data = json.loads(text[text.index("{"):]) if "{" in text else {}
+jobs = data if isinstance(data, list) else data.get("jobs", [])
+job = next((j for j in jobs if j.get("id") == job_id), None)
+if job is None:
+    sys.exit(f"verify: job {job_id} is not listed")
+bad = []
+if (job.get("agentId") or job.get("agent")) != agent:
+    bad.append("agentId=" + repr(job.get("agentId")) + ", want " + repr(agent))
+if job.get("enabled") is False:
+    bad.append("enabled=False, want enabled")
+if (job.get("payload") or {}).get("message") != message:
+    bad.append("payload.message is not the declared message")
+if job.get("description") != description:
+    bad.append("description is not the declared one")
+if (job.get("delivery") or {}).get("mode") != "none":
+    bad.append("delivery.mode=" + repr((job.get("delivery") or {}).get("mode")) + ", want none")
+if bad:
+    sys.exit("refusing: memory-vault-cleanup is not the declared row: " + "; ".join(bad))
+' "$existing_id" "$AGENT" "$DESCRIPTION" "$MESSAGE" >&2
+  cron_check_agrees "$JOB_NAME" "$existing_id"
+fi
+
 if [ -n "$existing_id" ]; then
-  docker exec "$GATEWAY" openclaw cron edit "$existing_id" \
+  docker exec "$GATEWAY" openclaw cron edit "$existing_id" --agent "$AGENT" \
     --description "$DESCRIPTION" --message "$MESSAGE" --no-deliver >/dev/null
-  echo "cron '$JOB_NAME' already existed (id $existing_id) — converged its message, description and delivery (--no-deliver); schedule left untouched"
+  # A row an operator paused is declared enabled again (a no-op when it already is).
+  docker exec "$GATEWAY" openclaw cron enable "$existing_id" >/dev/null
+  echo "cron '$JOB_NAME' already existed (id $existing_id) — converged its agent, message, description, delivery (--no-deliver) and enabled; schedule left untouched"
   echo "verify: docker exec $GATEWAY openclaw cron show $existing_id   # delivery.mode should read \"none\""
   exit 0
 fi

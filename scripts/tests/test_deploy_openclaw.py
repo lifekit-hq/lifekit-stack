@@ -128,6 +128,13 @@ LOGGING_SH = """#!/bin/sh
 echo "%s" >> "$DOCKER_CALL_LOG"
 """
 
+# Stands in for scripts/check-cron-declarations.sh: logs, then exits with
+# CRON_SWEEP_EXIT (default 0, every declaration agrees).
+CRON_SWEEP_SH = """#!/bin/sh
+echo "cron-declarations" >> "$DOCKER_CALL_LOG"
+exit "${CRON_SWEEP_EXIT:-0}"
+"""
+
 # Stands in for scripts/ledger-persona/ledger-persona.py: logs the command it
 # was given and exits with $LEDGER_<COMMAND>_EXIT (default 0).
 LEDGER_PERSONA_PY = """import os, sys
@@ -179,6 +186,7 @@ DEPLOY_ORDER = [
     "contract-enforce",
     "ledger-install",
     "ledger-check",
+    "cron-declarations",
     "builder-gc",
     "tmp-scratch",
 ]
@@ -236,6 +244,7 @@ def marker(line: str) -> str | None:
     if line.startswith(("openclaw:", "contract-", "ledger-")) or line in {
         "embed-origin",
         "render-heartbeat",
+        "cron-declarations",
         "builder-gc",
         "tmp-scratch",
     }:
@@ -278,6 +287,7 @@ def full_deploy(
     stub(fake / "scripts/deploy-embed-origin.sh", LOGGING_SH % "embed-origin")
     stub(fake / "scripts/deploy-grafana-oidc.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
+    stub(fake / "scripts/check-cron-declarations.sh", CRON_SWEEP_SH)
     stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
     stub(fake / "scripts/ensure-ops-door.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/ops-door/install-ops-door.sh", "#!/bin/sh\nexit 0\n")
@@ -403,6 +413,17 @@ def test_ledger_persona_is_installed_then_checked_on_every_deploy(
         assert message in r.stderr
     else:
         assert "ledger persona:" not in r.stderr
+
+
+@pytest.mark.parametrize(("sweep_exit", "ok"), [(0, True), (1, False)])
+def test_cron_declaration_drift_fails_the_deploy_after_the_rest_ran(
+    env, tmp_path, sweep_exit, ok
+):
+    r, trace, _ = full_deploy({**env, "CRON_SWEEP_EXIT": str(sweep_exit)}, tmp_path)
+    assert trace.count("cron-declarations") == 1
+    assert "builder-gc" in trace and "tmp-scratch" in trace
+    assert (r.returncode == 0) is ok, r.stdout + r.stderr
+    assert ("cron declarations:" in r.stderr) is not ok
 
 
 def test_identity_oidc_network_is_created_before_the_platform_up(env, tmp_path):
@@ -1468,6 +1489,7 @@ def run_gated_deploy(env, tmp_path, mode, touched):
     stub(fake / "scripts/deploy-embed-origin.sh", LOGGING_SH % "embed-origin")
     stub(fake / "scripts/deploy-grafana-oidc.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/render-heartbeat.sh", LOGGING_SH % "render-heartbeat")
+    stub(fake / "scripts/check-cron-declarations.sh", CRON_SWEEP_SH)
     stub(fake / "scripts/docker-builder-gc.sh", LOGGING_SH % "builder-gc")
     stub(fake / "scripts/ensure-ops-door.sh", "#!/bin/sh\nexit 0\n")
     stub(fake / "scripts/ops-door/install-ops-door.sh", "#!/bin/sh\nexit 0\n")

@@ -71,7 +71,8 @@ while IFS=$'\t' read -r id name kind model; do
     echo "skipped: command job '$name' ($id) runs no model"
     continue
   fi
-  if [ "$model" = "$MODEL" ]; then
+  # model@anthropic:api-key is the same model with its inference account recorded.
+  if [ "$model" = "$MODEL" ] || [ "$model" = "${MODEL}@anthropic:api-key" ]; then
     echo "ok: '$name' ($id) runs on $model"
     continue
   fi

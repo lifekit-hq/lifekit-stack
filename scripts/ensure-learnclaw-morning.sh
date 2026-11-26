@@ -54,6 +54,10 @@
 #   ENV_FILE                 host env file (default: /srv/lifekit-secrets/stack.env)
 set -euo pipefail
 
+# shellcheck source=scripts/lib/cron-check.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
+cron_check_args "$@"
+
 # shellcheck source=scripts/lib/cron-model.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-model.sh"
 MODEL="${LEARNCLAW_MORNING_MODEL:-$(cron_model)}"
@@ -141,6 +145,7 @@ for job in json.load(sys.stdin)["jobs"]:
 
 job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
 if [ -z "$job_id" ]; then
+  cron_check_absent "$JOB_NAME"
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
     --display-name "Learnclaw morning learning message" \
@@ -156,19 +161,21 @@ if [ -z "$job_id" ]; then
   echo "created cron '$JOB_NAME' ($job_id)"
 fi
 
-docker exec "$GATEWAY" openclaw cron edit "$job_id" \
-  --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
-  --agent "$AGENT" --session isolated \
-  --message "$MESSAGE" --model "$MODEL" --tools "$JOB_TOOLS" --light-context \
-  --timeout-seconds 300 \
-  --announce --no-best-effort-deliver \
-  --channel telegram --account "$ACCOUNT" --to "$CHAT" \
-  --failure-alert --failure-alert-after 1 \
-  --failure-alert-mode announce --failure-alert-channel telegram \
-  --failure-alert-account-id default --failure-alert-to "$CHAT" \
-  >/dev/null
-# A row an operator paused is declared enabled again (a no-op when it already is).
-docker exec "$GATEWAY" openclaw cron enable "$job_id" >/dev/null
+if [ "$CRON_CHECK" = 0 ]; then
+  docker exec "$GATEWAY" openclaw cron edit "$job_id" \
+    --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
+    --agent "$AGENT" --session isolated \
+    --message "$MESSAGE" --model "$MODEL" --tools "$JOB_TOOLS" --light-context \
+    --timeout-seconds 300 \
+    --announce --no-best-effort-deliver \
+    --channel telegram --account "$ACCOUNT" --to "$CHAT" \
+    --failure-alert --failure-alert-after 1 \
+    --failure-alert-mode announce --failure-alert-channel telegram \
+    --failure-alert-account-id default --failure-alert-to "$CHAT" \
+    >/dev/null
+  # A row an operator paused is declared enabled again (a no-op when it already is).
+  docker exec "$GATEWAY" openclaw cron enable "$job_id" >/dev/null
+fi
 
 # Fail closed: re-read the live row.
 live_jobs | python3 -c '
@@ -191,7 +198,9 @@ if payload.get("message") != message:
 allow = payload.get("toolsAllow")
 if not isinstance(allow, list) or sorted(allow) != sorted(tools.split(",")):
     bad.append("payload.toolsAllow=" + repr(allow) + ", want exactly " + repr(tools.split(",")))
-if payload.get("model") != model:
+# The gateway may record the inference account on the row (model@anthropic:api-key):
+# the same model, so it agrees (scripts/lib/cron-model.sh).
+if payload.get("model") not in (model, model + "@anthropic:api-key"):
     bad.append("payload.model=" + repr(payload.get("model")) + ", want " + repr(model))
 if job.get("sessionTarget") != "isolated" or job.get("sessionKey"):
     bad.append("session " + repr(job.get("sessionKey") or job.get("sessionTarget")) + ", want isolated")
@@ -213,6 +222,7 @@ if d.get("to") != chat:
 if bad:
     sys.exit("refusing: learnclaw-morning is not the declared row: " + "; ".join(bad))
 ' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$CRON_EXPR" "$CRON_TZ" "$JOB_TOOLS" "$MODEL" "$MESSAGE" >&2
+cron_check_agrees "$JOB_NAME" "$job_id"
 
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, model $MODEL, tools $JOB_TOOLS only, announce -> telegram:$ACCOUNT (verified), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"

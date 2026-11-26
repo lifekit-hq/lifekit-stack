@@ -40,6 +40,10 @@
 #   ENV_FILE             host env file (default: /srv/lifekit-secrets/stack.env)
 set -euo pipefail
 
+# shellcheck source=scripts/lib/cron-check.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
+cron_check_args "$@"
+
 ENV_FILE="${ENV_FILE:-/srv/lifekit-secrets/stack.env}"
 
 # The run's wall-clock limit. Successful pulse runs take 100-170 s (the model
@@ -108,6 +112,7 @@ for job in json.load(sys.stdin)["jobs"]:
         print(job["id"], str(job.get("enabled", False)).lower())
         break' "$JOB_NAME")"
 if [ -z "$row" ]; then
+  cron_check_absent "$JOB_NAME"
   echo "no '$JOB_NAME' automation row. It is host state, not applied by deploy:" >&2
   echo "create it by hand on the gateway CLI (docs/runbook.md, \"The finance" >&2
   echo "heartbeat, retired for an isolated cron job\")." >&2
@@ -155,17 +160,37 @@ for job in json.load(sys.stdin)["jobs"]:
         print(str((job.get("failureAlert") or {}).get("to") or ""), end="")
         break' "$JOB_NAME")"
 
-install -D -m 0644 "$gate_src/gate.js" "$gate_dest/gate.js"
-install -D -m 0755 "$gate_src/pulse_gate.py" "$gate_dest/pulse_gate.py"
+if [ "$CRON_CHECK" = 0 ]; then
+  install -D -m 0644 "$gate_src/gate.js" "$gate_dest/gate.js"
+  install -D -m 0755 "$gate_src/pulse_gate.py" "$gate_dest/pulse_gate.py"
+fi
 
 edit_args=()
 [ "$current_gate" = "$wanted_gate" ] || edit_args+=(--trigger-script "$gate_script")
 [ "$current" = "$wanted" ] || edit_args+=(--message "$wanted")
 [ "$current_timeout" = "$TIMEOUT_SECONDS" ] || edit_args+=(--timeout-seconds "$TIMEOUT_SECONDS")
-[ "$current_model" = "$MODEL" ] || edit_args+=(--model "$MODEL")
+# model@anthropic:api-key is the same model with its inference account recorded.
+[ "$current_model" = "$MODEL" ] || [ "$current_model" = "${MODEL}@anthropic:api-key" ] \
+  || edit_args+=(--model "$MODEL")
 [ "$current_alert_to" = "$ALERT_CHAT" ] || edit_args+=(--failure-alert --failure-alert-after 1
   --failure-alert-mode announce --failure-alert-channel telegram
   --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT")
+
+# --check: every field this script owns must already be the declared value.
+# (Whether the row is enabled is the operator's: a disabled pulse is a note above.)
+if [ "$CRON_CHECK" = 1 ]; then
+  [ "${#edit_args[@]}" -eq 0 ] || {
+    drift=""
+    [ "$current_gate" = "$wanted_gate" ] || drift+=" trigger"
+    [ "$current" = "$wanted" ] || drift+=" payload.message"
+    [ "$current_timeout" = "$TIMEOUT_SECONDS" ] || drift+=" payload.timeoutSeconds"
+    [ "$current_model" = "$MODEL" ] || [ "$current_model" = "${MODEL}@anthropic:api-key" ] || drift+=" payload.model"
+    [ "$current_alert_to" = "$ALERT_CHAT" ] || drift+=" failureAlert"
+    echo "drift: cron '$JOB_NAME' ($job_id) differs from $(basename "$0") in:$drift" >&2
+    exit 1
+  }
+  cron_check_agrees "$JOB_NAME" "$job_id"
+fi
 
 if [ "${#edit_args[@]}" -eq 0 ]; then
   echo "payload.message, timeoutSeconds ($TIMEOUT_SECONDS), model ($MODEL), gate and failure alert of '$JOB_NAME' ($job_id) already declared (${checklist#"${repo_root}/"}, ${gate_src#"${repo_root}/"}); nothing to do"
@@ -176,7 +201,7 @@ fi
 docker exec "$GATEWAY" openclaw cron edit "$job_id" "${edit_args[@]}" >/dev/null
 [ "$current" = "$wanted" ] || echo "payload.message of '$JOB_NAME' ($job_id) set from ${checklist#"${repo_root}/"}"
 [ "$current_timeout" = "$TIMEOUT_SECONDS" ] || echo "payload.timeoutSeconds of '$JOB_NAME' ($job_id) set to $TIMEOUT_SECONDS (was ${current_timeout:-unset})"
-[ "$current_model" = "$MODEL" ] || echo "payload.model of '$JOB_NAME' ($job_id) set to $MODEL (was ${current_model:-unset})"
+[ "$current_model" = "$MODEL" ] || [ "$current_model" = "${MODEL}@anthropic:api-key" ] || echo "payload.model of '$JOB_NAME' ($job_id) set to $MODEL (was ${current_model:-unset})"
 [ "$current_gate" = "$wanted_gate" ] || echo "trigger script of '$JOB_NAME' ($job_id) set to $gate_script"
 [ "$current_alert_to" = "$ALERT_CHAT" ] || echo "failure alert of '$JOB_NAME' ($job_id) set to announce on telegram"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"

@@ -34,6 +34,10 @@
 #   ENV_FILE                host env file (default: /srv/lifekit-secrets/stack.env)
 set -euo pipefail
 
+# shellcheck source=scripts/lib/cron-check.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
+cron_check_args "$@"
+
 JOB_NAME=planning-reminder
 AGENT=kit
 ACCOUNT=default
@@ -103,6 +107,7 @@ for job in json.load(sys.stdin)["jobs"]:
 
 job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
 if [ -z "$job_id" ]; then
+  cron_check_absent "$JOB_NAME"
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
     --display-name "Weekly planning reminder" \
@@ -118,19 +123,21 @@ if [ -z "$job_id" ]; then
   echo "created cron '$JOB_NAME' ($job_id)"
 fi
 
-docker exec "$GATEWAY" openclaw cron edit "$job_id" \
-  --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
-  --agent "$AGENT" --session isolated \
-  --command-argv "$ARGV" \
-  --timeout-seconds 60 --no-output-timeout-seconds 30 --output-max-bytes 1000 \
-  --announce --no-best-effort-deliver \
-  --channel telegram --account "$ACCOUNT" --to "$CHAT" \
-  --failure-alert --failure-alert-after 1 \
-  --failure-alert-mode announce --failure-alert-channel telegram \
-  --failure-alert-account-id default --failure-alert-to "$CHAT" \
-  >/dev/null
-# A row an operator paused is declared enabled again (a no-op when it already is).
-docker exec "$GATEWAY" openclaw cron enable "$job_id" >/dev/null
+if [ "$CRON_CHECK" = 0 ]; then
+  docker exec "$GATEWAY" openclaw cron edit "$job_id" \
+    --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
+    --agent "$AGENT" --session isolated \
+    --command-argv "$ARGV" \
+    --timeout-seconds 60 --no-output-timeout-seconds 30 --output-max-bytes 1000 \
+    --announce --no-best-effort-deliver \
+    --channel telegram --account "$ACCOUNT" --to "$CHAT" \
+    --failure-alert --failure-alert-after 1 \
+    --failure-alert-mode announce --failure-alert-channel telegram \
+    --failure-alert-account-id default --failure-alert-to "$CHAT" \
+    >/dev/null
+  # A row an operator paused is declared enabled again (a no-op when it already is).
+  docker exec "$GATEWAY" openclaw cron enable "$job_id" >/dev/null
+fi
 
 # Fail closed: re-read the live row.
 live_jobs | python3 -c '
@@ -168,6 +175,7 @@ if d.get("to") != chat:
 if bad:
     sys.exit("refusing: planning-reminder is not the declared row: " + "; ".join(bad))
 ' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$ARGV" "$CRON_EXPR" "$CRON_TZ" >&2
+cron_check_agrees "$JOB_NAME" "$job_id"
 
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, command payload (no model turn), announce -> telegram:$ACCOUNT (verified), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
