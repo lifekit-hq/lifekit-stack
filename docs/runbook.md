@@ -197,8 +197,8 @@ gateway stopped and stay `run --rm`.
 
 #### DevClaw MCP server (per-agent half)
 
-Kit calls DevClaw's MCP tools (and every agent its intake tool, see "Development-class
-problems: file and carry on") through `mcp.servers.devclaw`, which lives in the
+Kit calls DevClaw's MCP tools (agents file to intake through the intake door instead, see
+"Intake door") through `mcp.servers.devclaw`, which lives in the
 per-agent half of `openclaw.json` (host state), not in `platform.patch.json`.
 Its `url` is `http://devclaw-mcp:8000/mcp`, reached over the external
 `lifekit-shared` network that the gateway and `devclaw-mcp` already share, and
@@ -1736,7 +1736,7 @@ and the status read is an HTTP GET Kit could always make.
 The owner is never the messenger. Every OpenClaw agent with a door carries the same persona block,
 "Development-class problems": on a defect in a fleet app or tool, a data source or tool that
 keeps failing, or a gap in a repo it does not own, the agent files the problem through the
-devclaw intake tool (`file_intake`, over the `devclaw` MCP server), says so once in one line of
+intake door (`file_intake`, "Intake door" below), says so once in one line of
 its own output, degrades and carries on, and never waits for the fix and never messages the
 owner about a failure. It names the repo when the owner is obvious and leaves it out when not,
 and firstmate routes it. A failed filing is stated in the same line, never relayed. This is
@@ -1817,8 +1817,8 @@ Nothing the owner asks for, and nothing an agent promises, is held in chat or ag
 receipt in the same turn": the ask or commitment is filed in the intake store in the turn it is
 said, with the decision 0016 envelope (`origin`, `owner`, `class`, `fingerprint`, `acceptance`,
 `thread`), and the reply shows the owner the receipt id. Reversible work needs no second go
-(vault decision 0018 row C1). The doors are the devclaw intake tool (`file_intake` on its intake
-projects) and the agent-to-agent envelope to Kit; when a door fails the agent files the failure
+(vault decision 0018 row C1). The doors are the intake door (`file_intake` on the devclaw intake
+projects, "Intake door") and the agent-to-agent envelope to Kit; when a door fails the agent files the failure
 itself in the intake store and never hands the item back to the owner. This is gap G1 of vault
 decision 0019, at the persona level.
 
@@ -1836,9 +1836,9 @@ decision 0019, at the persona level.
   blocks and `--check` skips it (`no door reachable` on stdout). Its own ensure script rewrites
   its `SOUL.md` from git on each deploy, which leaves `--check` green. Any other agent, including
   one with no definition in the repo such as Ledger, gets the blocks.
-- **Dependency:** the doors themselves are not here: the agent-to-agent allow list (#683) and
-  the devclaw intake projects. Until they exist, an agent following the block files the door
-  failure as the block says.
+- **The doors:** the agent-to-agent allow list (#683, `ensure-reader-agent.sh`) and the intake
+  door ("Intake door", #686), which cannot refuse: a hand-off that fails is spooled and filed
+  later, so the failure is never the owner's to carry.
 
 Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
 
@@ -2389,6 +2389,59 @@ prose included, reaches Kit's model unchanged.
   `{"plugins":{"entries":{"video-drop-door":{"enabled":false}}}}`; Kit then takes every message
   again.
 
+### Intake door
+
+Every agent with a door files to intake through one tool that cannot refuse: `file_intake`,
+registered by the `intake-door` gateway plugin (`compose/openclaw-gateway/plugins/intake-door`,
+vault decisions 0016 and 0019). Before it, an agent filed through devclaw's own MCP tool, which
+refuses an unknown project, and a refusal came back to the owner as work to forward.
+
+- **The call:** `file_intake` with `project`, `title`, `body`, `fingerprint` and `envelope`
+  (`origin`, `owner`, `class`, `acceptance`, `thread`). `project` is a devclaw intake project:
+  each repository owner (`lifekit-stack`, `finance-sentry`, `lifekit-dashboard`,
+  `lifekit-common`, `devclaw`, ...), `vault` for the memory vault, `fleet` for the fleet's ops
+  queue. Nothing missing is refused: an absent origin is the calling agent, an absent class
+  `unclear`, an absent acceptance an `unclear:` placeholder to shape later. The receipt is
+  devclaw's `{id, url, state, count, ...}`; a repeat of the same project and fingerprint is
+  `working` with a higher `count` on the same issue (decision 0016's repeat rule, devclaw's
+  `intake:<fingerprint>` label).
+- **What devclaw is sent:** its `file_intake` takes `owner` as the target repo and class `dev`
+  only, so the door sends `owner` = the project and class `dev`, and puts the caller's own
+  envelope in an `intake-envelope` block at the top of the issue body.
+- **The spool:** any failure (devclaw unreachable or erroring, GitHub unavailable behind it, an
+  unknown project, a refused envelope) writes the item to
+  `/home/node/.openclaw/intake-spool/` in the gateway (host `/srv/openclaw/config/intake-spool/`),
+  one JSON file per occurrence, and the agent gets a receipt `spool:<key>` (`spooled: true`,
+  state `submitted`, or `working` when the same item is already waiting) with a note to carry
+  on. The plugin's service retries the spool every ten minutes, oldest first, one devclaw call
+  per occurrence, so a repeat that waited still lands as a count, not a second issue. An item
+  whose project devclaw does not know is filed under `fleet` with that said in its body. A filed
+  occurrence is deleted; one that fails again stays with its attempt count. Nothing is dropped:
+  after six failed retries it counts as `stuck` and is still retried.
+- **The fleet page:** the publisher's `intake_spool` field is `spool.mjs count` from the gateway
+  (`{pending, stuck, oldest_epoch}`, `scripts/fleet-publisher/README.md`); a stuck item also
+  adds an `errors[]` line.
+- **Install:** `platform.patch.json` allows and enables the plugin; `scripts/ensure-intake-door.sh`
+  (deploy, configure phase) installs its files, reloads it when they changed, and adds
+  `file_intake` to the global `tools.allow` when the live config has one and to each installed
+  agent with a door (`tools.alsoAllow`, or `tools.allow` for an entry with an explicit list).
+  It only adds; `--check` exits 1 naming each list without the tool. The agents with no door
+  (the reader and the study panel, "Agents with no door" above) get nothing.
+
+Check by hand (as `lifekit`; `G=$(docker ps -q --filter label=com.docker.compose.service=openclaw-gateway)`):
+
+```bash
+/srv/lifekit-stack/scripts/ensure-intake-door.sh --check
+docker exec "$G" openclaw plugins inspect intake-door        # loaded, tool file_intake
+docker exec "$G" node /home/node/.openclaw/extensions/intake-door/spool.mjs count
+docker exec "$G" node /home/node/.openclaw/extensions/intake-door/spool.mjs retry   # file now
+```
+
+**Turn it off:** remove `intake-door` from `plugins.allow` and its entry in
+`platform.patch.json` (a PR); agents then have no `file_intake` and fall back to the failure
+line in their persona blocks. A spool left behind is plain JSON, filed by hand or by turning the
+plugin back on.
+
 ### Envelope and receipt
 
 Every door that takes work carries one envelope and returns one receipt at once. The text
@@ -2402,6 +2455,7 @@ restated here. This section is only where this repo enforces it.
 | Job queue | `skills/job-queue/jobq.py enqueue` | flags `--origin --owner --class --acceptance [--fingerprint] [--thread]`, kept as `envelope` in the job file; the queue's own job owner is `--skill` | one JSON line `{"id","url","state"}`; `url` is `--url` or `jobq.py status <id>` | the job id (kind and key); a repeat of a waiting or running job adds `repeats` and `latest`, a finished one queued again carries `reopens` |
 | Video intake, jobs | `scripts/video-eval.sh enqueue` (also `backfill`'s `ingest` and `voice` through `video.py`) | the same flags after the link; origin is `VIDEO_EVAL_ORIGIN` | the usual line, then the receipt line; `url` is `video-eval.sh status <id>`, or the report when the item was judged before | the item's normalized link |
 | Video intake, direct | `video-eval.sh idea\|link\|note\|repo` | the same flags; an idea's origin is always `scout` | the usual three lines, then the receipt line; state `completed`, `url` the report | the item's recorded source; the envelope is kept in `<report>.envelope.json` with a count and the latest occurrence |
+| Intake door | the `file_intake` agent tool (`intake-door` plugin, "Intake door") | tool arguments `project title body fingerprint envelope{origin owner class acceptance thread}`; nothing missing is refused | devclaw's `{"id","url","state"}` with `count`, or `{"id":"spool:<key>","state","spooled":true}` when held for retry | the given fingerprint (devclaw derives one when it is absent); a repeat, also one that waited in the spool, adds a count to the same issue |
 | Kit to firstmate | `skills/secondmate-relay/relay.sh note` | flags after the body file and optional home: `--origin --owner --class --acceptance [--thread]`; the note body starts with the envelope as a `---` block | the host's two JSON lines, then the receipt line; `url` is `relay.sh replies <home>` | the `thread`; the request id derives from it, so a note on the same thread is a replay of the first (receipt `working`, no second note) |
 
 Rules this repo adds on top of the entry:
@@ -2515,9 +2569,9 @@ Verified 2026-11-15 on the running gateway, OpenClaw 2026.10.9 (build 8b18b55):
   scoping (the Google and finance-sentry MCP scopes, the repo and token permissions) stays
   the strongest boundary; the gate is the place a stop is filed, not the lock.
 - **Per-agent `devclaw__*` deny: do not apply.** An earlier note here suggested denying the
-  devclaw MCP tools for every agent except `kit`. Every agent now files a development-class
-  problem through the devclaw intake tool ("Development-class problems: file and carry on"),
-  so a blanket deny would stop the route. If per-agent enforcement is ever verified under
+  devclaw MCP tools for every agent except `kit`. Agents now file through the intake door
+  (`file_intake`, "Intake door"), which is not a devclaw tool, so a deny would no longer stop
+  filing; it is still not applied. If per-agent enforcement is ever verified under
   `claude-cli` for that agent (not enforced when last tried, 2026-05-25; enforced on 2026.11.4
   for the `reader` agent's shape only, `scripts/reader-canary`; `docs/openclaw-agent-design.md`), scope it
   to the other devclaw tools: deny `devclaw__*` except the intake tool, and give a stop row to

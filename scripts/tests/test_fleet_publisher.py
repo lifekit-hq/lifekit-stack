@@ -25,6 +25,7 @@ NO_LIVE_SOURCES = {
     "FLEET_CLIP_STATS": "",
     "FLEET_SCREEN_REPOS": "",
     "FLEET_INTAKE_CMD": "",
+    "FLEET_INTAKE_SPOOL_CMD": "",
     "FLEET_VAULT": "/nonexistent",
     "FLEET_POLICY_DIR": "/nonexistent",
     "FLEET_SYSTEMCTL": "",
@@ -2929,6 +2930,34 @@ def test_intake_is_the_job_queue_depth(homes):
     assert homes.run(vps, FLEET_INTAKE_CMD=junk).returncode == 0
     assert status(homes)["intake"] is None
     assert status(homes)["errors"] == ["intake depth unreadable (ValueError)"]
+
+
+def test_intake_spool_is_the_door_s_held_hand_offs(homes):
+    vps = status_home(homes.tmp, "fm-vps", [])
+    count = stub(
+        homes.tmp / "spool",
+        'echo \'{"schema":"intake-spool-count.v1","pending":2,"stuck":0,"oldest_epoch":1799999000}\'\n',
+    )
+    assert homes.run(vps, FLEET_INTAKE_SPOOL_CMD=count).returncode == 0
+    got = status(homes)
+    assert got["intake_spool"] == {"pending": 2, "stuck": 0, "oldest_epoch": 1799999000}
+    assert got["errors"] == []
+    stuck = stub(
+        homes.tmp / "stuck",
+        'echo \'{"schema":"intake-spool-count.v1","pending":3,"stuck":1,"oldest_epoch":1799990000}\'\n',
+    )
+    assert homes.run(vps, FLEET_INTAKE_SPOOL_CMD=stuck).returncode == 0
+    got = status(homes)
+    assert got["intake_spool"]["stuck"] == 1
+    assert got["errors"] == [
+        "1 intake hand-off(s) stuck in the spool: every retry failed (docs/runbook.md, Intake door)"
+    ]
+    junk = stub(homes.tmp / "junk", "echo '{\"pending\": 1}'\n")
+    assert homes.run(vps, FLEET_INTAKE_SPOOL_CMD=junk).returncode == 0
+    assert status(homes)["intake_spool"] is None
+    assert status(homes)["errors"] == ["intake spool unreadable (ValueError)"]
+    assert homes.run(vps).returncode == 0
+    assert status(homes)["intake_spool"] is None
 
 
 def test_how_it_works_links_each_owner_page_the_vault_has(homes):

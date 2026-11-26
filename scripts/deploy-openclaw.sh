@@ -831,6 +831,19 @@ say "study-panel agent contract -> ${OPENCLAW_CONFIG_DIR}/agents/study-panel/wor
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-study-panel.sh" \
   || fail_later "study-panel agent install failed (output above)"
 
+# ─── intake door plugin ──────────────────────────────────────────────────────
+#
+# compose/openclaw-gateway/plugins/intake-door is the one intake door every
+# agent files through: its `file_intake` tool hands an item to devclaw and,
+# when that fails, holds it in a local spool it retries, so the door never
+# refuses (docs/runbook.md, "Intake door"). platform.patch.json above allows
+# and enables it; this installs its files and adds the tool to the global
+# allow list and to each installed agent with a door, after the agent installs
+# so a new agent's entry is there to receive it.
+say "intake door plugin -> ${OPENCLAW_CONFIG_DIR}/extensions"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR}" "${REPO_DIR}/scripts/ensure-intake-door.sh" \
+  || fail_later "intake door install failed (output above)"
+
 # ─── Skill CLIs (workout-claw, life-state) ───────────────────────────────────
 #
 # Nothing to install in this script: workout-claw is baked into the gateway

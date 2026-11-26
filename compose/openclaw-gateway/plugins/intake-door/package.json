@@ -1,0 +1,11 @@
+{
+  "name": "intake-door",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "door.js", "spool.mjs", "openclaw.plugin.json"],
+  "openclaw": {
+    "extensions": ["./index.js"]
+  }
+}
