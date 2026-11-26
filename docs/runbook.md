@@ -1738,8 +1738,8 @@ The owner is never the messenger. Every OpenClaw agent with a door carries the s
 keeps failing, or a gap in a repo it does not own, the agent files the problem through the
 intake door (`file_intake`, "Intake door" below), says so once in one line of
 its own output, degrades and carries on, and never waits for the fix and never messages the
-owner about a failure. It names the repo when the owner is obvious and leaves it out when not,
-and firstmate routes it. A failed filing is stated in the same line, never relayed. This is
+owner about a failure. It names the repo's project when the owner is obvious and uses `fleet` when
+not. A failed filing is stated in the same line, never relayed. This is
 not a notification channel and adds no rule.
 
 - **One source:** `defaults/agents/shared/dev-problems.md`, between its two marker lines.
