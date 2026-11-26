@@ -6,13 +6,14 @@
 # The skills are copied from the repo's skills/ (the compose file's `skills`
 # build context), so the connector writes through the very record.py learnclaw
 # uses. git and the POSIX tools (sh, awk, grep, sed, find) are the vault
-# lint's, which record.py runs after every append.
+# lint's, which record.py runs after every append. tzdata gives daily.py's
+# Europe/Dublin date and the compose file's TZ a zone database to read.
 
 FROM python:3.13-slim-trixie
 
 # hadolint ignore=DL3008
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y --no-install-recommends git tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

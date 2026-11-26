@@ -113,7 +113,7 @@ sys.exit(0 if ok else 1)
 
   # Funnel (public internet) is allowed on one port and two paths only: the
   # existing 443 root and learn-mcp, the study coach's connector (docs/runbook.md
-  # "learn-mcp (the study coach's connector)"). Anything else public is red.
+  # "Public Funnel allowlist"). Anything else public is red.
   if ! printf '%s' "${serve}" | python3 -c '
 import json, re, sys
 try:

@@ -6391,9 +6391,8 @@ name. Arguments and the token are never logged.
 the rendered env file, and warns and skips otherwise. Its Prometheus targets
 file follows the study door's rule. The edge's entrypoint goes live on the
 merge deploy and answers 502 while the service is off. The deploy's sign-in
-gate report (`scripts/deploy-edge.sh check`) lists every public Funnel path. It
-goes red on anything except 443 `/` and 443 `/learn-mcp` →
-`http://127.0.0.1:18896/mcp`.
+gate report (`scripts/deploy-edge.sh check`) lists every public Funnel path
+and goes red on anything off its "Public Funnel allowlist" (below).
 
 **Apply (once, on the server).**
 
@@ -6465,8 +6464,35 @@ while the token is set.
 
 **Retire.** Pause as above. Empty `LEARN_MCP_TOKEN` in the master file
 (`scripts/secrets/edit.sh master`), render, and redeploy (the deploy then skips
-the project), then remove the connector in claude.ai. The rows it saved stay:
+the project). The skip does not stop a running container, so stop it, with
+the old bearer in its env: `docker compose -p learn-mcp down`. Then remove the
+connector in claude.ai. The rows it saved stay:
 they are the owner's record.
+
+### Public Funnel allowlist
+
+Funnel (the public internet) is allowed on exactly two entries, both on 443:
+
+- 443 `/` → `http://127.0.0.1:3200`, the existing root;
+- 443 `/learn-mcp` → `http://127.0.0.1:18896/mcp`, this connector.
+
+Any other public path, a different target behind either path, or Funnel on any
+other port turns `scripts/deploy-edge.sh check` red. The deploy then prints
+`✗ public Funnel: … see docs/runbook.md "Public Funnel allowlist"`, with the
+offending `tailscale funnel :<port><path> -> <target>: PUBLIC and not on the
+allowlist` lines above it. To see the live set, run `tailscale serve status`.
+
+- **Remove an unapproved path** (the normal fix): `sudo tailscale serve
+  --https=<port> --set-path=<path> off`, or `sudo tailscale funnel
+  --https=<port> off` to take a whole port off Funnel. The next deploy's check
+  is green again.
+- **Add one deliberately**: only with the owner's approval. Add the
+  `(port, path)` entry and its target to `ALLOWED` in `scripts/deploy-edge.sh`
+  and to the test cases in `scripts/tests/test_deploy_edge.py`, and list it
+  here, in the same PR. Publish it after that PR merges.
+
+If the check is still red once no Funnel line is, the remaining lines are the
+sign-in gate's: see "Tailnet sign-in gate".
 
 ## Ledger persona from finance-sentry
 

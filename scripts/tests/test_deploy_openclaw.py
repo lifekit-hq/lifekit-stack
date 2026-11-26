@@ -561,6 +561,53 @@ def test_edge_comes_up_after_identity_once_its_secrets_are_rendered(
     assert "redirects limited to box.example.ts.net:*" in r.stdout
 
 
+EDGE_CHECK_FAILS = """#!/bin/sh
+if [ "$1" = domains ]; then echo "EDGE_REDIRECT_DOMAINS=box.example.ts.net:*"; exit 0; fi
+echo "%s"
+exit 1
+"""
+
+
+@pytest.mark.parametrize(
+    ("finding", "pointer", "not_pointer"),
+    [
+        (
+            "  tailscale funnel :443/xui -> http://127.0.0.1:2053: "
+            "PUBLIC and not on the allowlist",
+            '"Public Funnel allowlist"',
+            '"Tailnet sign-in gate"',
+        ),
+        (
+            "  tailscale serve :3000: https -> http://127.0.0.1:3000, "
+            "not the sign-in gate (127.0.0.1:18890)",
+            '"Tailnet sign-in gate"',
+            '"Public Funnel allowlist"',
+        ),
+    ],
+)
+def test_a_failed_edge_check_points_at_the_runbook_section_for_its_finding(
+    env, tmp_path, finding, pointer, not_pointer
+):
+    r, _, _ = full_deploy(
+        env,
+        tmp_path,
+        env_text="LIFEKIT_TELEGRAM_CHAT=123\nLOGTO_DB_PASSWORD=abc\n" + EDGE_SECRETS,
+        identity=IDENTITY_STUB,
+        edge=EDGE_CHECK_FAILS % finding,
+    )
+    # Report-only either way: the finding is shown, the deploy stays green.
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert finding in r.stdout
+    assert pointer in r.stderr
+    assert not_pointer not in r.stderr
+    sections = {
+        line.removeprefix("## ").removeprefix("### ")
+        for line in (REPO / "docs/runbook.md").read_text().splitlines()
+        if line.startswith(("## ", "### "))
+    }
+    assert pointer.strip('"') in sections
+
+
 @pytest.mark.parametrize(
     ("env_text", "expect"),
     [

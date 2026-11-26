@@ -790,13 +790,17 @@ fi
 # (`tailscale serve`) is the operator's cutover (docs/runbook.md "Tailnet
 # sign-in gate"): the deploy account cannot run it. It reports, in red, while
 # Serve still sends either surface straight to the app, when either port is
-# public through Funnel, or when the devclaw console's bearer is missing.
-# Same shape as the identity check above; skipped while the project is not up.
+# public through Funnel, or when the devclaw console's bearer is missing. A
+# public path off the Funnel allowlist points at the runbook's "Public Funnel
+# allowlist" instead. Same shape as the identity check above; skipped while the project is not up.
 if [[ "${EDGE_UP}" == 1 ]]; then
   say "sign-in gate (host facts, report-only)"
   EDGE_CHECK_STATUS=0
-  ENV_FILE="${ENV_FILE}" bash "${REPO_DIR}/scripts/deploy-edge.sh" check || EDGE_CHECK_STATUS=$?
-  if [[ "${EDGE_CHECK_STATUS}" != 0 ]]; then
+  EDGE_CHECK_OUT="$(ENV_FILE="${ENV_FILE}" bash "${REPO_DIR}/scripts/deploy-edge.sh" check)" || EDGE_CHECK_STATUS=$?
+  printf '%s\n' "${EDGE_CHECK_OUT}"
+  if [[ "${EDGE_CHECK_STATUS}" != 0 ]] && grep -q 'PUBLIC and not on the allowlist' <<<"${EDGE_CHECK_OUT}"; then
+    printf '\033[1;31m✗ public Funnel: a path or port off the allowlist is public (lines above); see docs/runbook.md "Public Funnel allowlist"\033[0m\n' >&2
+  elif [[ "${EDGE_CHECK_STATUS}" != 0 ]]; then
     printf '\033[1;31m✗ sign-in gate: not yet converged (lines above); apply the operator steps in docs/runbook.md "Tailnet sign-in gate"\033[0m\n' >&2
   fi
 fi

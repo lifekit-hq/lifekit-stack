@@ -103,14 +103,67 @@ def test_no_host_socket_or_other_host_path_is_mounted():
     assert SVC["tmpfs"] == ["/tmp"]
 
 
-def test_the_image_copies_the_skills_from_the_repo():
+def _instructions(dockerfile: str):
+    """The Dockerfile as (INSTRUCTION, args) pairs: comments dropped, `\\`
+    continuations joined."""
+    out, buf = [], ""
+    for line in dockerfile.splitlines():
+        if not buf and (not line.strip() or line.lstrip().startswith("#")):
+            continue
+        if line.endswith("\\"):
+            buf += line[:-1] + " "
+            continue
+        word, _, args = (buf + line).strip().partition(" ")
+        out.append((word.upper(), args.split()))
+        buf = ""
+    return out
+
+
+def _copied_files(instructions):
+    """Each COPY as {(build context, source): destination file in the image}."""
+    files = {}
+    for word, args in instructions:
+        if word != "COPY":
+            continue
+        flags = dict(a[2:].partition("=")[::2] for a in args if a.startswith("--"))
+        *sources, dest = [a for a in args if not a.startswith("--")]
+        for src in sources:
+            target = dest + Path(src).name if dest.endswith("/") else dest
+            files[(flags.get("from", "."), src)] = target
+    return files
+
+
+def test_the_image_puts_the_repos_skills_where_the_server_resolves_them():
+    # server.py and context.py live in /app and resolve record.py, daily.py
+    # (and so problems.json, daily.py's sibling) under HERE / "skills/...".
     assert SVC["build"]["additional_contexts"] == {"skills": "../../skills"}
-    dockerfile = (SERVICE_DIR / "Dockerfile").read_text()
-    for path in (
-        "learning-record/record.py",
-        "leetcode-daily/daily.py",
-        "leetcode-daily/problems.json",
-    ):
-        assert path in dockerfile
-        assert (REPO / "skills" / path).is_file()
-    assert "USER 1000:1000" in dockerfile
+    files = _copied_files(_instructions((SERVICE_DIR / "Dockerfile").read_text()))
+    want = {
+        (
+            "skills",
+            "learning-record/record.py",
+        ): "/app/skills/learning-record/record.py",
+        ("skills", "leetcode-daily/daily.py"): "/app/skills/leetcode-daily/daily.py",
+        (
+            "skills",
+            "leetcode-daily/problems.json",
+        ): "/app/skills/leetcode-daily/problems.json",
+        (".", "server.py"): "/app/server.py",
+        (".", "context.py"): "/app/context.py",
+    }
+    for key, dest in want.items():
+        assert files.get(key) == dest, key
+    contexts = {"skills": REPO / "skills", ".": SERVICE_DIR}
+    for ctx, src in want:
+        assert (contexts[ctx] / src).is_file(), src
+
+
+def test_the_image_runs_as_a_non_root_user():
+    users = [
+        args
+        for word, args in _instructions((SERVICE_DIR / "Dockerfile").read_text())
+        if word == "USER"
+    ]
+    assert users, "no USER: the image would run as root"
+    uid, _, gid = users[-1][0].partition(":")
+    assert uid not in ("0", "root") and gid not in ("0", "root")
