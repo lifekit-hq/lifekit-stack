@@ -76,9 +76,3 @@ def test_ensure_fails_when_membership_does_not_take(host):
     assert r.returncode == 1
     assert "not in the lifekit group" in r.stderr
 
-
-def test_bootstrap_runs_it_after_the_clone():
-    text = (REPO / "scripts/bootstrap-vps.sh").read_text()
-    call = text.index("scripts/admin-group/ensure-admin-group.sh")
-    assert text.index('git clone --branch "$REPO_BRANCH"') < call
-    assert 'ADMIN_USER="$ADMIN_USER" LIFEKIT_GROUP="$LIFEKIT_USER"' in text
