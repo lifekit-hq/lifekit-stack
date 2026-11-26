@@ -1,0 +1,95 @@
+# Known gaps the data-flow lint (data-flow.py) accepts until their removal date.
+# Nothing here is accepted silently: the gate prints every entry on every run, flags
+# an expired one, and says when an entry is no longer needed. Each entry goes once
+# its store gets a row in `## Data flow` (system/system-map.md, dsdevq/memory), the
+# store is retired, or the unit sets ProtectSystem=strict plus ReadWritePaths= or
+# StateDirectory=. A new store or unit never goes here: give it a row or a sandbox.
+
+stores:
+  - store: bind:/home/lifekit/.claude
+    reason: the gateway's Claude Code home (session state); needs a row
+    remove_by: 2027-02-26
+  - store: bind:/home/lifekit/.claude.json
+    reason: the gateway's Claude Code settings file; needs a row
+    remove_by: 2027-02-26
+  - store: bind:/home/lifekit/.config/gh
+    reason: the gateway's gh CLI config; needs a row, or a secrets exclusion if it only holds the token
+    remove_by: 2027-02-26
+  - store: bind:/srv/openclaw/config/agents/learnclaw/workspace/learnharness-mirror
+    reason: row learnharness-mirror exists but names a relative path; the row needs the absolute host path
+    remove_by: 2027-02-26
+  - store: bind:/srv/openclaw/workspace
+    reason: the shared OpenClaw workspace; needs a row
+    remove_by: 2027-02-26
+  - store: bind:/var/lib/lifekit/morning-brief
+    reason: legacy store (no writer since 2026-09-14); retire it and drop it from install-memory-rotate.sh
+    remove_by: 2027-02-26
+  - store: volume:compose_otel_filelog_state
+    reason: otel-collector filelog offsets; needs a row (observability)
+    remove_by: 2027-02-26
+  - store: volume:compose_people-state
+    reason: people-serve state; needs a row
+    remove_by: 2027-02-26
+  - store: volume:study-door_study-door-spool
+    reason: study-door is defined but not deployed; a row once it deploys, or retire the compose file
+    remove_by: 2027-02-26
+  - store: volume:wger_media
+    reason: wger uploaded media; the wger row names only the database
+    remove_by: 2027-02-26
+  - store: volume:wger_static
+    reason: wger collected static files; a row, or a cache exclusion
+    remove_by: 2027-02-26
+
+units:
+  - unit: scripts/alert-inbox/alert-inbox.service
+    remove_by: 2027-02-26
+  - unit: scripts/docker-weekly-prune/lifekit-docker-weekly-prune.service
+    remove_by: 2027-02-26
+  - unit: scripts/fleet-publisher/lifekit-fleet-publisher.service
+    remove_by: 2027-02-26
+  - unit: scripts/host-gauge/host-group-gauge.service
+    remove_by: 2027-02-26
+  - unit: scripts/identity-backup/lifekit-identity-backup.service
+    remove_by: 2027-02-26
+  - unit: scripts/idle-lanes/lifekit-idle-lanes.service
+    remove_by: 2027-02-26
+  - unit: scripts/intake-shape/lifekit-intake-shape.service
+    remove_by: 2027-02-26
+  - unit: scripts/ledger-drift/lifekit-ledger-drift.service
+    remove_by: 2027-02-26
+  - unit: scripts/ledger-persona/lifekit-ledger-persona-check.service
+    remove_by: 2027-02-26
+  - unit: scripts/media-prune/media-prune.service
+    remove_by: 2027-02-26
+  - unit: scripts/offbox-backup/lifekit-offbox-backup.service
+    remove_by: 2027-02-26
+  - unit: scripts/offbox-backup/lifekit-offbox-verify.service
+    remove_by: 2027-02-26
+  - unit: scripts/openclaw-auth/lifekit-openclaw-spend-guard.service
+    remove_by: 2027-02-26
+  - unit: scripts/ops-door/ops-door-escalate.service
+    remove_by: 2027-02-26
+  - unit: scripts/quota-gauge/claude-quota-gauge.service
+    remove_by: 2027-02-26
+  - unit: scripts/quota-gauge/claude-quota-share-gauge.service
+    remove_by: 2027-02-26
+  - unit: scripts/release-gauge/lifekit-release-gauge.service
+    remove_by: 2027-02-26
+  - unit: scripts/rotate/memory-rotate.service
+    remove_by: 2027-02-26
+  - unit: scripts/scout/lifekit-scout.service
+    remove_by: 2027-02-26
+  - unit: scripts/sync/memory-sync.service
+    remove_by: 2027-02-26
+  - unit: scripts/sync/openclaw-config-sync.service
+    remove_by: 2027-02-26
+  - unit: scripts/tmp-gauge/tmp-usage-gauge.service
+    remove_by: 2027-02-26
+  - unit: scripts/unit-gauge/unit-gauge.service
+    remove_by: 2027-02-26
+  - unit: scripts/vault-door/lifekit-vault-door-bridge.service
+    remove_by: 2027-02-26
+  - unit: scripts/yt-tunnel/yt-relay.service
+    remove_by: 2027-02-26
+  - unit: scripts/yt-tunnel/yt-tunnel.service
+    remove_by: 2027-02-26
