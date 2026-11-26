@@ -50,7 +50,7 @@ python3 -m venv .venv && .venv/bin/pip install --quiet -r requirements.txt
 .venv/bin/python -m pytest compose/container-exporter/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests
 ```
 
-Every test has a 300-second limit, setup and teardown included (`timeout` in `pytest.ini`, enforced by pytest-timeout). A test that hangs fails with its name and a stack dump instead of holding the run. In-process fake servers start and stop through `scripts/tests/fakeserver.py`, so their teardown cannot block in `accept()`.
+Every test has a 300-second limit, setup and teardown included (`timeout` in `pytest.ini`, enforced by pytest-timeout); a test whose own subprocess budget is longer raises it with `@pytest.mark.timeout` (the live canaries run at 960 seconds). A test that hangs fails with its name and a stack dump instead of holding the run. In-process fake servers start and stop through `scripts/tests/fakeserver.py`, so their teardown cannot block in `accept()`.
 
 To test a wizard change end-to-end, you'll need a sacrificial VPS or a local VM. Don't test wizard changes against your real personal deployment.
 

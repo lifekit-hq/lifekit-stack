@@ -138,6 +138,7 @@ def test_the_cases_cover_what_the_cap_is_for():
     }
 
 
+@pytest.mark.timeout(960)
 def test_the_live_canary_passes_on_the_shipped_entry():
     proc = subprocess.run(
         ["bash", str(CANARY / "run.sh")],
