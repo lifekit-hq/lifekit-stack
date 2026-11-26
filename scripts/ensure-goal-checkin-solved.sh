@@ -12,7 +12,7 @@
 #
 # Why a script: the row is host state whose prompt carries the owner's personal
 # goal, which must not be copied into git (docs/PRIVATE.md). Like
-# ensure-learning-line.sh, it edits the live row in place: it adds or replaces
+# ensure-today-brief-fleet.sh, it edits the live row in place: it adds or replaces
 # only the text between its own two markers, so re-running converges, and it
 # leaves the rest of the prompt untouched. A row that does not exist is an error
 # (the row is created by hand, docs/runbook.md "Daily LeetCode problem").
@@ -22,6 +22,10 @@
 # DRY_RUN=1 prints the new message instead of editing. Undo: delete the text
 # between the markers, or re-apply the message saved first.
 set -euo pipefail
+
+# shellcheck source=scripts/lib/cron-check.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
+cron_check_args "$@"
 
 JOB_NAME=goal-weekly-checkin
 MARK_START="<<LEETCODE-COUNT"
@@ -33,7 +37,7 @@ ${MARK_END}"
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 
 # The gateway CLI may interleave JSON log lines with its result: keep the first
 # JSON object that carries the wanted key.
@@ -56,7 +60,7 @@ sys.exit(1)' "$1"
 }
 
 jobs="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | pick_json jobs)" || {
-  echo "could not read the automation list from $GATEWAY" >&2; exit 1; }
+  cron_check_fail "could not read the automation list from $GATEWAY"; }
 
 # plan -> stdout: JSON {"id","message","tools"|null,"changed"}; exit 12 when no row.
 plan="$(printf '%s' "$jobs" | python3 -c '
@@ -84,6 +88,7 @@ print(json.dumps({"id": job["id"], "message": new, "tools": new_tools,
 ' "$JOB_NAME" "$MARK_START" "$MARK_END" "$BLOCK")" || {
   rc=$?
   if [ "$rc" -eq 12 ]; then
+    cron_check_absent "$JOB_NAME"
     echo "no '$JOB_NAME' automation row: it is host state (docs/runbook.md, \"Daily LeetCode problem\"); nothing changed" >&2
   fi
   exit 1
@@ -92,8 +97,13 @@ print(json.dumps({"id": job["id"], "message": new, "tools": new_tools,
 field() { printf '%s' "$plan" | python3 -c 'import json,sys; v=json.load(sys.stdin)[sys.argv[1]]; print("" if v is None else (",".join(v) if isinstance(v, list) else v), end="")' "$1"; }
 job_id="$(field id)"
 if [ "$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["changed"])')" != "True" ]; then
+  cron_check_agrees "$JOB_NAME" "$job_id"
   echo "'$JOB_NAME' ($job_id) already reads the solved count from learnclaw; unchanged"
   exit 0
+fi
+if [ "$CRON_CHECK" = 1 ]; then
+  echo "drift: cron '$JOB_NAME' ($job_id) does not carry the solved-count block of $(basename "$0")" >&2
+  exit 1
 fi
 
 message="$(field message)"

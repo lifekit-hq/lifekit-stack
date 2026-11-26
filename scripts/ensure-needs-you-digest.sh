@@ -111,12 +111,15 @@ set -euo pipefail
 
 # shellcheck source=scripts/lib/cron-model.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-model.sh"
+# shellcheck source=scripts/lib/cron-check.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
+cron_check_args "$@"
 
 # The gateway container of the `openclaw` compose project, found by its
 # compose labels rather than a fixed container name.
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 JOB_NAME=needs-you-digest
 AGENT=kit
 # The mail reader job runs as the reader agent once the operator has applied it
@@ -130,7 +133,7 @@ if [ -z "$READER_AGENT" ]; then
   case "$rc" in
     0) READER_AGENT=reader ;;
     3) READER_AGENT=kit; echo "reader agent not installed: the mail reader job stays on kit (docs/runbook.md, \"Reader agent\")" ;;
-    *) exit "$rc" ;;
+    *) [ "$CRON_CHECK" = 0 ] || cron_check_fail "ensure-reader-agent.sh --check failed (exit $rc): the agent this job belongs on is unknown"; exit "$rc" ;;
   esac
 fi
 SESSION_KEY="agent:${AGENT}:main"
@@ -164,7 +167,7 @@ READER_GATED=0
 if [ "$READER_AGENT" = reader ] \
   && [ -f "${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}/agents/reader/workspace/skills/doc-door/door.py" ]; then
   READER_GATED=1
-  install -D -m 0644 "$gate_src" "$gate_dest/mail.js"
+  [ "$CRON_CHECK" = 1 ] || install -D -m 0644 "$gate_src" "$gate_dest/mail.js"
 else
   echo "mail reader gate not installed: needs the reader agent and its doc-door skill (run ensure-doc-door.sh); the reader job runs every tick"
 fi
@@ -174,11 +177,8 @@ if [ -z "$ALERT_CHAT" ] && [ -r "$ENV_FILE" ]; then
   ALERT_CHAT="$(sed -nE 's/^[[:space:]]*LIFEKIT_TELEGRAM_CHAT=["'"'"']?([0-9-]+)["'"'"']?[[:space:]]*$/\1/p' \
     "$ENV_FILE" | head -1)"
 fi
-if [ -z "$ALERT_CHAT" ]; then
-  echo "no owner chat id for the failure alert: set NEEDS_YOU_ALERT_CHAT, or" >&2
-  echo "LIFEKIT_TELEGRAM_CHAT in $ENV_FILE. Without it a failed digest would be silent." >&2
-  exit 1
-fi
+[ -n "$ALERT_CHAT" ] || cron_check_fail "no owner chat id for the failure alert: set NEEDS_YOU_ALERT_CHAT, or
+LIFEKIT_TELEGRAM_CHAT in $ENV_FILE. Without it a failed digest would be silent."
 
 MARK_START="<<<MAIL-SECTION"
 MARK_END="MAIL-SECTION>>>"
@@ -236,8 +236,9 @@ live_jobs() {
 }
 
 # 1. The mail reader: look it up, create it when absent, converge it.
-reader_id="$(find_job_id "$READER_NAME")"
+reader_id="$(find_job_id "$READER_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
 if [ -z "$reader_id" ]; then
+  cron_check_absent "$READER_NAME"
   docker exec "$GATEWAY" openclaw cron add \
     --name "$READER_NAME" \
     --display-name "Needs-you mail reader" \
@@ -262,7 +263,7 @@ import json, sys
 for job in json.load(sys.stdin)["jobs"]:
     if job.get("id") == sys.argv[1]:
         print(((job.get("trigger") or {}).get("script") or "").strip(), end="")
-        break' "$reader_id")" || exit 1
+        break' "$reader_id")" || cron_check_fail "could not read the automation list from $GATEWAY"
 gate_args=()
 if [ "$READER_GATED" -eq 1 ]; then
   [ "$current_gate" = "$(cat "$gate_src")" ] \
@@ -270,21 +271,24 @@ if [ "$READER_GATED" -eq 1 ]; then
 elif [ -n "$current_gate" ]; then
   gate_args=(--clear-trigger)
 fi
-docker exec "$GATEWAY" openclaw cron edit "$reader_id" \
-  --cron "$READER_CRON" --tz "$CRON_TZ" --exact \
-  --agent "$READER_AGENT" --session isolated \
-  --message "$READER_MESSAGE" \
-  --model "$DIGEST_MODEL" "${gate_args[@]}" \
-  --tools "$READER_TOOLS" \
-  --light-context \
-  --timeout-seconds 300 \
-  --no-deliver \
-  >/dev/null
+if [ "$CRON_CHECK" = 0 ]; then
+  docker exec "$GATEWAY" openclaw cron edit "$reader_id" \
+    --cron "$READER_CRON" --tz "$CRON_TZ" --exact \
+    --agent "$READER_AGENT" --session isolated \
+    --message "$READER_MESSAGE" \
+    --model "$DIGEST_MODEL" "${gate_args[@]}" \
+    --tools "$READER_TOOLS" \
+    --light-context \
+    --timeout-seconds 300 \
+    --no-deliver \
+    >/dev/null
 
+  docker exec "$GATEWAY" openclaw cron enable "$reader_id" >/dev/null
+fi
 # 2. Fail closed unless the reader's live row can call nothing but the Gmail
 #    read tools and delivers nothing (header: "Mail is read in a separate run").
 #    Checked before the digest is pointed at it.
-jobs="$(live_jobs)" || exit 1
+jobs="$(live_jobs)" || cron_check_fail "could not read the automation list from $GATEWAY"
 printf '%s' "$jobs" | python3 -c '
 import json, sys
 job_id, tools = sys.argv[1], sys.argv[2].split(",")
@@ -304,18 +308,39 @@ mode = (job.get("delivery") or {}).get("mode")
 if mode != "none":
     bad.append("delivery.mode=" + repr(mode) + ", want none")
 live_model = (job.get("payload") or {}).get("model")
-if live_model != sys.argv[4]:
+# model@anthropic:api-key is the same model with its inference account recorded.
+if live_model not in (sys.argv[4], sys.argv[4] + "@anthropic:api-key"):
     bad.append("payload.model=" + repr(live_model) + ", want " + repr(sys.argv[4]))
 if bad:
     sys.exit("refusing: the mail reader could do more than read mail: " + "; ".join(bad))
-' "$reader_id" "$READER_TOOLS" "$READER_AGENT" "$DIGEST_MODEL" >&2
+# What the run can do is as declared; the rest is whether it is the declared row.
+if job.get("enabled") is False:
+    bad.append("enabled=False, want enabled")
+if (job.get("payload") or {}).get("message") != sys.argv[5]:
+    bad.append("payload.message is not the declared message")
+live_gate = ((job.get("trigger") or {}).get("script") or "").strip()
+if sys.argv[6] and live_gate != sys.argv[6].strip():
+    bad.append("trigger is not the mail.js gate")
+if not sys.argv[6] and live_gate:
+    bad.append("trigger is set, want none (the gate needs the reader)")
+sched = job.get("schedule") or {}
+live_expr = sched.get("expr") or sched.get("cron") or job.get("cron")
+if live_expr != sys.argv[7]:
+    bad.append("schedule " + repr(live_expr) + ", want " + repr(sys.argv[7]))
+if sched.get("tz") != sys.argv[8]:
+    bad.append("schedule.tz=" + repr(sched.get("tz")) + ", want " + repr(sys.argv[8]))
+if bad:
+    sys.exit("refusing: the mail reader is not the declared row: " + "; ".join(bad))
+' "$reader_id" "$READER_TOOLS" "$READER_AGENT" "$DIGEST_MODEL" "$READER_MESSAGE" \
+  "$([ "$READER_GATED" -eq 1 ] && cat "$gate_src")" "$READER_CRON" "$CRON_TZ" >&2
 
 MESSAGE="$(digest_message "$reader_id")"
 
 # 3. The digest: look it up, and create it when absent. `cron add` has no
 #    failure-alert flags; step 4 sets the alert on new and existing jobs alike.
-job_id="$(find_job_id "$JOB_NAME")"
+job_id="$(find_job_id "$JOB_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
 if [ -z "$job_id" ]; then
+  cron_check_absent "$JOB_NAME"
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
     --display-name "Needs-you digest" \
@@ -334,22 +359,25 @@ if [ -z "$job_id" ]; then
 fi
 
 # 4. Converge the declared shape and the failure alert.
-docker exec "$GATEWAY" openclaw cron edit "$job_id" \
-  --cron "$CRON_EXPR" --tz "$CRON_TZ" \
-  --agent "$AGENT" --session current --session-key "$SESSION_KEY" \
-  --message "$MESSAGE" \
-  --model "$DIGEST_MODEL" \
-  --tools "$DIGEST_TOOLS" \
-  --timeout-seconds 300 \
-  --announce --no-best-effort-deliver \
-  --failure-alert --failure-alert-after 1 \
-  --failure-alert-mode announce --failure-alert-channel telegram \
-  --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT" \
-  >/dev/null
+if [ "$CRON_CHECK" = 0 ]; then
+  docker exec "$GATEWAY" openclaw cron edit "$job_id" \
+    --cron "$CRON_EXPR" --tz "$CRON_TZ" \
+    --agent "$AGENT" --session current --session-key "$SESSION_KEY" \
+    --message "$MESSAGE" \
+    --model "$DIGEST_MODEL" \
+    --tools "$DIGEST_TOOLS" \
+    --timeout-seconds 300 \
+    --announce --no-best-effort-deliver \
+    --failure-alert --failure-alert-after 1 \
+    --failure-alert-mode announce --failure-alert-channel telegram \
+    --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT" \
+    >/dev/null
+  docker exec "$GATEWAY" openclaw cron enable "$job_id" >/dev/null
+fi
 # 5. Fail closed if the live delivery could resolve to Telegram (header: "Never
 #    Telegram"), or if the digest could call more than DIGEST_TOOLS. The
 #    failure alert is a separate field and is not checked here.
-jobs="$(live_jobs)" || exit 1
+jobs="$(live_jobs)" || cron_check_fail "could not read the automation list from $GATEWAY"
 printf '%s' "$jobs" | python3 -c '
 import json, sys
 job_id, session_key, tools, model = sys.argv[1], sys.argv[2], sys.argv[3].split(","), sys.argv[4]
@@ -374,9 +402,25 @@ allow = (job.get("payload") or {}).get("toolsAllow")
 if not isinstance(allow, list) or sorted(allow) != sorted(tools):
     sys.exit("refusing: needs-you-digest payload.toolsAllow=" + repr(allow) + ", want exactly " + repr(tools))
 live_model = (job.get("payload") or {}).get("model")
-if live_model != model:
+if live_model not in (model, model + "@anthropic:api-key"):
     sys.exit("refusing: needs-you-digest payload.model=" + repr(live_model) + ", want " + repr(model))
-' "$job_id" "$SESSION_KEY" "$DIGEST_TOOLS" "$DIGEST_MODEL" >&2
+if job.get("enabled") is False:
+    sys.exit("refusing: needs-you-digest enabled=False, want enabled")
+if (job.get("payload") or {}).get("message") != sys.argv[5]:
+    sys.exit("refusing: needs-you-digest payload.message is not the declared message")
+if job.get("trigger"):
+    sys.exit("refusing: needs-you-digest has a trigger, want none")
+sched = job.get("schedule") or {}
+live_expr = sched.get("expr") or sched.get("cron") or job.get("cron")
+if live_expr != sys.argv[6]:
+    sys.exit("refusing: needs-you-digest schedule " + repr(live_expr) + ", want " + repr(sys.argv[6]))
+if sched.get("tz") != sys.argv[7]:
+    sys.exit("refusing: needs-you-digest schedule.tz=" + repr(sched.get("tz")) + ", want " + repr(sys.argv[7]))
+' "$job_id" "$SESSION_KEY" "$DIGEST_TOOLS" "$DIGEST_MODEL" "$MESSAGE" "$CRON_EXPR" "$CRON_TZ" >&2
+if [ "$CRON_CHECK" = 1 ]; then
+  echo "ok: cron '$READER_NAME' ($reader_id) agrees with $(basename "$0")"
+fi
+cron_check_agrees "$JOB_NAME" "$job_id"
 
 echo "cron '$READER_NAME' ($reader_id) converged: $READER_CRON @ $CRON_TZ, agent:$READER_AGENT isolated, model $DIGEST_MODEL, tools $READER_TOOLS only, no delivery (verified)$([ "$READER_GATED" -eq 1 ] && echo ', gated')"
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT -> $SESSION_KEY (announce, verified in-chat only), tools $DIGEST_TOOLS, failure alert after 1 via telegram:default"

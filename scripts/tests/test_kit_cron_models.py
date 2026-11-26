@@ -169,3 +169,33 @@ def test_command_jobs_are_skipped_not_pinned_or_flagged(tmp_path, args):
     assert "skipped: command job 'evening-day-plan' (m)" in proc.stdout
     assert edits == []
     assert "model" not in state["jobs"][0]["payload"]
+
+
+CRON_MODEL_LIB = REPO / "scripts/lib/cron-model.sh"
+
+
+def cron_model_account() -> str:
+    return subprocess.run(
+        ["bash", "-c", 'source "$1"; cron_model_account', "_", str(CRON_MODEL_LIB)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+@pytest.mark.parametrize("args", [(), ("--check",)])
+def test_a_row_on_the_model_with_its_account_is_ok_and_not_edited(tmp_path, args):
+    # cron_model_account (scripts/lib/cron-model.sh) is the same model with its
+    # account recorded: neither repinned nor reported off-policy.
+    model = cron_model_account()
+    assert model.startswith(SONNET + "@")
+    jobs = {
+        "jobs": [
+            {"id": "k", "name": "brief", "agentId": "kit", "payload": {"model": model}}
+        ]
+    }
+    proc, state, edits = run(tmp_path, *args, jobs=jobs)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"ok: 'brief' (k) runs on {model}" in proc.stdout
+    assert edits == []
+    assert state["jobs"][0]["payload"]["model"] == model

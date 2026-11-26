@@ -1090,6 +1090,8 @@ if cmd[:2] == ["config", "get"]:  # ensure-reader-agent.sh --check: no reader ag
 if cmd[:2] == ["cron", "list"]:
     print(json.dumps(data))
     sys.exit(0)
+if cmd[:2] == ["cron", "enable"]:  # re-enables a paused row; a no-op on these rows
+    sys.exit(0)
 with (state.parent / "calls.jsonl").open("a") as f:
     f.write(json.dumps(cmd) + "\n")
 if cmd[:2] == ["cron", "add"]:
@@ -1109,6 +1111,10 @@ elif cmd[:2] == ["cron", "edit"]:
                 job["payload"] = {"toolsAllow": cmd[cmd.index("--tools") + 1].split(",")}
                 if "--model" in cmd:
                     job["payload"]["model"] = cmd[cmd.index("--model") + 1]
+            if "--message" in cmd:
+                job.setdefault("payload", {})["message"] = cmd[cmd.index("--message") + 1]
+            if "--cron" in cmd:
+                job["schedule"] = {"expr": cmd[cmd.index("--cron") + 1], "tz": cmd[cmd.index("--tz") + 1]}
             job.update(json.loads(os.environ.get("FAKE_ROW_OVERRIDE", "{}")).get(job["id"], {}))
     state.write_text(json.dumps(data))
 else:

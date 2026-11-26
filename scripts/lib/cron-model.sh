@@ -24,9 +24,10 @@ print(model)' "$_CRON_MODEL_PATCH"
 
 # The same model with its inference account, provider/model@auth-profile. A cron
 # row with no recorded account fails to run, so a job that must name the account
-# takes this form (the digest and pulse jobs run on the default account and use
-# cron_model). The account is the api-key profile every agent carries
-# (docs/secrets.md).
+# takes this form. The gateway also records this suffix on live rows itself, so
+# --check and the converges (scripts/lib/cron-check.sh) treat
+# '<cron model>@anthropic:api-key' as the declared model, and no other suffix.
+# The account is the api-key profile every agent carries (docs/secrets.md).
 cron_model_account() {
   local model
   model="$(cron_model)" || return 1

@@ -456,6 +456,11 @@ elif cmd[:2] == ["cron", "edit"]:
         if job["id"] == cmd[2]:
             apply(job)
     state.write_text(json.dumps(data))
+elif cmd[:2] == ["cron", "enable"]:
+    for job in data["jobs"]:
+        if job["id"] == cmd[2]:
+            job["enabled"] = True
+    state.write_text(json.dumps(data))
 else:
     sys.exit("unexpected: " + " ".join(cmd))
 """

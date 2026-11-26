@@ -33,11 +33,15 @@
 # row's schedule, delivery and tools are not touched.
 set -euo pipefail
 
+# shellcheck source=scripts/lib/cron-check.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
+cron_check_args "$@"
+
 # The gateway container of the `openclaw` compose project, found by its
 # compose labels rather than a fixed container name.
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 JOB_NAME=today-brief
 
 # The gateway image has no jq, and once logging.consoleStyle=json is live the
@@ -63,7 +67,7 @@ sys.exit(1)' "$1"
 
 # 1. Find the row by name (ids differ per box; never hardcode one).
 jobs="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null | pick_json jobs)" || {
-  echo "could not read the automation list from $GATEWAY" >&2; exit 1; }
+  cron_check_fail "could not read the automation list from $GATEWAY"; }
 job_id="$(printf '%s' "$jobs" | python3 -c '
 import json, sys
 for job in json.load(sys.stdin)["jobs"]:
@@ -77,6 +81,7 @@ for job in json.load(sys.stdin)["jobs"]:
         print("yes" if (job.get("payload") or {}).get("lightContext") is True else "no")
         break' "$JOB_NAME")"
 if [ -z "$job_id" ]; then
+  cron_check_absent "$JOB_NAME"
   echo "no '$JOB_NAME' automation row. It is host state, not applied by deploy." >&2
   exit 1
 fi
@@ -209,6 +214,19 @@ if MARK in msg or msg.count(BEFORE) != 1 or msg.count(EMPTY) != 1:
     sys.exit(11)
 sys.stdout.write(msg.replace(BEFORE, "\n" + STEP + BEFORE, 1).replace(EMPTY, FLEET, 1))
 ' "$JOB_NAME")" || status=$?
+# --check: the live prompt must carry this version of the step and run light.
+if [ "$CRON_CHECK" = 1 ]; then
+  [ "$status" = 10 ] && [ "$light" = yes ] && cron_check_agrees "$JOB_NAME" "$job_id"
+  [ "$status" = 10 ] || [ "$status" = 11 ] || [ "$status" = 0 ] || {
+    echo "could not build the new message (python exit $status)" >&2; exit 3; }
+  case "$status" in
+    10) why="does not run with --light-context" ;;
+    0) why="carries an older version of the fleet step (a converge upgrades it)" ;;
+    *) why="no longer has the text $(basename "$0") anchors on (the step needs placing by hand)" ;;
+  esac
+  echo "drift: cron '$JOB_NAME' ($job_id) $why" >&2
+  exit 1
+fi
 case "$status" in
   0) ;;
   10)

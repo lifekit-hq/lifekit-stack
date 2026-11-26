@@ -68,6 +68,8 @@ def apply(job, f):
         job["sessionTarget"] = f["--session"]
     if "--session-key" in f:
         job["sessionKey"] = f["--session-key"]
+    if "--cron" in f:
+        job["schedule"] = {"kind": "cron", "expr": f["--cron"], "tz": f.get("--tz")}
     job["delivery"] = {"mode": "none" if "--no-deliver" in f else "announce"}
     payload = job.setdefault("payload", {})
     if "--tools" in f:
@@ -77,7 +79,10 @@ def apply(job, f):
     if "--message" in f:
         payload["message"] = f["--message"]
     if "--trigger-script" in f:
-        job["trigger"] = {"script": f["--trigger-script"]}
+        # The gateway stores the gate's content, read from the path the script
+        # installed it to (/home/node/.openclaw is OPENCLAW_CONFIG_DIR here).
+        path = f["--trigger-script"].replace("/home/node/.openclaw", os.environ["OPENCLAW_CONFIG_DIR"], 1)
+        job["trigger"] = {"script": open(path).read()}
     if "--clear-trigger" in f:
         job.pop("trigger", None)
 def log_call(argv):
@@ -158,6 +163,12 @@ elif cmd[:2] == ["cron", "edit"]:
         if job["id"] == cmd[2]:
             apply(job, flags(cmd[3:]))
     save("jobs", jobs)
+elif cmd[:2] == ["cron", "enable"]:
+    jobs = load("jobs", [])
+    for job in jobs:
+        if job["id"] == cmd[2]:
+            job["enabled"] = True
+    save("jobs", jobs)
 else:
     sys.exit(3)
 """
@@ -165,6 +176,10 @@ else:
 
 @pytest.fixture
 def box(tmp_path):
+    return make_box(tmp_path)
+
+
+def make_box(tmp_path):
     state, bin_dir, conf = tmp_path / "state", tmp_path / "bin", tmp_path / "conf"
     for d in (state, bin_dir, conf):
         d.mkdir()
@@ -585,7 +600,8 @@ def test_the_doc_door_gate_is_set_for_the_reader_and_cleared_on_the_kit_rollback
     assert box.run().returncode == 0
     done = box.script("ensure-doc-door.sh")
     assert done.returncode == 0, done.stderr
-    assert box.job("doc-door")["trigger"]["script"].endswith("scan.js")
+    scan = (REPO / "scripts/doc-door-gate/scan.js").read_text()
+    assert box.job("doc-door")["trigger"]["script"] == scan
     box.workspace.parent.parent.joinpath("kit/workspace").mkdir(parents=True)
     done = box.script("ensure-doc-door.sh", DOC_DOOR_AGENT="kit")
     assert done.returncode == 0, done.stderr

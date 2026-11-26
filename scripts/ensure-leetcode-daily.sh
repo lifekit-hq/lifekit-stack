@@ -49,6 +49,10 @@
 #   ENV_FILE              host env file (default: /srv/lifekit-secrets/stack.env)
 set -euo pipefail
 
+# shellcheck source=scripts/lib/cron-check.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
+cron_check_args "$@"
+
 JOB_NAME=leetcode-daily
 AGENT=learnclaw
 ACCOUNT=reading
@@ -62,8 +66,7 @@ if [ -z "$CHAT" ] && [ -r "$ENV_FILE" ]; then
     "$ENV_FILE" | head -1)"
 fi
 if [ -z "$CHAT" ]; then
-  echo "no owner chat id: set LEETCODE_DAILY_CHAT, or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE." >&2
-  exit 1
+  cron_check_fail "no owner chat id: set LEETCODE_DAILY_CHAT, or LIFEKIT_TELEGRAM_CHAT in $ENV_FILE."
 fi
 
 # Refuse a schedule that can fire on an office day or the rest day, before
@@ -89,7 +92,7 @@ PY
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
-[ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
+[ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 
 DAILY=/home/node/.openclaw/agents/learnclaw/workspace/skills/leetcode-daily/daily.py
 ARGV="$(python3 -c 'import json, sys; print(json.dumps(["python3", sys.argv[1], "next", "--record", "--push"]))' "$DAILY")"
@@ -129,12 +132,13 @@ for job in json.load(sys.stdin)["jobs"]:
         break' "$1"
 }
 
-job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
+job_id="$(live_jobs | find_job_id "$JOB_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
 
 # A row that is still the old agent turn cannot fail itself, so it is removed
 # and declared again as a command payload (a run history of the old turns goes
-# with it; the record in the vault is untouched).
-if [ -n "$job_id" ]; then
+# with it; the record in the vault is untouched). --check only reports such a
+# row, through the verify below.
+if [ -n "$job_id" ] && [ "$CRON_CHECK" = 0 ]; then
   kind="$(live_jobs | python3 -c '
 import json, sys
 job = next(j for j in json.load(sys.stdin)["jobs"] if j.get("id") == sys.argv[1])
@@ -147,6 +151,7 @@ print((job.get("payload") or {}).get("kind", ""))' "$job_id")" || exit 1
 fi
 
 if [ -z "$job_id" ]; then
+  cron_check_absent "$JOB_NAME"
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
     --display-name "Daily LeetCode problem" \
@@ -157,27 +162,32 @@ if [ -z "$job_id" ]; then
     --timeout-seconds 60 --no-output-timeout-seconds 30 --output-max-bytes 1000 \
     --announce --channel telegram --account "$ACCOUNT" --to "$CHAT" \
     --json >/dev/null
-  job_id="$(live_jobs | find_job_id "$JOB_NAME")" || exit 1
+  job_id="$(live_jobs | find_job_id "$JOB_NAME")" || cron_check_fail "could not read the automation list from $GATEWAY"
   [ -n "$job_id" ] || { echo "cron add ran but no '$JOB_NAME' job is listed" >&2; exit 1; }
   echo "created cron '$JOB_NAME' ($job_id)"
 fi
 
-docker exec "$GATEWAY" openclaw cron edit "$job_id" \
-  --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
-  --agent "$AGENT" --session isolated \
-  --command-argv "$ARGV" \
-  --timeout-seconds 60 --no-output-timeout-seconds 30 --output-max-bytes 1000 \
-  --announce --no-best-effort-deliver \
-  --channel telegram --account "$ACCOUNT" --to "$CHAT" \
-  --failure-alert --failure-alert-after 1 \
-  --failure-alert-mode announce --failure-alert-channel telegram \
-  --failure-alert-account-id default --failure-alert-to "$CHAT" \
-  >/dev/null
+if [ "$CRON_CHECK" = 0 ]; then
+  docker exec "$GATEWAY" openclaw cron edit "$job_id" \
+    --cron "$CRON_EXPR" --tz "$CRON_TZ" --exact \
+    --agent "$AGENT" --session isolated \
+    --command-argv "$ARGV" \
+    --timeout-seconds 60 --no-output-timeout-seconds 30 --output-max-bytes 1000 \
+    --announce --no-best-effort-deliver \
+    --channel telegram --account "$ACCOUNT" --to "$CHAT" \
+    --failure-alert --failure-alert-after 1 \
+    --failure-alert-mode announce --failure-alert-channel telegram \
+    --failure-alert-account-id default --failure-alert-to "$CHAT" \
+    >/dev/null
+  # A row an operator paused is declared enabled again (a no-op when it already is).
+  docker exec "$GATEWAY" openclaw cron enable "$job_id" >/dev/null
+fi
 
 # Fail closed: re-read the live row.
-live_jobs | python3 -c '
+jobs="$(live_jobs)" || cron_check_fail "could not read the automation list from $GATEWAY"
+printf '%s' "$jobs" | python3 -c '
 import json, sys
-job_id, agent, account, chat, argv, expr = sys.argv[1:7]
+job_id, agent, account, chat, argv, expr, tz = sys.argv[1:8]
 job = next((j for j in json.load(sys.stdin)["jobs"] if j.get("id") == job_id), None)
 if job is None:
     sys.exit(f"verify: job {job_id} is not listed after converging")
@@ -185,6 +195,8 @@ bad = []
 live_agent = job.get("agentId") or job.get("agent")
 if live_agent != agent:
     bad.append("agentId=" + repr(live_agent) + ", want " + repr(agent))
+if job.get("enabled") is False:
+    bad.append("enabled=False, want enabled")
 payload = job.get("payload") or {}
 if payload.get("kind") != "command":
     bad.append("payload.kind=" + repr(payload.get("kind")) + ", want command")
@@ -194,6 +206,8 @@ sched = job.get("schedule") or {}
 live_expr = sched.get("expr") or sched.get("cron") or job.get("cron")
 if live_expr != expr:
     bad.append("schedule " + repr(live_expr) + ", want " + repr(expr))
+if sched.get("tz") != tz:
+    bad.append("schedule.tz=" + repr(sched.get("tz")) + ", want " + repr(tz))
 d = job.get("delivery") or {}
 if d.get("mode") != "announce":
     bad.append("delivery.mode=" + repr(d.get("mode")) + ", want announce")
@@ -205,7 +219,8 @@ if d.get("to") != chat:
     bad.append("delivery.to is not the owner chat")
 if bad:
     sys.exit("refusing: leetcode-daily is not the declared row: " + "; ".join(bad))
-' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$ARGV" "$CRON_EXPR" >&2
+' "$job_id" "$AGENT" "$ACCOUNT" "$CHAT" "$ARGV" "$CRON_EXPR" "$CRON_TZ" >&2
+cron_check_agrees "$JOB_NAME" "$job_id"
 
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, command payload (no model turn), announce -> telegram:$ACCOUNT (verified), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"

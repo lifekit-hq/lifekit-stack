@@ -12,7 +12,7 @@
 #
 # Usage, on the VPS host as lifekit, from the repo checkout:
 #   scripts/ensure-kit-cron-models.sh           # pin every unpinned Kit job
-#   scripts/ensure-kit-cron-models.sh --check   # report only; exit 1 if any is unpinned
+#   scripts/ensure-kit-cron-models.sh --check   # report only; exit 1 if any is unpinned, 3 if it could not check
 #
 # A job whose payload.kind is "command" runs no model, so it is skipped silently
 # (reported as "skipped: command job") in both modes; it still counts as matched.
@@ -31,27 +31,23 @@ set -euo pipefail
 
 # shellcheck source=scripts/lib/cron-model.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-model.sh"
+# shellcheck source=scripts/lib/cron-check.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
+cron_check_args "$@"
 
 AGENT="${KIT_AGENT:-kit}"
 MODEL="${KIT_CRON_MODEL:-$(cron_model)}"
-check_only=0
-case "${1:-}" in
-  --check) check_only=1 ;;
-  "") ;;
-  *) echo "usage: $0 [--check]" >&2; exit 2 ;;
-esac
 
 GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
   --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
 if [ -z "$GATEWAY" ]; then
+  [ "$CRON_CHECK" = 0 ] || cron_check_fail "no running openclaw-gateway container; cron models not checked"
   echo "no running openclaw-gateway container; cron models not checked"
   exit 0
 fi
 
-jobs_json="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null)" || {
-  echo "could not read the gateway's cron list" >&2
-  exit 1
-}
+jobs_json="$(docker exec "$GATEWAY" openclaw cron list --all --json 2>/dev/null)" \
+  || cron_check_fail "could not read the gateway's cron list"
 
 # id<TAB>name<TAB>kind<TAB>model for every job of this agent (kind "-" when unset,
 # model empty when unset; tab is whitespace to `read`, so no empty field mid-row).
@@ -71,12 +67,13 @@ while IFS=$'\t' read -r id name kind model; do
     echo "skipped: command job '$name' ($id) runs no model"
     continue
   fi
-  if [ "$model" = "$MODEL" ]; then
+  # model@anthropic:api-key is the same model with its inference account recorded.
+  if [ "$model" = "$MODEL" ] || [ "$model" = "${MODEL}@anthropic:api-key" ]; then
     echo "ok: '$name' ($id) runs on $model"
     continue
   fi
   unpinned=$((unpinned + 1))
-  if [ "$check_only" -eq 1 ]; then
+  if [ "$CRON_CHECK" = 1 ]; then
     if [ -z "$model" ]; then
       echo "unpinned: '$name' ($id) inherits ${AGENT}'s default model"
     else
@@ -97,7 +94,7 @@ if [ "$matched" -eq 0 ]; then
   exit 1
 fi
 
-if [ "$check_only" -eq 1 ] && [ "$unpinned" -gt 0 ]; then
+if [ "$CRON_CHECK" = 1 ] && [ "$unpinned" -gt 0 ]; then
   echo "$unpinned ${AGENT} job(s) not on $MODEL; run without --check to pin them" >&2
   exit 1
 fi
