@@ -88,3 +88,6 @@ install -m 644 "$HERE/lifekit-idle-lanes.timer" "$UNIT_DIR/lifekit-idle-lanes.ti
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable --now lifekit-idle-lanes.timer
 echo "idle-lane check installed for: $HOMES"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" idle-lanes

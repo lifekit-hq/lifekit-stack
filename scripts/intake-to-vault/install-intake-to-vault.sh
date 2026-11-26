@@ -30,3 +30,6 @@ install -m 644 "$HERE/lifekit-intake-to-vault.service" "$UNIT_DIR/lifekit-intake
 install -m 644 "$HERE/lifekit-intake-to-vault.timer" "$UNIT_DIR/lifekit-intake-to-vault.timer"
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable --now lifekit-intake-to-vault.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" intake-to-vault

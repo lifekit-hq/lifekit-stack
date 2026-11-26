@@ -28,3 +28,6 @@ install -m 644 "$HERE/lifekit-vault-audit.service" "$UNIT_DIR/lifekit-vault-audi
 install -m 644 "$HERE/lifekit-vault-audit.timer" "$UNIT_DIR/lifekit-vault-audit.timer"
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable --now lifekit-vault-audit.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" vault-audit

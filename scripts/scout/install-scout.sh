@@ -55,3 +55,6 @@ sed -e "s|__SCOUT_USER__|${SCOUT_USER}|g" -e "s|__REPO_DIR__|${REPO_DIR}|g" \
 install -m 644 "$HERE/lifekit-scout.timer" "$UNIT_DIR/lifekit-scout.timer"
 "$SYSTEMCTL" daemon-reload
 echo "scout: installed; timer NOT enabled (systemctl enable --now lifekit-scout.timer)"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" scout

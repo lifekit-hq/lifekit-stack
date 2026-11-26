@@ -69,3 +69,6 @@ install -m 644 "$HERE/lifekit-intake-shape.timer" "$UNIT_DIR/lifekit-intake-shap
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable --now lifekit-intake-shape.timer
 echo "intake shape step installed for $FM_HOME"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" intake-shape

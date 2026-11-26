@@ -213,4 +213,9 @@ if [ "$drift" -eq 1 ]; then
   echo "check failed: a shared persona block is missing or differs; run $(basename "$0") without --check" >&2
   rc=1
 fi
+# Record the installed commit (issue 689; the release gauge reads it) after a full
+# written run (no agent subset, not --check or --dry-run) that passed.
+if [ "$rc" = 0 ] && [ -z "$mode" ] && [ "$#" -eq 0 ]; then
+  bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" dev-problem-block
+fi
 exit "$rc"

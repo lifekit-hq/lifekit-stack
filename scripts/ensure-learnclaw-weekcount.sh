@@ -195,3 +195,6 @@ cron_check_agrees "$JOB_NAME" "$job_id"
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, command payload (no model turn), announce -> telegram:$ACCOUNT (verified), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
 echo "        docker exec $GATEWAY python3 $DAILY weekfile --out /tmp/w.json --target $WEEKLY_TARGET && cat /tmp/w.json"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" learnclaw-weekcount

@@ -107,3 +107,6 @@ else
   echo "fleet gate installed -> $dest"
   reload_gateway
 fi
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" fleet-gate

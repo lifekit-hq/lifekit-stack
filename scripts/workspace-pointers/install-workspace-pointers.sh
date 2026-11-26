@@ -30,3 +30,6 @@ for agent in "${AGENTS[@]}"; do
     echo "workspace pointers: wrote ${ws}/${f}"
   done
 done
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" workspace-pointers

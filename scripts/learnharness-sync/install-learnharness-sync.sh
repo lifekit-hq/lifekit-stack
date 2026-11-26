@@ -39,6 +39,8 @@ render | sudo tee /etc/systemd/system/learnharness-sync.service >/dev/null
 sudo install -m 0644 "$here/learnharness-sync.timer" /etc/systemd/system/learnharness-sync.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now learnharness-sync.timer
+# Record the installed commit (issue 689; the release gauge reads it).
+sudo bash "$here/../lib/install-stamp.sh" learnharness-sync
 echo "installed: learnharness-sync.timer (every 10 minutes)"
 echo "add this line to ${LH_SYNC_USER}'s ~/.ssh/authorized_keys on the PC:"
 printf 'restrict,from="100.64.0.0/10",command="/usr/bin/rrsync -ro %s/" %s\n' \

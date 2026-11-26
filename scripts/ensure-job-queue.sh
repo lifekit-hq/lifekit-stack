@@ -67,3 +67,6 @@ case "$row" in
   *differs) echo "cron: '$CRON_NAME' ($row) runs a gate that DIFFERS from drain-gate.js - re-apply it (docs/runbook.md, \"Shared job queue\")" ;;
   *) echo "cron: '$CRON_NAME' is ${row%% *} - nothing drains the queue until it is enabled" ;;
 esac
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" job-queue

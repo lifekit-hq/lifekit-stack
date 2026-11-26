@@ -45,3 +45,6 @@ install -m 644 "$HERE/openclaw-config-sync.service" "$UNIT_DIR/openclaw-config-s
 install -m 644 "$HERE/openclaw-config-sync.timer" "$UNIT_DIR/openclaw-config-sync.timer"
 systemctl daemon-reload
 systemctl enable --now openclaw-config-sync.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" config-sync

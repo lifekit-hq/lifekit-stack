@@ -58,3 +58,6 @@ case "$listed" in
   no) echo "allowlist: '$SKILL' is NOT on agent '$AGENT''s skills list - apply the allowlist patch (docs/runbook.md, \"Kit's second-mate relay\")" ;;
   *) echo "allowlist: could not read agent '$AGENT''s skills list" ;;
 esac
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" secondmate-relay

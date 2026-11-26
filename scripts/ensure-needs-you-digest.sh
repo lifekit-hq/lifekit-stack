@@ -427,3 +427,6 @@ echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT 
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id   # delivery preview: announce -> current session"
 echo "        docker exec $GATEWAY openclaw cron run $reader_id --expect-final --json   # the mail section, or 'No new mail.'"
 echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # within the hour after the reader run; posts \"Nothing needs you today.\" while the ledger and the fleet's decisions_open are empty and no mail needs you"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" needs-you-digest

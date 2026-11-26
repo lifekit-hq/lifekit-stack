@@ -88,3 +88,6 @@ done
 for unit in "${UNITS[@]}"; do
   "$SYSTEMCTL" enable --now "$unit.timer"
 done
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" offbox-backup

@@ -339,6 +339,10 @@ def a2a_repo(tmp_path):
         repo / "scripts/ledger-persona/ledger-persona.py",
     )
     shutil.copytree(REPO / "defaults/agents", repo / "defaults/agents")
+    # Not a git checkout, so the install stamp (test_release_gauge.py covers it)
+    # is a no-op here.
+    (repo / "scripts/lib").mkdir()
+    (repo / "scripts/lib/install-stamp.sh").write_text("exit 0\n")
     return repo
 
 

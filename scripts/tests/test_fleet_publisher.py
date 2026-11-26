@@ -4471,6 +4471,63 @@ def test_the_scout_is_stalled_when_its_output_is_older_than_the_interval(homes):
     assert page["stalled_sources"]["scout"] == {"read": True, "reason": None}
 
 
+def installed_prom(homes, *lines, age=0):
+    """The release gauge's lifekit_installed.prom in the publisher's textfile dir."""
+    prom = homes.tmp / "prom/lifekit_installed.prom"
+    prom.write_text("".join(f"{line}\n" for line in lines))
+    os.utime(prom, (NOW - age, NOW - age))
+    return prom
+
+
+def installed_rows(page):
+    return [
+        i for g in page["stalled"] for i in g["items"] if i["source"] == "installed"
+    ]
+
+
+def test_a_component_behind_main_for_over_a_day_is_a_stalled_source(homes):
+    # Issue 689: merged code that never reached the host shows up by name.
+    installed_prom(
+        homes,
+        "# TYPE lifekit_component_behind gauge",
+        'lifekit_component_behind{component="fleet-publisher"} 1',
+        f'lifekit_component_behind_since_seconds{{component="fleet-publisher"}} {NOW - 2 * DAY}',
+        'lifekit_component_behind{component="learnclaw-morning"} 1',
+        f'lifekit_component_behind_since_seconds{{component="learnclaw-morning"}} {NOW - 3600}',
+        'lifekit_component_behind{component="scout"} 0',
+        'lifekit_component_behind{component="learnharness-sync"} -1',
+    )
+    assert homes.run(side_home(homes)).returncode == 0
+    page = status(homes)
+    (row,) = installed_rows(page)
+    assert row["id"] == row["title"] == "fleet-publisher"
+    assert row["reason"] == "behind-main" and row["since"] == NOW - 2 * DAY
+    assert row["threshold"] == 24 * 3600
+    (group,) = [g for g in page["stalled"] if row in g["items"]]
+    assert group["owner"] == "ops"
+    assert page["stalled_sources"]["installed"] == {"read": True, "reason": None}
+    labels = [p["label"] for p in page["problems"]["shown"]]
+    assert "fleet-publisher behind main" in labels
+
+
+def test_a_stale_or_missing_installed_gauge_is_unread_not_current(homes):
+    assert homes.run(side_home(homes)).returncode == 0
+    assert status(homes)["stalled_sources"]["installed"]["read"] is False
+    installed_prom(
+        homes,
+        'lifekit_component_behind{component="fleet-publisher"} 1',
+        f'lifekit_component_behind_since_seconds{{component="fleet-publisher"}} {NOW - 2 * DAY}',
+        age=2 * 3600,
+    )
+    assert homes.run(side_home(homes)).returncode == 0
+    page = status(homes)
+    assert not installed_rows(page)
+    assert page["stalled_sources"]["installed"] == {
+        "read": False,
+        "reason": "installed-commit gauge is stale",
+    }
+
+
 def test_an_unset_scout_or_clip_feed_is_said_not_guessed(homes):
     assert homes.run(side_home(homes), FLEET_NOW=str(NOW)).returncode == 0
     page = status(homes)

@@ -86,3 +86,6 @@ if json.dumps(settings, sort_keys=True) != before:
     os.replace(tmp, path)
     print(f"claude home: merged the vault env key and SessionStart hooks into {path}")
 PY
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" claude-home

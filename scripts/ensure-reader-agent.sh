@@ -261,3 +261,6 @@ if patterns != [sys.argv[1]]:
 
 echo "reader agent verified: shipped cap live, no bindings, not reachable by other agents (agent-to-agent allow and each agent's send = the repo's definitions), exec allowlist = the door script only"
 echo "verify: scripts/reader-canary/run.sh   # the cap, on a managed claude-cli turn"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+[ "$check_only" = 1 ] || bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" reader-agent

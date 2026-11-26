@@ -227,3 +227,6 @@ cron_check_agrees "$JOB_NAME" "$job_id"
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, model $MODEL, tools $JOB_TOOLS only, announce -> telegram:$ACCOUNT (verified), failure alert after 1 via telegram:default"
 echo "verify: docker exec $GATEWAY openclaw cron show $job_id"
 echo "test:   docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # one message in learnclaw's chat"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" learnclaw-morning

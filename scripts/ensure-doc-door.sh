@@ -272,3 +272,6 @@ cron_check_agrees "$JOB_NAME" "$job_id"
 [ "$converged" = 1 ] || exit 0
 echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT isolated, model $MODEL, tools $JOB_TOOLS only, no delivery (verified)"
 echo "verify: docker exec $GATEWAY openclaw cron run $job_id --expect-final --json"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" doc-door

@@ -102,3 +102,6 @@ fi
 echo "tunnel: ${tbind}:${tport} (via ssh alias ${host})"
 echo "relay: ${rbind}:${rport}"
 echo "linger: $(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null || echo unknown)"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" yt-tunnel

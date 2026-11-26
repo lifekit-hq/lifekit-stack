@@ -105,3 +105,6 @@ grep -q "^## " "$HOME/memory/system/goals.md" 2>/dev/null \
   && echo "goals: read from the vault goals page" \
   || echo "goals: vault goals page MISSING in the gateway - the judge says so; check the /srv/memory mount (docs/runbook.md, \"Video evaluation\")"
 ' 2>/dev/null || echo "tools: could not check inside the gateway"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" video-eval

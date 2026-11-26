@@ -103,3 +103,6 @@ if [ "$failed" -gt 0 ]; then
   exit 1
 fi
 echo "verify: docker exec $GATEWAY openclaw cron list --all --json | jq '.jobs[] | select(.agentId==\"$AGENT\") | [.name, .payload.model]'"
+
+# Record the installed commit (issue 689; the release gauge reads it).
+[ "$CRON_CHECK" = 1 ] || bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" kit-cron-models

@@ -61,3 +61,6 @@ chmod 644 "$UNIT_DIR/ops-door-escalate.service"
 install -m 644 "$HERE/ops-door-escalate.timer" "$UNIT_DIR/ops-door-escalate.timer"
 systemctl daemon-reload
 systemctl enable --now ops-door-escalate.timer
+
+# Record the installed commit (issue 689; the release gauge reads it).
+bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" ops-door-escalate
