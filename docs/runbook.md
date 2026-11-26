@@ -3678,7 +3678,13 @@ through its `bin/fm-tasks-axi.sh` and its `bin/fm-capacity.sh --json`, asks
 `gh` for open PRs (cached ten minutes in the publisher's state directory), and
 runs `jobq.py depth` in the gateway container (the admin account's `docker`
 group); a source it cannot read leaves a line in `status_page.errors`, never a
-failed run. The new output appears only once the
+failed run. It also adds `scheduled`, one list of the box's scheduled work:
+each repo timer, each OpenClaw cron row and Kit's and Ledger's active standing
+intents, with owner, schedule, next and last run, last result and the declaring
+script; a declared timer or cron row the live side lacks shows as `missing`
+(README "Scheduled work"). The declared side is
+`/usr/local/bin/lifekit-fleet-scheduled.json`, written by the installer from the
+checkout, so a new timer or `ensure-*.sh` shows only after a re-install. The new output appears only once the
 installed script is refreshed: re-run the install command below (it
 re-installs the script, the helper and the units, idempotent). The unit's
 environment gains `FLEET_PLAN_MAP` only when the installer is given one
@@ -3740,10 +3746,11 @@ keeps the previous feed and turns *host systemd unit is down or failed* red.
 
 **Cadence under load.** Every run reads the homes, rebuilds `status_page`, and
 replaces the summary and `fleet.prom` (the freshness stamp) first; the daily
-metrics, quota and taken feed follow. The two slow helpers run after that, on a
+metrics, quota and taken feed follow. The three slow helpers run after that, on a
 slower cadence: the screen changes feed (`gh`) every 5 minutes
-(`FLEET_SCREENS_EVERY`, default 300 s) and the activity journal every 15 minutes
-(`FLEET_JOURNAL_EVERY`, default 900 s), and neither starts once the run is two
+(`FLEET_SCREENS_EVERY`, default 300 s), the activity journal every 15 minutes
+(`FLEET_JOURNAL_EVERY`, default 900 s) and the gateway read behind `scheduled`
+every 5 minutes (`FLEET_SCHEDULED_EVERY`, default 300 s), and none starts once the run is two
 minutes old (`FLEET_SLOW_BUDGET`, default 120 s; it stays due for the next run). A
 section that is not due leaves its previous file in place; the cadence stamps are
 `cadence-<section>` in the publisher's state directory. Each run puts its
@@ -3753,7 +3760,7 @@ run that dies before replacing `fleet.prom` still rewrites its freshness gauges
 from each home's own summary. Read how a run spent its time from the unit's
 journal (`journalctl -u lifekit-fleet-publisher.service -n 5`): the last line of a
 run is `fleet-publisher: timings_ms total=... homes=... status_page=... screens=...
-journal=...` with `skipped=` naming sections the cadence or budget skipped. The
+journal=... scheduled=...` with `skipped=` naming sections the cadence or budget skipped. The
 per-section table is in `scripts/fleet-publisher/README.md` "Run cadence and what a
 loaded host does". The 15 minute alert threshold is unchanged.
 

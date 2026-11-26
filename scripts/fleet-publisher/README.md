@@ -20,6 +20,7 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
 | --- | --- | --- |
 | top | `published_epoch` | Publish time |
 | top | `status_page` | The living status page's sections (schema `fleet-status-page.v1`, below), or `null` when they could not be built |
+| top | `scheduled` | The fleet's scheduled work as one list: every repo timer, every OpenClaw cron row, and Kit's and Ledger's active standing intents (below, "Scheduled work"); `[]` when it cannot be built |
 | top | `homes[]` | One entry per home, in `FM_HOMES` order: `id`, `path`, `published`, `valid`, `reason`, and for a published home its `schema`, `generated_epoch`, `state`, `counts`, `invalidity` |
 | every item of every top-level list | `home_id` | The id of the home the item came from (`active_children`, `decisions_open`, `holds`, `queued`, `landed`, `endpoints`, `omitted`) |
 | `homes[]` | `invalidity` | The home summary's own `invalidity` (`{kind, ids}`: why `valid` is false, e.g. kind `terminal_in_flight` for finished work still waiting on validation or merge), passed through as-is; `null` when the summary has none |
@@ -125,9 +126,10 @@ the stamp's critical path. Order and cadence of a run:
 | taken-for-you feed | every run | `taken-for-you.json` | under 1 s |
 | screen changes feed (`screen_changes.py`, gh) | every `FLEET_SCREENS_EVERY` s (default 300) | `screen-changes.json`, `screen-changes/` | 18 s |
 | activity journal (`activity_journal.py`) | every `FLEET_JOURNAL_EVERY` s (default 900) | `journal/` | 19 s |
+| scheduled work, gateway side (`scheduled.py gateway`) | every `FLEET_SCHEDULED_EVERY` s (default 300) | `scheduled-gateway.json` in the state directory, joined into `scheduled` from the next run | 11 s |
 
 - **The stamp comes first.** `fleet.prom` (`fleet_summary_generated_timestamp_seconds`,
-  `fleet_publisher_last_success_timestamp_seconds`) is replaced before either slow
+  `fleet_publisher_last_success_timestamp_seconds`) is replaced before any slow
   helper starts, so a slow helper never delays it.
 - **A section that is not due leaves its previous output as it was.** Cadence stamps
   are the files `cadence-<section>` in the publisher's state directory, kept on the
@@ -148,6 +150,55 @@ the stamp's critical path. Order and cadence of a run:
   A directory a killed run left is removed once it is a day old.
 - **Timings.** Every run ends with one stderr line in the unit's journal, e.g.
   `fleet-publisher: timings_ms total=19950 homes=14560 status_page=3907 publish=189 ... skipped=screens:cadence,journal:cadence`.
+
+## Scheduled work (`scheduled`)
+
+One entry per thing that runs on a schedule, built by `scheduled.py` (installed
+as `lifekit-fleet-scheduled.py`), sorted timers, cron rows, intents, then name:
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `timer` (a `scripts/**/*.timer` unit), `cron` (an OpenClaw cron row) or `intent` (a standing intent) |
+| `name` | The timer unit, the cron row's name, or the intent's description (whitespace folded, 120 characters at most) |
+| `owner`, `owner_kind` | The service the timer starts (`unit`), or the agent id of the cron row or intent (`agent`; Ledger is `finance`); `null` for a missing cron row |
+| `schedule` | The timer's `On*=` keys joined with `; `; `cron <expr> (<tz>)`, `every <n><unit>` or `at <iso>` for a cron row; `when: <trigger keywords>` for an intent |
+| `next_run_epoch`, `last_run_epoch` | From `systemctl list-timers` or the cron row's state; an intent's last run is its last firing and it has no next run; `null` when unknown |
+| `last_result` | The service's systemd `Result` (`running` while it runs), the cron row's last run status, or the intent's status (`pending`, `armed`, `fired`) |
+| `script` | The repo file that declares it: the `.timer` file, or the `scripts/ensure-*.sh` naming the cron row; `null` for a live row nothing in the repo declares, and for intents |
+| `state` | `live`; `disabled` (a cron row switched off); `missing` (declared in the repo but absent from systemd or the gateway); `unknown` (that side could not be read, or its cached gateway rows are stale) |
+| `stale_seconds` | Cron rows and intents only, and only when `unknown` from the gateway side: how long ago that part was last read; `null` when it never was |
+| `expires_epoch`, `id` | Intents only: when it lapses, and its id |
+
+- **Declared comes from the checkout, at install.** The installer writes
+  `lifekit-fleet-scheduled.json` beside the script (`scheduled.py manifest`): the
+  repo's timer files and the cron rows each declaring script names
+  (`check-cron-declarations.sh --list`, through `cron_check_declares` in
+  `scripts/lib/cron-check.sh`, the same declarations the deploy sweep checks).
+  The publisher never reads the checkout; a new timer or declaring script shows
+  after a re-install.
+- **Live comes from systemd every run, and from the gateway on cadence.**
+  `openclaw cron list --all --json` takes about ten seconds, so the slow
+  `scheduled` section caches it with the intents in the state directory, and
+  every run joins the cache. Each part (cron rows, intents) is stamped with
+  the time it was read; a read that fails keeps that part and its old stamp.
+  A part last read more than three cadences ago (`3 × FLEET_SCHEDULED_EVERY`)
+  lists its rows, and for cron the declared ones too, as `unknown` with
+  `stale_seconds`, never as `live` or `missing`.
+- **Standing intents** live in each agent's own SQLite store,
+  `agents/<agent id>/agent/openclaw-agent.sqlite` under the gateway state
+  directory, table `standing_intents` (OpenClaw docs, concepts/standing-intents).
+  They are read read-only in the gateway container for the agents in
+  `FLEET_INTENT_AGENTS` (default `kit finance`: Kit and Ledger); only `pending`,
+  `armed` and `fired` ones are listed. An agent with no store file or no
+  `standing_intents` table is skipped; the other agents' intents are still
+  listed. Any other store error (a changed schema, a lock) fails the intents
+  read, so it keeps its previous rows and ages to `unknown`.
+- **Nothing private is kept.** Payloads, prompts, delivery targets, senders and
+  cron row ids are dropped before the cache is written; the summary's credential
+  check covers the list too.
+- Env for tests and drop-ins: `FLEET_SCHEDULED` (helper), `FLEET_SCHEDULED_MANIFEST`,
+  `FLEET_SYSTEMCTL`, `FLEET_CRON_CMD`, `FLEET_INTENTS_CMD` (a command printing the
+  CLI's JSON or a JSON list of intent rows; empty skips that read).
 
 ## Status page sections (`status_page`)
 

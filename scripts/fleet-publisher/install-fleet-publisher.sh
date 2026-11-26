@@ -7,6 +7,11 @@
 #
 #   sudo FM_HOMES="<fleet home> [<fleet home> ...]" bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
 #
+# It also writes lifekit-fleet-scheduled.json beside the script: the timers and
+# cron rows this checkout declares (scheduled.py manifest), which the summary's
+# `scheduled` list is joined against, so a re-install picks up a new timer or
+# declaring script (README "Scheduled work").
+#
 # TASKS_AXI (optional) is the absolute path of tasks-axi; unset, it is looked
 # up as the admin account (login shell, then an interactive one for a node
 # version manager set up in .bashrc).
@@ -105,6 +110,11 @@ install -m 755 "$HERE/taken_feed.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-
 install -m 755 "$HERE/screen_changes.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-screens.py"
 # The activity journal helper, found the same way.
 install -m 755 "$HERE/activity_journal.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-journal.py"
+install -m 755 "$HERE/scheduled.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-scheduled.py"
+manifest_tmp="$(mktemp)"
+python3 -I "$HERE/scheduled.py" manifest --repo "$(cd "$HERE/../.." && pwd)" > "$manifest_tmp"
+install -m 644 "$manifest_tmp" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-scheduled.json"
+rm -f "$manifest_tmp"
 sed -e "s|__ADMIN_USER__|${ADMIN_USER}|" -e "s|__FM_HOMES__|${FM_HOMES}|" -e "s|__TASKS_AXI__|${TASKS_AXI}|" \
   -e "s|__FLEET_PLAN_MAP_ENV__|${plan_map_env}|" -e "s|__FLEET_CLIP_STATS_FEED_ENV__|${clip_feed_env}|" \
   "$HERE/lifekit-fleet-publisher.service" > "$UNIT_DIR/lifekit-fleet-publisher.service"

@@ -46,3 +46,11 @@ cron_check_fail() { # $1 = reason; the live row could not be checked
   if [ "$CRON_CHECK" = 1 ]; then exit 3; fi
   exit 1
 }
+
+cron_check_declares() { # $1 = a declaring script; prints each cron row name it declares
+  # The names a script passes to cron_check_absent/cron_check_agrees: its
+  # top-level JOB_NAME= (and READER_NAME= for a second row) assignments. Read,
+  # never run, so listing needs no gateway. A policy script (no such line)
+  # prints nothing.
+  sed -nE 's/^(JOB_NAME|READER_NAME)="?([A-Za-z0-9_.-]+)"?[[:space:]]*$/\2/p' "$1"
+}
