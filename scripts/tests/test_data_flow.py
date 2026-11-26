@@ -239,7 +239,9 @@ def test_without_known_homes_tilde_and_home_rows_never_cover_the_service_homes(
     assert result.returncode == 1, result.stdout
     assert "FAIL no Data flow row: bind:/home/lifekit/.claude" in result.stdout
 
-    own_row = "| gw-claude | `/home/lifekit/.claude` | json | gw | gw | private | example |"
+    own_row = (
+        "| gw-claude | `/home/lifekit/.claude` | json | gw | gw | private | example |"
+    )
     result = run_gate(repo, map_with(admin_rows + [own_row]), tmp_path)
     assert result.returncode == 0, result.stdout
 
@@ -398,8 +400,14 @@ def test_rows_naming_volumes_or_containers_are_unverifiable_when_docker_is_unrea
         )
     )
     text = df.render(
-        stores, rows, df.Context(mounts=mounts), volumes, containers, notes,
-        TODAY, {"stores": {}},
+        stores,
+        rows,
+        df.Context(mounts=mounts),
+        volumes,
+        containers,
+        notes,
+        TODAY,
+        {"stores": {}},
     )
     assert "### Stale rows (0)" in text
     assert "### Rows this account cannot verify (2)" in text

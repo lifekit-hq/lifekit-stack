@@ -355,7 +355,9 @@ def store_matches_row(
                 return True  # equal, or the store sits under the row's path
         prefix = literal_prefix(g)
         if prefix == store.path and prefix != g:
-            return True  # the store holds a documented glob (an empty inbox is not stale)
+            return (
+                True  # the store holds a documented glob (an empty inbox is not stale)
+            )
         if parents and prefix.startswith(store.path.rstrip("/") + "/"):
             return True  # the store is a parent of a documented row
     return False
