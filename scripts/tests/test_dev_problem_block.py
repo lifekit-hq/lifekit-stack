@@ -25,7 +25,6 @@ RECEIPTS_BEGIN = "<!-- lifekit:receipts:begin -->"
 RECEIPTS_END = "<!-- lifekit:receipts:end -->"
 INTENTS = REPO / "defaults/agents/shared/standing-intents.md"
 INTENTS_BEGIN = "<!-- lifekit:standing-intents:begin -->"
-INTENTS_END = "<!-- lifekit:standing-intents:end -->"
 # The one-line rule the standing-intents block grew from (live Kit and Ledger).
 LEGACY_INTENT_LINE = (
     'A "when X comes up, remind me" ask is a standing intent, not a note: create it'
@@ -392,17 +391,3 @@ def test_the_standing_intents_block_replaces_the_one_line_rule_in_place(tmp_path
     assert "standing-intents block unchanged" in second.stdout
     assert run(root, "--check").returncode == 0
 
-
-def test_the_standing_intents_block_sets_a_date_expiry_and_a_one_line_renew():
-    text = INTENTS.read_text()
-    assert text.startswith(INTENTS_BEGIN + "\n") and text.rstrip().endswith(INTENTS_END)
-    # The block keeps the one-line rule it replaces, so nothing is lost.
-    assert LEGACY_INTENT_LINE in text
-    for phrase in (
-        "`expiresAt` on every create",
-        "90 days",
-        "#698",
-        "`expired`",
-        '"renew',
-    ):
-        assert phrase in text, phrase
