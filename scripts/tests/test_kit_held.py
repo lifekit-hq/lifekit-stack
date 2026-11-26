@@ -311,7 +311,9 @@ def test_no_home_is_exit_78(hub):
 NOW = int(dt.datetime(2026, 11, 26, 12, tzinfo=dt.timezone.utc).timestamp())
 
 
-def check(hub, notes: Path, *extra: str, env: dict | None = None) -> list[dict]:
+def check(
+    hub, notes: Path, *extra: str, env: dict | None = None, code: int = 0
+) -> list[dict]:
     r = subprocess.run(
         [
             sys.executable,
@@ -330,7 +332,7 @@ def check(hub, notes: Path, *extra: str, env: dict | None = None) -> list[dict]:
         text=True,
         check=False,
     )
-    assert r.returncode == 0, r.stderr
+    assert r.returncode == code, r.stderr
     return json.loads(r.stdout)
 
 
@@ -350,6 +352,8 @@ def test_the_check_lists_unfiled_fleet_items_and_skips_reminders_and_filed_ones(
         "- [ ] for firstmate: a mark that names no item (shaping: held-nothing)\n"
         "Next: on 2026-11-26, raise it with Denys. On his go, send firstmate a task: note.\n"
         "Next: buy milk\n"
+        "Next week firstmate ships the coach PR.\n"
+        "**Next:** send devclaw a task: rotate the key\n"
     )
     (notes / "notes.md").write_text("- [ ] for firstmate: not a daily note\n")
     found = check(hub, notes, "--now", str(NOW))
@@ -358,6 +362,7 @@ def test_the_check_lists_unfiled_fleet_items_and_skips_reminders_and_filed_ones(
         "for devclaw: fix the backup job",
         "for firstmate: a mark that names no item",
         "on 2026-11-26, raise it with Denys. On his go, send firstmate a task: note.",
+        "send devclaw a task: rotate the key",
     ]
     assert all(f["note"] == "2026-11-25.md" for f in found)
     assert all(f["since"] == NOW for f in found)
@@ -378,6 +383,22 @@ def test_the_check_keeps_the_first_seen_time_and_drops_a_filed_item(hub, tmp_pat
     )
     assert check(hub, notes, "--now", str(NOW + 31 * 3600)) == []
     assert json.loads((hub.tmp / "seen.json").read_text()) == {}
+
+
+def test_a_failed_hub_lookup_keeps_the_first_seen_time(hub, tmp_path):
+    notes = tmp_path / "memory"
+    notes.mkdir()
+    (notes / "2026-11-25.md").write_text(
+        "- [ ] for firstmate: share the coach context (shaping: held-typo)\n"
+    )
+    assert [f["since"] for f in check(hub, notes, "--now", str(NOW))] == [NOW]
+    hold = hub.home / "bin/fm-captain-hold.sh"
+    good = hold.read_text()
+    write_exec(hold, "#!/bin/sh\nexit 2\n")
+    check(hub, notes, "--now", str(NOW + 20 * 3600), code=1)
+    write_exec(hold, good)
+    later = check(hub, notes, "--now", str(NOW + 25 * 3600))
+    assert [f["since"] for f in later] == [NOW]
 
 
 def test_the_check_does_not_list_a_line_whose_item_was_answered_and_archived(

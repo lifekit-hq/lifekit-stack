@@ -100,7 +100,7 @@ MAX_CHAIN = 200  # a hub that answers every id as existing must not loop forever
 
 NOTE_RE = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2})\.md$")
 OPEN_RE = re.compile(
-    r"^\s*(?:[-*+]\s+\[ \]\s+(?P<task>.*)|(?:[-*+]\s+)?\**Next:?\**:?\s+(?P<next>.*))$"
+    r"^\s*(?:[-*+]\s+\[ \]\s+(?P<task>.*)|(?:[-*+]\s+)?\**Next\**:\**\s+(?P<next>.*))$"
 )
 FOR_RE = re.compile(r"^\**for\s+([A-Za-z0-9 _-]{1,40}?)\**\s*:", re.I)
 FLEET_RE = re.compile(r"\b(?:first ?mate|second ?mate|devclaw|fleet)\b|\btask:", re.I)
@@ -392,7 +392,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             found.append({**it, "since": max(first, day_start)})
     if seen_path is not None:
         live = {it["id"] for it in found}
-        kept = {k: v for k, v in seen.items() if k in live}
+        kept = seen if failed else {k: v for k, v in seen.items() if k in live}
         try:
             write_json(seen_path, kept)
         except OSError as error:
