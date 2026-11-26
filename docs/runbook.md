@@ -4352,8 +4352,8 @@ A merge reaches the host only when the component's installer runs, and several (
 (issue 689). Each `install-*`/`ensure-*` script that deploys a component ends its success path
 with `scripts/lib/install-stamp.sh <component>`, which writes
 `/var/lib/lifekit/installed/<component>` as `{"commit": "<checkout HEAD>", "at": "<UTC>"}`.
-A `--check`, `--print` or dry run, a skip (no gateway, no agent) and a failed install write
-none, so the stamp only moves on a real install; a re-run at the same commit leaves it (and its
+A `--check`, `--print` or dry run, a skip (no gateway, no agent), a subset run (agent
+arguments, `--files`) and a failed install write none, so the stamp only moves on a real install; a re-run at the same commit leaves it (and its
 `at`, the first install of that commit) as it was. `ensure-ops-door.sh` only checks, so it has
 no stamp.
 
