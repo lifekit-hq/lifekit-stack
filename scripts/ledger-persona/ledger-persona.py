@@ -69,7 +69,7 @@ RETIRED_PATHS = {
 SCANNED_FILES = ("MEMORY.md", "USER.md", "SOUL.md")
 STACK = "finance-sentry stack detail, the primer owns it"
 SHARED_BLOCK = re.compile(
-    r"<!-- lifekit:dev-problems:begin -->.*?<!-- lifekit:dev-problems:end -->", re.S
+    r"<!-- lifekit:(dev-problems|receipts):begin -->.*?<!-- lifekit:\1:end -->", re.S
 )
 STALE_MARKERS = (
     (re.compile(r"ASP\.NET", re.I), STACK),
@@ -153,8 +153,9 @@ def stale_copies(workspace: Path) -> list[str]:
         path = workspace / name
         if not path.is_file():
             continue
-        # The shared dev-problem block names devclaw on purpose: it is the intake
-        # door every agent files through (scripts/ensure-dev-problem-block.sh).
+        # The shared dev-problem and receipts blocks name devclaw on purpose: it
+        # is the intake door every agent files through
+        # (scripts/ensure-dev-problem-block.sh).
         # Blank it out, keeping line numbers; a devclaw handoff anywhere else is
         # still stale.
         text = SHARED_BLOCK.sub(

@@ -19,6 +19,10 @@ A2A = REPO / "defaults/agents/shared/a2a-envelope.md"
 BEGIN = "<!-- lifekit:dev-problems:begin -->"
 END = "<!-- lifekit:dev-problems:end -->"
 A2A_BEGIN = "<!-- lifekit:a2a-envelope:begin -->"
+RECEIPTS = REPO / "defaults/agents/shared/receipts.md"
+RECEIPTS_BEGIN = "<!-- lifekit:receipts:begin -->"
+RECEIPTS_END = "<!-- lifekit:receipts:end -->"
+BLOCKS = 3
 
 # What each agent's persona holds before the block lands (host state: free text).
 PERSONAS = {
@@ -31,8 +35,8 @@ PERSONAS = {
 
 
 def block_text() -> str:
-    """Both shared blocks as they land in a SOUL.md: dev-problems, then a2a."""
-    return SHARED.read_text().strip("\n") + "\n\n" + A2A.read_text().strip("\n")
+    """The shared blocks as they land in a SOUL.md: dev-problems, a2a, receipts."""
+    return "\n\n".join(p.read_text().strip("\n") for p in (SHARED, A2A, RECEIPTS))
 
 
 def state(tmp_path, personas=None):
@@ -68,6 +72,7 @@ def test_every_workspace_gets_the_block_and_keeps_its_own_persona(tmp_path):
         assert soul(root, agent) == before.rstrip("\n") + "\n\n" + block_text() + "\n"
         assert f"agent '{agent}': dev-problem block installed" in r.stdout
         assert f"agent '{agent}': a2a-envelope block installed" in r.stdout
+        assert f"agent '{agent}': receipts block installed" in r.stdout
 
 
 def test_a_second_run_changes_nothing(tmp_path):
@@ -77,7 +82,7 @@ def test_a_second_run_changes_nothing(tmp_path):
     r = run(root)
     assert r.returncode == 0, r.stderr
     assert {a: soul(root, a) for a in PERSONAS} == first
-    assert r.stdout.count("block unchanged") == 2 * len(PERSONAS)
+    assert r.stdout.count("block unchanged") == BLOCKS * len(PERSONAS)
 
 
 def test_a_changed_block_replaces_in_place_without_a_second_copy(tmp_path):
@@ -92,7 +97,7 @@ def test_a_changed_block_replaces_in_place_without_a_second_copy(tmp_path):
     assert r.returncode == 0, r.stderr
     assert soul(root, "kit") == (
         f"# Kit\n\nintro\n\n{BEGIN}\n## Development-class problems\n\nnew text\n{END}"
-        f"\n\nafter the block\n\n{A2A.read_text().strip()}\n"
+        f"\n\nafter the block\n\n{A2A.read_text().strip()}\n\n{RECEIPTS.read_text().strip()}\n"
     )
     assert "dev-problem block updated" in r.stdout
     assert "a2a-envelope block installed" in r.stdout
@@ -130,7 +135,7 @@ def test_dry_run_writes_nothing(tmp_path):
     r = run(root, DRY_RUN="1")
     assert r.returncode == 0, r.stderr
     assert {a: soul(root, a) for a in PERSONAS} == PERSONAS
-    assert r.stdout.count("block would-install") == 2 * len(PERSONAS)
+    assert r.stdout.count("block would-install") == BLOCKS * len(PERSONAS)
 
 
 def test_a_state_dir_with_no_workspace_fails_loudly(tmp_path):
@@ -184,3 +189,102 @@ def test_a_lone_a2a_marker_leaves_the_whole_file_untouched(tmp_path):
     assert "a2a-envelope marker" in r.stderr and "left untouched" in r.stderr
     assert soul(root, "kit") == broken
     assert A2A_BEGIN in soul(root, "career")
+
+
+def test_the_receipts_block_states_the_rule_and_its_doors(tmp_path):
+    root = state(tmp_path)
+    assert run(root).returncode == 0
+    for agent in PERSONAS:
+        text = soul(root, agent)
+        assert text.count(RECEIPTS_BEGIN) == 1 and text.count(RECEIPTS_END) == 1
+        # A receipt in the intake store, in the same turn, with the 0016 envelope.
+        assert "receipt in the intake store in the turn it is said" in text
+        for field in (
+            "origin",
+            "owner",
+            "class",
+            "fingerprint",
+            "acceptance",
+            "thread",
+        ):
+            assert f"`{field}`" in text, field
+        assert "decision 0016 envelope" in text
+        # The owner sees the receipt id; nothing is held for later.
+        assert "shows the owner the receipt id" in text
+        assert 'Never "save it for later"' in text
+        assert "Reversible work needs no second go from the owner" in text
+        # The doors and what to do when one fails.
+        assert "`file_intake`" in text and "intake projects" in text
+        assert "agent-to-agent envelope to Kit" in text
+        assert "write the failure itself to the intake store" in text
+        assert "Never hand the item back to the owner" in text
+
+
+def test_check_passes_after_install_and_writes_nothing(tmp_path):
+    root = state(tmp_path)
+    assert run(root).returncode == 0
+    before = {a: soul(root, a) for a in PERSONAS}
+    r = run(root, "--check")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.count("block unchanged") == BLOCKS * len(PERSONAS)
+    assert {a: soul(root, a) for a in PERSONAS} == before
+
+
+def test_check_fails_when_an_agent_lacks_the_block(tmp_path):
+    root = state(tmp_path)
+    r = run(root, "--check")
+    assert r.returncode == 1
+    assert "agent 'kit': receipts block missing" in r.stdout
+    assert "check failed" in r.stderr
+    # --check never writes.
+    assert {a: soul(root, a) for a in PERSONAS} == PERSONAS
+
+
+def test_check_fails_when_the_text_between_the_markers_differs(tmp_path):
+    root = state(tmp_path)
+    assert run(root).returncode == 0
+    path = root / "agents/career/workspace/SOUL.md"
+    drifted = soul(root, "career").replace(
+        "Reversible work needs no second go", "Reversible work needs a second go"
+    )
+    assert drifted != soul(root, "career")
+    path.write_text(drifted)
+    r = run(root, "--check")
+    assert r.returncode == 1
+    assert "agent 'career': receipts block differs" in r.stdout
+    assert "agent 'kit': receipts block unchanged" in r.stdout
+    assert soul(root, "career") == drifted
+    # Re-installing restores the shared text, and the check is clean again.
+    assert run(root).returncode == 0
+    assert run(root, "--check").returncode == 0
+
+
+def test_check_fails_for_a_workspace_without_a_soul(tmp_path):
+    root = state(tmp_path, {"kit": PERSONAS["kit"], "ghost": None})
+    assert run(root, "kit").returncode == 0
+    r = run(root, "--check")
+    assert r.returncode == 1
+    assert "agent 'ghost': no SOUL.md" in r.stderr
+
+
+def test_an_agent_defined_later_fails_the_check_until_the_next_install(tmp_path):
+    root = state(tmp_path, {"kit": PERSONAS["kit"]})
+    assert run(root).returncode == 0
+    ws = root / "agents/latecomer/workspace"
+    ws.mkdir(parents=True)
+    (ws / "SOUL.md").write_text("# SOUL.md - Latecomer\n")
+    r = run(root, "--check")
+    assert r.returncode == 1
+    assert "agent 'latecomer': receipts block missing" in r.stdout
+    r = run(root)
+    assert r.returncode == 0, r.stderr
+    assert "agent 'latecomer': receipts block installed" in r.stdout
+    assert "agent 'kit': receipts block unchanged" in r.stdout
+    assert soul(root, "latecomer") == "# SOUL.md - Latecomer\n\n" + block_text() + "\n"
+    assert run(root, "--check").returncode == 0
+
+
+def test_an_unknown_option_is_refused(tmp_path):
+    r = run(state(tmp_path), "--bogus")
+    assert r.returncode == 2
+    assert "unknown option" in r.stderr

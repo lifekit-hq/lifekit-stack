@@ -1747,7 +1747,7 @@ Operator steps, once per host after the PR deploys (as `lifekit`; the live works
 live `AGENTS.md` are host state):
 
 ```bash
-sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # two lines per agent (this block, then the a2a envelope)
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent (this block, the a2a envelope, receipts)
 ```
 
 Then paste the revised devclaw line of `defaults/agents/kit/workspace/AGENTS.md` into the live
@@ -1775,7 +1775,7 @@ decision 0016); this repo carries it into every agent's persona and does not res
 Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
 
 ```bash
-sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # two lines per agent
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent
 ```
 
 **Verify:** `grep -c 'lifekit:a2a-envelope:begin' /srv/openclaw/config/agents/*/workspace/SOUL.md`
@@ -1785,6 +1785,43 @@ session transcript and confirm its first message back is `type: ack` with that `
 of `submitted` or `rejected` and where the item lives, before any reply. Send the same `thread`
 again and confirm the ack's `state` is `working` and no second item exists. **Rollback:** delete
 the text between and including the two marker lines in each `SOUL.md`.
+
+#### Owner asks get a receipt in the same turn
+
+Nothing the owner asks for, and nothing an agent promises, is held in chat or agent memory for
+"later" or for a second go. Every agent carries the persona block "Owner asks and commitments: a
+receipt in the same turn": the ask or commitment is filed in the intake store in the turn it is
+said, with the decision 0016 envelope (`origin`, `owner`, `class`, `fingerprint`, `acceptance`,
+`thread`), and the reply shows the owner the receipt id. Reversible work needs no second go
+(vault decision 0018 row C1). The doors are the devclaw intake tool (`file_intake` on its intake
+projects) and the agent-to-agent envelope to Kit; when a door fails the agent files the failure
+itself in the intake store and never hands the item back to the owner. This is gap G1 of vault
+decision 0019, at the persona level.
+
+- **One source:** `defaults/agents/shared/receipts.md`, between its `lifekit:receipts` marker
+  lines, spliced by the same `scripts/ensure-dev-problem-block.sh` as the two blocks above (all
+  three in one pass; `ensure-learnclaw.sh` re-applies them). Ledger's `ledger-persona.py check`
+  exempts this block's devclaw mention, as it does the dev-problems block.
+- **Drift check:** `scripts/ensure-dev-problem-block.sh --check` writes nothing and exits 1 when
+  any workspace (all of `agents/*/workspace`, so an agent defined later is covered) lacks a
+  shared block, holds a different text between its markers, has no `SOUL.md` or has a marker
+  problem; each failing block is named on stdout as `missing` or `differs`.
+- **Dependency:** the doors themselves are not here: the agent-to-agent allow list (#683) and
+  the devclaw intake projects. Until they exist, an agent following the block files the door
+  failure as the block says.
+
+Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
+
+```bash
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh           # three lines per agent
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh --check   # exit 0, every block "unchanged"
+```
+
+**Verify:** `--check` exits 0, and `grep -c 'lifekit:receipts:begin'
+/srv/openclaw/config/agents/*/workspace/SOUL.md` prints 1 for each. Then ask Kit for something
+reversible and confirm the same reply carries a receipt id and no "saved for later".
+**Rollback:** delete the text between and including the two `lifekit:receipts` marker lines in
+each `SOUL.md`.
 
 ### Kit's workout log and gym-day nudge
 

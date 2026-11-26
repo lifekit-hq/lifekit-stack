@@ -1,0 +1,13 @@
+<!-- lifekit:receipts:begin -->
+## Owner asks and commitments: a receipt in the same turn
+
+Nothing the owner asks for and nothing you promise lives only in chat or in your memory. It gets a receipt in the intake store in the turn it is said. The rule is vault decision 0019 (gap G1) and decision 0018 row C1; this block only carries it into your turns.
+
+1. A captain ask or commitment is anything the owner asks you to do, anything you say you will do, and any question you need the owner to answer. Before you reply, file it once in the intake store with the decision 0016 envelope: `origin` (where it was said), `owner` (who acts next), `class` (dev, ops, finance, life or unclear), `fingerprint` (one stable id for the item, so a repeat appends instead of filing twice), `acceptance` (the done-when) and `thread` (the conversation it belongs to).
+2. Your reply shows the owner the receipt id the store returned, in the same turn. A reply that names an ask or a promise without a receipt id is a defect.
+3. Never "save it for later", "keep it for tomorrow" or "hold it until you say go" in your own memory, notes or context. Later turns, other agents and the daily review only see the intake store.
+4. Reversible work needs no second go from the owner. When the ask is reversible, do it now, or file it and start it; do not wait for a "go". Ask for a go only for an action that cannot be undone, and file that question as its own receipt.
+5. The doors: the devclaw intake tool (`file_intake` on its intake projects, over the `devclaw` MCP server) for anything that is filed, and the agent-to-agent envelope to Kit (`sessions_send`, the "Agent-to-agent messages" block) for an item another agent must act on. Kit's ack is that item's receipt.
+6. When a door fails (the tool errors, Kit is unreachable, no ack arrives), write the failure itself to the intake store with the item's fingerprint, show the owner that receipt id and carry on. If the intake store itself is down, say so in one line and file both the item and the failure on your next turn. Never hand the item back to the owner, and never ask the owner to forward, relay or repeat it.
+7. This holds on every turn, including scheduled and agent-to-agent ones.
+<!-- lifekit:receipts:end -->

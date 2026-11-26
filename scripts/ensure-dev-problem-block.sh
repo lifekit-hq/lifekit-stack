@@ -7,6 +7,9 @@
 #   a2a-envelope  (defaults/agents/shared/a2a-envelope.md): the one agent-to-agent
 #                 envelope and the mandatory ack (docs/runbook.md, "Agent-to-agent
 #                 envelope and ack").
+#   receipts      (defaults/agents/shared/receipts.md): every owner ask or commitment
+#                 gets an intake-store receipt in the same turn, never "saved for later"
+#                 (docs/runbook.md, "Owner asks get a receipt in the same turn").
 #
 # One source per block: the text lives only in its shared file. The script
 # finds every workspace under <config>/agents/*/workspace and replaces each
@@ -17,9 +20,13 @@
 # SOUL.md is host state, so the block goes there.)
 #
 # Run on the VPS host as lifekit, from the repo checkout:
-#   /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh [agent-id ...]
-# With no ids it covers every workspace found. ensure-learnclaw.sh runs it for
-# learnclaw after the deploy rewrites that SOUL.md from git.
+#   /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh [--check|--dry-run] [agent-id ...]
+# With no ids it covers every workspace found, so an agent defined later gets
+# the blocks on the next run. --check writes nothing and exits 1 when any
+# workspace lacks a block, holds a different text between its markers, has no
+# SOUL.md or has a marker problem; each such block is named on stdout.
+# ensure-learnclaw.sh runs it for learnclaw after the deploy rewrites that
+# SOUL.md from git.
 #
 # Re-running converges. A workspace with no SOUL.md, or whose SOUL.md has a
 # lone or reversed marker, is left untouched and reported, and the exit code
@@ -30,25 +37,36 @@
 #                           (default: /srv/openclaw/config, as in compose)
 #   DEV_PROBLEM_BLOCK_FILE  the dev-problems block to install (default: the shared file)
 #   A2A_BLOCK_FILE          the a2a-envelope block to install (default: the shared file)
-#   DRY_RUN=1               report what would change, write nothing
+#   RECEIPTS_BLOCK_FILE     the receipts block to install (default: the shared file)
+#   DRY_RUN=1               same as --dry-run: report what would change, write nothing
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 config_dir="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
+mode=""
+[ -z "${DRY_RUN:-}" ] || mode=dry
+
+agents=()
+for arg in "$@"; do
+  case "$arg" in
+    --check) mode=check ;;
+    --dry-run) [ "$mode" = check ] || mode=dry ;;
+    -*) echo "unknown option: $arg" >&2; exit 2 ;;
+    *) agents+=("$arg") ;;
+  esac
+done
 
 # label|marker name|block file; the markers are <!-- lifekit:NAME:begin|end -->.
 blocks=(
   "dev-problem|dev-problems|${DEV_PROBLEM_BLOCK_FILE:-${repo_root}/defaults/agents/shared/dev-problems.md}"
   "a2a-envelope|a2a-envelope|${A2A_BLOCK_FILE:-${repo_root}/defaults/agents/shared/a2a-envelope.md}"
+  "receipts|receipts|${RECEIPTS_BLOCK_FILE:-${repo_root}/defaults/agents/shared/receipts.md}"
 )
 for spec in "${blocks[@]}"; do
   [ -f "${spec##*|}" ] || { echo "no block file at ${spec##*|}" >&2; exit 1; }
 done
 
-if [ "$#" -gt 0 ]; then
-  agents=("$@")
-else
-  agents=()
+if [ "${#agents[@]}" -eq 0 ]; then
   for ws in "$config_dir"/agents/*/workspace; do
     [ -d "$ws" ] && agents+=("$(basename "$(dirname "$ws")")")
   done
@@ -59,16 +77,20 @@ if [ "${#agents[@]}" -eq 0 ]; then
 fi
 
 # stdout: one "<label> <verb>" line per block, verb = installed | updated |
-# unchanged | would-install | would-update. All blocks are checked before
-# anything is written, so a lone or reversed marker for any of them (exit 3)
-# leaves the whole file untouched.
+# unchanged | would-install | would-update (dry run) | missing | differs
+# (check). All blocks are checked before anything is written, so a lone or
+# reversed marker for any of them (exit 3) leaves the whole file untouched.
 splice() { # $1 = SOUL.md path
-  python3 - "$1" "${DRY_RUN:-}" "${blocks[@]}" <<'PY'
+  python3 - "$1" "$mode" "${blocks[@]}" <<'PY'
 import os, sys, tempfile
 
-path, dry = sys.argv[1], bool(sys.argv[2])
+path, mode = sys.argv[1], sys.argv[2]
+dry = bool(mode)
 text = open(path, encoding="utf-8").read()
-WOULD = {"installed": "would-install", "updated": "would-update"}
+WOULD = {
+    "dry": {"installed": "would-install", "updated": "would-update"},
+    "check": {"installed": "missing", "updated": "differs"},
+}.get(mode)
 new, out = text, []
 for spec in sys.argv[3:]:
     label, name, block_path = spec.split("|", 2)
@@ -100,6 +122,7 @@ PY
 }
 
 rc=0
+drift=0
 for agent in "${agents[@]}"; do
   soul="${config_dir}/agents/${agent}/workspace/SOUL.md"
   if [ ! -f "$soul" ]; then
@@ -110,10 +133,15 @@ for agent in "${agents[@]}"; do
   if verbs="$(splice "$soul")"; then
     while IFS= read -r line; do
       echo "agent '$agent': ${line% *} block ${line##* } -> $soul"
+      case "${line##* }" in missing | differs) drift=1 ;; esac
     done <<<"$verbs"
   else
     echo "agent '$agent': $soul left untouched (block marker problem above)" >&2
     rc=1
   fi
 done
+if [ "$drift" -eq 1 ]; then
+  echo "check failed: a shared persona block is missing or differs; run $(basename "$0") without --check" >&2
+  rc=1
+fi
 exit "$rc"

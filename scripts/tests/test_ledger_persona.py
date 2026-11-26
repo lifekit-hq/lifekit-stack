@@ -152,7 +152,10 @@ def test_the_shared_dev_problem_block_is_not_stale_but_a_devclaw_handoff_still_i
     source, ws
 ):
     args = installed(source, ws)
-    block = (DIR.parents[1] / "defaults/agents/shared/dev-problems.md").read_text()
+    block = "\n".join(
+        (DIR.parents[1] / f"defaults/agents/shared/{n}.md").read_text()
+        for n in ("dev-problems", "a2a-envelope", "receipts")
+    )
     (ws / "SOUL.md").write_text(
         "# Notes\n\n" + block + "\nhand build work to DevClaw\n"
     )
