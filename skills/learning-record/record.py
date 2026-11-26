@@ -19,6 +19,12 @@ the page's updatedAt, then lints the page with the vault's own
 page back exactly as it was and exits 1. It never commits: the vault's sync
 timer does (vault README, "never commit manually").
 
+Writers are serialised: `append` holds an exclusive flock on the page's
+directory from the read to the lint, so two writers (learnclaw's daily.py in
+the gateway, learn-mcp in its own container, both on the same vault mount)
+cannot interleave and lose a row. The lock is on the directory itself, so it
+leaves no lock file in the vault for the vault lint to flag.
+
 Env: LEARNING_VAULT (default ~/memory), LEARNING_PAGE (default
 domains/learning.md, relative to the vault), LEARNING_TODAY (YYYY-MM-DD,
 tests only; default the local date).
@@ -27,7 +33,9 @@ tests only; default the local date).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import fcntl
 import os
 import re
 import subprocess
@@ -239,10 +247,30 @@ def lint_findings(vault: Path, page: Path) -> list[str]:
     ]
 
 
+@contextlib.contextmanager
+def page_lock(page: Path):
+    """Hold an exclusive flock on the page's directory until the block ends.
+
+    flock is per open file description on the inode, so every container that
+    bind-mounts the vault shares it. The kernel drops it if the holder dies.
+    """
+    fd = os.open(page.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def append(args: argparse.Namespace) -> None:
     vault, page = page_path()
     if not (vault / "bin/lint.sh").is_file():
         fail(f"no vault lint at {vault / 'bin/lint.sh'}; nothing written")
+    with page_lock(page):
+        _append_locked(args, vault, page)
+
+
+def _append_locked(args: argparse.Namespace, vault: Path, page: Path) -> None:
     now = today()
     original = page.read_text()
     lines = original.splitlines()

@@ -17,7 +17,7 @@ binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 ```bash
 pre-commit run --all-files                 # THE local gate — exactly what CI's lint job runs
 python3 -m venv .venv && .venv/bin/pip install --quiet -r requirements.txt
-.venv/bin/python -m pytest compose/container-exporter/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests   # the CI tests job
+.venv/bin/python -m pytest compose/container-exporter/tests compose/learn-mcp/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests   # the CI tests job
 (cd compose/notify-relay && node --test)   # notify-relay renderer + route tests; CI runs them in node:22-trixie-slim
 bash scripts/check-doc-drift.sh            # README <-> compose service-count parity
 ```
@@ -55,7 +55,7 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
 - **Lint** = `pre-commit run --all-files`: gitleaks (secrets), hygiene hooks, yamllint,
   shellcheck, hadolint (`--failure-threshold error`), ruff + ruff-format, doc-drift.
 - **Gitleaks full-history scan** (OSS binary, pinned to the pre-commit rev).
-- **Tests**: the container-exporter, quota-share, ops-report and platform-contract pytest suites, plus the
+- **Tests**: the container-exporter, learn-mcp, quota-share, ops-report and platform-contract pytest suites, plus the
   notify-relay `node:test` suite (the memory-audit logic moved to the vault `bin/` on 2026-09-14 -
   shellcheck covers its wrapper). Owner notifications have one wire format,
   [`docs/message-format.md`](./docs/message-format.md): notify-relay is the only renderer, and

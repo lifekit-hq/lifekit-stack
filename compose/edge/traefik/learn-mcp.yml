@@ -1,0 +1,40 @@
+# Route for learn-mcp, the study coach's claude.ai connector (docs/runbook.md
+# "learn-mcp (the study coach's connector)"). Entrypoint `learn-mcp` (:18896) is
+# published on 127.0.0.1 only; Tailscale Funnel on 443 maps the public path
+# /learn-mcp to it (`--set-path=/learn-mcp http://127.0.0.1:18896/mcp`). Only
+# /mcp reaches the service: every other path is a 404 from Traefik, so /health,
+# /ready and /metrics stay on the lifekit-shared network for Prometheus and the
+# platform contract.
+#
+# No sign-in and no identity headers: claude.ai's connector presents a static
+# bearer (LEARN_MCP_TOKEN), which the service checks itself, along with the
+# client address Funnel puts in X-Forwarded-For (Anthropic's outbound ranges
+# only). The identity headers are cleared, so a caller cannot present one.
+#
+# Until the service runs, this route answers 502/503 from Traefik; nothing else
+# happens. Remove the route, the entrypoint and the port to take it away.
+---
+http:
+  routers:
+    learn-mcp:
+      entryPoints: [learn-mcp]
+      rule: >-
+        Path(`/mcp`)
+        && (Method(`POST`) || Method(`GET`) || Method(`DELETE`))
+      middlewares: [learn-mcp-no-identity]
+      service: learn-mcp
+
+  middlewares:
+    learn-mcp-no-identity:
+      headers:
+        customRequestHeaders:
+          X-Auth-Request-Email: ""
+          X-Openclaw-Scopes: ""
+
+  services:
+    learn-mcp:
+      loadBalancer:
+        servers:
+          # The service's name on lifekit-shared
+          # (compose/learn-mcp/docker-compose.yml).
+          - url: http://learn-mcp:8099

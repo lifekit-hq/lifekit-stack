@@ -1,0 +1,109 @@
+# learn-mcp compose project (`learn-mcp`): the browser study coach's claude.ai
+# custom connector over learnclaw's learning record (docs/runbook.md, "learn-mcp
+# (the study coach's connector)"). Two tools: `learning_context` (read) and
+# `record_artefact` (one row through skills/learning-record/record.py).
+#
+# OFF until its token is placed: scripts/deploy.sh brings this project up only
+# once LEARN_MCP_TOKEN is in the env file, and warns and skips otherwise (the
+# study-door precedent), so merging this file starts nothing. The token is
+# generated on the server by scripts/learn-mcp/token.sh, never typed here.
+#
+# Way in: claude.ai's connector -> Tailscale Funnel on 443, path /learn-mcp ->
+# the edge's loopback entrypoint `learn-mcp` (:18896,
+# compose/edge/traefik/learn-mcp.yml, POST/GET/DELETE on /mcp only) -> this
+# service on :8099. The service publishes no host port, so /health, /ready and
+# /metrics stay on lifekit-shared for Prometheus and the platform contract.
+#
+# The x-policy anchor is a copy of the platform file's (YAML anchors do not
+# cross files); keep the two in step.
+---
+name: learn-mcp
+
+x-policy:
+  policy: &policy
+    init: true
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: '50m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          pids: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+services:
+  learn-mcp:
+    <<: *policy
+    build:
+      context: .
+      # The repo's skills: the image carries record.py and daily.py as merged.
+      additional_contexts:
+        skills: ../../skills
+    image: learn-mcp:local
+    # Contract: ingress `edge` means reached through the edge's Traefik, with
+    # no published port. The edge routes it by file (learn-mcp.yml), not by
+    # these labels, so traefik.enable only states the intent the contract
+    # checks for.
+    labels:
+      lifekit.contract: "v1"
+      lifekit.contract.port: "8099"
+      lifekit.contract.health: /health
+      lifekit.contract.ready: /ready
+      lifekit.contract.metrics: /metrics
+      lifekit.contract.ingress: edge
+      traefik.enable: "true"
+    # lifekit-shared: the edge's Traefik finds the service there by name
+    # (learn-mcp:8099), and so does Prometheus. Nothing else is reached.
+    networks:
+      - default
+      - lifekit-shared
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          pids: 128
+    environment:
+      LEARN_MCP_PORT: "8099"
+      # The bearer, by name only; the value comes from the env file.
+      LEARN_MCP_TOKEN: ${LEARN_MCP_TOKEN:-}
+      # Anthropic's published outbound ranges: a request through the Funnel
+      # from anywhere else gets 403 before the bearer is checked.
+      LEARN_MCP_ALLOW_CIDRS: ${LEARN_MCP_ALLOW_CIDRS:-160.79.104.0/21,153.61.208.0/20}
+      LEARN_MCP_RATE_PER_MIN: ${LEARN_MCP_RATE_PER_MIN:-60}
+      LEARNING_VAULT: /vault
+      LEARN_MCP_MIRROR: /mirror
+      # The date the record and the daily problem use (daily.py: Europe/Dublin).
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      # The vault, read-write: record.py writes the learning page and its lint
+      # reads the rest. The vault's sync timer commits; this service never does.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/vault
+      # The LearnHarness mirror (scripts/learnharness-sync/), read-only.
+      - ${LEARNHARNESS_MIRROR_DIR:-/var/lib/lifekit/learnharness/data}:/mirror:ro
+    expose:
+      - "8099"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=4).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  default: {}
+  lifekit-shared:
+    external: true

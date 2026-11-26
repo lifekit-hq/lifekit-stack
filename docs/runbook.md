@@ -5546,6 +5546,8 @@ this before the change merged.
 | | anything else | 404 | - |
 | `study-door`, `127.0.0.1:18895` (published on loopback only; Serve's `:8098`) | `POST` or `OPTIONS` `/v1/turn` | the study door (not the gateway) | - (the door checks its own bearer and Origin) |
 | | any other method or path | 404 | - |
+| `learn-mcp`, `127.0.0.1:18896` (published on loopback only; Funnel's 443 `/learn-mcp`) | `POST`, `GET` or `DELETE` `/mcp` | learn-mcp (not the gateway) | no identity (any client-sent copy is removed); learn-mcp checks its own bearer and Anthropic's ranges against `X-Forwarded-For`, which this entrypoint keeps |
+| | any other method or path | 404 | - |
 | `openclaw-hook`, `127.0.0.1:18894` (published on loopback only) | `POST <hook path>/firstmate-reply` | the gateway | no identity (any client-sent copy is removed); the hook token, checked by the gateway |
 | | any other method or path | 404 | - |
 
@@ -6317,6 +6319,122 @@ the page text, and the spike that proves it can read a problem page on the
 owner's PC is a separate piece. The door's rejects are visible only as the
 `study_door_events_total{kind="reject"}` counter and the audit spool; there is
 no alert on them yet.
+
+## learn-mcp (the study coach's connector)
+
+learn-mcp is a claude.ai custom connector (an MCP server, streamable HTTP, the
+official MCP Python SDK) over learnclaw's learning record. The browser study
+coach in claude.ai uses it to read today's problem and the owner's gaps, and to
+save a row when the owner says so. It is the one public path on the box, and it
+has exactly two tools:
+
+- **`learning_context`** (read only). It returns today's offered `leetcode:`
+  row, or on Tue/Thu/Sun "no problem today" with the next pick. It also returns
+  the open problems, the week line from `daily.py week`, the last few rows, the
+  learning page's In-progress lines, and the newest gaps from the LearnHarness
+  mirror (wrong, don't-know, skipped or low-confidence answers, and skipped
+  practice problems) with the mirror's newest session date. The mirror is
+  mounted read-only.
+- **`record_artefact`** (append). It runs `skills/learning-record/record.py
+  append` for today's date and nothing else. That is the same writer learnclaw
+  uses, under the same directory lock (`daily.py` calls it in-process), so two
+  writers never lose a row, and a row the vault lint refuses is rolled back.
+
+There is no other tool, no exec, and no path argument. The service
+(`compose/learn-mcp/`, compose project `learn-mcp`, container
+`learn-mcp-learn-mcp-1`, port 8099) mounts the vault read-write, because
+record.py's lint needs git and the whole vault.
+
+Path: claude.ai → `https://<host>.<tailnet>.ts.net/learn-mcp` (Funnel on 443,
+path `/learn-mcp`; Serve strips the prefix and sets `X-Forwarded-For` to the
+client) → edge entrypoint `learn-mcp`, `127.0.0.1:18896`
+(`compose/edge/traefik/learn-mcp.yml`, `POST`/`GET`/`DELETE` on `/mcp` only;
+it keeps Funnel's `X-Forwarded-For`) → the service. The service then checks
+these in order, before any tool runs:
+
+1. a forwarded client outside `LEARN_MCP_ALLOW_CIDRS` (default: Anthropic's
+   published outbound ranges `160.79.104.0/21,153.61.208.0/20`) gets 403;
+2. a request without the exact `Authorization: Bearer <LEARN_MCP_TOKEN>`
+   (constant-time compare) gets 401;
+3. more than `LEARN_MCP_RATE_PER_MIN` (60) requests a minute gets 429;
+4. a body over 64 KiB gets 413.
+
+`/health`, `/ready` and `/metrics` answer only unforwarded (in-network)
+callers; through the edge they are a 404. The access log is one JSON line per
+request: time, source IP, method, status, and the JSON-RPC method and tool
+name. Arguments and the token are never logged.
+
+**Off until the token exists.** Merging changes nothing for the service:
+`deploy.sh` brings the project up only once `LEARN_MCP_TOKEN` is non-empty in
+the rendered env file, and warns and skips otherwise. Its Prometheus targets
+file follows the study door's rule. The edge's entrypoint goes live on the
+merge deploy and answers 502 while the service is off. The deploy's sign-in
+gate report (`scripts/deploy-edge.sh check`) lists every public Funnel path. It
+goes red on anything except 443 `/` and 443 `/learn-mcp` →
+`http://127.0.0.1:18896/mcp`.
+
+**Apply (once, on the server).**
+
+1. Generate the token, from the admin account's own clone of this repo (not
+   `/srv/lifekit-stack`), with an operator age key:
+
+   ```bash
+   bash scripts/learn-mcp/token.sh
+   ```
+
+   It writes the token once to the owner-only file
+   `~/.config/lifekit/learn-mcp.token` (mode 0600). It hands the token on stdin
+   to `scripts/set-secret.sh master LEARN_MCP_TOKEN`, which opens the secrets
+   PR with auto-merge, and prints the token nowhere.
+2. After that PR merges, render the env and redeploy:
+   `sudo bash scripts/secrets/render-stack-env.sh`, then re-run the CI deploy.
+   Then `docker compose -p learn-mcp ps` should show the service healthy.
+3. Publish the path on the existing 443 Funnel (Funnel stays on for 443; this
+   adds one path):
+
+   ```bash
+   sudo tailscale serve --bg --https=443 --set-path=/learn-mcp http://127.0.0.1:18896/mcp
+   tailscale serve status        # 443: / and /learn-mcp, "(Funnel on)"
+   ```
+
+**Connect claude.ai (owner).** Settings → Connectors → add a custom connector:
+
+- URL: `https://<host>.<tailnet>.ts.net/learn-mcp`
+- request header: `Authorization: Bearer <the value in
+  ~/.config/lifekit/learn-mcp.token>`. Copy it from the file; do not paste it
+  anywhere else.
+- per-tool permissions: `learning_context` always allowed, `record_artefact`
+  ask every time. A save is then always the owner's call.
+
+**Verify.**
+
+```bash
+# No token, through the public path: 401, or 403 from outside Anthropic's ranges.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<host>.<tailnet>.ts.net/learn-mcp
+# The tools, from inside the container (its own token, no output of it):
+docker exec learn-mcp-learn-mcp-1 python -c 'import json,os,urllib.request as u; r=u.Request("http://127.0.0.1:8099/mcp", json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/list"}).encode(), {"Authorization":"Bearer "+os.environ["LEARN_MCP_TOKEN"],"Content-Type":"application/json","Accept":"application/json, text/event-stream"}); print([t["name"] for t in json.load(u.urlopen(r))["result"]["tools"]])'
+# ['learning_context', 'record_artefact']
+docker logs learn-mcp-learn-mcp-1 --tail 5    # src of claude.ai's calls is in 160.79.104.0/21 or 153.61.208.0/20
+```
+
+End to end, from the coach: in a claude.ai chat with the connector on, ask
+for today's problem; `learning_context` answers. Approve one save; the row
+appears in `domains/learning.md`, and a second `learning_context` shows it under
+the recent rows. After the vault sync the row is on the vault's `main`.
+
+**Rotate.** Run `bash scripts/learn-mcp/token.sh` again, then the render and
+redeploy, then paste the new file value into the connector's header. The old
+value stops working when the service is recreated.
+
+**Pause.** `sudo tailscale serve --https=443 --set-path=/learn-mcp off`. The
+path stops being public and the rest of 443 is untouched. To also stop the
+service, use `docker compose -p learn-mcp down`. The next deploy brings it back
+while the token is set.
+
+**Retire.** Pause as above. Empty `LEARN_MCP_TOKEN` in the master file
+(`scripts/secrets/edit.sh master`), render, and redeploy (the deploy then skips
+the project), then remove the connector in claude.ai. The rows it saved stay:
+they are the owner's record.
 
 ## Ledger persona from finance-sentry
 

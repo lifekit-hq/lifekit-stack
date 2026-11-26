@@ -16,13 +16,14 @@ from pathlib import Path
 import pytest
 
 COMPOSE = Path(__file__).resolve().parents[2] / "compose"
-# The platform, openclaw, identity, edge and study-door projects, each from its own directory.
+# The platform, openclaw, identity, edge, study-door and learn-mcp projects, each from its own directory.
 COMPOSE_DIRS = [
     COMPOSE,
     COMPOSE / "openclaw",
     COMPOSE / "identity",
     COMPOSE / "edge",
     COMPOSE / "study-door",
+    COMPOSE / "learn-mcp",
 ]
 
 pytestmark = pytest.mark.skipif(

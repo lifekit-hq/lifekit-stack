@@ -103,6 +103,12 @@ services:
       # to the study-door service only (traefik/study-door.yml). The door
       # checks its own bearer; nothing is trusted from the caller's headers.
       - --entrypoints.study-door.address=:18895
+      # learn-mcp's way in: loopback-published, /mcp only, to the learn-mcp
+      # service (traefik/learn-mcp.yml). Tailscale Funnel's 443 path
+      # /learn-mcp is its only caller. The service checks its own bearer and
+      # the client address Funnel sets in X-Forwarded-For, so that header is
+      # kept (forwardedHeaders.insecure below).
+      - --entrypoints.learn-mcp.address=:18896
       # Tailscale Serve terminates HTTPS and sends X-Forwarded-Proto/-Host;
       # oauth2-proxy builds its callback URL from them. These ports bind only
       # to loopback, so only Serve (or a local process) can send them. The
@@ -111,6 +117,7 @@ services:
       - --entrypoints.dashboard.forwardedHeaders.insecure=true
       - --entrypoints.devclaw.forwardedHeaders.insecure=true
       - --entrypoints.openclaw.forwardedHeaders.insecure=true
+      - --entrypoints.learn-mcp.forwardedHeaders.insecure=true
       # Drop headers whose names alias the ones Traefik and oauth2-proxy set
       # (X_Forwarded_User for X-Forwarded-User), so a client cannot spoof them.
       - --entrypoints.dashboard.http.aliasHeadersStrategy=delete
@@ -119,6 +126,7 @@ services:
       - --entrypoints.openclaw-internal.http.aliasHeadersStrategy=delete
       - --entrypoints.openclaw-hook.http.aliasHeadersStrategy=delete
       - --entrypoints.study-door.http.aliasHeadersStrategy=delete
+      - --entrypoints.learn-mcp.http.aliasHeadersStrategy=delete
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
       # Prometheus metrics on a dedicated entrypoint (Traefik serves them
@@ -159,6 +167,7 @@ services:
       - "127.0.0.1:18892:18892"
       - "127.0.0.1:18894:18894"
       - "127.0.0.1:18895:18895"
+      - "127.0.0.1:18896:18896"
     volumes:
       # A directory, not the file: git replaces the file on deploy, and a
       # single-file bind mount would keep the old inode.

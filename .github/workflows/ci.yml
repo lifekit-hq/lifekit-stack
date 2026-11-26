@@ -41,7 +41,9 @@ jobs:
     uses: lifekit-hq/.github/.github/workflows/python-ci.yml@v1
     with:
       install: "-r requirements.txt"
-      run: "python -m pytest -q compose/container-exporter/tests scripts/quota-share/tests scripts/ops-report/tests scripts/tests"
+      run: >-
+        python -m pytest -q compose/container-exporter/tests compose/learn-mcp/tests
+        scripts/quota-share/tests scripts/ops-report/tests scripts/tests
       runner: '"ubuntu-latest"'
 
   notify-relay-tests:

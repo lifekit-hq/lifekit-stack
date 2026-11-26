@@ -304,6 +304,8 @@ fi
 wger_compose config --format json | python3 "${REPO_DIR}/scripts/check-wger-compose.py" "${WGER_CHECK_ARGS[@]}" -
 study_door_compose config --format json \
   | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
+learn_mcp_compose config --format json \
+  | python3 "${REPO_DIR}/scripts/platform-contract.py" --static -
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -491,6 +493,26 @@ else
   fail_later "study-door: project ${STUDY_DOOR_PROJECT} did not come up healthy (study_door_compose ps / logs study-door)"
 fi
 
+# ─── learn-mcp: compose project `learn-mcp`, up -d ──────────────────────────
+#
+# The study coach's claude.ai connector (compose/learn-mcp/, docs/runbook.md
+# "learn-mcp (the study coach's connector)"). Skipped with a warning until
+# LEARN_MCP_TOKEN is rendered into the env file, so merging its files starts
+# nothing; its targets file follows the study door's rule. Generating the
+# token and publishing the Funnel path are operator steps in the runbook; the
+# deploy never runs them. The edge check below reports what Funnel serves.
+say "learn-mcp (compose project ${LEARN_MCP_PROJECT})"
+if ! grep -qE '^[[:space:]]*LEARN_MCP_TOKEN=["'"'"']?[^"'"'"'[:space:]]' "${ENV_FILE}"; then
+  warn "learn-mcp: LEARN_MCP_TOKEN is not in ${ENV_FILE}; project ${LEARN_MCP_PROJECT} not brought up (docs/runbook.md \"learn-mcp (the study coach's connector)\")"
+  rm -f "${LEARN_MCP_TARGETS_FILE}"
+elif learn_mcp_compose up -d --build --wait --wait-timeout 120; then
+  printf '[{"targets": ["learn-mcp:8099"]}]\n' >"${LEARN_MCP_TARGETS_FILE}"
+  chmod 644 "${LEARN_MCP_TARGETS_FILE}"
+else
+  rm -f "${LEARN_MCP_TARGETS_FILE}"
+  fail_later "learn-mcp: project ${LEARN_MCP_PROJECT} did not come up healthy (learn_mcp_compose ps / logs learn-mcp)"
+fi
+
 # ─── OpenClaw: move out of the platform project (once), up -d ───────────────
 #
 # scripts/deploy-openclaw.sh, phase `up`. OpenClaw is its own compose project
@@ -604,7 +626,8 @@ STACK_PROJECT="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" co
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')"
 python3 "${REPO_DIR}/scripts/platform-contract.py" --enforce "${STACK_PROJECT}" --enforce "${OPENCLAW_PROJECT}" \
   --enforce "${IDENTITY_PROJECT}" --enforce "${EDGE_PROJECT}" --enforce "${STUDY_DOOR_PROJECT}" \
-  || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT}, ${IDENTITY_PROJECT}, ${EDGE_PROJECT} or ${STUDY_DOOR_PROJECT} containers fail it (table above)"
+  --enforce "${LEARN_MCP_PROJECT}" \
+  || fail_later "platform contract: ${STACK_PROJECT}, ${OPENCLAW_PROJECT}, ${IDENTITY_PROJECT}, ${EDGE_PROJECT}, ${STUDY_DOOR_PROJECT} or ${LEARN_MCP_PROJECT} containers fail it (table above)"
 
 # ─── Ledger persona: install the pinned finance-sentry persona, then check ──
 #
