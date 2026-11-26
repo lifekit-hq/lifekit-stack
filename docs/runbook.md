@@ -4368,6 +4368,14 @@ checkout does not have). A manifest it cannot read leaves the previous file and 
 The fleet page shows a component behind for more than 24 hours as an `installed` stalled source
 ("Fleet publisher", above).
 
+Both halves need the `lifekit` group: `/srv/lifekit-stack` and `/var/lib/lifekit` are
+`lifekit:lifekit 0750`, so the account the release gauge runs as (the admin account) must be in
+the `lifekit` group to read the checkout, or the drift read must run as `lifekit`; an installer
+run without sudo (e.g. `install-yt-tunnel.sh`) needs the same group membership to write
+`/var/lib/lifekit/installed`. Bootstrap does not add it; both fail with an error naming it.
+The manifest lists only what each installer renders or copies onto the host, never code a unit
+runs straight from the checkout, which goes live with the deploy.
+
 A new component is a line in `components.txt` and the stamp call in its installer;
 `scripts/tests/test_release_gauge.py` fails when an installer stamps a name the file does not
 list. To clear a behind component, run its installer (its section here names it); to see them:

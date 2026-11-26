@@ -70,7 +70,7 @@ installed_drift() {
   local out="$1" manifest component paths_line commit since stamp line
   local -a paths
   manifest="$(stack_git show "$STACK_REF:$MANIFEST")" || {
-    echo "lifekit-release-gauge: cannot read $MANIFEST at $STACK_REF in $STACK_REPO" >&2
+    echo "lifekit-release-gauge: cannot read $MANIFEST at $STACK_REF in $STACK_REPO as $(id -un); the account must be in the lifekit group (or run the drift read as lifekit)" >&2
     return 1
   }
   local behind="" sinces=""

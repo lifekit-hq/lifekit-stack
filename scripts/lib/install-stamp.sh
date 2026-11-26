@@ -47,9 +47,15 @@ if [[ ! -d "$dir" ]]; then
     install -d -o lifekit -g lifekit -m 2775 "$dir"
   else
     install -d -m 2775 "$dir"
-  fi
+  fi || {
+    echo "install stamp: cannot create $dir as $(id -un); the account must be in the lifekit group (or run the installer with sudo); $component is not stamped" >&2
+    exit 1
+  }
 fi
-tmp="$(mktemp "$dir/.${component}.XXXXXX")"
+tmp="$(mktemp "$dir/.${component}.XXXXXX")" || {
+  echo "install stamp: cannot write in $dir as $(id -un); the account must be in the lifekit group (or run the installer with sudo); $component is not stamped" >&2
+  exit 1
+}
 trap 'rm -f "$tmp"' EXIT
 printf '{"commit": "%s", "at": "%s"}\n' "$commit" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
 chmod 644 "$tmp"

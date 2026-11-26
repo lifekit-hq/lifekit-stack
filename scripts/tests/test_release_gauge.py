@@ -445,6 +445,26 @@ def test_the_stamp_refuses_a_bad_component_name(tmp_path, name):
     assert not list(tmp_path.iterdir())
 
 
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through 0550")
+@pytest.mark.parametrize("existing", [False, True])
+def test_a_stamp_dir_the_account_cannot_write_names_the_lifekit_group(
+    tmp_path, existing
+):
+    parent = tmp_path / "lifekit"
+    stamps = parent / "installed"
+    stamps.mkdir(parents=True)
+    if not existing:
+        stamps.rmdir()
+    (stamps if existing else parent).chmod(0o550)
+    try:
+        proc = run_stamp(tmp_path, "scout", LIFEKIT_INSTALLED_DIR=str(stamps))
+    finally:
+        (stamps if existing else parent).chmod(0o750)
+    assert proc.returncode == 1
+    assert "lifekit group" in proc.stderr and "scout is not stamped" in proc.stderr
+    assert not (stamps / "scout").exists()
+
 def run_fleet_installer(tmp_path, systemctl_exit):
     fake = tmp_path / "systemctl"
     fake.write_text(f"#!/usr/bin/env bash\nexit {systemctl_exit}\n")

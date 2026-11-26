@@ -83,6 +83,7 @@ b34f020e9cca38950548c9e21e8cdf86df35d781154bcf2942fe3e323553d926  learnharness/r
 fb4abe3f3e99133a9f5a6e28a0733437d1ec37b5e92ba8413102911145cd2883  learnharness/scripts/_data.py
 95d05acebef77764a215439a95b39b1bc0a81d2595c67349d90053e548e236ed  learnharness/scripts/graph.py
 864368dfde5a8c7550ebf80ec77671d9f159f80c0859b248cce20fe799b95dc7  learnharness/scripts/sessions.py"
+lh_failed=0
 if [ -f "$lh_dest/.commit" ] && [ "$(cat "$lh_dest/.commit")" = "$LH_SKILL_COMMIT" ]; then
   echo "learnharness skill at ${LH_SKILL_COMMIT:0:12} -> $lh_dest"
 else
@@ -99,6 +100,7 @@ else
     echo "learnharness skill installed at ${LH_SKILL_COMMIT:0:12} -> $lh_dest"
   else
     echo "learnharness skill NOT installed: fetch or checksum failed for ${LH_SKILL_COMMIT:0:12}; the installed copy (if any) is kept"
+    lh_failed=1
   fi
 fi
 
@@ -128,4 +130,4 @@ esac
 done
 
 # Record the installed commit (issue 689; the release gauge reads it).
-bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" learnclaw
+[ "$lh_failed" = 1 ] || bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" learnclaw

@@ -99,7 +99,7 @@ job_id="$(field id)"
 if [ "$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["changed"])')" != "True" ]; then
   cron_check_agrees "$JOB_NAME" "$job_id"
   echo "'$JOB_NAME' ($job_id) already reads the solved count from learnclaw; unchanged"
-  bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" goal-checkin-solved
+  [ "${DRY_RUN:-0}" = 1 ] || bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" goal-checkin-solved
   exit 0
 fi
 if [ "$CRON_CHECK" = 1 ]; then

@@ -218,4 +218,4 @@ else
 fi
 
 # Record the installed commit (issue 689; the release gauge reads it).
-bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" memory-vault-cleanup
+[ -z "$job_id" ] || bash "$(dirname "${BASH_SOURCE[0]}")/lib/install-stamp.sh" memory-vault-cleanup
