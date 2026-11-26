@@ -223,6 +223,34 @@ def test_home_and_tilde_rows_normalise_through_the_known_homes():
     )
 
 
+def test_without_known_homes_tilde_and_home_rows_never_cover_the_service_homes(
+    tmp_path,
+):
+    repo = make_repo(tmp_path)
+    (repo / "compose/gateway").mkdir(parents=True)
+    (repo / "compose/gateway/docker-compose.yml").write_text(
+        "services:\n  gw:\n    image: example/gw:1\n    volumes:\n"
+        "      - /home/lifekit/.claude:/home/node/.claude\n"
+    )
+    admin_rows = ROWS + [
+        "| sessions | `~/.claude` | jsonl | Claude Code | quota-share | private | example |"
+    ]
+    result = run_gate(repo, map_with(admin_rows), tmp_path)
+    assert result.returncode == 1, result.stdout
+    assert "FAIL no Data flow row: bind:/home/lifekit/.claude" in result.stdout
+
+    own_row = "| gw-claude | `/home/lifekit/.claude` | json | gw | gw | private | example |"
+    result = run_gate(repo, map_with(admin_rows + [own_row]), tmp_path)
+    assert result.returncode == 0, result.stdout
+
+    ctx = df.Context()
+    home = df.make_row("status", "`<home>/state`", 1)
+    assert not df.store_matches_row(
+        df.Store("bind", "/home/lifekit/fleet/state"), home, ctx
+    )
+    assert df.store_matches_row(df.Store("bind", "/home/admin/fleet/state"), home, ctx)
+
+
 def test_container_paths_normalise_through_the_mount_table():
     ctx = df.Context(
         mounts=[df.Mount("/var/lib/lifekit", "/home/node/.life-state", "bind")]

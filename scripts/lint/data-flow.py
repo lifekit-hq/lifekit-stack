@@ -71,6 +71,7 @@ VAULT_URL = os.environ.get(
 )
 MAP_PATH = "system/system-map.md"
 DEPLOY_ROOT = "/srv/lifekit-stack"  # where relative compose binds resolve on the host
+SERVICE_HOMES = ("/home/lifekit", "/root")  # never what `~` or `<home>` stands for
 DOCKER = os.environ.get("DOCKER", "docker")
 SYSTEMCTL = os.environ.get("SYSTEMCTL", "systemctl")
 CMD_TIMEOUT = 30
@@ -278,6 +279,16 @@ def expand_pattern(p: str, homes: list[str], fm_homes: list[str]) -> list[str]:
     return []
 
 
+def glob_reaches(path: str, pattern: str) -> bool:
+    """fnmatch, except a wildcard never reaches into a service account's home."""
+    if not fnmatch.fnmatch(path, pattern):
+        return False
+    prefix = literal_prefix(pattern)
+    return not any(
+        _under(path, (h,)) and not _under(prefix, (h,)) for h in SERVICE_HOMES
+    )
+
+
 def literal_prefix(pattern: str) -> str:
     """The directory part of a glob before its first wildcard."""
     idx = min([pattern.find(c) for c in "*?[" if c in pattern] or [len(pattern)])
@@ -334,7 +345,7 @@ def store_matches_row(store: Store, row: Row, ctx: Context) -> bool:
         return False
     for g in row_globs(row, ctx):
         for anc in _ancestors(store.path):
-            if fnmatch.fnmatch(anc, g):
+            if glob_reaches(anc, g):
                 return True  # equal, or the store sits under the row's path
         prefix = literal_prefix(g)
         if prefix.startswith(store.path.rstrip("/") + "/") or (
@@ -351,7 +362,7 @@ def unmatched(stores: list[Store], rows: list[Row], ctx: Context) -> list[Store]
 def _exists(pattern: str) -> bool | None:
     """True/False, or None when the host cannot tell (an unreadable parent)."""
     if any(c in pattern for c in "*?["):
-        if glob.glob(pattern):
+        if any(glob_reaches(p, pattern) for p in glob.glob(pattern)):
             return True
         base = literal_prefix(pattern)
     else:
