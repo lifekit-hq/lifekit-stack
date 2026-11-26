@@ -129,7 +129,7 @@ the stamp's critical path. Order and cadence of a run:
 | scheduled work, gateway side (`scheduled.py gateway`) | every `FLEET_SCHEDULED_EVERY` s (default 300) | `scheduled-gateway.json` in the state directory, joined into `scheduled` from the next run | 11 s |
 
 - **The stamp comes first.** `fleet.prom` (`fleet_summary_generated_timestamp_seconds`,
-  `fleet_publisher_last_success_timestamp_seconds`) is replaced before either slow
+  `fleet_publisher_last_success_timestamp_seconds`) is replaced before any slow
   helper starts, so a slow helper never delays it.
 - **A section that is not due leaves its previous output as it was.** Cadence stamps
   are the files `cadence-<section>` in the publisher's state directory, kept on the
@@ -160,7 +160,7 @@ as `lifekit-fleet-scheduled.py`), sorted timers, cron rows, intents, then name:
 | --- | --- |
 | `kind` | `timer` (a `scripts/**/*.timer` unit), `cron` (an OpenClaw cron row) or `intent` (a standing intent) |
 | `name` | The timer unit, the cron row's name, or the intent's description (whitespace folded, 120 characters at most) |
-| `owner`, `owner_kind` | The service the timer starts (`unit`), or the agent id of the cron row or intent (`agent`; Ledger is `finance`); `null` for a missing row |
+| `owner`, `owner_kind` | The service the timer starts (`unit`), or the agent id of the cron row or intent (`agent`; Ledger is `finance`); `null` for a missing cron row |
 | `schedule` | The timer's `On*=` keys joined with `; `; `cron <expr> (<tz>)`, `every <n><unit>` or `at <iso>` for a cron row; `when: <trigger keywords>` for an intent |
 | `next_run_epoch`, `last_run_epoch` | From `systemctl list-timers` or the cron row's state; an intent's last run is its last firing and it has no next run; `null` when unknown |
 | `last_result` | The service's systemd `Result` (`running` while it runs), the cron row's last run status, or the intent's status (`pending`, `armed`, `fired`) |

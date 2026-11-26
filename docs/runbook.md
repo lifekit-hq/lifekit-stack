@@ -3746,10 +3746,11 @@ keeps the previous feed and turns *host systemd unit is down or failed* red.
 
 **Cadence under load.** Every run reads the homes, rebuilds `status_page`, and
 replaces the summary and `fleet.prom` (the freshness stamp) first; the daily
-metrics, quota and taken feed follow. The two slow helpers run after that, on a
+metrics, quota and taken feed follow. The three slow helpers run after that, on a
 slower cadence: the screen changes feed (`gh`) every 5 minutes
-(`FLEET_SCREENS_EVERY`, default 300 s) and the activity journal every 15 minutes
-(`FLEET_JOURNAL_EVERY`, default 900 s), and neither starts once the run is two
+(`FLEET_SCREENS_EVERY`, default 300 s), the activity journal every 15 minutes
+(`FLEET_JOURNAL_EVERY`, default 900 s) and the gateway read behind `scheduled`
+every 5 minutes (`FLEET_SCHEDULED_EVERY`, default 300 s), and none starts once the run is two
 minutes old (`FLEET_SLOW_BUDGET`, default 120 s; it stays due for the next run). A
 section that is not due leaves its previous file in place; the cadence stamps are
 `cadence-<section>` in the publisher's state directory. Each run puts its
@@ -3759,7 +3760,7 @@ run that dies before replacing `fleet.prom` still rewrites its freshness gauges
 from each home's own summary. Read how a run spent its time from the unit's
 journal (`journalctl -u lifekit-fleet-publisher.service -n 5`): the last line of a
 run is `fleet-publisher: timings_ms total=... homes=... status_page=... screens=...
-journal=...` with `skipped=` naming sections the cadence or budget skipped. The
+journal=... scheduled=...` with `skipped=` naming sections the cadence or budget skipped. The
 per-section table is in `scripts/fleet-publisher/README.md` "Run cadence and what a
 loaded host does". The 15 minute alert threshold is unchanged.
 
