@@ -1069,8 +1069,9 @@ if ! run_slow journal "$JOURNAL_EVERY"; then
   ((rc != 0)) || rc=1
 fi
 # The gateway side of scheduled: `scheduled.py gateway` reads the cron rows and
-# Kit's and Ledger's active standing intents (names, owners, schedules, times
-# and results only) into STATE_DIR/scheduled-gateway.json, which the next
+# Kit's and Ledger's active and recently expired standing intents (names,
+# owners, schedules, times and results only) into
+# STATE_DIR/scheduled-gateway.json, which the next
 # run's summary joins. A read that fails keeps that part of the previous cache
 # and is logged; it never fails the run.
 refresh_scheduled_gateway() {

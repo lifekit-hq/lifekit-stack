@@ -20,7 +20,7 @@ added or, with more than one home, aggregated. The fleet homes are only ever rea
 | --- | --- | --- |
 | top | `published_epoch` | Publish time |
 | top | `status_page` | The living status page's sections (schema `fleet-status-page.v1`, below), or `null` when they could not be built |
-| top | `scheduled` | The fleet's scheduled work as one list: every repo timer, every OpenClaw cron row, and Kit's and Ledger's active standing intents (below, "Scheduled work"); `[]` when it cannot be built |
+| top | `scheduled` | The fleet's scheduled work as one list: every repo timer, every OpenClaw cron row, and Kit's and Ledger's standing intents, active or recently expired (below, "Scheduled work"); `[]` when it cannot be built |
 | top | `homes[]` | One entry per home, in `FM_HOMES` order: `id`, `path`, `published`, `valid`, `reason`, and for a published home its `schema`, `generated_epoch`, `state`, `counts`, `invalidity` |
 | every item of every top-level list | `home_id` | The id of the home the item came from (`active_children`, `decisions_open`, `holds`, `queued`, `landed`, `endpoints`, `omitted`) |
 | `homes[]` | `invalidity` | The home summary's own `invalidity` (`{kind, ids}`: why `valid` is false, e.g. kind `terminal_in_flight` for finished work still waiting on validation or merge), passed through as-is; `null` when the summary has none |
