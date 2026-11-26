@@ -21,13 +21,13 @@ alert-inbox scripts/alert-inbox/install-alert-inbox.sh scripts/alert-inbox/alert
 claude-home scripts/claude-home defaults/claude-home
 config-sync scripts/sync/install-config-sync.sh scripts/sync/openclaw-config-sync.service scripts/sync/openclaw-config-sync.sh scripts/sync/openclaw-config-sync.timer
 docker-weekly-prune scripts/docker-weekly-prune
-fleet-publisher scripts/fleet-publisher/install-fleet-publisher.sh scripts/fleet-publisher/fleet-publisher.sh scripts/fleet-publisher/fleet_status.py scripts/fleet-publisher/fleet-stalled.json scripts/fleet-publisher/fleet-decisions.json scripts/fleet-publisher/taken_feed.py scripts/fleet-publisher/screen_changes.py scripts/fleet-publisher/activity_journal.py scripts/fleet-publisher/lifekit-fleet-publisher.service scripts/fleet-publisher/lifekit-fleet-publisher.timer
+fleet-publisher scripts/fleet-publisher/install-fleet-publisher.sh scripts/fleet-publisher/fleet-publisher.sh scripts/fleet-publisher/fleet_status.py scripts/fleet-publisher/fleet-stalled.json scripts/fleet-publisher/fleet-decisions.json scripts/fleet-publisher/taken_feed.py scripts/fleet-publisher/screen_changes.py scripts/fleet-publisher/activity_journal.py scripts/fleet-publisher/scheduled.py scripts/fleet-publisher/lifekit-fleet-publisher.service scripts/fleet-publisher/lifekit-fleet-publisher.timer
 host-gauges scripts/host-gauge scripts/tmp-gauge scripts/unit-gauge scripts/release-gauge/lifekit-release-gauge.sh scripts/release-gauge/lifekit-release-gauge.service scripts/release-gauge/lifekit-release-gauge.timer scripts/ledger-drift scripts/openclaw-auth/lifekit-openclaw-spend-guard.sh scripts/openclaw-auth/lifekit-openclaw-spend-guard.service scripts/openclaw-auth/lifekit-openclaw-spend-guard.timer
 identity-backup scripts/identity-backup
 idle-lanes scripts/ensure-idle-lanes.sh scripts/idle-lanes
 intake-shape scripts/intake-shape
 intake-to-vault scripts/intake-to-vault/install-intake-to-vault.sh scripts/intake-to-vault/intake_to_vault.py scripts/intake-to-vault/lifekit-intake-to-vault.service scripts/intake-to-vault/lifekit-intake-to-vault.timer
-kit-relay scripts/kit-relay
+kit-relay scripts/kit-relay scripts/kit-held/kit_held.py scripts/intake-shape/intake_shape.py
 learnharness-sync scripts/learnharness-sync
 ledger-persona-check scripts/ledger-persona/install-ledger-persona-check.sh scripts/ledger-persona/lifekit-ledger-persona-check.service scripts/ledger-persona/lifekit-ledger-persona-check.timer
 media-prune scripts/media-prune
