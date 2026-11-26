@@ -11,7 +11,11 @@
     jobq.py drop <id>   remove one job
     jobq.py enqueue <kind> <key> ...  queue a job from a script, print its receipt
     jobq.py status <id> the receipt of one job, as it stands now
-    jobq.py runner <id> the run itself, started by `next`, never by hand
+    jobq.py runner <id> the run itself, started by the launcher (or `next`),
+                        never by hand
+    jobq.py launcher    the long-lived process that starts runs, run by the
+                        gateway's entrypoint, never by hand
+    jobq.py launcher-status  whether a launcher is running
 
 Some fetches cannot leave from this server (Instagram and YouTube refuse its
 IP), so they go out through an egress: today the owner's PC, reached by the
@@ -43,13 +47,22 @@ Jobs are JSON files in a private directory (JOBQ_DIR, default
 second add of the same key while it waits is "already queued". A job is
 queued -> running -> done | failed; a run counts an attempt, and after
 JOBQ_MAX_ATTEMPTS (default 3) failures it is failed, which the handler
-reports to the owner once. The run is a detached runner process (its own
-session, so it outlives the gate's command), bounded by JOBQ_RUN_MINUTES
-(default 90); its output waits in <id>.out (0600) until a turn reads it. A
+reports to the owner once. The run is a detached runner process, bounded by
+JOBQ_RUN_MINUTES (default 90); its output waits in <id>.out (0600) until a
+turn reads it. The gate's command cannot start it: the exec tool runs each
+command under a child-subreaper anchor that, when the command ends, kills
+every process the command left behind, however detached (OpenClaw 2026.11.9;
+lifekit-stack#676). So `next` only claims the job and asks the launcher, a
+long-lived `jobq.py launcher` the gateway's entrypoint starts outside every
+exec, to start the runner; with no launcher running (a host, a test) `next`
+starts it itself. A runner records how far it got as it goes (run.stage,
+run.alive_at), and however it ends, its signal, stage and run time, so a run
+killed outright still names the stage it reached and how long it lived. A
 running job nobody will report back for is taken up again at once when its
 runner died (a gateway restart) or its handler ended leaving nothing for a
-turn, and JOBQ_LEASE_MINUTES (default 30) after a turn read its output without
-finishing it. The queue gives up on its own, and the gate hands kit a
+turn, LAUNCH_GRACE seconds after `next` asked for a runner no launcher
+started, and JOBQ_LEASE_MINUTES (default 30) after a turn read its output
+without finishing it. The queue gives up on its own, and the gate hands kit a
 one-line report for the owner instead of the output, when a job used up its
 attempts that way, or when OFFER_LIMIT drain turns in a row were handed its
 output and none read it, so no job loops or ends unreported.
@@ -102,6 +115,10 @@ HOST = re.compile(r"[A-Za-z0-9.-]{1,253}")
 
 QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
 LOCK = ".lock"
+LAUNCHER = ".launcher"  # the running launcher's {pid, start}
+LAUNCH_GRACE = 120  # seconds a launcher has to start a requested runner
+BEAT = 60  # seconds between a runner's signs of life (run.alive_at)
+LAUNCHER_POLL = 1.0
 NO_REPLY = "NO_REPLY"
 # The envelope every door accepts (build-standards, "Envelope and receipt at
 # every door"): the class names and the A2A state names are that entry's.
@@ -245,6 +262,8 @@ def _stale(job: dict, now: float) -> bool:
     if run is None:
         return now - job.get("claimed_at", 0) > lease
     if "ran_at" not in run:
+        if "pid" not in run:  # asked of the launcher, not started yet
+            return now - run.get("requested_at", 0) > LAUNCH_GRACE
         start = _proc_start(run["pid"])
         return start is None or start != run["start"]
     if run.get("unread"):
@@ -454,8 +473,9 @@ def running(jid: str) -> dict | None:
 
 def _spawn(d: Path, jid: str, now: float) -> dict:
     """Start the job's runner in a session of its own with its stdio closed,
-    so it outlives the gate's command and a tool that kills that command's
-    process group or children."""
+    so a kill of its starter's process group leaves it be. That is not enough
+    under an exec tool's anchor, which kills what its command leaves behind:
+    the launcher starts it there (`launcher`)."""
     fd = os.open(_err(d, jid), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as err:  # the runner's crash, not a closed stream
         p = subprocess.Popen(
@@ -466,6 +486,74 @@ def _spawn(d: Path, jid: str, now: float) -> dict:
             start_new_session=True,
         )
     return {"pid": p.pid, "start": _proc_start(p.pid), "started_at": now}
+
+
+def _launcher_alive(d: Path) -> bool:
+    """A launcher is running: the one its file names, by pid and start time."""
+    info = _load(d / LAUNCHER)
+    if not isinstance(info, dict) or not isinstance(info.get("pid"), int):
+        return False
+    return _proc_start(info["pid"]) == info.get("start")
+
+
+def launcher_status() -> str:
+    d = root()
+    if _launcher_alive(d):
+        return f"launcher pid {_load(d / LAUNCHER)['pid']} is running"
+    return (
+        "no launcher is running: `next` starts runs itself, and an exec tool kills them"
+    )
+
+
+def _launch_requested(d: Path, now: float) -> None:
+    """Under the lock: start the runner of each job `next` asked for."""
+    for p, job in _jobs(d):
+        run = job.get("run") or {}
+        if job["status"] == RUNNING and "requested_at" in run and "pid" not in run:
+            run.update(_spawn(d, job["id"], now), via="launcher")
+            job["run"] = run
+            _save(p, job)
+
+
+def _reap() -> None:
+    while True:
+        try:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if pid == 0:
+            return
+
+
+def launcher(poll: float = LAUNCHER_POLL) -> int:
+    """Start each run `next` asks for, from outside the exec tool's process
+    tree, so the run outlives the gate's command. One at a time: a second
+    launcher leaves at once. It leaves when this file changes (a deploy), so
+    the entrypoint's loop starts the new code."""
+    me = Path(__file__).resolve()
+    born = me.stat().st_mtime
+    with locked() as d:
+        if _launcher_alive(d):
+            return 0
+        _save(d / LAUNCHER, {"pid": os.getpid(), "start": _proc_start(os.getpid())})
+    fd = os.open(d / f"{LAUNCHER}.err", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.dup2(fd, 2)
+    os.close(fd)
+    while True:
+        try:
+            with locked() as d:
+                if (_load(d / LAUNCHER) or {}).get("pid") != os.getpid():
+                    return 0
+                _launch_requested(d, time.time())
+        except (OSError, ValueError) as e:
+            print(f"launcher: {e}", file=sys.stderr, flush=True)
+        _reap()
+        try:
+            if me.stat().st_mtime != born:
+                return 0
+        except OSError:
+            return 0
+        time.sleep(poll)
 
 
 def _mine(job: dict | None) -> bool:
@@ -483,26 +571,73 @@ def _on_signal(signum, _frame):
     raise _Killed(signum)
 
 
+def _elapsed(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 120:
+        return f"{seconds}s"
+    if seconds < 7200:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m"
+
+
+def _mark(jid: str, **fields) -> None:
+    """Note how far this runner got (run.stage, run.alive_at), so a runner
+    killed outright, with no chance to record anything, still names it."""
+    with contextlib.suppress(OSError), locked() as d:
+        p = _path(d, jid)
+        job = _load(p)
+        if _mine(job):
+            job["run"].update(fields)
+            _save(p, job)
+
+
+def _wait(
+    proc: subprocess.Popen, jid: str, deadline: float
+) -> tuple[int | None, bytes]:
+    """The handler's exit status and stderr, with a sign of life every BEAT
+    seconds; killed at the deadline (JOBQ_RUN_MINUTES)."""
+    while True:
+        left = deadline - time.time()
+        try:
+            err = proc.communicate(timeout=max(0.0, min(BEAT, left)))[1]
+            return proc.returncode, err
+        except subprocess.TimeoutExpired:
+            if time.time() >= deadline:
+                os.killpg(proc.pid, signal.SIGKILL)
+                return None, proc.communicate()[1] + b"\nran over the time limit"
+            _mark(jid, alive_at=time.time())
+
+
 def run_handler(jid: str) -> None:
     """The runner: run the job's handler to its end (at most JOBQ_RUN_MINUTES),
     keep what it printed for the turn that answers it, and note that it ran.
-    It records under the lock `next` holds while it starts it, so the job
+    It records under the lock its starter holds while it starts it, so the job
     names this runner by then; a runner the job no longer names records
-    nothing. However the run ends (the handler's exit or death by a signal,
-    this runner told to stop, or a crash of its own) the exit status and the
-    last stderr lines are recorded, so a run that dies is never silent."""
-    with locked() as d:
-        job = _load(_path(d, jid))
-    if not _mine(job):
-        return
+    nothing. Its signal handlers come first, before it waits for the lock, so
+    a stop at any point is caught. However the run ends (the handler's exit or
+    death by a signal, this runner told to stop, or a crash of its own) the
+    exit status, the last stderr lines, the stage it reached and how long it
+    ran are recorded, so a run that dies is never silent; one killed outright
+    leaves the stage and its last sign of life (run.stage, run.alive_at)."""
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, _on_signal)
-    out = _out(d, jid)
+    began = time.time()
+    stage = "runner started"
     limit = _int_env("JOBQ_RUN_MINUTES", DEFAULT_RUN_MINUTES) * 60
+    d = root()
+    out = _out(d, jid)
     code: int | None = None
     err = b""
     proc = None
+    stopped: int | None = None
     try:
+        with locked() as d:
+            p = _path(d, jid)
+            job = _load(p)
+            if not _mine(job):
+                return
+            job["run"].update(stage=stage, runner_at=began, alive_at=began)
+            _save(p, job)
         fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "wb") as f:
             proc = subprocess.Popen(
@@ -513,25 +648,28 @@ def run_handler(jid: str) -> None:
                 env={**os.environ, RUN_ENV: jid},
                 start_new_session=True,
             )
-            try:
-                err = proc.communicate(timeout=limit)[1]
-                code = proc.returncode
-            except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGKILL)
-                err = proc.communicate()[1]
-                code, err = None, err + f"\nran over {limit // 60} minutes".encode()
+            stage = "handler running"
+            _mark(jid, stage=stage, handler_pid=proc.pid, alive_at=time.time())
+            code, err = _wait(proc, jid, began + limit)
+            if code is None:
+                err += f" of {limit // 60} minutes".encode()
+            stage = "handler ended"
     except _Killed as k:
-        if proc is not None:
-            with contextlib.suppress(OSError):
-                os.killpg(proc.pid, signal.SIGKILL)
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal.signal(sig, signal.SIG_IGN)  # let the record be written
+        stopped = k.signum
         code, err = (
             None,
-            f"the runner was stopped by {signal.Signals(k.signum).name}".encode(),
+            f"the runner was stopped by {signal.Signals(k.signum).name} at "
+            f"stage '{stage}' after {_elapsed(time.time() - began)}".encode(),
         )
     except OSError as e:
         code, err = None, str(e).encode()
     except Exception as e:  # the runner's own bug: still recorded, never silent
         code, err = None, f"runner crashed: {type(e).__name__}: {e}".encode()
+    if proc is not None and stage != "handler ended":
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
     text = ""
     if code == 0:
         with contextlib.suppress(OSError):
@@ -541,7 +679,12 @@ def run_handler(jid: str) -> None:
         job = _load(p)
         if not _mine(job):
             return
-        job["run"].update(ran_at=time.time(), exit=code)
+        ended = time.time()
+        job["run"].update(
+            ran_at=ended, exit=code, stage=stage, ran_for=round(ended - began, 1)
+        )
+        if stopped is not None:
+            job["run"]["signal"] = signal.Signals(stopped).name
         job["offers"] = 0
         if text and text != NO_REPLY:
             job["run"]["unread"] = True
@@ -751,15 +894,39 @@ def _never_reported(d: Path, job: dict) -> str:
         tail = _tail(_err(d, job["id"]).read_text(errors="replace"))
     except OSError:
         tail = ""
-    gone = (
-        f"runner pid {run['pid']} was gone before it recorded an exit"
-        if run
-        else "no runner was started for it"
-    )
+    gone = _gone(run, d)
     earlier = f"; earlier error: {job['last_error']}" if job.get("last_error") else ""
     return (
         f"{reason} ({gone}"
         f"{'; its stderr: ' + tail if tail else '; it left no stderr'}{earlier})"
+    )
+
+
+def _gone(run: dict, d: Path) -> str:
+    """What a dead runner's own record says of it: the stage it reached, how
+    long it lived, and what can kill a runner with no chance to record."""
+    if not run:
+        return "no runner was started for it"
+    if "pid" not in run:
+        alive = "" if _launcher_alive(d) else " (no launcher is running)"
+        return f"no launcher started its runner within {LAUNCH_GRACE}s{alive}"
+    gone = f"runner pid {run['pid']} was gone before it recorded an exit"
+    if "stage" not in run:
+        return (
+            f"{gone}, before it reached its first stage: killed within moments "
+            "of its start"
+            + (
+                ""
+                if run.get("via") == "launcher"
+                else ", as an exec tool's cleanup kills a runner the gate's "
+                "command started (no launcher was running)"
+            )
+        )
+    lived = _elapsed(run.get("alive_at", 0) - run.get("runner_at", 0))
+    return (
+        f"{gone}; it reached stage '{run['stage']}' and was last seen alive "
+        f"{lived} after it started; killed outright (SIGKILL, the OOM killer, or "
+        "a gateway restart), with no signal it could catch"
     )
 
 
@@ -809,7 +976,10 @@ def next_job(now: float | None = None) -> tuple[str, str]:
         job = next((j for j in _runnable(d, now) if j["id"] == picked["id"]), None)
         if job is None:
             return "idle", ""
-        run = _spawn(d, job["id"], now)
+        if _launcher_alive(d):
+            run = {"requested_at": now}
+        else:
+            run = {**_spawn(d, job["id"], now), "via": "gate"}
         _claim(job, now)
         job["run"] = run
         _save(_path(d, job["id"]), job)
@@ -886,6 +1056,7 @@ def drop(jid: str) -> bool:
         existed = p.exists()
         p.unlink(missing_ok=True)
         _out(d, jid).unlink(missing_ok=True)
+        _err(d, jid).unlink(missing_ok=True)
     return existed
 
 
@@ -949,6 +1120,11 @@ def main(argv: list[str]) -> int:
             return 0
         if cmd == "output" and len(argv) == 3:
             print(output(argv[2]))
+            return 0
+        if cmd == "launcher" and len(argv) == 2:
+            return launcher()
+        if cmd == "launcher-status" and len(argv) == 2:
+            print(launcher_status())
             return 0
         if cmd == "runner" and len(argv) == 3:
             run_handler(argv[2])
