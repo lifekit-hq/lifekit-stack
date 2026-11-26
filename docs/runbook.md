@@ -1315,10 +1315,12 @@ pipe: kit copies the text into a file and runs one script; it never decides what
 - **Host:** `scripts/kit-relay/kit-relay`, installed root-owned at
   `/usr/local/libexec/kit-relay` by `scripts/kit-relay/install-kit-relay.sh`, which
   pins the second mate's home (`FM_HOME`, the default) and optionally one more home
-  (`FM_HOME_ALT`, see "Home argument" below) into the installed copy. Two verbs only:
+  (`FM_HOME_ALT`, see "Home argument" below) into the installed copy. Verbs:
   `note <kit-request-id> [<home>]` (body on stdin, 1 B to 32 KiB of UTF-8 without NUL, refused
   whole otherwise, exit 65) and `receipts [<12-digit cursor>] [<home>]` (only the notes whose
-  request id starts with `kit-`, with their replies). Anything else exits 64. At most
+  request id starts with `kit-`, with their replies). A third verb, `hold <kit-held-id>
+  [<home>]`, is Kit's key only and files a held item as a shaping item when the install
+  pinned `TASKS_AXI` ("Held items become shaping items" below). Anything else exits 64. At most
   30 new `kit-` notes per rolling hour (exit 75); a replay of an existing request id is
   never limited. `fm-inbox.sh` runs under `env -i`, so nothing the client sends (SendEnv,
   `FM_*_OVERRIDE`) reaches it. Each note and refusal is logged with tag `kit-relay`
@@ -2403,6 +2405,7 @@ restated here. This section is only where this repo enforces it.
 | Video intake, jobs | `scripts/video-eval.sh enqueue` (also `backfill`'s `ingest` and `voice` through `video.py`) | the same flags after the link; origin is `VIDEO_EVAL_ORIGIN` | the usual line, then the receipt line; `url` is `video-eval.sh status <id>`, or the report when the item was judged before | the item's normalized link |
 | Video intake, direct | `video-eval.sh idea\|link\|note\|repo` | the same flags; an idea's origin is always `scout` | the usual three lines, then the receipt line; state `completed`, `url` the report | the item's recorded source; the envelope is kept in `<report>.envelope.json` with a count and the latest occurrence |
 | Kit to firstmate | `skills/secondmate-relay/relay.sh note` | flags after the body file and optional home: `--origin --owner --class --acceptance [--thread]`; the note body starts with the envelope as a `---` block | the host's two JSON lines, then the receipt line; `url` is `relay.sh replies <home>` | the `thread`; the request id derives from it, so a note on the same thread is a replay of the first (receipt `working`, no second note) |
+| Kit's held item | `skills/secondmate-relay/relay.sh hold` | all six flags required: `--origin --owner --class --fingerprint --acceptance --thread`; sent as a `---` block ahead of the item | one JSON line `{"id","url","state","count"}`; `url` is `calls:<home>/<item>` (the Calls page) | the `fingerprint`; a repeat counts on the open shaping item, one of an answered item opens `<id>-<n>` naming it ("Held items become shaping items") |
 
 Rules this repo adds on top of the entry:
 
@@ -2426,6 +2429,63 @@ all of them prints the receipt and `jobq.py list` shows the job; the same call a
 same receipt. `relay.sh note <file> --origin kit --owner firstmate --class dev --acceptance
 "<done when>" --thread <id>` twice prints the same note id, the second time with
 `"state":"working"`, and `relay.sh replies` shows one note.
+
+### Held items become shaping items
+
+A held item is one the owner asks Kit to keep for later ("tomorrow", "on my go"). When it
+names a task for firstmate or another owner, it is filed at the moment Kit holds it as a
+**shaping item**: a captain-held task (`fm-captain-hold.sh hold`, the primitive the intake
+shape step uses) on the home's Calls page. It never waits only in a daily note, which no
+script reads (lifekit-stack#684; vault decision 0019, gap G1). The persona rule is rule 8 of
+the shared receipts block (`defaults/agents/shared/receipts.md`); the line format is the
+daily-note template in Kit's `AGENTS.md` ("Daily notes").
+
+- **The door.** `relay.sh hold <item-file> [<home>] --origin --owner --class --fingerprint
+  --acceptance --thread` (the `secondmate-relay` skill, "Hold") pipes the envelope and the
+  item over Kit's relay key; the forced command's `hold` verb (Kit's key only, request ids
+  `kit-held-*`, the note rate limit) runs the root-owned
+  `/usr/local/libexec/kit-held/kit_held.py file` with nothing inherited but `FM_HOME`, the
+  pinned `TASKS_AXI` and a state dir in the relay account's
+  `~/.local/state/lifekit-kit-held/`.
+- **The item.** Id `held-<fingerprint>`, title `Held for <owner>: <text>`, reason the text
+  and the six envelope fields. The same fingerprint while it is open retitles it with
+  `(seen <n>x)` and files nothing new (receipt `working`); once the owner has answered it,
+  the next repeat opens `held-<fingerprint>-2` whose reason names the first. The same text
+  sent again the same UTC day is a replay: same receipt, no count.
+- **A reminder to Kit itself** (owner `kit`, `me`, `self`) is refused with exit 65 by the
+  client and the host alike; it stays in the note as a `for kit:` line.
+- **The safety net.** `kit_held.py check --notes <Kit's memory dir> --home <home> [--home
+  <home>] --seen <state file>` lists the open lines of the last 7 days of daily notes (an
+  unchecked `- [ ]` line or a `Next:` line) that name a fleet task (`for <owner>:` with an
+  owner other than Kit, or a mention of firstmate, the second mate, devclaw, the fleet or a
+  `task:` note) and carry no `(shaping: <id>)` of an item that exists in one of the homes.
+  The fleet publisher reads it through `FLEET_KIT_HELD_CMD` and marks each one stalled after
+  `kit_held.hours` (24) of `fleet-stalled.json` (scripts/fleet-publisher/README.md, "Stalled
+  items").
+
+**Operator steps** (once, after the merge deploys):
+
+1. Re-install kit-relay with `tasks-axi` pinned, so the hold verb and its helper exist
+   (`--print` first to diff):
+   ```bash
+   sudo FM_HOME=<second-mate home> FM_HOME_ALT=<main home> TASKS_AXI=<absolute tasks-axi> \
+     bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh
+   ```
+   Without `TASKS_AXI` the verb answers exit 78, "hold is not installed". Re-run it after a
+   change to `kit_held.py` or `intake_shape.py`: the installed copies are root-owned.
+2. Point the fleet publisher at the check with a systemd drop-in on its unit:
+   ```ini
+   [Service]
+   Environment="FLEET_KIT_HELD_CMD=python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py check --notes /srv/memory/agents/kit/memory --home <second-mate home> --home <main home> --seen /var/lib/lifekit-fleet/kit-held-seen.json"
+   ```
+   The unit's `TASKS_AXI` already reaches the check. Unset, `stalled_sources.kit_held` says
+   `read: false`.
+
+Verify: `relay.sh hold` with the six flags prints `"state":"submitted"` and the item shows
+on the Calls page; the same call again prints the same id with `"replay":true`; a reworded
+item with the same fingerprint prints `"count":2`. `--owner kit` prints the reminder refusal.
+After the drop-in, `kit_held.py check` with the same arguments prints `[]` when every held
+fleet task carries its mark, and the fleet page's `stalled_sources.kit_held.read` is `true`.
 
 ### Fleet gate
 
@@ -3709,7 +3769,8 @@ are read by the publisher's existing run, read-only, from the directory of
 `queue-run.json`; a missing input shows as unavailable, never zero) and, for the scout,
 `FLEET_SCOUT_STATE` (its state dir). The installer sets the first (above); the unit never
 sets `FLEET_SCOUT_STATE`, so point it with a systemd drop-in. Unset, the page says
-`read: false`.
+`read: false`. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
+drop-in: "Held items become shaping items").
 
 The same run writes `/var/lib/lifekit-fleet/taken-for-you.json`, the dashboard's
 "Taken for you" feed: the last 200 actions the fleet took under a standing

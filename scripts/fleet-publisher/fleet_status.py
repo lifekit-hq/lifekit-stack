@@ -47,6 +47,8 @@ FLEET_FINANCE_CMD (prints finance's open items as JSON; unset: not read),
 FLEET_NEEDS_YOU_LEDGER (Kit's needs-you/open.json; unset: not read),
 FLEET_SCOUT_STATE (the scout's state dir, `candidates/<date>.txt` inside; unset:
 the scout is not read),
+FLEET_KIT_HELD_CMD (prints the held fleet tasks in Kit's daily notes that have
+no shaping item, as JSON - `kit_held.py check`; unset: not read),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
 script), FLEET_CLIP_STATS_FEED (path of clip's stats.jsonl, whose directory is
 the clip queue's: unset: no side_hustles or clip_queue section, or clip source, an unreadable file: its "no data" line). A source that fails empties its own part
@@ -814,6 +816,7 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
         for key, fields in (
             ("clip", ("buffer_floor_days", "slot_window_hours")),
             ("scout", ("idle_hours",)),
+            ("kit_held", ("hours",)),
         ):
             if key in cfg:  # optional: absent leaves that source unread
                 block = cfg[key]
@@ -1406,6 +1409,56 @@ def scout_stalls(
     ], {"read": True, "reason": None}
 
 
+def held_stalls(
+    cfg: dict[str, Any] | None, now: int, errors: list[str]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Held items in Kit's daily notes that name a fleet task and were never
+    filed as a shaping item (lifekit-stack#684), from FLEET_KIT_HELD_CMD (a
+    JSON list of `{id, note, title, since}`, `kit_held.py check`). An item is
+    stalled once it has waited `kit_held.hours`; `open` counts every listed
+    item, stalled or not. Unset or unreadable: unread, never guessed."""
+    if cfg is None or "kit_held" not in cfg:
+        return [], {
+            "read": False,
+            "reason": "no kit_held thresholds in fleet-stalled.json",
+        }
+    argv = shlex.split(os.environ.get("FLEET_KIT_HELD_CMD") or "")
+    if not argv:
+        return [], {"read": False, "reason": "FLEET_KIT_HELD_CMD is not set"}
+    try:
+        doc = json.loads(run(argv, timeout=30))
+        assert isinstance(doc, list)
+    except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as exc:
+        errors.append(f"Kit's held items unreadable ({exc.__class__.__name__})")
+        return [], {"read": False, "reason": "Kit's held items unreadable"}
+    window = int(cfg["kit_held"]["hours"] * 3600)
+    owner = cfg["kit_held"].get("owner", "firstmate")
+    rows, listed = [], 0
+    for item in doc:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            continue
+        since = item.get("since")
+        if not isinstance(since, int) or isinstance(since, bool):
+            continue
+        listed += 1
+        if now - since < window:
+            continue
+        rows.append(
+            {
+                "source": "held",
+                "id": item["id"],
+                "home_id": None,
+                "title": one_line(item.get("title"), TITLE_CUT),
+                "url": None,
+                "reason": "not-filed",
+                "since": since,
+                "threshold": window,
+                "owner": owner,
+            }
+        )
+    return rows, {"read": True, "reason": None, "open": listed}
+
+
 def stalled_section(
     rows: list[dict[str, Any]], owners: list[str]
 ) -> list[dict[str, Any]]:
@@ -1438,6 +1491,7 @@ PROBLEM_SOURCE_KEY = {
     "thread": "a2a",
     "clip": "clip",
     "scout": "scout",
+    "held": "kit_held",
 }
 PROBLEM_PHRASE = {
     "no-status-line": "silent",
@@ -1449,6 +1503,7 @@ PROBLEM_PHRASE = {
     "no-post": "no post",
     "buffer-short": "buffer short",
     "no-output": "no output",
+    "not-filed": "held, not filed",
 }
 
 
@@ -2034,7 +2089,10 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         jobs, jobq = job_stalls(cfg, args.now, errors)
         threads, a2a = thread_stalls(cfg, args.now, errors)
         scout_rows, scout_source = scout_stalls(cfg, args.now)
-        stalled_rows = found + issues + jobs + threads + clip_rows + scout_rows
+        held_rows, held_source = held_stalls(cfg, args.now, errors)
+        stalled_rows = (
+            found + issues + jobs + threads + clip_rows + scout_rows + held_rows
+        )
         stalled = stalled_section(stalled_rows, cfg["owners"])
         sources = {
             "backlog": {
@@ -2048,6 +2106,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "a2a": a2a,
             "clip": clip_source,
             "scout": scout_source,
+            "kit_held": held_source,
         }
     depth: dict[str, Any] | None = None
     if os.environ.get("FLEET_INTAKE_CMD") != "":
