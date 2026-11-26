@@ -17,7 +17,11 @@
 # lifekit, from /srv/lifekit-stack), or a change to that script when the live
 # row is the intended design (docs/runbook.md, "Cron declarations check").
 #
-# Usage: scripts/check-cron-declarations.sh
+# Usage: scripts/check-cron-declarations.sh [--list]
+# --list checks nothing: it prints "<row name><TAB>scripts/<script>" for each
+# cron row a declaration names (cron_check_declares in scripts/lib/cron-check.sh),
+# the fleet publisher's list of declared rows (scripts/fleet-publisher/README.md,
+# "Scheduled work").
 # Env: CRON_DECLARATIONS overrides the script list (space-separated, relative to
 # scripts/), for tests.
 set -uo pipefail
@@ -41,6 +45,17 @@ DECLARATIONS=(
 )
 if [ -n "${CRON_DECLARATIONS:-}" ]; then
   read -r -a DECLARATIONS <<< "$CRON_DECLARATIONS"
+fi
+
+if [ "${1:-}" = --list ]; then
+  # shellcheck source=scripts/lib/cron-check.sh
+  source "$here/lib/cron-check.sh"
+  for script in "${DECLARATIONS[@]}"; do
+    cron_check_declares "$here/$script" | while IFS= read -r name; do
+      printf '%s\tscripts/%s\n' "$name" "$script"
+    done
+  done
+  exit 0
 fi
 
 failed=0

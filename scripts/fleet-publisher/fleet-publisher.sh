@@ -68,6 +68,13 @@
 # date already stored is never rewritten) and OUT_DIR/journal/retro/ (a board per
 # 14 journal days), from activity_journal.py beside this script (FLEET_JOURNAL
 # overrides; installed as lifekit-fleet-journal.py); contract in README.md.
+# scheduled is the fleet's scheduled work as one list (README "Scheduled work"),
+# built every run by scheduled.py beside this script (FLEET_SCHEDULED
+# overrides; installed as lifekit-fleet-scheduled.py) from the repo's declared
+# timers and cron rows (FLEET_SCHEDULED_MANIFEST, default the installed
+# lifekit-fleet-scheduled.json beside the script), systemd, and the gateway's
+# cron rows and Kit and Ledger standing intents cached in the state dir by the
+# slow "scheduled" section; [] when it cannot be built.
 # The dashboard never reads Lavish or fleet-home state. Writes TEXTFILE_DIR/fleet.prom:
 #   fleet_workers{state}                          active children by state, all homes
 #   fleet_decisions_open                          open captain decisions, all homes
@@ -86,7 +93,9 @@
 # slow helpers run on a slower cadence, after the stamp is already written:
 # the screen changes feed (gh, tens of seconds) every FLEET_SCREENS_EVERY seconds
 # (default 300) and the activity journal (a row per finished day) every
-# FLEET_JOURNAL_EVERY seconds (default 900); neither starts once the run is
+# FLEET_JOURNAL_EVERY seconds (default 900), and the gateway read behind
+# scheduled (openclaw cron list, ~10 s) every FLEET_SCHEDULED_EVERY seconds
+# (default 300); none starts once the run is
 # FLEET_SLOW_BUDGET seconds old (default 120), it stays due for the next run.
 # A section not due leaves its previous output as it was. Cadence stamps live in
 # the state dir (cadence-<section>), measured on the run's own clock (FLEET_NOW in
@@ -119,6 +128,7 @@ PC_STALE_SECONDS="${PC_STALE_SECONDS:-1200}"
 STATE_DIR="${FLEET_STATE_DIR:-${STATE_DIRECTORY:-$HOME/.local/state/lifekit-fleet-publisher}}"
 SCREENS_EVERY="${FLEET_SCREENS_EVERY:-300}"
 JOURNAL_EVERY="${FLEET_JOURNAL_EVERY:-900}"
+SCHEDULED_EVERY="${FLEET_SCHEDULED_EVERY:-300}"
 SLOW_BUDGET="${FLEET_SLOW_BUDGET:-120}"
 WORK_STALE_MINUTES=1440
 
@@ -175,7 +185,7 @@ section_due() {
   [[ "$last" =~ ^[0-9]+$ ]] || last=0
   ((NOW - last >= $2 || last > NOW))
 }
-# run_slow <screens|journal> <every seconds>: runs the section's function when it is
+# run_slow <screens|journal|scheduled> <every seconds>: runs the section's function when it is
 # due and the run is still inside SLOW_BUDGET seconds, and returns its
 # status; otherwise records the skip and returns 0, leaving the section's
 # previous output in place. The cadence stamp is written when the section starts,
@@ -191,6 +201,7 @@ run_slow() {
     case "$section" in
       screens) publish_screens || status=$? ;;
       journal) publish_journal || status=$? ;;
+      scheduled) refresh_scheduled_gateway || status=$? ;;
     esac
   fi
   tick "$section"
@@ -762,10 +773,52 @@ publish_status_page() {
 publish_status_page
 tick status_page
 
+# Scheduled work (README "Scheduled work"): scheduled.py beside this script
+# (FLEET_SCHEDULED overrides; installed as lifekit-fleet-scheduled.py). Every
+# run joins the installed manifest of declared timers and cron rows to systemd
+# and to the gateway rows the slow "scheduled" section last cached; a helper
+# that fails, or output that looks like a credential, publishes [].
+scheduled_helper() {
+  local here helper="${FLEET_SCHEDULED:-}"
+  here="$(dirname "$(realpath "$0")")"
+  if [[ -z "$helper" ]]; then
+    for helper in "$here/scheduled.py" "$here/lifekit-fleet-scheduled.py" ""; do
+      [[ -z "$helper" || -r "$helper" ]] && break
+    done
+  fi
+  printf '%s' "$helper"
+}
+publish_scheduled() {
+  local helper here manifest
+  here="$(dirname "$(realpath "$0")")"
+  manifest="${FLEET_SCHEDULED_MANIFEST:-$here/lifekit-fleet-scheduled.json}"
+  echo '[]' > "$work/scheduled.json"
+  helper="$(scheduled_helper)"
+  [[ -n "$helper" ]] || {
+    echo "fleet-publisher: no scheduled.py; scheduled not published" >&2
+    return 0
+  }
+  timeout 40 python3 -I "$helper" build --manifest "$manifest" \
+    --gateway "$STATE_DIR/scheduled-gateway.json" > "$work/scheduled.out" || {
+    echo "fleet-publisher: scheduled.py failed; scheduled not published" >&2
+    return 0
+  }
+  if grep -Eq "$CREDENTIAL_RE" "$work/scheduled.out"; then
+    echo "fleet-publisher: scheduled looks like it holds a credential; not publishing it" >&2
+  elif ! jq -c 'arrays' "$work/scheduled.out" > "$work/scheduled.json" 2> /dev/null ||
+    [[ ! -s "$work/scheduled.json" ]]; then
+    echo "fleet-publisher: scheduled.py printed no JSON list; scheduled not published" >&2
+    echo '[]' > "$work/scheduled.json"
+  fi
+}
+publish_scheduled
+tick scheduled
+
 # One home: its summary as-is. More: the lists concatenated, and the fields
 # that describe the whole fleet aggregated over every home.
 jq -s --slurpfile homes "$work/homes.jsonl" --slurpfile remote "$work/remote.json" \
-  --slurpfile status "$work/status.json" --argjson now "$NOW" '
+  --slurpfile status "$work/status.json" --slurpfile scheduled "$work/scheduled.json" \
+  --argjson now "$NOW" '
   . as $parts
   | if ($homes | length) == 1 then $parts[0]
     else ([$parts[] | to_entries[] | select(.value | type == "array") | .key] | unique) as $lists
@@ -781,7 +834,8 @@ jq -s --slurpfile homes "$work/homes.jsonl" --slurpfile remote "$work/remote.jso
         else . end
     end
   | .homes = ($homes + $remote[0]) | .published_epoch = $now
-  | .status_page = ($status[0][0] // null)' "$work/published.jsonl" > "$summary_tmp"
+  | .status_page = ($status[0][0] // null)
+  | .scheduled = ($scheduled[0] // [])' "$work/published.jsonl" > "$summary_tmp"
 grep -Eq "$CREDENTIAL_RE" "$summary_tmp" && {
   echo "fleet-publisher: the published summary looks like it holds a credential; not publishing" >&2
   exit 3
@@ -1012,4 +1066,33 @@ if ! run_slow journal "$JOURNAL_EVERY"; then
   echo "fleet-publisher: the activity journal was not written" >&2
   ((rc != 0)) || rc=1
 fi
+# The gateway side of scheduled: `scheduled.py gateway` reads the cron rows and
+# Kit's and Ledger's active standing intents (names, owners, schedules, times
+# and results only) into STATE_DIR/scheduled-gateway.json, which the next
+# run's summary joins. A read that fails keeps that part of the previous cache
+# and is logged; it never fails the run.
+refresh_scheduled_gateway() {
+  local helper cache="$STATE_DIR/scheduled-gateway.json"
+  helper="$(scheduled_helper)"
+  [[ -n "$helper" ]] || return 0
+  install -d -m 700 "$STATE_DIR" || return 0
+  timeout 90 python3 -I "$helper" gateway > "$work/scheduled-gateway.out" || {
+    echo "fleet-publisher: scheduled.py gateway failed; the cached gateway rows stay" >&2
+    return 0
+  }
+  jq -r '.errors[]? | "fleet-publisher: scheduled gateway read: \(.)"' \
+    "$work/scheduled-gateway.out" >&2 2> /dev/null || true
+  if grep -Eq "$CREDENTIAL_RE" "$work/scheduled-gateway.out"; then
+    echo "fleet-publisher: the gateway rows look like they hold a credential; not cached" >&2
+    return 0
+  fi
+  # This read's parts replace the cached ones; a part it could not read stays.
+  jq -s --argjson now "$NOW" '(.[1] // {} | objects) as $old | .[0]
+    | {read_epoch: $now} + ($old | with_entries(select(.key == "cron" or .key == "intents")))
+      + with_entries(select(.key == "cron" or .key == "intents"))' \
+    "$work/scheduled-gateway.out" <(cat "$cache" 2> /dev/null || true) > "$work/scheduled-gateway.json" 2> /dev/null &&
+    mv -f "$work/scheduled-gateway.json" "$cache" ||
+    echo "fleet-publisher: scheduled.py gateway printed no JSON object; the cached gateway rows stay" >&2
+}
+run_slow scheduled "$SCHEDULED_EVERY" || true
 exit "$rc"

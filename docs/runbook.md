@@ -3678,7 +3678,13 @@ through its `bin/fm-tasks-axi.sh` and its `bin/fm-capacity.sh --json`, asks
 `gh` for open PRs (cached ten minutes in the publisher's state directory), and
 runs `jobq.py depth` in the gateway container (the admin account's `docker`
 group); a source it cannot read leaves a line in `status_page.errors`, never a
-failed run. The new output appears only once the
+failed run. It also adds `scheduled`, one list of the box's scheduled work:
+each repo timer, each OpenClaw cron row and Kit's and Ledger's active standing
+intents, with owner, schedule, next and last run, last result and the declaring
+script; a declared timer or cron row the live side lacks shows as `missing`
+(README "Scheduled work"). The declared side is
+`/usr/local/bin/lifekit-fleet-scheduled.json`, written by the installer from the
+checkout, so a new timer or `ensure-*.sh` shows only after a re-install. The new output appears only once the
 installed script is refreshed: re-run the install command below (it
 re-installs the script, the helper and the units, idempotent). The unit's
 environment gains `FLEET_PLAN_MAP` only when the installer is given one

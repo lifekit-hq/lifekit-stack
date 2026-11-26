@@ -27,6 +27,10 @@ NO_LIVE_SOURCES = {
     "FLEET_INTAKE_CMD": "",
     "FLEET_VAULT": "/nonexistent",
     "FLEET_POLICY_DIR": "/nonexistent",
+    "FLEET_SYSTEMCTL": "",
+    "FLEET_CRON_CMD": "",
+    "FLEET_INTENTS_CMD": "",
+    "FLEET_SCHEDULED_MANIFEST": "/nonexistent",
 }
 
 
@@ -1475,6 +1479,74 @@ def test_home_list_needs_absolute_paths_with_unique_ids(homes, dirs):
     assert not (homes.out / "home-summary.json").exists()
 
 
+def test_the_summary_carries_the_scheduled_list(fleet):
+    """A declared row with no live gateway rows cached yet is unknown; once the
+    slow section has cached them, a declared row they lack is missing."""
+    manifest = fleet.tmp / "scheduled.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "timers": [],
+                "cron": [
+                    {
+                        "name": "ledger-pulse",
+                        "script": "scripts/ensure-finance-pulse.sh",
+                    },
+                    {
+                        "name": "planning-reminder",
+                        "script": "scripts/ensure-planning-reminder.sh",
+                    },
+                ],
+            }
+        )
+    )
+    cron = fleet.tmp / "cron.json"
+    cron.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "name": "ledger-pulse",
+                        "agentId": "finance",
+                        "enabled": True,
+                        "schedule": {"kind": "cron", "expr": "20 9 * * *"},
+                        "delivery": {"to": "4223"},
+                        "state": {"lastRunStatus": "ok"},
+                    }
+                ]
+            }
+        )
+    )
+    fleet.write(summary())
+    env = {"FLEET_SCHEDULED_MANIFEST": str(manifest), "FLEET_SCHEDULED_EVERY": "300"}
+    result = fleet.run(**env)
+    assert result.returncode == 0, result.stderr
+    # The first run reads the gateway after the summary is out: nothing cached yet.
+    assert {e["name"]: e["state"] for e in fleet.published()["scheduled"]} == {
+        "ledger-pulse": "unknown",
+        "planning-reminder": "unknown",
+    }
+    result = fleet.run(
+        **{**env, "FLEET_CRON_CMD": f"cat {cron}", "FLEET_SCHEDULED_EVERY": "0"}
+    )
+    assert result.returncode == 0, result.stderr
+    result = fleet.run(**env)
+    assert result.returncode == 0, result.stderr
+    scheduled = fleet.published()["scheduled"]
+    assert [(e["name"], e["owner"], e["state"]) for e in scheduled] == [
+        ("ledger-pulse", "finance", "live"),
+        ("planning-reminder", None, "missing"),
+    ]
+    assert "4223" not in (fleet.out / "home-summary.json").read_text()
+
+
+def test_the_summary_scheduled_list_is_empty_without_a_manifest(fleet):
+    fleet.write(summary())
+    result = fleet.run()
+    assert result.returncode == 0, result.stderr
+    assert fleet.published()["scheduled"] == []
+
+
 def test_installer_renders_units_and_enables_the_timer(tmp_path):
     root, calls = tmp_path / "root", tmp_path / "calls"
     fake = tmp_path / "systemctl"
@@ -1526,6 +1598,14 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     screens = root / "usr/local/bin/lifekit-fleet-screens.py"
     assert os.access(screens, os.X_OK)
     assert screens.read_text() == (DIR / "screen_changes.py").read_text()
+    scheduled = root / "usr/local/bin/lifekit-fleet-scheduled.py"
+    assert os.access(scheduled, os.X_OK)
+    assert scheduled.read_text() == (DIR / "scheduled.py").read_text()
+    manifest = json.loads(
+        (root / "usr/local/bin/lifekit-fleet-scheduled.json").read_text()
+    )
+    assert "lifekit-fleet-publisher.timer" in {t["unit"] for t in manifest["timers"]}
+    assert "today-brief" in {c["name"] for c in manifest["cron"]}
     assert service["Service"]["ExecStart"].startswith(
         "/usr/local/bin/lifekit-fleet-publisher.sh "
     )
