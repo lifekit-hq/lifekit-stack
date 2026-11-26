@@ -189,8 +189,10 @@ as `lifekit-fleet-scheduled.py`), sorted timers, cron rows, intents, then name:
   directory, table `standing_intents` (OpenClaw docs, concepts/standing-intents).
   They are read read-only in the gateway container for the agents in
   `FLEET_INTENT_AGENTS` (default `kit finance`: Kit and Ledger); only `pending`,
-  `armed` and `fired` ones are listed. An agent whose store or table cannot be
-  read is skipped; the other agents' intents are still listed.
+  `armed` and `fired` ones are listed. An agent with no store file or no
+  `standing_intents` table is skipped; the other agents' intents are still
+  listed. Any other store error (a changed schema, a lock) fails the intents
+  read, so it keeps its previous rows and ages to `unknown`.
 - **Nothing private is kept.** Payloads, prompts, delivery targets, senders and
   cron row ids are dropped before the cache is written; the summary's credential
   check covers the list too.

@@ -20,8 +20,8 @@ Three subcommands, each printing JSON to stdout (contract in README.md,
       FLEET_CRON_CMD and FLEET_INTENTS_CMD override the two reads (a command
       printing the CLI's JSON, or a JSON list of intent rows); empty skips one.
       A read that fails is listed in `errors` and its key is absent. An agent
-      whose store or `standing_intents` table cannot be read is skipped; the
-      other agents' intents are still listed.
+      with no store file or no `standing_intents` table is skipped; the other
+      agents' intents are still listed. Any other store error fails the read.
 
   build --now EPOCH --max-age SECONDS [--manifest FILE] [--gateway FILE]
       The array itself: the manifest's timers joined to `systemctl list-timers`
@@ -59,19 +59,23 @@ ACTIVE_INTENTS = ("pending", "armed", "fired")
 # Run inside the gateway (its image has python3, no sqlite3 CLI): print the
 # active intents of each agent named in argv as one JSON list, read-only.
 INTENT_READER = """
-import json, sqlite3, sys
+import json, os, sqlite3, sys
 rows = []
 for agent in sys.argv[2:]:
     path = sys.argv[1].format(agent=agent)
-    try:
-        con = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
-        found = con.execute(
-            "select id, description, trigger_keywords, status, expires_at,"
-            " last_fired_at, created_at from standing_intents"
-            " where status in ('pending', 'armed', 'fired') order by created_at"
-        ).fetchall()
-    except sqlite3.Error:
+    if not os.path.exists(path):
         continue
+    con = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
+    if not con.execute(
+        "select 1 from sqlite_master where type = 'table'"
+        " and name = 'standing_intents'"
+    ).fetchone():
+        continue
+    found = con.execute(
+        "select id, description, trigger_keywords, status, expires_at,"
+        " last_fired_at, created_at from standing_intents"
+        " where status in ('pending', 'armed', 'fired') order by created_at"
+    ).fetchall()
     for r in found:
         rows.append(dict(zip(
             ("id", "description", "trigger_keywords", "status", "expires_at",

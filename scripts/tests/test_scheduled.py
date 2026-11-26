@@ -344,6 +344,30 @@ def test_an_agent_without_a_store_or_table_does_not_hide_the_others_intents(tmp_
     ]
 
 
+def test_a_store_missing_a_column_fails_the_intents_read_instead_of_listing_none(
+    tmp_path,
+):
+    store = tmp_path / "kit" / "agent.sqlite"
+    store.parent.mkdir()
+    with sqlite3.connect(store) as con:
+        con.execute(
+            "create table standing_intents (id text, description text,"
+            " status text, expires_at integer, last_fired_at integer,"
+            " created_at integer)"
+        )
+        con.execute(
+            "insert into standing_intents values"
+            " ('si-1', 'Confirm the rollback owner', 'armed', null, null, 1)"
+        )
+    template = str(tmp_path / "{agent}" / "agent.sqlite")
+    reader = ["python3", "-c", intent_reader(), template, "kit"]
+    r = helper("gateway", FLEET_CRON_CMD="", FLEET_INTENTS_CMD=shlex.join(reader))
+    assert r.returncode == 0, r.stderr
+    doc = json.loads(r.stdout)
+    assert "intents" not in doc
+    assert [e.split(":")[0] for e in doc["errors"]] == ["intents"]
+
+
 def test_a_declared_timer_systemd_does_not_list_is_missing(box):
     (box / "list-timers.json").write_text("[]")
     entries = build(box, gateway_cache(box))
