@@ -1340,8 +1340,8 @@ pipe: kit copies the text into a file and runs one script; it never decides what
   the reply pusher (see "Reply pusher") tells Kit at once when a `kit-` note is answered.
 
 The key reaches the second mate as the owner: any process in the gateway that can read
-it can send a note. `from=`, the two verbs, the rate limit, the `kit-` request ids and
-the log line bound that; they do not close it.
+it can send a note or file a held item. `from=`, the verbs, the rate limit, the `kit-`
+request ids and the log line bound that; they do not close it.
 
 Operator steps, once per host, after the PR that adds the mount has deployed. The
 deploy recreated the gateway with the mount, and Docker created
@@ -1493,7 +1493,8 @@ FM_HOME=<the second mate's home, holding bin/fm-inbox.sh>
 FM_HOME_ALT=<the main home, only if the live install pins one; same as today>
 
 # 1. Reinstall the forced command (root). --print first to diff against the live copy;
-#    pass the same FM_HOME / FM_HOME_ALT the live copy was installed with.
+#    pass the same FM_HOME / FM_HOME_ALT (and TASKS_AXI, if pinned: "Held items become
+#    shaping items") the live copy was installed with.
 FM_HOME="$FM_HOME" FM_HOME_ALT="$FM_HOME_ALT" bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh --print \
   | diff /usr/local/libexec/kit-relay - || true
 sudo FM_HOME="$FM_HOME" FM_HOME_ALT="$FM_HOME_ALT" bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh
@@ -2475,8 +2476,9 @@ daily-note template in Kit's `AGENTS.md` ("Daily notes").
    sudo FM_HOME=<second-mate home> FM_HOME_ALT=<main home> TASKS_AXI=<absolute tasks-axi> \
      bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh
    ```
-   Without `TASKS_AXI` the verb answers exit 78, "hold is not installed". Re-run it after a
-   change to `kit_held.py` or `intake_shape.py`: the installed copies are root-owned.
+   Without `TASKS_AXI` the verb answers exit 78, "hold is not installed", so every later
+   re-install of kit-relay passes the same `TASKS_AXI`. Re-run it after a change to
+   `kit_held.py` or `intake_shape.py`: the installed copies are root-owned.
 2. Point the fleet publisher at the check with a systemd drop-in on its unit:
    ```ini
    [Service]
