@@ -2452,7 +2452,7 @@ daily-note template in Kit's `AGENTS.md` ("Daily notes").
   `(seen <n>x)` and files nothing new (receipt `working`); once the owner has answered it,
   the next repeat opens `held-<fingerprint>-2` whose reason names the first. The same text
   sent again the same UTC day is a replay: same receipt, no count. Each filing is kept in
-  `filed.json` of the state dir (item base, fingerprint, chain length, filed date), since
+  `filed.json` of the state dir (per home: item base, fingerprint, chain length, filed date), since
   the hub archives an answered item and then reads it as absent; the repeat chain and the
   check both read it.
 - **A reminder to Kit itself** (owner `kit`, `me`, `self`) is refused with exit 65 by the

@@ -31,8 +31,8 @@ look (lifekit-stack#684, gap G1 of vault decision 0019). Two verbs:
           item, `working` for a repeat or a replay. A request id seen before
           (`--request-id`, the relay's retry of the same text) is a replay: the
           same receipt, no second count. Every filing is kept in the record
-          `filed.json` (KIT_HELD_STATE): per item base its fingerprint, chain
-          length and filed date, because the hub archives answered items and
+          `filed.json` (KIT_HELD_STATE): per home and item base its
+          fingerprint, chain length and filed date, because the hub archives answered items and
           its own state then reads them as absent.
 
   check   the safety net. Lists the open items in Kit's daily notes
@@ -195,8 +195,8 @@ def state_dir() -> Path:
     )
 
 
-def load_filed() -> dict[str, dict[str, object]]:
-    """The record of filed items: base id -> {fingerprint, chain, filed}."""
+def load_filed() -> dict[str, dict[str, dict[str, object]]]:
+    """The record of filed items: home -> base id -> {fingerprint, chain, filed}."""
     try:
         loaded = json.loads((state_dir() / "filed.json").read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -204,16 +204,21 @@ def load_filed() -> dict[str, dict[str, object]]:
     if not isinstance(loaded, dict):
         raise ValueError("filed.json is not a JSON object")
     return {
-        k: v
-        for k, v in loaded.items()
-        if isinstance(v, dict) and isinstance(v.get("chain"), int)
+        home: {
+            k: v
+            for k, v in bases.items()
+            if isinstance(v, dict) and isinstance(v.get("chain"), int)
+        }
+        for home, bases in loaded.items()
+        if isinstance(bases, dict)
     }
 
 
-def filed_ids(record: dict[str, dict[str, object]]) -> set[str]:
+def filed_ids(record: dict[str, dict[str, dict[str, object]]]) -> set[str]:
     return {
         item_id(base, n)
-        for base, entry in record.items()
+        for bases in record.values()
+        for base, entry in bases.items()
         for n in range(1, int(entry["chain"]) + 1)
     }
 
@@ -229,7 +234,8 @@ def file_item(raw: str, hub: Hub, request_id: str | None) -> dict[str, object]:
             return {**known, "state": "working", "replay": True}
     base = "held-" + slug(env["fingerprint"])[:60].strip("-")
     record = load_filed()
-    seen = int(record.get(base, {}).get("chain", 0))
+    filed = record.setdefault(str(Path(hub.home).resolve()), {})
+    seen = int(filed.get(base, {}).get("chain", 0))
     while hub.state(item_id(base, seen + 1)) != "absent":
         seen += 1
         if seen >= MAX_CHAIN:
@@ -249,7 +255,7 @@ def file_item(raw: str, hub: Hub, request_id: str | None) -> dict[str, object]:
         count = 1
         hub.hold(item, held_title(env, text, 1), held_reason(env, text, previous))
         state = "submitted"
-    record[base] = {
+    filed[base] = {
         "fingerprint": env["fingerprint"],
         "chain": seen,
         "filed": dt.datetime.now(dt.timezone.utc).date().isoformat(),

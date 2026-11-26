@@ -239,6 +239,20 @@ def test_a_repeat_of_an_answered_and_archived_item_still_names_it(hub):
     assert third["repeat_of"] == "held-coach-learnclaw-context-2"
 
 
+def test_a_hold_on_another_home_opens_its_own_item_not_a_repeat(hub, tmp_path):
+    (tmp_path / "other").mkdir()
+    other = Hub(tmp_path / "other")
+    other.env["KIT_HELD_STATE"] = hub.env["KIT_HELD_STATE"]
+    receipt(hub.file(held()))
+    r = receipt(other.file(held()))
+    assert r["id"] == "held-coach-learnclaw-context"
+    assert r["state"] == "submitted" and "repeat_of" not in r
+    assert "Repeat of" not in other.items()["held-coach-learnclaw-context"]["reason"]
+    again = receipt(hub.file(held()))
+    assert again["id"] == "held-coach-learnclaw-context"
+    assert again["state"] == "working" and again["count"] == 2
+
+
 def test_filing_finds_tasks_axi_through_its_absolute_path(hub):
     hub.need_tasks_axi_on_path()
     env = {**hub.env, "PATH": "/usr/bin:/bin"}
