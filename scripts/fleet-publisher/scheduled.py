@@ -13,8 +13,9 @@ Three subcommands, each printing JSON to stdout (contract in README.md,
 
   gateway
       The gateway's live rows: `openclaw cron list --all --json` and the active
-      standing intents of the agents in FLEET_INTENT_AGENTS (default "kit
-      finance": Kit and Ledger), read-only through `docker exec` in the running
+      standing intents, plus those expired in the last EXPIRED_LISTED_DAYS, of
+      the agents in FLEET_INTENT_AGENTS (default "kit finance": Kit and
+      Ledger), read-only through `docker exec` in the running
       openclaw-gateway container. Only names, owners, schedules, times and
       results are kept: never a payload, prompt, delivery target or sender.
       FLEET_CRON_CMD and FLEET_INTENTS_CMD override the two reads (a command
@@ -26,7 +27,8 @@ Three subcommands, each printing JSON to stdout (contract in README.md,
   build --now EPOCH --max-age SECONDS [--manifest FILE] [--gateway FILE]
       The array itself: the manifest's timers joined to `systemctl list-timers`
       (FLEET_SYSTEMCTL, default systemctl; empty skips), the gateway file's
-      cron rows joined to the manifest's declared ones, and its intents. A
+      cron rows joined to the manifest's declared ones, and its intents (one
+      past its expiry is `expired`, whatever its cached status). A
       declared timer or cron row the live side does not list is `missing`; one
       whose live side could not be read is `unknown`. The gateway file stamps
       each part it holds (`cron_read_epoch`, `intents_read_epoch`); a part read
@@ -56,10 +58,18 @@ GATEWAY_LABELS = (
 # concepts/standing-intents: agents/<agentId>/agent/openclaw-agent.sqlite).
 INTENT_DB = "/home/node/.openclaw/agents/{agent}/agent/openclaw-agent.sqlite"
 ACTIVE_INTENTS = ("pending", "armed", "fired")
+# An intent stops firing at its expiry (every row carries one; issue #698). An
+# expired one stays listed as `expired` for this long after its date, so the
+# owner sees it lapse and can renew it.
+EXPIRED_LISTED_DAYS = 30
 # Run inside the gateway (its image has python3, no sqlite3 CLI): print the
-# active intents of each agent named in argv as one JSON list, read-only.
-INTENT_READER = """
-import json, os, sqlite3, sys
+# active intents, and those expired in the last EXPIRED_LISTED_DAYS, of each
+# agent named in argv as one JSON list, read-only.
+INTENT_READER = (
+    f"EXPIRED_LISTED_MS = {EXPIRED_LISTED_DAYS} * 86400 * 1000"
+    + """
+import json, os, sqlite3, sys, time
+cutoff = int(time.time() * 1000) - EXPIRED_LISTED_MS
 rows = []
 for agent in sys.argv[2:]:
     path = sys.argv[1].format(agent=agent)
@@ -74,7 +84,9 @@ for agent in sys.argv[2:]:
     found = con.execute(
         "select id, description, trigger_keywords, status, expires_at,"
         " last_fired_at, created_at from standing_intents"
-        " where status in ('pending', 'armed', 'fired') order by created_at"
+        " where status in ('pending', 'armed', 'fired')"
+        " or (status = 'expired' and expires_at >= ?) order by created_at",
+        (cutoff,),
     ).fetchall()
     for r in found:
         rows.append(dict(zip(
@@ -82,6 +94,8 @@ for agent in sys.argv[2:]:
              "last_fired_at", "created_at"), r), agent=agent))
 print(json.dumps(rows))
 """
+)
+LISTED_INTENTS = (*ACTIVE_INTENTS, "expired")
 TIMER_KEYS = (
     "OnCalendar",
     "OnBootSec",
@@ -236,7 +250,7 @@ def intent_rows(raw: Any) -> list[dict[str, Any]]:
         raise ValueError("not a list of standing intents")
     rows = []
     for r in raw:
-        if not isinstance(r, dict) or r.get("status") not in ACTIVE_INTENTS:
+        if not isinstance(r, dict) or r.get("status") not in LISTED_INTENTS:
             continue
         keywords = r.get("trigger_keywords")
         try:
@@ -441,6 +455,12 @@ def build(
 
     intents_stale = staleness(gateway_doc, "intents", now, max_age)
     for it in gateway_doc.get("intents") or []:
+        # Past its date it no longer fires, even before the gateway's own
+        # maintenance has moved the row to `expired` or the cache is re-read.
+        expires = it.get("expires")
+        status = (
+            "expired" if expires is not None and expires <= now else it.get("status")
+        )
         entries.append(
             entry(
                 "intent",
@@ -448,8 +468,8 @@ def build(
                 owner=it.get("agent"),
                 schedule=f"when: {it['trigger']}" if it.get("trigger") else None,
                 last_run_epoch=it.get("last"),
-                last_result=it.get("status"),
-                expires_epoch=it.get("expires"),
+                last_result=status,
+                expires_epoch=expires,
                 id=it.get("id"),
                 **intents_stale,
             )

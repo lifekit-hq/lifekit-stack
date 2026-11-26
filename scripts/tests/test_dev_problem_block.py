@@ -23,7 +23,18 @@ A2A_BEGIN = "<!-- lifekit:a2a-envelope:begin -->"
 RECEIPTS = REPO / "defaults/agents/shared/receipts.md"
 RECEIPTS_BEGIN = "<!-- lifekit:receipts:begin -->"
 RECEIPTS_END = "<!-- lifekit:receipts:end -->"
+INTENTS = REPO / "defaults/agents/shared/standing-intents.md"
+INTENTS_BEGIN = "<!-- lifekit:standing-intents:begin -->"
+INTENTS_END = "<!-- lifekit:standing-intents:end -->"
+# The one-line rule the standing-intents block grew from (live Kit and Ledger).
+LEGACY_INTENT_LINE = (
+    'A "when X comes up, remind me" ask is a standing intent, not a note: create it'
+    " with the `intent` tool (trigger, what to say, expiry). A clock-time reminder"
+    " is a scheduled task instead."
+)
 BLOCKS = 3
+# Kit and Ledger also get the standing-intents block.
+INTENT_AGENTS = ("kit", "finance")
 
 # What each agent's persona holds before the block lands (host state: free text).
 PERSONAS = {
@@ -35,9 +46,15 @@ PERSONAS = {
 }
 
 
-def block_text() -> str:
-    """The shared blocks as they land in a SOUL.md: dev-problems, a2a, receipts."""
-    return "\n\n".join(p.read_text().strip("\n") for p in (SHARED, A2A, RECEIPTS))
+def block_text(agent: str = "career") -> str:
+    """The shared blocks as they land in a SOUL.md: dev-problems, a2a, receipts,
+    and standing-intents for Kit and Ledger."""
+    parts = (SHARED, A2A, RECEIPTS) + ((INTENTS,) if agent in INTENT_AGENTS else ())
+    return "\n\n".join(p.read_text().strip("\n") for p in parts)
+
+
+def block_count(agents) -> int:
+    return sum(BLOCKS + (a in INTENT_AGENTS) for a in agents)
 
 
 def state(tmp_path, personas=None):
@@ -70,7 +87,9 @@ def test_every_workspace_gets_the_block_and_keeps_its_own_persona(tmp_path):
     assert r.returncode == 0, r.stderr
     for agent, before in PERSONAS.items():
         # The persona stays exactly as it was, with the block after a blank line.
-        assert soul(root, agent) == before.rstrip("\n") + "\n\n" + block_text() + "\n"
+        assert (
+            soul(root, agent) == before.rstrip("\n") + "\n\n" + block_text(agent) + "\n"
+        )
         assert f"agent '{agent}': dev-problem block installed" in r.stdout
         assert f"agent '{agent}': a2a-envelope block installed" in r.stdout
         assert f"agent '{agent}': receipts block installed" in r.stdout
@@ -83,7 +102,7 @@ def test_a_second_run_changes_nothing(tmp_path):
     r = run(root)
     assert r.returncode == 0, r.stderr
     assert {a: soul(root, a) for a in PERSONAS} == first
-    assert r.stdout.count("block unchanged") == BLOCKS * len(PERSONAS)
+    assert r.stdout.count("block unchanged") == block_count(PERSONAS)
 
 
 def test_a_changed_block_replaces_in_place_without_a_second_copy(tmp_path):
@@ -98,7 +117,8 @@ def test_a_changed_block_replaces_in_place_without_a_second_copy(tmp_path):
     assert r.returncode == 0, r.stderr
     assert soul(root, "kit") == (
         f"# Kit\n\nintro\n\n{BEGIN}\n## Development-class problems\n\nnew text\n{END}"
-        f"\n\nafter the block\n\n{A2A.read_text().strip()}\n\n{RECEIPTS.read_text().strip()}\n"
+        f"\n\nafter the block\n\n{A2A.read_text().strip()}\n\n{RECEIPTS.read_text().strip()}"
+        f"\n\n{INTENTS.read_text().strip()}\n"
     )
     assert "dev-problem block updated" in r.stdout
     assert "a2a-envelope block installed" in r.stdout
@@ -136,7 +156,7 @@ def test_dry_run_writes_nothing(tmp_path):
     r = run(root, DRY_RUN="1")
     assert r.returncode == 0, r.stderr
     assert {a: soul(root, a) for a in PERSONAS} == PERSONAS
-    assert r.stdout.count("block would-install") == BLOCKS * len(PERSONAS)
+    assert r.stdout.count("block would-install") == block_count(PERSONAS)
 
 
 def test_a_state_dir_with_no_workspace_fails_loudly(tmp_path):
@@ -227,7 +247,7 @@ def test_check_passes_after_install_and_writes_nothing(tmp_path):
     before = {a: soul(root, a) for a in PERSONAS}
     r = run(root, "--check")
     assert r.returncode == 0, r.stderr
-    assert r.stdout.count("block unchanged") == BLOCKS * len(PERSONAS)
+    assert r.stdout.count("block unchanged") == block_count(PERSONAS)
     assert {a: soul(root, a) for a in PERSONAS} == before
 
 
@@ -343,3 +363,46 @@ def test_a_later_definition_decides_by_its_doors_not_its_name(tmp_path):
     for agent in ("helper", "filer"):
         assert soul(root, agent) == personas[agent] + "\n" + block_text() + "\n"
     assert run(root, "--check", AGENT_DEFS_DIR=str(defs)).returncode == 0
+
+
+def test_only_kit_and_ledger_get_the_standing_intents_block(tmp_path):
+    root = state(tmp_path)
+    r = run(root)
+    assert r.returncode == 0, r.stderr
+    for agent in PERSONAS:
+        assert soul(root, agent).count(INTENTS_BEGIN) == (agent in INTENT_AGENTS)
+        assert (f"agent '{agent}': standing-intents block" in r.stdout) == (
+            agent in INTENT_AGENTS
+        )
+
+
+def test_the_standing_intents_block_replaces_the_one_line_rule_in_place(tmp_path):
+    before = f"# SOUL\n\n## Memory\n\nnotes\n\n{LEGACY_INTENT_LINE}\n\n## Last\n\nend\n"
+    root = state(tmp_path, {"kit": before, "finance": before})
+    assert run(root).returncode == 0
+    for agent in INTENT_AGENTS:
+        text = soul(root, agent)
+        assert LEGACY_INTENT_LINE not in text.replace(INTENTS.read_text(), "")
+        intents = INTENTS.read_text().strip("\n")
+        assert text.startswith(
+            f"# SOUL\n\n## Memory\n\nnotes\n\n{intents}\n\n## Last\n\nend\n"
+        )
+    second = run(root)
+    assert second.returncode == 0
+    assert "standing-intents block unchanged" in second.stdout
+    assert run(root, "--check").returncode == 0
+
+
+def test_the_standing_intents_block_sets_a_date_expiry_and_a_one_line_renew():
+    text = INTENTS.read_text()
+    assert text.startswith(INTENTS_BEGIN + "\n") and text.rstrip().endswith(INTENTS_END)
+    # The block keeps the one-line rule it replaces, so nothing is lost.
+    assert LEGACY_INTENT_LINE in text
+    for phrase in (
+        "`expiresAt` on every create",
+        "90 days",
+        "#698",
+        "`expired`",
+        '"renew',
+    ):
+        assert phrase in text, phrase

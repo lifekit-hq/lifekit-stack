@@ -8,6 +8,7 @@ import os
 import shlex
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -229,6 +230,34 @@ def test_standing_intents_of_kit_and_ledger_are_listed_while_active(box):
     ]
 
 
+def test_an_intent_past_its_date_is_listed_as_expired(box):
+    intents = [
+        {
+            "id": "si-3",
+            "agent": "kit",
+            "description": "Lapsed by the gateway",
+            "trigger_keywords": '["rent"]',
+            "status": "expired",
+            "expires_at": (NOW - 86_400) * 1000,
+        },
+        {
+            # Still armed in the cache, but its date has passed: it no longer fires.
+            "id": "si-4",
+            "agent": "finance",
+            "description": "Past its date before maintenance ran",
+            "trigger_keywords": '["tax"]',
+            "status": "armed",
+            "expires_at": NOW * 1000,
+        },
+    ]
+    entries = build(box, gateway_cache(box, intents=intents))
+    listed = {e["id"]: e for e in entries if e["kind"] == "intent"}
+    assert {i: (e["last_result"], e["expires_epoch"]) for i, e in listed.items()} == {
+        "si-3": ("expired", NOW - 86_400),
+        "si-4": ("expired", NOW),
+    }
+
+
 def test_an_undeclared_or_disabled_live_row_is_listed_without_a_script(box):
     cron = {
         "jobs": [
@@ -342,6 +371,49 @@ def test_an_agent_without_a_store_or_table_does_not_hide_the_others_intents(tmp_
     assert [(i["agent"], i["id"], i["status"]) for i in doc["intents"]] == [
         ("kit", "si-1", "armed")
     ]
+
+
+def test_the_reader_keeps_recently_expired_intents_and_drops_old_ones(tmp_path):
+    store = tmp_path / "kit" / "agent.sqlite"
+    store.parent.mkdir()
+    now_ms = int(time.time() * 1000)
+    day_ms = 86_400_000
+    with sqlite3.connect(store) as con:
+        con.execute(
+            "create table standing_intents (id text, description text,"
+            " trigger_keywords text, status text, expires_at integer,"
+            " last_fired_at integer, created_at integer)"
+        )
+        con.executemany(
+            "insert into standing_intents values (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    "si-1",
+                    "Lapsed last week",
+                    "[]",
+                    "expired",
+                    now_ms - 7 * day_ms,
+                    None,
+                    1,
+                ),
+                (
+                    "si-2",
+                    "Lapsed long ago",
+                    "[]",
+                    "expired",
+                    now_ms - 31 * day_ms,
+                    None,
+                    2,
+                ),
+                ("si-3", "Cancelled", "[]", "cancelled", now_ms + day_ms, None, 3),
+            ],
+        )
+    template = str(tmp_path / "{agent}" / "agent.sqlite")
+    reader = ["python3", "-c", intent_reader(), template, "kit"]
+    r = helper("gateway", FLEET_CRON_CMD="", FLEET_INTENTS_CMD=shlex.join(reader))
+    assert r.returncode == 0, r.stderr
+    doc = json.loads(r.stdout)
+    assert [(i["id"], i["status"]) for i in doc["intents"]] == [("si-1", "expired")]
 
 
 def test_a_store_missing_a_column_fails_the_intents_read_instead_of_listing_none(

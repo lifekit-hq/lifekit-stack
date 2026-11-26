@@ -1774,7 +1774,7 @@ Operator steps, once per host after the PR deploys (as `lifekit`; the live works
 live `AGENTS.md` are host state):
 
 ```bash
-sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent with a door (this block, the a2a envelope, receipts)
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent with a door (this block, the a2a envelope, receipts; kit and finance add standing-intents)
 ```
 
 Then paste the revised devclaw line of `defaults/agents/kit/workspace/AGENTS.md` into the live
@@ -1802,7 +1802,7 @@ decision 0016); this repo carries it into the persona of every agent with a door
 Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
 
 ```bash
-sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent with a door
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent with a door, four for kit and finance
 ```
 
 **Verify:** `grep -c 'lifekit:a2a-envelope:begin' /srv/openclaw/config/agents/*/workspace/SOUL.md`
@@ -1846,7 +1846,7 @@ decision 0019, at the persona level.
 Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
 
 ```bash
-sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh           # three lines per agent with a door
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh           # three lines per agent with a door, four for kit and finance
 sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh --check   # exit 0, every block "unchanged"
 ```
 
@@ -1856,6 +1856,46 @@ the reader and the study panel. Then ask Kit for something
 reversible and confirm the same reply carries a receipt id and no "saved for later".
 **Rollback:** delete the text between and including the two `lifekit:receipts` marker lines in
 each `SOUL.md`.
+
+#### Standing intents carry an end date
+
+Every standing intent Kit or Ledger creates ("when X comes up, remind me", the `intent` tool) has
+an end date, so nothing self-started runs forever (issue #698). Kit and Ledger carry the persona
+block "Standing intents: every one has an end date": the agent passes `expiresAt` on every create,
+using the date the owner gave or, when none was given, 90 days from creation (the default picked in
+#698, equal to OpenClaw's own `DEFAULT_INTENT_EXPIRY_MS`, so it never asks); the reply names the
+date. Past it the gateway stops firing the intent (its matcher rechecks expiry on every turn and
+its maintenance moves the row to `expired`). Renewing is one line to the agent that owns the
+intent, "renew <intent> [until <date>]": the `intent` tool has no update action, so the agent
+creates it again with the same description, triggers and scope and the new date, then cancels the
+old one if it is still active.
+
+- **One source:** `defaults/agents/shared/standing-intents.md`, between its
+  `lifekit:standing-intents` marker lines, spliced by `scripts/ensure-dev-problem-block.sh` into
+  the `SOUL.md` of `kit` and `finance` only. It replaces in place the one-line standing-intent
+  rule (ruling C-02, 2026-11-15) those two files held by hand, and carries that line's text, so
+  `--check` covers it like the other blocks.
+- **Fleet list:** the scheduled-work list (`scripts/fleet-publisher/README.md`, "Scheduled work")
+  shows an intent past its date as `expired`, for 30 days after the date, with its
+  `expires_epoch`.
+- **Existing intents:** the one-time pass on 2026-11-26 found none: the `standing_intents` table
+  of every agent store (kit, finance, career, learnclaw, reader) was empty. The store's
+  `expires_at` is `NOT NULL` and the tool defaults it to 90 days, so any intent made before this
+  block also has a date.
+
+Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
+
+```bash
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh           # kit and finance also print a standing-intents line
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh --check   # exit 0, every block "unchanged"
+```
+
+**Verify:** `grep -c 'lifekit:standing-intents:begin' /srv/openclaw/config/agents/{kit,finance}/workspace/SOUL.md`
+prints 1 for each, and `grep -c 'remind me" ask is a standing intent'` on the same files prints 1
+(the old line, now only inside the block). Then ask Kit "when rent comes up, remind me to check the
+transfer" and confirm the reply names a date about 90 days out. **Rollback:** replace the text
+between and including the two `lifekit:standing-intents` marker lines with the one-line rule the
+block opens with.
 
 ### Kit's workout log and gym-day nudge
 
