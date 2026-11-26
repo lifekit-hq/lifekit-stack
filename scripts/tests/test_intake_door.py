@@ -7,8 +7,9 @@ devclaw's `file_intake`: one issue per repo + fingerprint, a repeat bumps its
 count, an unknown project or a fingerprint outside `[a-z0-9._-]` is rejected,
 and it can be taken down. Like a
 stateful MCP streamable-HTTP server, it hands out a session id on `initialize`
-and answers a `tools/call` without that `Mcp-Session-Id` with HTTP 400; set
-`stateless` and it hands out none and takes calls without one.
+and answers a `tools/call` without that `Mcp-Session-Id` with HTTP 400, until
+a DELETE carrying that id ends the session; set `stateless` and it hands out
+none and takes calls without one.
 """
 
 from __future__ import annotations
@@ -52,6 +53,8 @@ class FakeDevclaw:
         self.stateless = False
         self.projects = dict(PROJECTS)
         self.sessions: dict[str, bool] = {}
+        self.opened = 0
+        self.deletes: list[str | None] = []
         self.calls: list[dict] = []
         self.issues: dict[tuple[str, str], dict] = {}
         fake = self
@@ -59,6 +62,14 @@ class FakeDevclaw:
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_):
                 pass
+
+            def do_DELETE(self):
+                sid = self.headers.get("mcp-session-id")
+                fake.deletes.append(sid)
+                known = sid in fake.sessions
+                fake.sessions.pop(sid, None)
+                self.send_response(200 if known else 404)
+                self.end_headers()
 
             def do_POST(self):
                 req = json.loads(self.rfile.read(int(self.headers["content-length"])))
@@ -72,7 +83,8 @@ class FakeDevclaw:
                     self.send_response(200)
                     self.send_header("content-type", "application/json")
                     if not fake.stateless:
-                        sid = f"s{len(fake.sessions) + 1}"
+                        fake.opened += 1
+                        sid = f"s{fake.opened}"
                         fake.sessions[sid] = False
                         self.send_header("mcp-session-id", sid)
                     self.end_headers()
@@ -396,13 +408,15 @@ def test_an_unreachable_devclaw_is_spooled_and_kept_through_failed_retries(tmp_p
 def test_the_door_completes_the_mcp_handshake_before_the_call(tmp_path, devclaw):
     got = step(tmp_path, devclaw.url, "file", params=item("devclaw"), agent="kit")
     assert got["spooled"] is False and got["id"] == "lifekit-hq/devclaw#1"
-    assert devclaw.sessions == {"s1": True}
-    # Each call opens its own session, the spool retry included.
+    assert devclaw.opened == 1 and devclaw.deletes == ["s1"]
+    assert devclaw.sessions == {}
+    # Each call opens its own session and ends it, the spool retry included.
     devclaw.down = True
     step(tmp_path, devclaw.url, "file", params=item("vault"), agent="kit")
     devclaw.down = False
     assert step(tmp_path, devclaw.url, "retry")["filed"] == 1
-    assert devclaw.sessions == {"s1": True, "s2": True}
+    assert devclaw.opened == 2 and devclaw.deletes == ["s1", "s2"]
+    assert devclaw.sessions == {}
 
 
 @needs_node
@@ -410,7 +424,7 @@ def test_the_door_files_through_a_stateless_server(tmp_path, devclaw):
     devclaw.stateless = True
     got = step(tmp_path, devclaw.url, "file", params=item("fleet"), agent="kit")
     assert got["spooled"] is False and got["id"] == "lifekit-hq/lifekit-stack#1"
-    assert devclaw.sessions == {}
+    assert devclaw.sessions == {} and devclaw.deletes == []
 
 
 @needs_node

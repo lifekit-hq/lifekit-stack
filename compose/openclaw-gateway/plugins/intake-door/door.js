@@ -117,7 +117,8 @@ function parseRpc(raw) {
 
 // One devclaw `file_intake` call: the MCP handshake (initialize, then
 // notifications/initialized, echoing the session id when the server hands one
-// out) and the tools/call, all within the one timeout. Resolves
+// out), the tools/call, and a DELETE that ends any session handed out, all
+// within the one timeout. Resolves
 // { ok, receipt } or { ok: false, reason }; never throws.
 export async function callDevclaw(args, cfg = settings()) {
   const ctl = new AbortController();
@@ -164,6 +165,16 @@ export async function callDevclaw(args, cfg = settings()) {
     const why = err?.name === "AbortError" ? `timed out after ${cfg.timeoutMs} ms` : line(err?.cause?.code || err?.message || err);
     return { ok: false, reason: `devclaw unreachable: ${why.slice(0, 160)}` };
   } finally {
+    if (session) {
+      await fetch(cfg.url, {
+        method: "DELETE",
+        signal: ctl.signal,
+        headers: {
+          ...(cfg.token ? { authorization: `Bearer ${cfg.token}` } : {}),
+          "mcp-session-id": session,
+        },
+      }).catch(() => {});
+    }
     clearTimeout(timer);
   }
 }
