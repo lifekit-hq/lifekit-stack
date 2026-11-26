@@ -3882,7 +3882,6 @@ are read by the publisher's existing run, read-only, from the directory of
 sets `FLEET_SCOUT_STATE`, so point it with a systemd drop-in. Unset, the page says
 `read: false`. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
 drop-in: "Held items become shaping items").
-`read: false`.
 Installed components are one more (`installed.behind_hours`, 24): the publisher reads
 the release gauge's `lifekit_installed.prom` from its textfile directory
 (`FLEET_INSTALLED_PROM` overrides), and a component
@@ -4363,8 +4362,8 @@ checkout (`/srv/lifekit-stack`; `RELEASE_STACK_REPO`, `RELEASE_STACK_REF` and
 `LIFEKIT_INSTALLED_DIR` override) - one line per component, the paths it owns - and writes
 `lifekit_installed.prom`: `lifekit_component_behind{component}` is 1 when origin/main changed one
 of those paths after the stamped commit (with `lifekit_component_behind_since_seconds`, the commit
-time of the oldest such change), 0 when current, and -1 when unknown (no stamp, or a commit the
-checkout does not have). A manifest it cannot read leaves the previous file and exits nonzero.
+time of the oldest such change), 0 when current, and -1 when unknown (no stamp, an unreadable
+stamp, or a commit the checkout does not have). A manifest it cannot read leaves the previous file and exits nonzero.
 The fleet page shows a component behind for more than 24 hours as an `installed` stalled source
 ("Fleet publisher", above).
 
