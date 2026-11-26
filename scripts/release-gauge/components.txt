@@ -50,6 +50,7 @@ doc-door scripts/ensure-doc-door.sh skills/doc-door scripts/doc-door-gate
 finance-pulse scripts/ensure-finance-pulse.sh scripts/finance-pulse-gate scripts/finance-pulse.md
 fleet-gate scripts/ensure-fleet-gate.sh compose/openclaw-gateway/plugins/fleet-gate
 goal-checkin-solved scripts/ensure-goal-checkin-solved.sh
+intake-door scripts/ensure-intake-door.sh compose/openclaw-gateway/plugins/intake-door defaults/agents
 job-queue scripts/ensure-job-queue.sh skills/job-queue
 kit-cron-models scripts/ensure-kit-cron-models.sh
 learnclaw scripts/ensure-learnclaw.sh defaults/agents/learnclaw skills/learning-record skills/leetcode-daily
