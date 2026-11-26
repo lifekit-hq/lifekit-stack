@@ -4454,6 +4454,60 @@ def test_an_unset_scout_or_clip_feed_is_said_not_guessed(homes):
     assert page["stalled_sources"]["scout"]["read"] is False
 
 
+def test_a_held_fleet_task_left_unfiled_is_stalled_after_a_day(homes):
+    held = homes.tmp / "held.json"
+    held.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "2026-11-25:aaa",
+                    "note": "2026-11-25.md",
+                    "title": "for firstmate: share the coach context",
+                    "since": NOW - 25 * 3600,
+                },
+                {
+                    "id": "2026-11-26:bbb",
+                    "note": "2026-11-26.md",
+                    "title": "for devclaw: fix the backup job",
+                    "since": NOW - 3600,
+                },
+                {"id": "no-since"},
+            ]
+        )
+    )
+    env = {"FLEET_NOW": str(NOW), "FLEET_KIT_HELD_CMD": f"cat {held}"}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    rows = [i for g in page["stalled"] for i in g["items"] if i["source"] == "held"]
+    assert [r["id"] for r in rows] == ["2026-11-25:aaa"]
+    assert rows[0]["reason"] == "not-filed"
+    assert rows[0]["threshold"] == 24 * 3600
+    assert rows[0]["since"] == NOW - 25 * 3600
+    group = next(g for g in page["stalled"] if g["owner"] == "firstmate")
+    assert "2026-11-25:aaa" in [i["id"] for i in group["items"]]
+    assert page["stalled_sources"]["kit_held"] == {
+        "read": True,
+        "reason": None,
+        "open": 2,
+    }
+
+
+def test_unset_or_unreadable_held_items_are_said_not_guessed(homes):
+    assert homes.run(side_home(homes), FLEET_NOW=str(NOW)).returncode == 0
+    assert status(homes)["stalled_sources"]["kit_held"]["read"] is False
+    bad = homes.tmp / "bad.json"
+    bad.write_text("not json")
+    assert (
+        homes.run(
+            side_home(homes), FLEET_NOW=str(NOW), FLEET_KIT_HELD_CMD=f"cat {bad}"
+        ).returncode
+        == 0
+    )
+    page = status(homes)
+    assert page["stalled_sources"]["kit_held"]["read"] is False
+    assert any("held items unreadable" in e for e in page["errors"])
+
+
 # --- queue items: the 0019 envelope on finance, needs-you and clip records -------
 
 

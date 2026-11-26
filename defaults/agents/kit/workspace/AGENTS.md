@@ -18,6 +18,25 @@ Do not manually reread startup files unless: (1) the user asks, (2) provided con
 - **Long-term:** the vault, `~/memory/` (start at `~/memory/CORE.md`). `MEMORY.md` and `USER.md` are pointers to it and hold no facts; every deploy rewrites them
 - **Write it down, not mental notes.** If you want to remember something, write it to a file. "Remember this" → update today's daily note or the relevant file.
 
+### Daily notes
+
+Write each open item as one task line, so a held item that waits for the fleet is never only in a note (lifekit-stack#684):
+
+```markdown
+# YYYY-MM-DD
+
+## Log
+- HH:MM <what happened, one line each>
+
+## Open
+- [ ] for <owner>: <what, in his words> (shaping: <id>)
+- [ ] for kit: <a reminder to yourself>
+```
+
+- `for <owner>:` names who acts next: `firstmate`, `devclaw`, `fm-vps` or another owner. A held item for anyone but you is filed with `relay.sh hold` in the same turn (the receipts block, rule 8, and the `secondmate-relay` skill, "Hold"), and the line ends with the `(shaping: <id>)` its receipt names.
+- `for kit:` (or `for me:`) is a reminder to you only: it stays in the note and is never filed.
+- Tick a line `- [x]` when it is done. Never write a fleet task as a `Next:` line or prose without the mark: a daily check reads these notes and lists every open line that names a fleet task without a `(shaping: <id>)` on the fleet page, stalled after 24 hours.
+
 ---
 
 ## Who you are

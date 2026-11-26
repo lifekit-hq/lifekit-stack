@@ -12,6 +12,12 @@
 #     FM_HOME_ALT is optional: a second home a client may name (by its
 #     basename) on the SSH command; FM_HOME stays the default when none is named
 #
+#   sudo FM_HOME=... TASKS_AXI=/abs/path/to/tasks-axi bash .../install-kit-relay.sh
+#     TASKS_AXI is optional: pinning it turns on Kit's hold verb (a held item
+#     filed as a shaping item, lifekit-stack#684) and installs its helper,
+#     scripts/kit-held/kit_held.py with the intake_shape.py it imports, root-owned
+#     under /usr/local/libexec/kit-held/. Without it hold is refused (exit 78).
+#
 #   FM_HOME=/path/to/second-mate/home bash install-kit-relay.sh --print
 #     render to stdout only (no root, nothing installed) - to diff against the
 #     installed copy before replacing it
@@ -30,6 +36,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST=/usr/local/libexec/kit-relay   # authorized_keys pins this path
+HELD_DIR=/usr/local/libexec/kit-held
 
 die() { echo "install-kit-relay: $*" >&2; exit 1; }
 
@@ -57,11 +64,23 @@ if [[ -n "$FM_HOME_ALT" ]]; then
   [[ -x "$FM_HOME_ALT/bin/fm-inbox.sh" ]] || die "$FM_HOME_ALT/bin/fm-inbox.sh is missing or not executable"
 fi
 
+TASKS_AXI="${TASKS_AXI:-}"
+HELD_BIN=
+if [[ -n "$TASKS_AXI" ]]; then
+  [[ "$TASKS_AXI" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "TASKS_AXI must be an absolute path of [A-Za-z0-9._/-]"
+  [[ -x "$TASKS_AXI" ]] || die "$TASKS_AXI is missing or not executable"
+  [[ -x "$FM_HOME/bin/fm-captain-hold.sh" ]] || die "$FM_HOME/bin/fm-captain-hold.sh is missing or not executable"
+  HELD_BIN="$HELD_DIR/kit_held.py"
+fi
+
 rendered="$(mktemp)"
 trap 'rm -f "$rendered"' EXIT
-sed -e "s|__FM_HOME__|${FM_HOME}|" -e "s|__FM_HOME_ALT__|${FM_HOME_ALT}|" "$HERE/kit-relay" >"$rendered"
+sed -e "s|__FM_HOME__|${FM_HOME}|" -e "s|__FM_HOME_ALT__|${FM_HOME_ALT}|" \
+  -e "s|__KIT_HELD__|${HELD_BIN}|" -e "s|__TASKS_AXI__|${TASKS_AXI}|" "$HERE/kit-relay" >"$rendered"
 grep -q "^readonly DEFAULT_HOME='${FM_HOME}'\$" "$rendered" || die "render did not pin FM_HOME"
 grep -q "^readonly ALT_HOME='${FM_HOME_ALT}'" "$rendered" || die "render did not pin FM_HOME_ALT"
+grep -q "^readonly HELD_BIN='${HELD_BIN}'\$" "$rendered" || die "render did not pin the hold helper"
+grep -q "^readonly TASKS_AXI_BIN='${TASKS_AXI}'\$" "$rendered" || die "render did not pin TASKS_AXI"
 bash -n "$rendered" || die "rendered script does not parse"
 grep -q '^  dashboard) ID_PREFIX=dash- ;;$' "$rendered" || die "rendered script lacks the dashboard sender"
 grep -q '^  finance-sentry) ID_PREFIX=fs- ;;$' "$rendered" || die "rendered script lacks the finance-sentry sender"
@@ -74,5 +93,10 @@ fi
 
 [[ $EUID -eq 0 ]] || die "must run as root (sudo); --print renders without installing"
 install -d -o root -g root -m 0755 "$(dirname "$DEST")"
+if [[ -n "$HELD_BIN" ]]; then
+  install -d -o root -g root -m 0755 "$HELD_DIR"
+  install -o root -g root -m 0644 "$HERE/../intake-shape/intake_shape.py" "$HELD_DIR/intake_shape.py"
+  install -o root -g root -m 0755 "$HERE/../kit-held/kit_held.py" "$HELD_BIN"
+fi
 install -o root -g root -m 0755 "$rendered" "$DEST"
-echo "kit-relay installed -> $DEST (FM_HOME=$FM_HOME${FM_HOME_ALT:+ FM_HOME_ALT=$FM_HOME_ALT})"
+echo "kit-relay installed -> $DEST (FM_HOME=$FM_HOME${FM_HOME_ALT:+ FM_HOME_ALT=$FM_HOME_ALT}${TASKS_AXI:+ TASKS_AXI=$TASKS_AXI, hold helper $HELD_BIN})"

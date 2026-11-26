@@ -3,10 +3,13 @@
 #
 # authorized_keys pins this script with command="..."; sshd runs it for every
 # connection that key opens and puts what the client asked for in
-# SSH_ORIGINAL_COMMAND. No shell ever parses that string. Exactly two verbs:
+# SSH_ORIGINAL_COMMAND. No shell ever parses that string. Exactly three verbs:
 #
 #   note <request-id> [<home>]     body on stdin, saved verbatim as one fm-inbox note
 #   receipts [<cursor>] [<home>]   fm-inbox receipts, reduced to the notes this key sent
+#   hold <request-id> [<home>]     Kit's key only: one held item (envelope + text)
+#                                  on stdin, filed as a shaping item on the home's
+#                                  Calls page by the pinned kit_held.py (#684)
 #
 # Everything else is refused (exit 64 usage, 65 body, 75 rate limit).
 #
@@ -33,6 +36,10 @@ umask 077
 # Pinned here, never taken from the caller's environment.
 readonly DEFAULT_HOME='__FM_HOME__'
 readonly ALT_HOME='__FM_HOME_ALT__'   # empty unless the installer pinned a second home
+# The hold verb's helper and the tasks-axi it drives; both empty unless the
+# installer pinned TASKS_AXI, and then hold is refused (exit 78).
+readonly HELD_BIN='__KIT_HELD__'
+readonly TASKS_AXI_BIN='__TASKS_AXI__'
 readonly MAX_BYTES=32768        # refuse, never truncate
 readonly MAX_NOTES_PER_HOUR=30  # every note wakes the home's primary
 
@@ -92,13 +99,27 @@ run_inbox() {
     FM_HOME="$FM_HOME" "$INBOX_BIN" "$@"
 }
 
+# stdin -> $tmp, $size, $sha: refused, never truncated, when it is empty, over
+# MAX_BYTES, holds a NUL or is not UTF-8.
+read_body() {
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' EXIT
+  head -c "$((MAX_BYTES + 1))" >"$tmp"
+  size=$(stat -c %s "$tmp")
+  [ "$size" -gt 0 ] || refuse 65 "empty body; nothing saved"
+  [ "$size" -le "$MAX_BYTES" ] || refuse 65 "body over $MAX_BYTES bytes; nothing saved"
+  [ "$(tr -d '\000' <"$tmp" | wc -c)" -eq "$size" ] || refuse 65 "body contains NUL bytes"
+  iconv -f UTF-8 -t UTF-8 "$tmp" >/dev/null 2>&1 || refuse 65 "body is not valid UTF-8"
+  sha=$(sha256sum "$tmp" | cut -d' ' -f1)
+}
+
 cmd=${SSH_ORIGINAL_COMMAND-}
 [ "${#cmd}" -le 160 ] || refuse 64 "command too long"
 case "$cmd" in
   *[!A-Za-z0-9._:\ -]*) refuse 64 "unexpected characters in command" ;;
 esac
 read -r -a words <<<"$cmd"
-[ "${#words[@]}" -ge 1 ] || refuse 64 "usage: note <request-id> [<home>] | receipts [<cursor>] [<home>]"
+[ "${#words[@]}" -ge 1 ] || refuse 64 "usage: note <request-id> [<home>] | receipts [<cursor>] [<home>] | hold <request-id> [<home>]"
 
 case "${words[0]}" in
   note)
@@ -113,15 +134,7 @@ case "${words[0]}" in
     if [ ! -e "$FM_HOME/state/inbox/.requests/$rid" ] && [ "$recent" -ge "$MAX_NOTES_PER_HOUR" ]; then
       refuse 75 "rate limit: $recent notes in the last hour"
     fi
-    tmp=$(mktemp)
-    trap 'rm -f "$tmp"' EXIT
-    head -c "$((MAX_BYTES + 1))" >"$tmp"
-    size=$(stat -c %s "$tmp")
-    [ "$size" -gt 0 ] || refuse 65 "empty body; nothing saved"
-    [ "$size" -le "$MAX_BYTES" ] || refuse 65 "body over $MAX_BYTES bytes; nothing saved"
-    [ "$(tr -d '\000' <"$tmp" | wc -c)" -eq "$size" ] || refuse 65 "body contains NUL bytes"
-    iconv -f UTF-8 -t UTF-8 "$tmp" >/dev/null 2>&1 || refuse 65 "body is not valid UTF-8"
-    sha=$(sha256sum "$tmp" | cut -d' ' -f1)
+    read_body
     printf '{"schema":"kit-relay-received.v1","bytes":%d,"sha256":"%s"}\n' "$size" "$sha"
     status=0
     run_inbox note --request-id "$rid" --json - <"$tmp" || status=$?
@@ -162,6 +175,33 @@ json.dump({
 }, sys.stdout, ensure_ascii=False, separators=(",", ":"))
 sys.stdout.write("\n")
 ' <<<"$out"
+    ;;
+  hold)
+    [ "$ID_PREFIX" = kit- ] || refuse 64 "hold is Kit's verb"
+    { [ "${#words[@]}" -eq 2 ] || [ "${#words[@]}" -eq 3 ]; } \
+      || refuse 64 "usage: hold <request-id> [<home>] (held item on stdin)"
+    rid=${words[1]}
+    [[ $rid =~ ^kit-held-[A-Za-z0-9._:-]{1,111}$ ]] \
+      || refuse 64 "request id must match kit-held-[A-Za-z0-9._:-]{1,111}"
+    resolve_home "${words[@]:2}"
+    case "$HELD_BIN:$TASKS_AXI_BIN" in
+      /*:/*) ;;
+      *) refuse 78 "hold is not installed; reinstall kit-relay with TASKS_AXI pinned" ;;
+    esac
+    HELD_STATE="$HOME/.local/state/lifekit-kit-held"
+    recent=$({ find "$HELD_STATE/requests" -maxdepth 1 -name 'kit-held-*' \
+      -mmin -60 2>/dev/null || true; } | wc -l)
+    if [ ! -e "$HELD_STATE/requests/$rid" ] && [ "$recent" -ge "$MAX_NOTES_PER_HOUR" ]; then
+      refuse 75 "rate limit: $recent held items in the last hour"
+    fi
+    read_body
+    status=0
+    # Nothing inherited here either; kit_held.py puts tasks-axi's dir first on PATH.
+    env -i HOME="$HOME" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+      FM_HOME="$FM_HOME" TASKS_AXI="$TASKS_AXI_BIN" KIT_HELD_STATE="$HELD_STATE" \
+      python3 "$HELD_BIN" file --request-id "$rid" <"$tmp" || status=$?
+    say_log "hold rid=$rid bytes=$size sha256=$sha exit=$status$HOME_LOG"
+    exit "$status"
     ;;
   *)
     refuse 64 "unknown verb: ${words[0]}"

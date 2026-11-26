@@ -1,6 +1,6 @@
 ---
 name: secondmate-relay
-description: Read the fleet status the dashboard shows, and pipe the user's words, unchanged, to firstmate's (or the second mate's) captain inbox, and show the replies unchanged. Use only when the user explicitly asks for the fleet status, to send something to firstmate or the second mate, to answer or confirm a decision, or for their replies, or when the user's own message asks for something only firstmate's fleet can do (the handoff in Kit's AGENTS.md - a logged-in site, a purchase or booking, the desktop), or when it is his reply or card answer to a pending ask Kit's AGENTS.md routes to firstmate (a relayed ask).
+description: Read the fleet status the dashboard shows, and pipe the user's words, unchanged, to firstmate's (or the second mate's) captain inbox, and show the replies unchanged. Use only when the user explicitly asks for the fleet status, to send something to firstmate or the second mate, to answer or confirm a decision, or for their replies, or when the user's own message asks for something only firstmate's fleet can do (the handoff in Kit's AGENTS.md - a logged-in site, a purchase or booking, the desktop), or when it is his reply or card answer to a pending ask Kit's AGENTS.md routes to firstmate (a relayed ask), or when he holds an item that names a task for firstmate or another owner for later (a held item, filed as a shaping item).
 metadata: { "openclaw": { "requires": { "bins": ["ssh", "curl"] } } }
 ---
 
@@ -42,6 +42,14 @@ Two homes receive notes. `firstmate` is the main home; `fm-vps` is the second ma
    - any other failure → "Not sent: <stderr line>." See failure rules below.
 
 A script (never his chat turn) may send a note with the envelope as flags after the home: `relay.sh note <body-file> [home] --origin O --owner W --class C --acceptance A [--thread T]`. The body is still piped unaltered; the script puts the envelope block ahead of it and prints a receipt line `{"id","url","state"}` after the host's two lines. A second note on the same thread is a replay: the first note's id, state `working`, no second note.
+
+## Hold
+A held item is one he asks you to keep for later ("tomorrow", "after the trip", "on my go") that names a task for firstmate, the second mate, devclaw or another owner who is not you. File it at the moment you hold it, on the same turn, so it shows on the Calls page as a shaping item; never leave it only in your daily note, where no script reads it.
+A held item that is only a reminder to you (you will raise it with him, you will look again) is not filed: it stays in the daily note as a `for kit:` line (your AGENTS.md, "Daily notes").
+1. Write his words, unchanged, to `/tmp/secondmate-relay/held.txt` with the Write tool.
+2. Run `sh {baseDir}/relay.sh hold /tmp/secondmate-relay/held.txt firstmate --origin <where he said it, e.g. telegram 2026-11-25> --owner <who acts next: firstmate, devclaw, ...> --class <dev | ops | finance | life | unclear> --fingerprint <a short stable id for the item, the same words each time it comes up, e.g. coach-learnclaw-context> --acceptance <what done looks like, one line> --thread <the conversation it belongs to>`. All six are required.
+3. Stdout is the receipt `{"id","url","state","count"}`. Put `(shaping: <id>)` at the end of the item's line in the daily note, and tell him in one line: state `submitted` → "Held as shaping item <id>; it waits on the Calls page." `working` → "Already held as <id> (seen <count>x)." The same fingerprint again counts a repeat on the open item; an item he already answered opens a new one naming the old.
+4. exit 65 with "reminder to Kit itself": keep it in the note as `for kit:`. Any other failure: say "Not held: <stderr line>." (Failures below), write the item in the note without a `(shaping: ...)` mark, and the daily check lists it on the fleet page until it is filed.
 
 ## Answers and confirms
 Only on his explicit words naming the decision (an id, the number of a call in the list you last showed him, optionally with an option's letter, or words that unambiguously name one item of `decisions_open`).

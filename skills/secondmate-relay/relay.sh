@@ -3,6 +3,9 @@
 # read of the fleet status the dashboard serves.
 #   relay.sh note <body-file> [<home>] [ENVELOPE]
 #                                        send the file's bytes, unchanged
+#   relay.sh hold <item-file> [<home>] ENVELOPE --fingerprint F --thread T
+#                                        file a held item that names a fleet task
+#                                        as a shaping item on the Calls page
 #   relay.sh replies [<cursor>] [<home>] notes sent from here, with their replies
 #   relay.sh status                      the fleet summary JSON, unchanged
 # <home> is fm-vps (the default) or firstmate; the host checks it again against
@@ -17,10 +20,17 @@
 # a third line follows the host's two: the receipt {"id","url","state"}, state
 # submitted for a new note and working for a thread already open. The relay's
 # fingerprint is the thread. Docs: docs/runbook.md, "Envelope and receipt".
+#
+# hold takes the whole envelope, all six fields, and files the item the moment
+# Kit holds it instead of leaving it in a daily note (lifekit-stack#684). The
+# fingerprint names the item: the same fingerprint again counts a repeat on the
+# open shaping item. Owner kit (a reminder to Kit itself) is refused - that
+# stays in the note. The host prints the receipt {"id","url","state","count"}.
+# Docs: docs/runbook.md, "Held items become shaping items".
 set -eu
 CONF=/run/lifekit/kit-relay/ssh_config
 FLEET_URL=http://lifekit-dashboard:8080/api/fleet
-USAGE="usage: relay.sh note <body-file> [<home>] [--origin O --owner W --class C --acceptance A [--thread T]] | replies [<cursor>] [<home>] | status  (<home>: fm-vps | firstmate)"
+USAGE="usage: relay.sh note <body-file> [<home>] [--origin O --owner W --class C --acceptance A [--thread T]] | hold <item-file> [<home>] --origin O --owner W --class C --acceptance A --thread T --fingerprint F | replies [<cursor>] [<home>] | status  (<home>: fm-vps | firstmate)"
 
 home_ok() {
   case "$1" in
@@ -31,7 +41,8 @@ home_ok() {
 }
 
 case "${1-}" in
-  note)
+  note | hold)
+    verb=$1
     shift
     env_origin='' env_owner='' env_class='' env_acceptance='' env_thread='' env_fp=''
     enveloped='' pos=0 body='' home=''
@@ -69,6 +80,40 @@ case "${1-}" in
     done
     [ -s "$body" ] || { echo "relay.sh: body file missing or empty" >&2; exit 64; }
     [ -z "$home" ] || home_ok "$home" || exit 64
+    if [ "$verb" = hold ]; then
+      missing=
+      [ -n "$env_origin" ] || missing="$missing origin"
+      [ -n "$env_owner" ] || missing="$missing owner"
+      [ -n "$env_class" ] || missing="$missing class"
+      [ -n "$env_fp" ] || missing="$missing fingerprint"
+      [ -n "$env_acceptance" ] || missing="$missing acceptance"
+      [ -n "$env_thread" ] || missing="$missing thread"
+      [ -z "$missing" ] || { echo "relay.sh: envelope missing:$missing" >&2; exit 64; }
+      case "$env_class" in
+        dev | ops | finance | life | unclear) ;;
+        *) echo "relay.sh: envelope class must be dev, ops, finance, life or unclear" >&2; exit 64 ;;
+      esac
+      case "$(printf '%s' "$env_owner" | tr '[:upper:]' '[:lower:]')" in
+        kit | me | self | myself)
+          echo "relay.sh: a reminder to Kit itself is not filed; keep it in the daily note" >&2
+          exit 65
+          ;;
+      esac
+      sent=$(mktemp)
+      trap 'rm -f "$sent"' EXIT
+      {
+        printf -- '---\norigin: %s\nowner: %s\nclass: %s\nfingerprint: %s\nacceptance: %s\nthread: %s\n---\n' \
+          "$env_origin" "$env_owner" "$env_class" "$env_fp" "$env_acceptance" "$env_thread"
+        cat "$body"
+      } >"$sent"
+      # Same text the same UTC day is a replay (no second count); a repeat on
+      # a later day, or in other words, counts.
+      rid="kit-held-$(sha256sum "$sent" | cut -c1-16)-$(date -u +%Y%m%d)"
+      # No exec: the EXIT trap removes the temp file.
+      st=0
+      ssh -F "$CONF" relay hold "$rid" ${home:+"$home"} <"$sent" || st=$?
+      exit "$st"
+    fi
     if [ -z "$enveloped" ]; then
       rid="kit-$(date -u +%Y%m%d)-$(sha256sum "$body" | cut -c1-16)"
       exec ssh -F "$CONF" relay note "$rid" ${home:+"$home"} <"$body"

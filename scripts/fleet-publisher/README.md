@@ -222,7 +222,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `intake` | The shared job queue's depth: `{waiting, running, done_24h, failed_24h}`, or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
-| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`): `{read, reason}`; `read: false` says why a source contributed nothing, or `null` with `stalled` |
+| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`): `{read, reason}` (`kit_held` adds `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | The side-hustle lines and week-sheet rows (below): `{channels[], lines[], week_rows[], credential, brief_day, week_of, feed_read}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
 | `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
@@ -314,6 +314,7 @@ line), never a guess.
 | A2A thread | open and past its own `deadline`, or no turn for 24 hours | `a2a.idle_hours` | the `deadline`, or the last turn | the thread's `owner` when it is one, else `firstmate` |
 | Clip channel | `buffer_days` under `clip.buffer_floor_days` (1), or no post inside `clip.slot_window_hours` (30; a channel that never posted counts) | `clip.buffer_floor_days`, `clip.slot_window_hours` | the last post (or the slot, never posted), or the check time for a short buffer | `clip.owner` (`firstmate`) |
 | Scout | no new candidates file for `scout.idle_hours` (96) | `scout.idle_hours` | the newest `candidates/*.txt` of `FLEET_SCOUT_STATE`, by modification time | `scout.owner` (`firstmate`) |
+| Kit's held item | an open line of Kit's daily notes that names a fleet task and has no shaping item, for `kit_held.hours` (24) | `kit_held.hours` | when `kit_held.py check` first saw it unfiled | `kit_held.owner` (`firstmate`) |
 | Captain call | unchanged: days waited, as before | - | - | - |
 
 - **Shape.** `records[].stalled` and `queue.top[].stalled` are `null` or
@@ -321,9 +322,9 @@ line), never a guess.
   duration, an exhausted job or a passed deadline). `stalled[]` is
   `[{owner, count, items: [{source, id, home_id, title, url, reason, since,
   threshold}]}]` in the config's `owners` order (a count of 0 is kept), oldest
-  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip` or `scout`; `reason` is
+  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip`, `scout` or `held`; `reason` is
   `no-status-line`, `no-update`, `attempts-exhausted`, `waiting`,
-  `past-deadline`, `no-turn`, `no-post`, `buffer-short` or `no-output`. The schema stays `fleet-status-page.v1`; these
+  `past-deadline`, `no-turn`, `no-post`, `buffer-short`, `no-output` or `not-filed`. The schema stays `fleet-status-page.v1`; these
   are new optional keys, and a consumer that ignores them is unchanged. The
   dashboard's rendering is its own issue.
 - **GitHub issues** come from `gh issue list -R <owner/name> --state open`
@@ -346,6 +347,14 @@ line), never a guess.
   `FLEET_SCOUT_STATE` (its state dir, `~/.local/state/lifekit-scout` by default for
   the scout's own unit; the publisher does not guess it, so unset the source is
   `read: false`), and a state dir with no candidates file yet is unread, not stalled.
+- **Kit's held items** (lifekit-stack#684) come from `FLEET_KIT_HELD_CMD`, a
+  command printing the JSON list `scripts/kit-held/kit_held.py check` prints
+  (`{id, note, title, since}`: open lines of Kit's daily notes that name a fleet
+  task and carry no `(shaping: <id>)` of an existing shaping item). An item is a
+  stalled row (`source` `held`, `reason` `not-filed`) once it has waited
+  `kit_held.hours`; `stalled_sources.kit_held.open` counts all of them. Unset,
+  or with no `kit_held` block, the source is `read: false`. Setup: docs/runbook.md,
+  "Held items become shaping items".
 - **Failure** of one source empties only its own rows, sets its
   `stalled_sources` entry to `read: false` and adds an `errors[]` line.
 
