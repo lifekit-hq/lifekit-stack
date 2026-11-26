@@ -8,12 +8,12 @@ import os
 import shutil
 import subprocess
 import sys
-import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 
 GATE = Path(__file__).resolve().parents[2] / "scripts/finance-pulse-gate"
 TOKEN = "t0k3n"
@@ -74,9 +74,9 @@ class FakeMcp(BaseHTTPRequestHandler):
 def mcp():
     FakeMcp.events, FakeMcp.health, FakeMcp.sse, FakeMcp.calls = [], [], False, []
     server = HTTPServer(("127.0.0.1", 0), FakeMcp)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    serve(server)
     yield f"http://127.0.0.1:{server.server_port}/"
-    server.shutdown()
+    stop(server)
 
 
 def check(url, now=AFTERNOON, token=TOKEN):

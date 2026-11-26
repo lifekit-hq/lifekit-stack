@@ -14,12 +14,12 @@ import base64
 import json
 import os
 import subprocess
-import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 
 REPO = Path(__file__).resolve().parents[2]
 ADMIN = REPO / "scripts/identity/logto-admin.py"
@@ -447,8 +447,7 @@ def handler_for(fake: FakeLogto):
 def logto(tmp_path):
     fake = FakeLogto()
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(fake))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    serve(server)
     outputs: list[str] = []
     ledger = tmp_path / "ledger.jsonl"
 
@@ -477,7 +476,7 @@ def logto(tmp_path):
     run.ledger = ledger
     run.outputs = outputs
     yield run
-    server.shutdown()
+    stop(server)
     for out in outputs:
         for secret in (APP_SECRET, TOKEN, GATE_SECRET, SMTP_PASSWORD):
             assert secret not in out

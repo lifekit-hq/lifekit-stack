@@ -14,12 +14,12 @@ import json
 import os
 import subprocess
 import sys
-import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 from test_logto_admin import (
     APP_ID,
     APP_SECRET,
@@ -191,7 +191,7 @@ def env(tmp_path):
     servers = []
     for handler in (handler_for(logto), ts_handler(ts)):
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        serve(server)
         servers.append(server)
     outputs: list[str] = []
 
@@ -225,7 +225,7 @@ def env(tmp_path):
     run.logto, run.ts = logto, ts
     yield run
     for s in servers:
-        s.shutdown()
+        stop(s)
     for out in outputs:
         for secret in (CLIENT_SECRET, TS_TOKEN, USER_TOKEN, APP_SECRET, TOKEN):
             assert secret not in out

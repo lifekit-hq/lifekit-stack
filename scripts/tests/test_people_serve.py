@@ -15,7 +15,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -23,6 +22,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+import fakeserver
 import yaml
 from test_logto_admin import APP_ID, APP_SECRET, TOKEN, FakeLogto, handler_for
 from test_people import (  # noqa: F401 - tls_ctx is a fixture
@@ -60,7 +60,7 @@ def serve(tmp_path):
     servers = []
     for handler in (handler_for(logto), ts_handler(ts)):
         srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        fakeserver.serve(srv)
         servers.append(srv)
     ledger = tmp_path / "ledger.jsonl"
     procs: list[subprocess.Popen] = []
@@ -138,7 +138,7 @@ def serve(tmp_path):
         out, err = p.communicate(timeout=10)
         outs.append(out + err)
     for srv in servers:
-        srv.shutdown()
+        fakeserver.stop(srv)
     for out in outs:
         for secret in (SECRET, CLIENT_SECRET, USER_TOKEN, APP_SECRET, TOKEN, PASSWORD):
             assert secret not in out

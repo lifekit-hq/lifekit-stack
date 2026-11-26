@@ -12,11 +12,11 @@ import importlib.util
 import json
 import stat
 import sys
-import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 
 REPO = Path(__file__).resolve().parents[2]
 SKILL = REPO / "skills/doc-door"
@@ -599,12 +599,12 @@ class _Stub(BaseHTTPRequestHandler):
 def test_mcp_client_works_with_and_without_trailing_slash(path):
     _Stub.seen = []
     srv = HTTPServer(("127.0.0.1", 0), _Stub)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    serve(srv)
     try:
         mcp = REAL_MCP(f"http://127.0.0.1:{srv.server_port}{path}")
         assert mcp.call("search_gmail_messages", query="x") == "pong"
     finally:
-        srv.shutdown()
+        stop(srv)
     last = _Stub.seen[-1]
     assert last[0] == "/mcp" and last[1] == "sess-1"  # session header survives
     assert last[2]["params"]["name"] == "search_gmail_messages"
