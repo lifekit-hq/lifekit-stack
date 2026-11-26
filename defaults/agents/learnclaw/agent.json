@@ -1,0 +1,11 @@
+{
+  "agents": {
+    "entries": {
+      "learnclaw": {
+        "tools": {
+          "agentToAgent": { "send": ["kit"] }
+        }
+      }
+    }
+  }
+}

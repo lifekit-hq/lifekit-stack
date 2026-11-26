@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -115,6 +116,12 @@ if cmd[:2] == ["config", "get"]:
         if load("a2a_noise"):
             print("[gateway] noise before the value")
         print(json.dumps(load("a2a", False)))
+    elif cmd[2] == "agents.entries":
+        entries = load("entries", {})
+        if load("entry") is not None:
+            entries["reader"] = load("entry")
+        print("[gateway] noise before the JSON")
+        print(json.dumps(entries))
     elif cmd[2] == "tools.agentToAgent.allow":
         allow = load("a2a_allow")
         if allow is None:
@@ -124,9 +131,16 @@ if cmd[:2] == ["config", "get"]:
             print("[gateway] noise before the value")
         print(json.dumps(allow))
 elif cmd[:2] == ["config", "patch"]:
-    log_call(cmd)
     patch = json.load(sys.stdin)
-    save("a2a_allow", patch["tools"]["agentToAgent"]["allow"])
+    log_call(cmd + [patch])
+    if "tools" in patch:
+        save("a2a_allow", patch["tools"]["agentToAgent"]["allow"])
+    entries = load("entries", {})
+    for i, e in patch.get("agents", {}).get("entries", {}).items():
+        live = entries.setdefault(i, {})
+        live.setdefault("tools", {}).setdefault("agentToAgent", {})
+        live["tools"]["agentToAgent"]["send"] = e["tools"]["agentToAgent"]["send"]
+    save("entries", entries)
 elif cmd[:2] == ["agents", "list"]:
     rows = [{"id": "main", "bindings": 0}]
     if load("entry") is not None:
@@ -179,7 +193,7 @@ def box(tmp_path):
     return make_box(tmp_path)
 
 
-def make_box(tmp_path):
+def make_box(tmp_path, repo=REPO):
     state, bin_dir, conf = tmp_path / "state", tmp_path / "bin", tmp_path / "conf"
     for d in (state, bin_dir, conf):
         d.mkdir()
@@ -204,7 +218,7 @@ def make_box(tmp_path):
 
         def script(self, name, *args, **extra_env):
             return subprocess.run(
-                ["bash", str(REPO / "scripts" / name), *args],
+                ["bash", str(repo / "scripts" / name), *args],
                 env={
                     **env,
                     "DOC_DOOR_ALERT_CHAT": "1",
@@ -303,11 +317,50 @@ def test_a_channel_binding_is_refused(box):
     assert done.returncode == 1 and "channel binding" in done.stderr
 
 
-A2A_AGENTS = ["kit", "finance"]
+# The owner's rule (2026-11-25, #683): every agent can message Kit and no other agent,
+# Kit keeps its exchange with each of them, and the reader and the study panel stay
+# unreachable. The agents that run today, by name: the oracle the derived list and the
+# converged sends are held to.
+ALLOW = ["career", "finance", "kit", "learnclaw"]
+SEND = {"kit": ["*"], "finance": ["kit"], "learnclaw": ["kit"], "career": ["kit"]}
+LIVE = {
+    i: {"workspace": f"/w/{i}", "tools": {"agentToAgent": {"send": s}}}
+    for i, s in SEND.items()
+}
+
+
+def a2a_repo(tmp_path):
+    """A copy of the pieces the script derives the allow list from, to add agents to."""
+    repo = tmp_path / "repo"
+    (repo / "scripts/ledger-persona").mkdir(parents=True)
+    shutil.copy(ENSURE, repo / "scripts/ensure-reader-agent.sh")
+    shutil.copy(
+        REPO / "scripts/ledger-persona/ledger-persona.py",
+        repo / "scripts/ledger-persona/ledger-persona.py",
+    )
+    shutil.copytree(REPO / "defaults/agents", repo / "defaults/agents")
+    return repo
+
+
+def add_agent(repo, agent, send=None):
+    (repo / f"defaults/agents/{agent}/workspace").mkdir(parents=True)
+    if send is not None:
+        entry = {"tools": {"agentToAgent": {"send": send}}}
+        (repo / f"defaults/agents/{agent}/agent.json").write_text(
+            json.dumps({"agents": {"entries": {agent: entry}}})
+        )
 
 
 def patches(box):
     return [c for c in box.calls() if c[:2] == ["config", "patch"]]
+
+
+def sends(box):
+    return {
+        i: e["tools"]["agentToAgent"].get("send")
+        for i, e in box.get("entries").items()
+        if "agentToAgent" in e.get("tools", {})
+    }
 
 
 def test_agent_to_agent_on_with_no_allow_list_converges_to_the_users_only(box):
@@ -316,7 +369,151 @@ def test_agent_to_agent_on_with_no_allow_list_converges_to_the_users_only(box):
     box.put("a2a", True)
     done = box.run()
     assert done.returncode == 0, done.stderr
-    assert box.get("a2a_allow") == A2A_AGENTS and "reader" not in box.get("a2a_allow")
+    assert box.get("a2a_allow") == ALLOW
+
+
+def test_every_running_agent_reaches_kit_and_only_kit(box):
+    # the live entries as they were before #683: no per-agent send, the study panel's []
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("a2a_allow", ["kit", "finance"])
+    live = {i: {"workspace": f"/w/{i}"} for i in SEND}
+    live["study-panel"] = {"tools": {"agentToAgent": {"send": []}}}
+    box.put("entries", live)
+    done = box.run()
+    assert done.returncode == 0, done.stderr
+    allow = box.get("a2a_allow")
+    assert allow == ALLOW and not {"reader", "study-panel"} & set(allow)
+    got = sends(box)
+    assert {i: got[i] for i in SEND} == SEND and got["study-panel"] == []
+    assert box.get("entries")["kit"]["workspace"] == "/w/kit"
+    for agent in ("learnclaw", "career"):
+        assert not {"finance", "study-panel", "reader", "*"} & set(got[agent])
+    # Ledger is reached by Kit alone
+    assert [i for i, s in got.items() if {"finance", "*"} & set(s)] == ["kit"]
+    assert box.run("--check").returncode == 0
+
+
+def test_a_new_agent_definition_joins_the_allow_list(tmp_path):
+    repo = a2a_repo(tmp_path)
+    add_agent(repo, "workout", ["kit"])
+    box = make_box(tmp_path, repo)
+    box.put("entry", ENTRY)
+    box.put("allow", [DOOR])
+    box.put("a2a", True)
+    box.put("a2a_allow", ALLOW)
+    box.put("entries", {**LIVE, "workout": {"workspace": "/w/workout"}})
+    done = box.run("--check")
+    assert done.returncode == 1
+    assert "differs from the agents the repo defines" in done.stderr
+    done = box.run()
+    assert done.returncode == 0, done.stderr
+    assert box.get("a2a_allow") == sorted([*ALLOW, "workout"])
+    assert sends(box)["workout"] == ["kit"]
+    assert box.run("--check").returncode == 0
+
+
+def test_a_new_agent_definition_without_a_send_list_is_refused(tmp_path):
+    repo = a2a_repo(tmp_path)
+    add_agent(repo, "workout")
+    box = make_box(tmp_path, repo)
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    done = box.run()
+    assert done.returncode == 1
+    assert (
+        "defaults/agents/workout/agent.json ships no tools.agentToAgent.send"
+        in done.stderr
+    )
+    assert patches(box) == []
+
+
+def test_an_isolated_agent_definition_stays_out_of_the_allow_list(tmp_path):
+    repo = a2a_repo(tmp_path)
+    add_agent(repo, "vault", [])
+    box = make_box(tmp_path, repo)
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    assert box.run().returncode == 0
+    assert box.get("a2a_allow") == ALLOW
+
+
+@pytest.mark.parametrize("live", [["*"], ["kit", "finance"], None])
+def test_check_refuses_a_send_list_wider_than_the_shipped_one(box, live):
+    box.put("entry", ENTRY)
+    box.put("allow", [DOOR])
+    box.put("a2a", True)
+    box.put("a2a_allow", ALLOW)
+    career = {"workspace": "/w/career"}
+    if live is not None:
+        career["tools"] = {"agentToAgent": {"send": live}}
+    box.put("entries", {**LIVE, "career": career})
+    done = box.run("--check")
+    assert done.returncode == 1
+    assert "agents.entries.career.tools.agentToAgent.send" in done.stderr
+    assert patches(box) == []
+    assert box.run().returncode == 0
+    (patch,) = patches(box)
+    assert patch[-1] == {
+        "agents": {
+            "entries": {"career": {"tools": {"agentToAgent": {"send": ["kit"]}}}}
+        }
+    }
+    assert sends(box)["career"] == ["kit"]
+    assert box.get("entries")["career"]["workspace"] == "/w/career"
+
+
+def test_an_agent_not_installed_here_gets_no_entry(box):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("entries", {"kit": {"workspace": "/w/kit"}})
+    assert box.run().returncode == 0
+    assert sorted(box.get("entries")) == ["kit"] and sends(box) == {"kit": ["*"]}
+
+
+def test_the_reader_never_joins_the_allow_list(tmp_path):
+    # even with its definition present and Ledger's installer pointed at it
+    repo = a2a_repo(tmp_path)
+    ledger = repo / "scripts/ledger-persona/ledger-persona.py"
+    ledger.write_text(
+        ledger.read_text().replace(
+            "/agents/finance/workspace", "/agents/reader/workspace"
+        )
+    )
+    box = make_box(tmp_path, repo)
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    done = box.run()
+    assert done.returncode == 0 or "exec allowlist" in done.stderr, done.stderr
+    assert "reader" not in box.get("a2a_allow") and box.get("a2a_allow")
+
+
+def test_a_missing_ledger_id_fails_closed(tmp_path):
+    repo = a2a_repo(tmp_path)
+    ledger = repo / "scripts/ledger-persona/ledger-persona.py"
+    ledger.write_text(ledger.read_text().replace("DEFAULT_WORKSPACE = ", "OTHER = "))
+    box = make_box(tmp_path, repo)
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    done = box.run()
+    assert done.returncode == 1 and "Ledger's agent id" in done.stderr
+    assert patches(box) == []
+
+
+@pytest.mark.parametrize("allow", [["kit", "finance"], [*ALLOW, "ghost"]])
+def test_check_refuses_an_allow_list_that_differs_from_the_defined_agents(box, allow):
+    box.put("entry", ENTRY)
+    box.put("a2a", True)
+    box.put("a2a_allow", allow)
+    done = box.run("--check")
+    assert (
+        done.returncode == 1
+        and "differs from the agents the repo defines" in done.stderr
+    )
+    assert patches(box) == []
+    done = box.run()
+    assert done.returncode == 0 or "exec allowlist" in done.stderr, done.stderr
+    assert box.get("a2a_allow") == ALLOW
 
 
 def test_agent_to_agent_on_with_no_allow_list_is_refused_by_check(box):
@@ -350,13 +547,13 @@ def test_converge_removes_the_reader_from_the_allow_list(box):
     box.put("a2a", True)
     box.put("a2a_allow", ["kit", "finance", "reader"])
     assert box.run().returncode == 0
-    assert box.get("a2a_allow") == A2A_AGENTS
+    assert box.get("a2a_allow") == ALLOW
 
 
 def test_an_allow_list_that_excludes_the_reader_passes_and_is_left_alone(box):
     box.put("entry", ENTRY)
     box.put("a2a", True)
-    box.put("a2a_allow", list(reversed(A2A_AGENTS)))
+    box.put("a2a_allow", list(reversed(ALLOW)))
     for args in ((), ("--check",)):
         done = box.run(*args)
         assert done.returncode == 0 or "exec allowlist" in done.stderr, done.stderr
@@ -379,7 +576,7 @@ def test_the_allow_list_converge_is_idempotent(box):
     assert len(patches(box)) == 1
     again = box.run()
     assert again.returncode == 0, again.stderr
-    assert len(patches(box)) == 1 and box.get("a2a_allow") == A2A_AGENTS
+    assert len(patches(box)) == 1 and box.get("a2a_allow") == ALLOW
 
 
 def test_agent_to_agent_enabled_is_read_through_log_noise(box):
@@ -396,7 +593,7 @@ def test_the_allow_list_is_read_through_log_noise(box):
     box.put("entry", ENTRY)
     box.put("a2a", True)
     box.put("a2a_allow_noise", True)
-    box.put("a2a_allow", list(reversed(A2A_AGENTS)))
+    box.put("a2a_allow", list(reversed(ALLOW)))
     for args in ((), ("--check",)):
         done = box.run(*args)
         assert done.returncode == 0 or "exec allowlist" in done.stderr, done.stderr

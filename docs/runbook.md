@@ -2474,9 +2474,26 @@ The `reader` agent is the one agent that reads untrusted text: new mail and the 
 attached to it. Both reading crons run as it - `doc-door` and `needs-you-mail-reader` - so a
 hostile message or document meets an agent that holds no write, send, web or delegation tool,
 not Kit, which does (decided in #528, built in #556). It runs only from those two cron jobs: no
-channel is bound to it, nothing chats with it, and no other agent can reach it: agent-to-agent
-stays on for the Kit to Ledger exchange but `tools.agentToAgent.allow` names only `kit` and
-`finance` (Ledger), never the reader.
+channel is bound to it, nothing chats with it, and no other agent can reach it.
+
+- **Agent-to-agent rule**: every agent can message Kit and no other agent, Kit can answer
+  each of them, and nothing can message the reader or the study panel. `tools.agentToAgent`
+  stays on. Each agent's definition ships who it may message as
+  `tools.agentToAgent.send` in `defaults/agents/<id>/agent.json`: Kit `["*"]`, Ledger
+  (`finance`), learnclaw and career `["kit"]`, the reader and the study panel `[]`.
+  `tools.agentToAgent.allow` is every agent the repo defines (each `defaults/agents/<id>` with a
+  `workspace/`, plus Ledger's id from `scripts/ledger-persona/ledger-persona.py`'s default
+  workspace) except the ones that ship `send: []`, and never the reader. So learnclaw and
+  career cannot reach Ledger or the study panel, and only Kit reaches Ledger.
+  `scripts/ensure-reader-agent.sh` derives the list and the sends on every deploy and converges
+  them with `openclaw config patch` (the allow list, and only the `send` key of each agent that
+  has a live entry; an agent not installed on the box gets no entry), so a new agent definition
+  (a `workspace/` plus an `agent.json` with its `send`) joins without an edit to the script; a
+  definition with no `send` list is refused, and `--check` fails when the live list or any live
+  send differs. OpenClaw (2026.11.4 schema) has no one-way rule: the requester and the target
+  must both match the global allow list, and an agent's own `send` only narrows its outbound
+  sends inside it. So the reader stays out of the list, which also means it cannot send to Kit;
+  a list that reaches the reader (`reader`, `*` or a trailing `*` pattern) is refused.
 
 - **What it holds** (`defaults/agents/reader/agent.json`, the agent entry; the persona is
   `defaults/agents/reader/workspace/`): `tools.allow` is `exec` plus the two Gmail reads
@@ -2527,7 +2544,8 @@ leaves both crons on Kit, each with a note, so the merge changes nothing before 
    `reader agent verified` only when the live entry equals the shipped one, nothing is bound to the
    reader, the reader is unreachable by other agents (`tools.agentToAgent` off, or on with a
    non-empty `tools.agentToAgent.allow` that excludes it; enabled with no allow list is refused, and
-   the script sets the list to `kit` and `finance` when it is on, a re-run changes nothing) and the
+   the script sets the list and each agent's `send` to the repo's definitions when it is on, a
+   re-run changes nothing) and the
    reader's allowlist is exactly the door script.
 4. `scripts/ensure-doc-door.sh`: installs the skill into the reader's workspace and moves the
    `doc-door` job to the reader. Then `scripts/ensure-needs-you-digest.sh`: moves

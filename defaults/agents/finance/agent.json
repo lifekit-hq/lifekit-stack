@@ -1,0 +1,11 @@
+{
+  "agents": {
+    "entries": {
+      "finance": {
+        "tools": {
+          "agentToAgent": { "send": ["kit"] }
+        }
+      }
+    }
+  }
+}
