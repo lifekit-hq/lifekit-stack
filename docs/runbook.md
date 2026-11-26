@@ -1721,7 +1721,8 @@ not a notification channel and adds no rule.
 
 - **One source:** `defaults/agents/shared/dev-problems.md`, between its two marker lines.
   `scripts/ensure-dev-problem-block.sh [agent-id ...]` puts it into each workspace's
-  `SOUL.md` (all of `agents/*/workspace` when no id is given): it replaces the text between
+  `SOUL.md` (all of `agents/*/workspace` when no id is given, less the agents with no door,
+  see "Agents with no door" below): it replaces the text between
   the markers, or appends the block when they are absent, and touches nothing else. Re-running
   converges; `DRY_RUN=1` reports without writing; a missing `SOUL.md` or a lone, repeated or
   reversed marker leaves that file alone and makes the exit code 1 after the others finish.
@@ -1747,15 +1748,15 @@ Operator steps, once per host after the PR deploys (as `lifekit`; the live works
 live `AGENTS.md` are host state):
 
 ```bash
-sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent (this block, the a2a envelope, receipts)
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent with a door (this block, the a2a envelope, receipts)
 ```
 
 Then paste the revised devclaw line of `defaults/agents/kit/workspace/AGENTS.md` into the live
 kit `AGENTS.md`. Ledger's own persona still tells it to hand build work to Kit with
 `sessions_send`; that line moves to this route by a finance-sentry `agent/ledger` change and a
 `PIN` bump. **Verify:** `grep -c 'lifekit:dev-problems:begin' /srv/openclaw/config/agents/*/workspace/SOUL.md`
-prints 1 for each. **Rollback:** delete the text between and including the two marker lines in
-each `SOUL.md`.
+prints 1 for each agent with a door and 0 for the reader and the study panel. **Rollback:**
+delete the text between and including the two marker lines in each `SOUL.md`.
 
 #### Agent-to-agent envelope and ack
 
@@ -1775,12 +1776,12 @@ decision 0016); this repo carries it into every agent's persona and does not res
 Operator steps after the PR deploys (as `lifekit`; live workspaces are host state):
 
 ```bash
-sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent
+sudo -u lifekit /srv/lifekit-stack/scripts/ensure-dev-problem-block.sh   # three lines per agent with a door
 ```
 
 **Verify:** `grep -c 'lifekit:a2a-envelope:begin' /srv/openclaw/config/agents/*/workspace/SOUL.md`
-prints 1 for each. Then the exchange check, from the main agent: have Kit `sessions_send` Ledger
-one envelope with `type: request`, a fresh `thread` and `reply_expected: true`; read Ledger's
+prints 1 for each agent with a door and 0 for the reader and the study panel. Then the exchange
+check, from the main agent: have Kit `sessions_send` Ledger one envelope with `type: request`, a fresh `thread` and `reply_expected: true`; read Ledger's
 session transcript and confirm its first message back is `type: ack` with that `thread`, a `state`
 of `submitted` or `rejected` and where the item lives, before any reply. Send the same `thread`
 again and confirm the ack's `state` is `working` and no second item exists. **Rollback:** delete
