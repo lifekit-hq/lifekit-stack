@@ -75,4 +75,3 @@ def test_ensure_fails_when_membership_does_not_take(host):
     r = run(host, "admin")
     assert r.returncode == 1
     assert "not in the lifekit group" in r.stderr
-
