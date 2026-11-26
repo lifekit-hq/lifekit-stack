@@ -6342,18 +6342,40 @@ has exactly two tools:
 
 There is no other tool, no exec, and no path argument. The service
 (`compose/learn-mcp/`, compose project `learn-mcp`, container
-`learn-mcp-learn-mcp-1`, port 8099) mounts the vault read-write, because
-record.py's lint needs git and the whole vault.
+`learn-mcp-learn-mcp-1`, port 8099) runs as uid 1000 (the vault's owner, never
+root), with a read-only root filesystem, `/tmp` on tmpfs, every capability
+dropped, no Docker socket, and two host mounts:
+
+- **The vault, read-only** at `/vault`. `learning_context` reads the learning
+  page, and record.py's lint (the vault's `bin/lint.sh --changed`) reads the
+  rest of the vault and its git history. A read-only `.git` is enough for that.
+- **`domains/`, read-write**, mounted over it at `/vault/domains`. This is the
+  service's whole write surface. record.py needs the page's directory, not
+  only the page, for two reasons. It writes the row to a sibling temp file and
+  renames it over the page; a rename onto a single-file bind mount fails, and
+  a file mount would go stale when the vault sync replaces the page. It also
+  takes its lock on that directory. The page is pinned by `LEARNING_PAGE` in
+  the compose file and no tool argument can change it, so the other pages in
+  `domains/` are writable to the container but reachable by no tool. A test
+  calls both tools with path-shaped values on a fixture vault that is
+  read-only except `domains/`. The learning page is the only file that changes.
+
+The LearnHarness mirror is the third mount, read-only at `/mirror`.
 
 Path: claude.ai → `https://<host>.<tailnet>.ts.net/learn-mcp` (Funnel on 443,
 path `/learn-mcp`; Serve strips the prefix and sets `X-Forwarded-For` to the
-client) → edge entrypoint `learn-mcp`, `127.0.0.1:18896`
-(`compose/edge/traefik/learn-mcp.yml`, `POST`/`GET`/`DELETE` on `/mcp` only;
-it keeps Funnel's `X-Forwarded-For`) → the service. The service then checks
-these in order, before any tool runs:
+client address when it has one, replacing what the caller sent) → edge
+entrypoint `learn-mcp`, `127.0.0.1:18896` (`compose/edge/traefik/learn-mcp.yml`,
+`POST`/`GET`/`DELETE` on `/mcp` only; it keeps Funnel's header and appends its
+own hop) → the service. So the service sees `<client>, <edge hop>`, or only
+`<edge hop>` when Funnel passed no address. It then checks these in order,
+before any tool runs:
 
-1. a forwarded client outside `LEARN_MCP_ALLOW_CIDRS` (default: Anthropic's
-   published outbound ranges `160.79.104.0/21,153.61.208.0/20`) gets 403;
+1. when Funnel passed the client address, a client outside
+   `LEARN_MCP_ALLOW_CIDRS` (default: Anthropic's published outbound ranges
+   `160.79.104.0/21,153.61.208.0/20`) gets 403. When it passed none, there is
+   no refusal. The bearer alone decides, and the access log line carries
+   `"client_address": "absent"` (vault decision 0020);
 2. a request without the exact `Authorization: Bearer <LEARN_MCP_TOKEN>`
    (constant-time compare) gets 401;
 3. more than `LEARN_MCP_RATE_PER_MIN` (60) requests a minute gets 429;
@@ -6416,6 +6438,16 @@ docker exec learn-mcp-learn-mcp-1 python -c 'import json,os,urllib.request as u;
 # ['learning_context', 'record_artefact']
 docker logs learn-mcp-learn-mcp-1 --tail 5    # src of claude.ai's calls is in 160.79.104.0/21 or 153.61.208.0/20
 ```
+
+**Known gap to re-check: the client address.** The outbound-range limit
+holds only when Funnel passes the client address. Tailscale's serve proxy sets
+it from the connection's source; whether a Funnel connection's source is
+claude.ai's real address has not been seen on this box yet. After the first
+connector calls, read the access log. If the lines carry a `src` in
+Anthropic's ranges and no `client_address`, the limit is in force. If they
+carry `"client_address": "absent"`, or a `src` that is a Tailscale relay
+rather than Anthropic, only the bearer is guarding the path. Note it on the
+issue and re-check after each Tailscale upgrade.
 
 End to end, from the coach: in a claude.ai chat with the connector on, ask
 for today's problem; `learning_context` answers. Approve one save; the row

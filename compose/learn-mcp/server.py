@@ -11,11 +11,14 @@ The gate runs before the MCP app sees a byte, in this order:
   1. /health, /ready and /metrics answer only a direct caller (Prometheus and
      the platform contract on lifekit-shared). A request that came through
      the edge carries X-Forwarded-For and gets 404 there.
-  2. A forwarded request from outside LEARN_MCP_ALLOW_CIDRS (Anthropic's
-     published outbound ranges) gets 403. Tailscale Funnel sets
-     X-Forwarded-For to the connecting address, replacing whatever the client
-     sent, so its first entry is the real client (scripts/deploy-edge.sh
-     checks Funnel serves nothing else).
+  2. When Funnel passed the client address, a request from outside
+     LEARN_MCP_ALLOW_CIDRS (Anthropic's published outbound ranges) gets 403.
+     Tailscale's serve proxy sets X-Forwarded-For to the connecting address,
+     replacing whatever the client sent, and Traefik appends its own hop, so
+     the client is the entry before the last (client_of). When Funnel passed
+     none, the bearer alone decides and the access log records
+     `client_address: absent` (a known gap, re-checked at install:
+     docs/runbook.md "learn-mcp (the study coach's connector)").
   3. Every other request needs `Authorization: Bearer <LEARN_MCP_TOKEN>`,
      compared in constant time; anything else gets 401. With no token set,
      every request gets 401.
@@ -282,17 +285,15 @@ class Gate:
         started = time.monotonic()
         headers = {k.decode("latin-1").lower(): v for k, v in scope["headers"]}
         forwarded = headers.get("x-forwarded-for", b"").decode("latin-1")
-        src = (
-            forwarded.split(",")[0].strip()
-            if forwarded
-            else (scope.get("client") or ("", 0))[0]
-        )
+        src, client_address = client_of(forwarded, scope)
         entry = {
             "trace_id": uuid.uuid4().hex,
             "src": src,
             "method": scope["method"],
             "path": scope["path"],
         }
+        if forwarded and client_address is None:
+            entry["client_address"] = "absent"
 
         async def reply(status: int, body: bytes, ctype: str = "text/plain") -> None:
             await send(
@@ -317,7 +318,9 @@ class Gate:
                 await reply(200, METRICS.render().encode(), "text/plain; version=0.0.4")
             return
 
-        if forwarded and self.cidrs and not self._allowed(src):
+        # The range check applies only when Funnel passed the client address;
+        # without one the bearer alone decides, and the log line says so.
+        if client_address is not None and self.cidrs and not self._allowed(src):
             METRICS.request("forbidden")
             await reply(403, b"forbidden\n")
             return
@@ -393,6 +396,24 @@ class Gate:
             "ms": round((time.monotonic() - started) * 1000),
         }
         log.info("request", extra={"fields": fields})
+
+
+def client_of(forwarded: str, scope) -> tuple[str, str | None]:
+    """(the address to log, the Funnel client address or None when absent).
+
+    Through the edge, X-Forwarded-For is `<funnel client>, <edge hop>`:
+    Tailscale's serve proxy sets it to the one connecting address (replacing
+    whatever the caller sent) when it has one, and Traefik always appends the
+    address it was reached from. So the client is the entry just before the
+    last; a header holding only the edge's hop means Funnel passed none.
+    A direct caller (no header) logs its socket address.
+    """
+    hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+    if not hops:
+        return (scope.get("client") or ("", 0))[0], None
+    if len(hops) < 2:
+        return hops[-1], None
+    return hops[-2], hops[-2]
 
 
 def describe(body: bytes) -> dict[str, str]:

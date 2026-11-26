@@ -8,8 +8,10 @@
 #
 # No sign-in and no identity headers: claude.ai's connector presents a static
 # bearer (LEARN_MCP_TOKEN), which the service checks itself, along with the
-# client address Funnel puts in X-Forwarded-For (Anthropic's outbound ranges
-# only). The identity headers are cleared, so a caller cannot present one.
+# client address Funnel puts in X-Forwarded-For when it passes one
+# (Anthropic's outbound ranges only). Traefik keeps that header and appends
+# its own hop, which the service skips. The identity headers are cleared, so a
+# caller cannot present one.
 #
 # Until the service runs, this route answers 502/503 from Traefik; nothing else
 # happens. Remove the route, the entrypoint and the port to take it away.

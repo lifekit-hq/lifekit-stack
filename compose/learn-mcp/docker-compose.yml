@@ -64,6 +64,9 @@ services:
     networks:
       - default
       - lifekit-shared
+    # The vault's owner (lifekit), never root: rows land as the user the sync
+    # timer commits as. The image says the same; this keeps it if it changes.
+    user: "1000:1000"
     read_only: true
     tmpfs:
       - /tmp
@@ -81,13 +84,26 @@ services:
       LEARN_MCP_ALLOW_CIDRS: ${LEARN_MCP_ALLOW_CIDRS:-160.79.104.0/21,153.61.208.0/20}
       LEARN_MCP_RATE_PER_MIN: ${LEARN_MCP_RATE_PER_MIN:-60}
       LEARNING_VAULT: /vault
+      # Pinned here, never taken from a caller: the one page record.py writes.
+      # Its directory is the one writable mount below; keep the two in step.
+      LEARNING_PAGE: domains/learning.md
       LEARN_MCP_MIRROR: /mirror
       # The date the record and the daily problem use (daily.py: Europe/Dublin).
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
-      # The vault, read-write: record.py writes the learning page and its lint
-      # reads the rest. The vault's sync timer commits; this service never does.
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/vault
+      # The vault, read-only: learning_context reads the learning page, and
+      # record.py's lint (the vault's bin/lint.sh --changed) reads the rest and
+      # its git history. Nothing under it is writable but the mount below.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/vault:ro
+      # The learning page's own directory, read-write, over the read-only vault
+      # (Docker mounts the deeper path last). record.py needs the directory,
+      # not just the file: it writes the row to a sibling temp file and renames
+      # it over the page (a rename onto a single-file bind mount fails, and a
+      # file mount would go stale when the vault sync replaces the page), and
+      # it takes its lock on the directory. That is the service's whole write
+      # surface: the pages in domains/, reached only by record.py on the pinned
+      # LEARNING_PAGE. The vault's sync timer commits; this service never does.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/domains:/vault/domains
       # The LearnHarness mirror (scripts/learnharness-sync/), read-only.
       - ${LEARNHARNESS_MIRROR_DIR:-/var/lib/lifekit/learnharness/data}:/mirror:ro
     expose:

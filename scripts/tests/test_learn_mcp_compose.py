@@ -47,6 +47,8 @@ def test_it_is_routed_through_the_edge_and_publishes_no_host_port():
 
 def test_it_is_locked_down_like_every_other_service():
     assert SVC["read_only"] is True
+    uid, gid = (int(x) for x in SVC["user"].split(":"))
+    assert uid != 0 and gid != 0
     assert SVC["cap_drop"] == ["ALL"]
     assert "no-new-privileges:true" in SVC["security_opt"]
     assert SVC["deploy"]["resources"]["limits"]["memory"]
@@ -65,11 +67,40 @@ def test_the_default_ranges_are_anthropics_published_outbound_ranges():
     )
 
 
-def test_the_vault_is_the_only_writable_mount_and_the_mirror_is_read_only():
-    mounts = SVC["volumes"]
-    assert mounts[0].endswith(":/vault")
-    assert mounts[1].endswith(":/mirror:ro")
-    assert len(mounts) == 2
+def _mounts():
+    """Each short-form mount as (source, target, read_only)."""
+    out = []
+    for m in SVC["volumes"]:
+        parts = m.split(":")
+        # the source holds a `${VAR:-default}`, whose `:-` is not a separator
+        mode = parts[-1] if parts[-1] in ("ro", "rw") else "rw"
+        if parts[-1] in ("ro", "rw"):
+            parts = parts[:-1]
+        out.append((":".join(parts[:-1]), parts[-1], mode == "ro"))
+    return out
+
+
+def test_the_only_writable_mount_is_the_learning_pages_own_directory():
+    mounts = {target: (source, ro) for source, target, ro in _mounts()}
+    assert set(mounts) == {"/vault", "/vault/domains", "/mirror"}
+    vault_src, vault_ro = mounts["/vault"]
+    assert vault_ro is True
+    assert mounts["/mirror"][1] is True
+    domains_src, domains_ro = mounts["/vault/domains"]
+    assert domains_ro is False
+    # the writable mount is the read-only vault's own domains/, nothing wider
+    assert domains_src == vault_src + "/domains"
+    # and it is the directory of the one page record.py is pinned to
+    env = SVC["environment"]
+    assert env["LEARNING_VAULT"] == "/vault"
+    assert str(Path("/vault") / Path(env["LEARNING_PAGE"]).parent) == "/vault/domains"
+
+
+def test_no_host_socket_or_other_host_path_is_mounted():
+    for source, target, _ in _mounts():
+        assert "docker.sock" not in source
+        assert target.startswith(("/vault", "/mirror"))
+    assert SVC["tmpfs"] == ["/tmp"]
 
 
 def test_the_image_copies_the_skills_from_the_repo():

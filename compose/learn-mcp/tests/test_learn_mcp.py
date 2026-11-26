@@ -31,6 +31,16 @@ from starlette.testclient import TestClient  # noqa: E402
 TOKEN = "t" * 64
 INSIDE = "160.79.104.10"  # in Anthropic's 160.79.104.0/21
 OUTSIDE = "203.0.113.7"
+# The address Traefik appends for its own hop, as a throwaway traefik:v3.7.14
+# with the edge's entrypoint flags showed: no incoming header gave
+# `X-Forwarded-For: 192.168.208.1`, one gave `<that one>, 192.168.208.1`.
+EDGE_HOP = "192.168.208.1"
+
+
+def via_funnel(addr: str) -> str:
+    """X-Forwarded-For as the service sees it when Funnel passed `addr`."""
+    return f"{addr}, {EDGE_HOP}"
+
 
 PAGE = """\
 ---
@@ -291,25 +301,50 @@ def test_the_token_is_compared_in_constant_time(client, monkeypatch):
     assert seen == [(f"Bearer {TOKEN}".encode(), f"Bearer {TOKEN}".encode())]
 
 
-def test_a_forwarded_request_from_outside_anthropics_ranges_gets_403(client):
-    r = rpc(client, "tools/list", headers={**AUTH, "x-forwarded-for": OUTSIDE})
-    assert r.status_code == 403
-    r = rpc(client, "tools/list", headers={**AUTH, "x-forwarded-for": "not-an-ip"})
-    assert r.status_code == 403
+def test_a_funnel_client_outside_anthropics_ranges_gets_403(client):
+    for addr in (OUTSIDE, "not-an-ip"):
+        r = rpc(
+            client, "tools/list", headers={**AUTH, "x-forwarded-for": via_funnel(addr)}
+        )
+        assert r.status_code == 403, addr
 
 
-def test_a_forwarded_request_from_inside_the_ranges_passes_the_gate(client):
+def test_a_funnel_client_inside_the_ranges_passes_the_gate(client):
     r = rpc(
-        client,
-        "tools/list",
-        headers={**AUTH, "x-forwarded-for": f"{INSIDE}, 172.18.0.1"},
+        client, "tools/list", headers={**AUTH, "x-forwarded-for": via_funnel(INSIDE)}
     )
     assert r.status_code == 200
 
 
 def test_the_range_check_comes_before_the_token(client):
-    r = rpc(client, "tools/list", headers={"x-forwarded-for": OUTSIDE})
+    r = rpc(client, "tools/list", headers={"x-forwarded-for": via_funnel(OUTSIDE)})
     assert r.status_code == 403
+
+
+def test_an_absent_client_address_is_decided_by_the_bearer_alone_and_logged(
+    client, caplog
+):
+    # Decision 0020: when Funnel passes no client address, only the edge's hop
+    # is in the header; the bearer decides and the log says the address was
+    # absent. The edge hop itself is never range-checked.
+    caplog.set_level(logging.INFO, logger="learn-mcp")
+    hop_only = {"x-forwarded-for": EDGE_HOP}
+    assert rpc(client, "tools/list", headers={**AUTH, **hop_only}).status_code == 200
+    assert rpc(client, "tools/list", headers=hop_only).status_code == 401
+    lines = [
+        json.loads(server.JsonFormatter().format(r))
+        for r in caplog.records
+        if r.name == "learn-mcp"
+    ]
+    assert [(ln["status"], ln.get("client_address")) for ln in lines] == [
+        (200, "absent"),
+        (401, "absent"),
+    ]
+    # with an address, the line carries the client and no absence marker
+    caplog.clear()
+    rpc(client, "tools/list", headers={**AUTH, "x-forwarded-for": via_funnel(INSIDE)})
+    line = json.loads(server.JsonFormatter().format(caplog.records[-1]))
+    assert line["src"] == INSIDE and "client_address" not in line
 
 
 def test_health_ready_and_metrics_answer_only_a_direct_caller(client):
@@ -514,7 +549,7 @@ def test_the_access_log_has_time_source_and_tool_and_never_the_arguments(
             "name": "record_artefact",
             "arguments": {"topic": secret_words, "artefact": secret_words},
         },
-        headers={**AUTH, "x-forwarded-for": INSIDE},
+        headers={**AUTH, "x-forwarded-for": via_funnel(INSIDE)},
     )
     rpc(client, "tools/list", headers={"authorization": "Bearer nope"})
     lines = [
@@ -531,8 +566,59 @@ def test_the_access_log_has_time_source_and_tool_and_never_the_arguments(
     assert secret_words not in text and TOKEN not in text
 
 
-def test_the_server_module_never_reads_a_caller_path():
-    # No tool argument reaches a filesystem call: the only paths are env-set.
-    src = (SERVICE / "server.py").read_text() + (SERVICE / "context.py").read_text()
-    assert "subprocess" not in (SERVICE / "context.py").read_text()
-    assert src.count("subprocess.run(") == 1
+def _tree(root):
+    return {
+        p.relative_to(root): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and ".git" not in p.relative_to(root).parts
+    }
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the read-only modes")
+def test_the_tools_reach_no_file_but_the_learning_page(tmp_path, env, client):
+    # The deployed mounts, on the fixture: the vault read-only but for the
+    # page's own directory, which also holds another page. Path-shaped values
+    # in every argument must stay cell text: the only file that changes is
+    # the learning page, and nothing is created anywhere.
+    vault = env["vault"]
+    (vault / "CORE.md").write_text("core\n")
+    (vault / "domains/other.md").write_text("other\n")
+    (tmp_path / "outside.txt").write_text("outside\n")
+    read_only = [
+        p for p in [vault, *vault.rglob("*")] if not p.is_relative_to(vault / "domains")
+    ]
+    modes = {p: p.stat().st_mode for p in read_only}
+    before = _tree(tmp_path)
+    values = (
+        "../../CORE.md",
+        "/vault/CORE.md",
+        "../other.md",
+        str(tmp_path / "outside.txt"),
+        "--page=domains/other.md",
+    )
+    try:
+        for p in read_only:
+            p.chmod(modes[p] & ~0o222)
+        for value in values:
+            assert not call(client, "learning_context").get("isError")
+            res = call(
+                client,
+                "record_artefact",
+                topic=value,
+                artefact=value,
+                reading=value,
+                applied=value,
+                post=value,
+            )
+            assert not res.get("isError"), res
+            assert rows(env)[-1].startswith(f"| 2026-11-27 | {value} | {value} |")
+    finally:
+        for p, mode in modes.items():
+            p.chmod(mode)
+    after = _tree(tmp_path)
+    page = Path("vault/domains/learning.md")
+    assert set(after) == set(before)
+    assert {k for k in after if after[k] != before[k]} == {page}
+    old = before[page].decode().splitlines()
+    new = after[page].decode().splitlines()
+    assert len(new) == len(old) + len(values)  # one row per call, nothing else
