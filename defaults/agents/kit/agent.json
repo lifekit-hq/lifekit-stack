@@ -1,0 +1,11 @@
+{
+  "agents": {
+    "entries": {
+      "kit": {
+        "tools": {
+          "agentToAgent": { "send": ["*"] }
+        }
+      }
+    }
+  }
+}
