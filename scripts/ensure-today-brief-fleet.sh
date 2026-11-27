@@ -162,9 +162,9 @@ PROBLEMS = (
     "status_page.problems is null or absent, print no Problems line and no placeholder."
 )
 PREV_STEP5 = PREV_STEP4 + PROBLEMS
-# Side hustles: the publisher decides the day (Monday and Thursday) and writes the
-# lines (status_page.side_hustles.lines, empty on other days, at most 3, a
-# credential need already one line); the brief only prints them.
+# Side hustles: retired in the publisher (lifekit-stack#692), which now always
+# writes status_page.side_hustles as null, so this step prints nothing; it stays
+# so an object, should the section return, is printed as given.
 SIDE = (
     " Side hustles: from the same JSON, when status_page.side_hustles is an object, print each entry of its "
     "lines array exactly as given, one line each, in order, after the Problems line (3 lines at most, never "
