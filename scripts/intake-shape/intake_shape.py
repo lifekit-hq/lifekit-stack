@@ -560,8 +560,8 @@ def item_title(row: Row, count: int) -> str:
     return one_line(f"Shape: {row['title']}{seen}")[:150]
 
 
-def item_reason(row: Row, previous: str | None, repo: str = "") -> str:
-    repo = repo or proposed_repo(row["project"]) or "none registered - name one"
+def item_reason(row: Row, previous: str | None, repo: str) -> str:
+    repo = repo or "none registered - name one"
     done = one_line(row["next step or why"]) or "none given - name one"
     again = f" Repeat of {previous}, already answered." if previous else ""
     text = (
@@ -768,8 +768,9 @@ def _answer_tail(lines: list[str]) -> list[str]:
     return out
 
 
-def parse_answer(text: str, row: Row) -> Shape | str | None:
-    """The shape the owner's answer files; the string `drop` when it files
+def parse_answer(text: str, row: Row, repo: str) -> Shape | str | None:
+    """The shape the owner's answer files (`repo` is the row's owner repo
+    unless the answer names another); the string `drop` when it files
     nothing; None when the answer cannot be read as either."""
     ruled = "owner ruled"
     body = text.strip()
@@ -784,7 +785,6 @@ def parse_answer(text: str, row: Row) -> Shape | str | None:
     if body.lower().startswith("matrix:"):
         ruled, body = "matrix auto-answered", body[len("matrix:") :].strip()
     first = re.split(r"[\s,.:;!]+", body.lower(), maxsplit=1)[0]
-    repo = proposed_repo(row["project"])
     cls = "dev"
     done = one_line(row["next step or why"])
     overrides = 0
@@ -944,13 +944,13 @@ def file_issue(gh: Gh, shape: Shape, row: Row, item: str) -> str:
     return url
 
 
-def ask_again(hub: Hub, item: str, row: Row, why: str) -> None:
+def ask_again(hub: Hub, item: str, row: Row, repo: str, why: str) -> None:
     """An answer that files nothing does not end the item: the same item goes
     back under its hold, its text saying why, and the rows stay `shaping`. A
     reopened item is no longer closed, so the next run does not read the
     refused answer again; the owner's next answer is a new one."""
     reason = one_line(f"Not filed: {why}. Answer this item again. ")
-    hub.reopen(item, (reason + item_reason(row, None))[:REASON_MAX])
+    hub.reopen(item, (reason + item_reason(row, None, repo))[:REASON_MAX])
     log(f"{item}: not filed ({why}); item reopened for a new answer")
 
 
@@ -971,12 +971,15 @@ def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
                 failed += 1
             if state != "closed":
                 continue
+            repo = named_repo(row, report_text(intake, row))
             text = hub.decision(item)
             if text is None:
-                ask_again(hub, item, row, "the item closed without a recorded answer")
+                ask_again(
+                    hub, item, row, repo, "the item closed without a recorded answer"
+                )
                 failed += 1
                 continue
-            shape = parse_answer(text, row)
+            shape = parse_answer(text, row, repo)
             if shape == "drop":
                 mark_rows(intake, dict.fromkeys(keys, ("dropped", item)))
                 log(f"{item}: dropped by the answer")
@@ -986,6 +989,7 @@ def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
                     hub,
                     item,
                     row,
+                    repo,
                     "the answer reads as neither approve, drop nor a shape",
                 )
                 failed += 1
@@ -997,7 +1001,7 @@ def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
                     f"{shape.repo or 'no repo'} is not a registered project"
                 )
             if problems:
-                ask_again(hub, item, row, "; ".join(problems))
+                ask_again(hub, item, row, repo, "; ".join(problems))
                 failed += 1
                 continue
             url = file_issue(gh, shape, row, item)

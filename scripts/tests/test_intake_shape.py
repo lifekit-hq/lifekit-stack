@@ -304,6 +304,27 @@ def test_owner_repo_named_only_in_the_report_is_answered(matrix):
     assert "Owner repo: lifekit-hq/lifekit-stack" in issue["body"]
 
 
+def test_owner_approves_a_held_row_whose_repo_is_named_only_in_the_report(matrix):
+    env = matrix
+    env.index(row("abc", project="goal 1; plain upgrade of a tool already run"))
+    env.report(
+        "abc",
+        "## Cost of adoption\nThe pro plan is $20 per month.\n\n"
+        "## Sources\nPin: lifekit-stack compose/openclaw-gateway/package.json\n",
+    )
+    assert env.run() == 0
+    assert env.gh()["issues"] == []
+    assert "repo lifekit-hq/lifekit-stack" in env.hub()["shape-abc"]["reason"]
+    env.set_hub("shape-abc", state="closed", decision="approve")
+    assert env.run() == 0
+    [issue] = env.gh()["issues"]
+    assert issue["url"] == "https://github.com/lifekit-hq/lifekit-stack/issues/1"
+    assert "Decision: owner ruled" in issue["body"]
+    assert env.hub()["shape-abc"]["state"] == "closed"
+    [r] = env.rows()
+    assert (r["status"], r["ref"]) == ("handed-off", issue["url"])
+
+
 def test_matrix_repeat_of_filed_work_joins_its_issue(matrix):
     env = matrix
     env.index(row("abc", rubric="v7"))
