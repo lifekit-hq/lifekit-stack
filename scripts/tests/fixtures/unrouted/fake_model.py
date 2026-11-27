@@ -4,7 +4,9 @@ reads the numbered chat on stdin and lists asks and promises by keyword, in
 the `claude -p --output-format json` envelope. Synthetic, deterministic and
 free; the real model is exercised only by the replay test on the host.
 FAKE_MODEL_QUOTE_WORDS=<n> quotes only the first n words, standing in for a
-model that picks other words on a rerun."""
+model that picks other words on a rerun. FAKE_MODEL_UNLINK=1 returns a promise
+that answers an ask at the agent's message with no `about`, standing in for a
+model that links the item differently on a rerun."""
 
 import json
 import os
@@ -12,6 +14,7 @@ import re
 import sys
 
 WORDS = int(os.environ.get("FAKE_MODEL_QUOTE_WORDS") or 0)
+UNLINK = os.environ.get("FAKE_MODEL_UNLINK") == "1"
 
 
 def quote(text):
@@ -51,7 +54,7 @@ for line in sys.stdin.read().splitlines():
             "receipt": r.group(0) if r else None,
         }
         if last_ask is not None:
-            item["about"] = items[last_ask]["msg"]
+            item["about"] = None if UNLINK else items[last_ask]["msg"]
             items[last_ask] = item
             last_ask = None
         else:

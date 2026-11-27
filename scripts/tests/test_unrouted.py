@@ -246,6 +246,26 @@ def test_a_rerun_that_quotes_other_words_files_nothing_twice(env, monkeypatch):
     assert len(env.filed()) == 4
 
 
+def test_a_rerun_that_links_a_promise_differently_files_nothing_twice(env, monkeypatch):
+    assert env.run(DAY_25) == 0
+    first = env.doc()["items"]
+    assert len(env.filed()) == 4
+    # The rerun's promises carry no `about`: anchored on the agent's message,
+    # not on the owner ask they answer.
+    monkeypatch.setenv("FAKE_MODEL_UNLINK", "1")
+    assert env.run(DAY_25 + 3600) == 0
+    again = env.doc()["items"]
+    # Same turns, so the same owner asks the fixture holds with no receipt.
+    assert [minute(i["ask_at"]) for i in again] == [
+        "2026-11-25 22:09",
+        "2026-11-25 22:11",
+        "2026-11-25 22:12",
+        "2026-11-25 22:30",
+    ]
+    assert [i["fingerprint"] for i in again] == [i["fingerprint"] for i in first]
+    assert len(env.filed()) == 4
+
+
 def test_routed_items_are_not_listed(env):
     assert env.run(DAY_24) == 0
     assert env.filed() == []
@@ -291,6 +311,18 @@ def test_check_is_the_dead_man(env, capsys):
     stale = ["--check", "--state", str(env.state), "--now", str(DAY_25 + 27 * 3600)]
     assert unrouted.main(stale) == 1
     assert json.loads(capsys.readouterr().out)["missed_day"] == "2026-11-26"
+
+
+def test_a_backfill_of_an_older_day_keeps_the_missed_day(env, capsys):
+    # The timer checks 2026-11-26; the operator then reruns 2026-11-24 by hand.
+    assert env.run(DAY_25 + 86400) == 0
+    assert env.run(DAY_25 + 86400 + 3600, "--day", "2026-11-24") == 0
+    assert env.doc()["day"] == "2026-11-24"
+    capsys.readouterr()
+    stale = ["--check", "--state", str(env.state), "--now", str(DAY_25 + 4 * 86400)]
+    assert unrouted.main(stale) == 1
+    # The latest day checked is still 2026-11-26: the first missed one is the 27th.
+    assert json.loads(capsys.readouterr().out)["missed_day"] == "2026-11-27"
 
 
 def test_a_bad_day_is_usage(env):

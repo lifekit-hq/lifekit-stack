@@ -4892,14 +4892,15 @@ def test_no_inbox_threshold_leaves_the_inbox_unread(homes):
 # --- the daily unrouted check (issue 687) ---------------------------------------
 
 
-def unrouted_state(homes, ran_at, items):
+def unrouted_state(homes, ran_at, items, day="2027-01-14"):
     path = homes.tmp / "unrouted.json"
     path.write_text(
         json.dumps(
             {
                 "schema": "lifekit-unrouted.v1",
                 "ran_at": ran_at,
-                "day": "2027-01-14",
+                "day": day,
+                "last_day": "2027-01-14",
                 "items": items,
                 "errors": [],
             }
@@ -4948,14 +4949,16 @@ def test_an_unrouted_ask_is_listed_with_agent_day_and_quote(homes):
 
 
 def test_the_unrouted_check_is_stalled_after_26_hours_without_a_run(homes):
-    path = unrouted_state(homes, NOW - 27 * 3600, [])
+    # The last run was a --day backfill of 2027-01-12; the latest day checked
+    # is still 2027-01-14.
+    path = unrouted_state(homes, NOW - 27 * 3600, [], day="2027-01-12")
     env = {"FLEET_NOW": str(NOW), "FLEET_UNROUTED_STATE": str(path)}
     assert homes.run(side_home(homes), **env).returncode == 0
     page = status(homes)
     rows = [i for g in page["stalled"] for i in g["items"] if i["source"] == "unrouted"]
     assert [(r["id"], r["reason"]) for r in rows] == [("unrouted-check", "no-run")]
     assert rows[0]["threshold"] == 26 * 3600 and rows[0]["since"] == NOW - 27 * 3600
-    # The state's last checked day is 2027-01-14: the first missed one is the next.
+    # The first missed day is the one after the latest day checked.
     assert (
         rows[0]["title"]
         == "the daily unrouted check: rerun unrouted.py --day 2027-01-15"

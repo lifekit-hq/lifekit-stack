@@ -418,7 +418,8 @@ line), never a guess.
   (`FLEET_UNROUTED_STATE`, `/var/lib/lifekit-fleet/unrouted/unrouted.json` on the
   VPS). Its dead-man is one `unrouted` row (`id` `unrouted-check`, `reason`
   `no-run`, title `the daily unrouted check: rerun unrouted.py --day <day>`, the
-  day after the state's last checked `day`) once its `ran_at` is
+  day after the state's `last_day`, the latest day checked, which a `--day`
+  rerun of an older day leaves alone) once its `ran_at` is
   `unrouted.hours` old; a run that could not read
   the chats records nothing, so the row shows it. One read feeds the row and the
   `unrouted` items below. Unset, missing, or with no `unrouted` block, the source

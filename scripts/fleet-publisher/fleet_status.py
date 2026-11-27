@@ -2125,7 +2125,8 @@ def unrouted_stalls(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """The check's dead-man: one row once its last run is `unrouted.hours`
     old (26: a daily job that missed a day), its title naming the first missed
-    day (the one after the last checked day) to rerun with `--day`. `open`
+    day (the one after `last_day`, the latest day checked) to rerun with
+    `--day`. `open`
     counts its listed items."""
     if cfg is None or "unrouted" not in cfg:
         return [], {
@@ -2142,7 +2143,7 @@ def unrouted_stalls(
     if now - ran >= window:
         title = "the daily unrouted check"
         try:
-            last = dt.date.fromisoformat(str(doc.get("day")))
+            last = dt.date.fromisoformat(str(doc.get("last_day")))
             missed = (last + dt.timedelta(days=1)).isoformat()
             title += f": rerun unrouted.py --day {missed}"
         except ValueError:

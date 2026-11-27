@@ -456,9 +456,20 @@ class Receipts:
         return "unchecked"
 
 
+def turn_anchor(conv: Conversation, it: dict[str, Any]) -> int:
+    """The owner message that opened the item's turn: the last one at or
+    before the item's message or the message it is about, so the anchor does
+    not depend on how the model linked the item."""
+    start = it["msg"] if it["about"] is None else min(it["msg"], it["about"])
+    for i in range(start, -1, -1):
+        if conv.who(i) == "owner":
+            return i
+    return start
+
+
 def turn_replies(conv: Conversation, anchor: int) -> str:
-    """The agent replies of the turn an item was said in: from the item's
-    message to the next owner message after it."""
+    """The agent replies of the turn an item was said in: from the turn's
+    anchor to the next owner message after it."""
     out = []
     for i in range(anchor, len(conv.messages)):
         if i > anchor and conv.who(i) == "owner":
@@ -492,10 +503,10 @@ def extract(
         if cost is not None:
             costs.append(cost)
         for it in got:
-            # One item per owner ask: a promise about an ask replaces the ask.
-            anchor = it["about"] if it["about"] is not None else it["msg"]
-            if anchor not in items or it["kind"] == "promise":
-                items[anchor] = it
+            # One item per owner turn: a promise in the turn replaces the ask.
+            it["anchor"] = turn_anchor(conv, it)
+            if it["anchor"] not in items or it["kind"] == "promise":
+                items[it["anchor"]] = it
     return [items[k] for k in sorted(items)]
 
 
@@ -505,10 +516,10 @@ def assess(
     """Each item with its receipt verdict, its time and its fingerprint."""
     out = []
     for it in items:
-        anchor = it["about"] if it["about"] is not None else it["msg"]
+        anchor = it["anchor"]
         verdict, rid = receipts.check(it["receipt"])
         if verdict not in ("found", "unchecked"):
-            v2, r2 = receipts.check(turn_replies(conv, min(anchor, it["msg"])))
+            v2, r2 = receipts.check(turn_replies(conv, anchor))
             if v2 in ("found", "unchecked") or verdict is None:
                 verdict, rid = v2, r2
         quote = it["quote"] or one_line(str(conv.messages[it["msg"]].get("text") or ""))
@@ -687,6 +698,7 @@ def run(args: argparse.Namespace) -> int:
         "schema": SCHEMA,
         "ran_at": now,
         "day": day,
+        "last_day": max(day, str(prev.get("last_day") or day)),
         "model": args.model,
         "conversations": len(convs),
         "asks_and_promises": len(found),
@@ -708,8 +720,9 @@ def run(args: argparse.Namespace) -> int:
 
 
 def next_day(day: Any) -> str | None:
-    """The day after the last checked one: the first day a stalled check
-    missed, to rerun with --day."""
+    """The day after the latest day checked (`last_day`, which a --day rerun
+    of an older day leaves alone): the first day a stalled check missed, to
+    rerun with --day."""
     try:
         return (dt.date.fromisoformat(str(day)) + dt.timedelta(days=1)).isoformat()
     except ValueError:
@@ -733,7 +746,8 @@ def check(args: argparse.Namespace) -> int:
             {
                 "ran_at": ran,
                 "day": doc.get("day"),
-                "missed_day": next_day(doc.get("day")) if stale else None,
+                "last_day": doc.get("last_day"),
+                "missed_day": next_day(doc.get("last_day")) if stale else None,
                 "age_hours": round(age, 1),
                 "stale": stale,
                 "unrouted": len(doc.get("items") or []),
