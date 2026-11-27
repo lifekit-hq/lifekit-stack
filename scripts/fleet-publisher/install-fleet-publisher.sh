@@ -26,6 +26,19 @@
 # rows. On the VPS: /home/denys/clip-data/queue/stats.jsonl. Unset or empty, the
 # unit carries no FLEET_CLIP_STATS_FEED and those rows stay null.
 #
+# The queue item and stalled sources (README "Queue items", "Stalled items"),
+# each optional and carried into the unit only when set and non-empty:
+#   FLEET_NEEDS_YOU_LEDGER  Kit's needs-you/open.json; unset, the default below
+#                           (empty: none). Its directory is bound read-only into
+#                           the unit at /run/lifekit-fleet-needs-you, since Kit's
+#                           workspace is not readable by the admin account.
+#   FLEET_FINANCE_CMD       the finance items command; on the VPS
+#                           "python3 /usr/local/bin/lifekit-fleet-finance.py"
+#                           (finance_items.py, installed here).
+#   FLEET_A2A_CMD           prints the open A2A threads; none exists yet.
+#   FLEET_SCOUT_STATE       the scout's state dir; on the VPS
+#                           /home/denys/.local/state/lifekit-scout.
+#
 # Tests set INSTALL_ROOT (a prefix for every installed path), SYSTEMCTL and SU; an
 # INSTALL_ROOT run needs no root and does not chown.
 
@@ -69,6 +82,37 @@ if [[ -n "$FLEET_CLIP_STATS_FEED" ]]; then
   }
   clip_feed_env=" \"FLEET_CLIP_STATS_FEED=${FLEET_CLIP_STATS_FEED}\""
 fi
+KIT_NEEDS_YOU_LEDGER=/srv/openclaw/config/agents/kit/workspace/needs-you/open.json
+NEEDS_YOU_BIND=/run/lifekit-fleet-needs-you
+FLEET_NEEDS_YOU_LEDGER="${FLEET_NEEDS_YOU_LEDGER-$KIT_NEEDS_YOU_LEDGER}"
+sources_env=""
+needs_you_bind=""
+if [[ -n "$FLEET_NEEDS_YOU_LEDGER" ]]; then
+  [[ "$FLEET_NEEDS_YOU_LEDGER" =~ ^/[A-Za-z0-9._/-]+/[A-Za-z0-9._-]+$ ]] || {
+    echo "FLEET_NEEDS_YOU_LEDGER must be an absolute file path of [A-Za-z0-9._/-]" >&2
+    exit 1
+  }
+  # "-": a box without Kit's workspace starts the unit anyway (an empty ledger).
+  needs_you_bind="\nBindReadOnlyPaths=-${FLEET_NEEDS_YOU_LEDGER%/*}:${NEEDS_YOU_BIND}"
+  sources_env+=" \"FLEET_NEEDS_YOU_LEDGER=${NEEDS_YOU_BIND}/${FLEET_NEEDS_YOU_LEDGER##*/}\""
+fi
+for name in FLEET_FINANCE_CMD FLEET_A2A_CMD; do
+  value="${!name:-}"
+  [[ -n "$value" ]] || continue
+  [[ "$value" =~ ^/?[A-Za-z0-9._/=:,\ -]+$ ]] || {
+    echo "$name must be a command of [A-Za-z0-9._/=:, -]" >&2
+    exit 1
+  }
+  sources_env+=" \"${name}=${value}\""
+done
+FLEET_SCOUT_STATE="${FLEET_SCOUT_STATE:-}"
+if [[ -n "$FLEET_SCOUT_STATE" ]]; then
+  [[ "$FLEET_SCOUT_STATE" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+    echo "FLEET_SCOUT_STATE must be an absolute path of [A-Za-z0-9._/-]" >&2
+    exit 1
+  }
+  sources_env+=" \"FLEET_SCOUT_STATE=${FLEET_SCOUT_STATE}\""
+fi
 owner=(-o "$ADMIN_USER" -g "$ADMIN_USER")
 if [[ -n "$INSTALL_ROOT" ]]; then
   owner=()
@@ -111,12 +155,15 @@ install -m 755 "$HERE/screen_changes.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fl
 # The activity journal helper, found the same way.
 install -m 755 "$HERE/activity_journal.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-journal.py"
 install -m 755 "$HERE/scheduled.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-scheduled.py"
+# The finance items command (FLEET_FINANCE_CMD), read-only against finance-sentry.
+install -m 755 "$HERE/finance_items.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-finance.py"
 manifest_tmp="$(mktemp)"
 python3 -I "$HERE/scheduled.py" manifest --repo "$(cd "$HERE/../.." && pwd)" > "$manifest_tmp"
 install -m 644 "$manifest_tmp" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-scheduled.json"
 rm -f "$manifest_tmp"
 sed -e "s|__ADMIN_USER__|${ADMIN_USER}|" -e "s|__FM_HOMES__|${FM_HOMES}|" -e "s|__TASKS_AXI__|${TASKS_AXI}|" \
   -e "s|__FLEET_PLAN_MAP_ENV__|${plan_map_env}|" -e "s|__FLEET_CLIP_STATS_FEED_ENV__|${clip_feed_env}|" \
+  -e "s|__FLEET_SOURCES_ENV__|${sources_env}|" -e "s|__NEEDS_YOU_BIND__|${needs_you_bind}|" \
   "$HERE/lifekit-fleet-publisher.service" > "$UNIT_DIR/lifekit-fleet-publisher.service"
 install -m 644 "$HERE/lifekit-fleet-publisher.timer" "$UNIT_DIR/lifekit-fleet-publisher.timer"
 "$SYSTEMCTL" daemon-reload
