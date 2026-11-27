@@ -16,7 +16,8 @@ This job is the mechanical safety net behind it. Once a day it:
      model that passes the replay test, docs/runbook.md);
   4. looks for each one's receipt: the id the model saw cited, plus every id an
      agent reply in the same turn shows from the item's own message on (an ask
-     from the owner's message, a promise from the agent's), checked where it lives - a firstmate
+     from the owner's message, a promise from the agent's) that the model did not
+     cite for another item of the turn, checked where it lives - a firstmate
      task note (`<home>/state/inbox[/handled]/<id>.note`), a captain-held or
      shaping item (`held-*`, `shape-*`, fm-captain-hold.sh in each home), an
      intake spool receipt (`spool:<key>`), a GitHub issue or pull request (gh),
@@ -25,7 +26,7 @@ This job is the mechanical safety net behind it. Once a day it:
      (`file_intake` in the gateway, project `fleet`, redacted to the agent, the
      day and the thread - no chat words; one fingerprint per item, from the
      conversation, the time of the owner message that opened its turn and its
-     place among that turn's items, so a rerun never files twice)
+     place among that turn's unrouted items, so a rerun never files twice)
      and writes the state file the fleet publisher lists on the fleet page as
      `unrouted` (FLEET_UNROUTED_STATE), the one place the quote is kept.
 
@@ -395,9 +396,13 @@ class Receipts:
         seen: set[str] = set()
         return [i for i in found if not (i in seen or seen.add(i))]
 
-    def check(self, text: str | None) -> tuple[str | None, str | None]:
+    def check(
+        self, text: str | None, skip: set[str] | None = None
+    ) -> tuple[str | None, str | None]:
         best: tuple[str | None, str | None] = (None, None)
         for rid in self.ids(text or ""):
+            if skip and rid in skip:
+                continue
             verdict = self.cache.get(rid) or self.lookup(rid)
             self.cache[rid] = verdict
             if verdict in ("found", "unchecked"):
@@ -487,7 +492,8 @@ def turn_replies(conv: Conversation, start: int) -> str:
 def fingerprint(agent: str, day: str, session_key: str, ask_at: str, nth: int) -> str:
     """Stable across reruns: built from the conversation, the time of the owner
     message that opened the item's turn and the item's place among that turn's
-    items, never from the model's quote or how it linked the item."""
+    unrouted items, never from the model's quote, how it linked the item or
+    whether it listed a routed one."""
     key = f"{agent}|{day}|{session_key}|{ask_at}|{nth}"
     h = hashlib.sha256(key.encode()).hexdigest()
     return f"unrouted-{agent}-{day}-{h[:10]}"
@@ -496,7 +502,7 @@ def fingerprint(agent: str, day: str, session_key: str, ask_at: str, nth: int) -
 def extract(
     conv: Conversation, model: str, errors: list[str], costs: list[float]
 ) -> list[dict[str, Any]]:
-    items: dict[tuple[int, int], dict[str, Any]] = {}
+    items: list[dict[str, Any]] = []
     for lo, hi in chunks(conv):
         try:
             answer, cost = ask_model(model, render(conv, lo, hi))
@@ -508,26 +514,34 @@ def extract(
             costs.append(cost)
         for it in got:
             it["anchor"] = turn_anchor(conv, it)
-            items.setdefault((it["anchor"], it["msg"]), it)
-    out = [items[k] for k in sorted(items)]
-    for i, it in enumerate(out):
-        same_turn = i > 0 and out[i - 1]["anchor"] == it["anchor"]
-        it["nth"] = out[i - 1]["nth"] + 1 if same_turn else 0
-    return out
+            items.append(it)
+    return sorted(items, key=lambda it: (it["anchor"], it["msg"], it["kind"]))
 
 
 def assess(
     conv: Conversation, items: list[dict[str, Any]], receipts: Receipts, day: str
 ) -> list[dict[str, Any]]:
-    """Each item with its receipt verdict, its time and its fingerprint."""
+    """Each item with its receipt verdict, its time and, when unrouted, its
+    fingerprint. A reply's receipt the model cited for another item of the
+    turn never routes this one."""
+    cited = [set(receipts.ids(it["receipt"] or "")) for it in items]
+    nth: dict[int, int] = {}
     out = []
-    for it in items:
+    for n, it in enumerate(items):
         anchor = it["anchor"]
         verdict, rid = receipts.check(it["receipt"])
         if verdict not in ("found", "unchecked"):
-            v2, r2 = receipts.check(turn_replies(conv, it["msg"]))
+            others = set().union(
+                *(
+                    c
+                    for m, c in enumerate(cited)
+                    if m != n and items[m]["anchor"] == anchor
+                )
+            )
+            v2, r2 = receipts.check(turn_replies(conv, it["msg"]), others)
             if v2 in ("found", "unchecked") or verdict is None:
                 verdict, rid = v2, r2
+        routed = verdict in ("found", "unchecked")
         quote = it["quote"] or one_line(str(conv.messages[it["msg"]].get("text") or ""))
         if len(quote) > QUOTE_CUT:
             quote = quote[: QUOTE_CUT - 3] + "..."
@@ -540,18 +554,22 @@ def assess(
                 "ask_at": conv.messages[anchor]["ts"],
                 "kind": it["kind"],
                 "quote": quote,
-                "receipt": rid if verdict in ("found", "unchecked") else None,
+                "receipt": rid if routed else None,
                 "receipt_cited": rid if verdict == "missing" else None,
-                "routed": verdict in ("found", "unchecked"),
-                "fingerprint": fingerprint(
+                "routed": routed,
+                "fingerprint": None
+                if routed
+                else fingerprint(
                     conv.agent,
                     day,
                     conv.session_key,
                     conv.messages[anchor]["ts"],
-                    it["nth"],
+                    nth.get(anchor, 0),
                 ),
             }
         )
+        if not routed:
+            nth[anchor] = nth.get(anchor, 0) + 1
     return out
 
 

@@ -266,67 +266,127 @@ def test_a_rerun_that_links_a_promise_differently_files_nothing_twice(env, monke
     assert len(env.filed()) == 4
 
 
+class Scripted:
+    """One synthetic chat, a gh that knows only acme/x#12, and a model whose
+    answer each test scripts."""
+
+    def __init__(self, env, tmp_path, monkeypatch, messages):
+        self.env = env
+        self.chats = tmp_path / "turn.jsonl"
+        self.chats.write_text("".join(json.dumps(m) + "\n" for m in messages))
+        gh = tmp_path / "bin/gh"
+        gh.parent.mkdir()
+        gh.write_text('#!/bin/sh\n[ "$2" = repos/acme/x/issues/12 ] && echo 12\n')
+        gh.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{gh.parent}{os.pathsep}{os.environ['PATH']}")
+        self.model = tmp_path / "model.py"
+        monkeypatch.setenv("UNROUTED_MODEL_CMD", f"{sys.executable} {self.model}")
+
+    def run(self, now, items):
+        answer = {"type": "result", "is_error": False, "total_cost_usd": 0.001,
+                  "result": json.dumps({"items": items})}  # fmt: skip
+        self.model.write_text(f"print({json.dumps(json.dumps(answer))})\n")
+        assert self.env.run(now, "--chats", str(self.chats)) == 0
+        return self.env.doc()
+
+
+def item(kind, msg, quote, about=None, receipt=None):
+    return {"kind": kind, "msg": msg, "about": about, "quote": quote,
+            "receipt": receipt}  # fmt: skip
+
+
 def test_a_receipt_in_the_turn_does_not_route_another_promise(
     env, tmp_path, monkeypatch
 ):
     """One owner turn, two pieces of work: the bug the agent filed (with an
     issue receipt) and a second promise with none. The receipt routes only
     its own item; the promise is listed and filed once, whether the model
-    gives the filed bug as the owner's ask or, on a rerun, as a promise about it."""
-    chats = tmp_path / "turn.jsonl"
-    chats.write_text(
-        "".join(
-            json.dumps(m) + "\n"
-            for m in (
-                chat("2026-11-25T10:00:00.000Z", "user", "File the bug.", owner=True),
-                chat("2026-11-25T10:00:20.000Z", "assistant", "Filed acme/x#12."),
-                chat("2026-11-25T10:00:40.000Z", "assistant", "I'll fix the timer."),
-            )
-        )
+    gives the filed bug as the owner's ask, on a rerun as a promise about it,
+    or leaves the filed bug out."""
+    talk = Scripted(
+        env,
+        tmp_path,
+        monkeypatch,
+        (
+            chat("2026-11-25T10:00:00.000Z", "user", "File the bug.", owner=True),
+            chat("2026-11-25T10:00:20.000Z", "assistant", "Filed acme/x#12."),
+            chat("2026-11-25T10:00:40.000Z", "assistant", "I'll fix the timer."),
+        ),
     )
-    gh = tmp_path / "bin/gh"
-    gh.parent.mkdir()
-    gh.write_text('#!/bin/sh\n[ "$2" = repos/acme/x/issues/12 ] && echo 12\n')
-    gh.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{gh.parent}{os.pathsep}{os.environ['PATH']}")
-    model = tmp_path / "model.py"
-    monkeypatch.setenv("UNROUTED_MODEL_CMD", f"{sys.executable} {model}")
-    promise = {
-        "kind": "promise",
-        "msg": 2,
-        "about": None,
-        "quote": "fix",
-        "receipt": None,
-    }
-    ask = {
-        "kind": "ask",
-        "msg": 0,
-        "about": None,
-        "quote": "File",
-        "receipt": "acme/x#12",
-    }
-    linked = {
-        "kind": "promise",
-        "msg": 1,
-        "about": 0,
-        "quote": "Filed",
-        "receipt": None,
-    }
+    promise = item("promise", 2, "fix")
+    answers = (
+        [item("ask", 0, "File", receipt="acme/x#12"), promise],
+        [item("promise", 1, "Filed", about=0), promise],
+        [promise],
+    )
     runs = []
-    for n, first in enumerate((ask, linked)):
-        answer = {"type": "result", "is_error": False, "total_cost_usd": 0.001,
-                  "result": json.dumps({"items": [first, promise]})}  # fmt: skip
-        model.write_text(f"print({json.dumps(json.dumps(answer))})\n")
-        assert env.run(DAY_25 + n * 3600, "--chats", str(chats)) == 0
-        doc = env.doc()
-        assert doc["asks_and_promises"] == 2 and doc["routed"] == 1
-        (item,) = doc["items"]
-        assert item["kind"] == "promise" and item["at"] == "2026-11-25T10:00:40.000Z"
-        runs.append(item["fingerprint"])
-    assert runs[0] == runs[1]
+    for n, items in enumerate(answers):
+        doc = talk.run(DAY_25 + n * 3600, items)
+        assert doc["asks_and_promises"] == len(items)
+        assert doc["routed"] == len(items) - 1
+        (it,) = doc["items"]
+        assert it["kind"] == "promise" and it["at"] == "2026-11-25T10:00:40.000Z"
+        runs.append(it["fingerprint"])
+    assert runs[0] == runs[1] == runs[2]
     (filed,) = env.filed()
     assert filed["fingerprint"] == runs[0]
     assert "timer" not in json.dumps(filed)
+
+
+def test_two_asks_in_one_message_each_need_a_receipt(env, tmp_path, monkeypatch):
+    """The agent files one of the two asks of one owner message: the receipt the
+    model cited for it does not route the other."""
+    talk = Scripted(
+        env,
+        tmp_path,
+        monkeypatch,
+        (
+            chat(
+                "2026-11-25T10:00:00.000Z",
+                "user",
+                "File the bug about the export, and remind me Friday to renew it.",
+                owner=True,
+            ),
+            chat("2026-11-25T10:00:20.000Z", "assistant", "Filed acme/x#12."),
+        ),
+    )
+    doc = talk.run(
+        DAY_25,
+        [
+            item("ask", 0, "File the bug", receipt="acme/x#12"),
+            item("ask", 0, "remind me Friday"),
+        ],
+    )
+    assert doc["asks_and_promises"] == 2 and doc["routed"] == 1
+    (it,) = doc["items"]
+    assert it["kind"] == "ask" and it["quote"] == "remind me Friday"
+    assert it["receipt"] is None and it["receipt_cited"] is None
+    (filed,) = env.filed()
+    assert filed["fingerprint"] == it["fingerprint"]
+
+
+def test_two_promises_in_one_message_are_both_filed(env, tmp_path, monkeypatch):
+    talk = Scripted(
+        env,
+        tmp_path,
+        monkeypatch,
+        (
+            chat("2026-11-25T10:00:00.000Z", "user", "Any news?", owner=True),
+            chat(
+                "2026-11-25T10:00:20.000Z",
+                "assistant",
+                "I'll file the export bug and look into the timer tomorrow.",
+            ),
+        ),
+    )
+    two = [item("promise", 1, "file the export bug"), item("promise", 1, "timer")]
+    doc = talk.run(DAY_25, two)
+    assert [i["quote"] for i in doc["items"]] == ["file the export bug", "timer"]
+    fps = [i["fingerprint"] for i in doc["items"]]
+    assert len(set(fps)) == 2
+    assert sorted(f["fingerprint"] for f in env.filed()) == sorted(fps)
+    talk.run(DAY_25 + 3600, two)  # a rerun files neither again
+    assert len(env.filed()) == 2
 
 
 def test_routed_items_are_not_listed(env):

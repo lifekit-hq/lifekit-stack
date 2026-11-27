@@ -2713,8 +2713,9 @@ and never messages the owner.
   promises of each conversation (`--model`, default `haiku`; see "Model choice" below).
 - **Receipts.** Each item of a turn needs its own: the id the model saw cited, plus every
   id the agent's replies in that turn show from the item's own message on (an ask from the
-  owner's message, a promise from the agent's), so one item's receipt never routes a later
-  promise, checked where it lives: a firstmate task note (`<home>/state/inbox[/handled]/<id>.note`),
+  owner's message, a promise from the agent's) that the model did not cite for another item
+  of the turn, so one item's receipt never routes a later promise or a second ask in the
+  same message, checked where it lives: a firstmate task note (`<home>/state/inbox[/handled]/<id>.note`),
   a `held-`/`shape-` item (`fm-captain-hold.sh` in each home), a `spool:` door receipt, a
   GitHub issue or pull request (`gh`), or a line of the intake index or Kit's held-item record.
   A lookup that errors counts as a receipt and is listed in the run's `errors`.
@@ -2725,9 +2726,10 @@ and never messages the owner.
   (`<agent>/<channel>/<day>`, never the session key, which holds the owner's chat id). The
   quote never leaves the host: read it in `unrouted.json` under the item's fingerprint, or
   in the thread. The hash is built from the conversation, the time of the owner message
-  that opened the item's turn and the item's place among that turn's items, not from the
-  model's quote or from how it linked a promise to an ask, so a rerun that quotes or links
-  differently maps to the same fingerprint; `filed.json` in the state dir keeps the door's
+  that opened the item's turn and the item's place among that turn's unrouted items, not
+  from the model's quote, from how it linked a promise to an ask or from whether it listed
+  an item that has a receipt, so a rerun that quotes, links or lists differently maps to
+  the same fingerprint; `filed.json` in the state dir keeps the door's
   receipt, so a rerun files nothing twice.
 - **State.** `/var/lib/lifekit-fleet/unrouted/unrouted.json` keeps the last run's time and the
   unrouted items of the last 7 days. The fleet publisher reads it through
