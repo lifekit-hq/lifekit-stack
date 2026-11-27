@@ -1,22 +1,28 @@
 """Helpers for scout-fetch.sh: which feeds to seed, and the order and cap of a lens's items.
 
-    scout_order.py config <ini> <db> seed    the lens config cut to its sections
+    scout_order.py seed <ini> <db> <dir>     the lens config cut to its sections
                                              not seen yet (first sighting: to be
-                                             caught up)
-    scout_order.py config <ini> <db> fetch   the config cut to its other sections,
+                                             caught up), each fetched here and
+                                             its url pointed at the copy saved in
+                                             <dir>; a section whose fetch is not
+                                             an HTTP 2xx feed is left out and
+                                             listed in <dir>/failed
+    scout_order.py config <ini> <db>         the config cut to its other sections,
                                              echo output swapped for scout_echo
-    scout_order.py seeded <ini> <db> <log>   record as seen the sections of <ini>
-                                             whose feed the `feed2exec -v` run
-                                             logged in <log> reached and parsed
+    scout_order.py seeded <ini> <db>         record the sections of <ini> as seen
     scout_order.py order <lens> <budget> <overflow file>
         stdin: scout_echo lines (<feed> TAB <epoch> TAB <echo line>)
         stdout: candidate lines (<lens> TAB <echo line>), grouped by feed in
         config order, each feed newest first, at most <budget> in all
 
 A section is seen once it has a row in feedcache or is recorded by `seeded`
-(a feed reached while still empty has no row, and must not be caught up again
+(a feed caught up while still empty has no row, and must not be caught up again
 when it first publishes). Both live in the lens database, so deleting it resets
-both. `config` prints nothing when no section qualifies. `order` shares the
+both. feed2exec parses whatever body a server answers, error pages included, so
+`seed` checks the answer itself: only a 2xx body that feedparser reads as a feed
+(an empty one counts) is caught up and then recorded; anything else stays unseen
+and is tried again on the next run. `seed` and `config` print nothing when no
+section qualifies. `order` shares the
 budget fairly: a feed with fewer items than its share keeps them all and the
 rest is split among the larger feeds, so one big feed can never crowd out a
 small one. What does not fit is appended to the overflow file (feed2exec has
@@ -26,9 +32,11 @@ already marked it seen; nothing is dropped silently).
 from __future__ import annotations
 
 import configparser
+import http.client
 import io
 import sqlite3
 import sys
+import urllib.request
 from pathlib import Path
 
 ECHO = "feed2exec.plugins.echo"
@@ -61,43 +69,76 @@ def seen_feeds(db: str) -> set[str]:
     return seen
 
 
-def seeded(ini: str, db: str, log: str) -> None:
-    text = Path(log).read_text(errors="replace")
-    parser = read_ini(ini)
-    reached = [
-        s
-        for s in parser.sections()
-        if f"parsing feed {parser.get(s, 'url', fallback='').strip()} (" in text
-    ]
+def seeded(ini: str, db: str) -> None:
     con = sqlite3.connect(db)
     try:
         con.execute(f"CREATE TABLE IF NOT EXISTS {SEEDED} (name text PRIMARY KEY)")
         con.executemany(
-            f"INSERT OR IGNORE INTO {SEEDED} VALUES (?)", [(s,) for s in reached]
+            f"INSERT OR IGNORE INTO {SEEDED} VALUES (?)",
+            [(s,) for s in read_ini(ini).sections()],
         )
         con.commit()
     finally:
         con.close()
 
 
-def config(ini: str, db: str, mode: str) -> str:
+def select(ini: str, db: str, seen_ones: bool) -> configparser.RawConfigParser:
     parser = read_ini(ini)
     seen = seen_feeds(db)
-    keep = [s for s in parser.sections() if (s in seen) == (mode == "fetch")]
-    if not keep:
-        return ""
     for section in parser.sections():
-        if section not in keep:
+        if (section in seen) != seen_ones:
             parser.remove_section(section)
-    if mode == "fetch":
-        if parser.defaults().get("output", "").strip() == ECHO:
-            parser.defaults()["output"] = PLUGIN
-        for section in keep:
-            if parser.get(section, "output", fallback="").strip() == ECHO:
-                parser.set(section, "output", PLUGIN)
+    return parser
+
+
+def dump(parser: configparser.RawConfigParser) -> str:
+    if not parser.sections():
+        return ""
     out = io.StringIO()
     parser.write(out)
     return out.getvalue()
+
+
+def download(url: str) -> bytes:
+    # urlopen returns only a 2xx answer (redirects followed); any other is an error
+    req = urllib.request.Request(url, headers={"User-Agent": "feed2exec"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return resp.read()
+
+
+def seed(ini: str, db: str, workdir: str) -> str:
+    import feedparser
+
+    parser = select(ini, db, seen_ones=False)
+    work = Path(workdir)
+    work.mkdir(parents=True, exist_ok=True)
+    failed: list[str] = []
+    for n, section in enumerate(parser.sections()):
+        try:
+            body = download(parser.get(section, "url", fallback="").strip())
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            failed.append(f"{section} ({e})")
+            parser.remove_section(section)
+            continue
+        if not feedparser.parse(body).get("version"):
+            failed.append(f"{section} (not a feed)")
+            parser.remove_section(section)
+            continue
+        copy = work / f"{n}.feed"
+        copy.write_bytes(body)
+        parser.set(section, "url", copy.resolve().as_uri())
+    (work / "failed").write_text("; ".join(failed))
+    return dump(parser)
+
+
+def config(ini: str, db: str) -> str:
+    parser = select(ini, db, seen_ones=True)
+    if parser.defaults().get("output", "").strip() == ECHO:
+        parser.defaults()["output"] = PLUGIN
+    for section in parser.sections():
+        if parser.get(section, "output", fallback="").strip() == ECHO:
+            parser.set(section, "output", PLUGIN)
+    return dump(parser)
 
 
 def allocate(sizes: dict[str, int], budget: int) -> dict[str, int]:
@@ -148,11 +189,14 @@ def order(lens: str, budget: int, overflow: str) -> None:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) == 4 and argv[0] == "config" and argv[3] in ("seed", "fetch"):
-        sys.stdout.write(config(argv[1], argv[2], argv[3]))
+    if len(argv) == 4 and argv[0] == "seed":
+        sys.stdout.write(seed(argv[1], argv[2], argv[3]))
         return 0
-    if len(argv) == 4 and argv[0] == "seeded":
-        seeded(argv[1], argv[2], argv[3])
+    if len(argv) == 3 and argv[0] == "config":
+        sys.stdout.write(config(argv[1], argv[2]))
+        return 0
+    if len(argv) == 3 and argv[0] == "seeded":
+        seeded(argv[1], argv[2])
         return 0
     if len(argv) == 4 and argv[0] == "order" and argv[2].isdigit():
         order(argv[1], int(argv[2]), argv[3])

@@ -2,7 +2,8 @@
 
 What this file pins: a feed seen for the first time (a new lens, or a source
 added to one) is caught up silently, so its back catalogue never reaches the
-judge; after that a run with new items sends exactly one note carrying the
+judge, while a new source answering an error page, an HTML page or nothing is
+reported and caught up on a later run instead; after that a run with new items sends exactly one note carrying the
 count and the candidates path, and a second run sends none; each feed's items
 are written newest first even when the feed lists them oldest first, and a big
 feed gets only its fair share of the per-lens cap beside small ones; a feed
@@ -11,7 +12,8 @@ that cannot be fed to feed2exec safely is skipped and reported once (not every d
 `scout: off` and non-lens pages are ignored; `--catchup` records items as seen
 and sends nothing; a failed note is retried instead of lost; the installer puts
 down the units without enabling the timer. feed2exec and fm-inbox.sh are stubs;
-one test runs the real feed2exec (with scout_echo) over a local feed file.
+the lens pages' feeds are local files or a local HTTP server; one test runs the
+real feed2exec (with scout_echo) over a local feed file.
 """
 
 from __future__ import annotations
@@ -21,9 +23,11 @@ import os
 import re
 import shutil
 import subprocess
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 
 REPO = Path(__file__).resolve().parents[2]
 DIR = REPO / "scripts/scout"
@@ -36,9 +40,8 @@ TIMER = DIR / "lifekit-scout.timer"
 # 1000*i and listed newest first, or oldest first with `order = asc`. The seen
 # database is a real feedcache table, as feed2exec keeps it. With the echo plugin
 # an item prints as the echo line; with scout_echo as feed TAB date TAB line.
-# Like feed2exec -v it logs `parsing feed <url> (...)` for each feed it reached;
-# an `unreachable` feed logs a timeout and is skipped, the run still exits 0.
-# FAILME exits 1; PARTIAL exits 1 and KILLME kills the caller after a fetch.
+# It never reads the url. FAILME exits 1; PARTIAL exits 1 and KILLME kills the
+# caller after a fetch.
 FAKE_FEED2EXEC = r"""#!/usr/bin/env python3
 import configparser, os, signal, sqlite3, sys
 args = sys.argv[1:]
@@ -58,11 +61,6 @@ con = sqlite3.connect(db)
 con.execute("CREATE TABLE IF NOT EXISTS feedcache (name text, guid text, PRIMARY KEY (name, guid))")
 grow = int(os.environ.get("F2E_GROW", "0"))
 for name in p.sections():
-    url = p.get(name, "url")
-    if p.getboolean(name, "unreachable", fallback=False):
-        print(f"WARNING: timeout while fetching feed {name} at {url}: x", file=sys.stderr)
-        continue
-    print(f"INFO: parsing feed {url} (100 bytes)", file=sys.stderr)
     n = p.getint(name, "items", fallback=1) + grow * p.getint(name, "grows", fallback=1)
     ids = list(range(1, n + 1))
     if p.get(name, "order", fallback="desc") != "asc":
@@ -124,7 +122,8 @@ class Env:
         self.lenses = tmp / "lenses"
         self.state = tmp / "state"
         self.stub = tmp / "stub"
-        for d in (self.lenses, self.stub, self.state):
+        self.feeds = tmp / "feeds"
+        for d in (self.lenses, self.stub, self.state, self.feeds):
             d.mkdir()
         self.stub_state = tmp / "stubstate"
         self.stub_state.mkdir()
@@ -137,6 +136,15 @@ class Env:
             p.chmod(0o755)
 
     def lens(self, name: str, text: str = LENS) -> None:
+        """A lens page; each `url = https://x.test/<f>` becomes a local empty feed."""
+
+        def local(m: re.Match) -> str:
+            feed = self.feeds / m.group(1)
+            if not feed.exists():
+                feed.write_text(atom([]))
+            return f"url = {feed.as_uri()}"
+
+        text = re.sub(r"^url = https://x\.test/(\S+)$", local, text, flags=re.MULTILINE)
         (self.lenses / f"{name}.md").write_text(text)
 
     def run(self, *args: str, date: str = "2026-11-16", **extra: str):
@@ -276,37 +284,90 @@ def test_a_large_backlog_feed_cannot_crowd_out_small_feeds(tmp_path):
     )
 
 
-def test_a_feed_reached_while_empty_offers_its_first_item(tmp_path):
+@pytest.fixture
+def server():
+    """A local HTTP server answering each path from `routes`: (status, type, body)."""
+    routes: dict[str, tuple[int, str, str]] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            status, ctype, body = routes[self.path]
+            data = body.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    srv = serve(ThreadingHTTPServer(("127.0.0.1", 0), Handler))
+    yield routes, f"http://127.0.0.1:{srv.server_address[1]}"
+    stop(srv)
+
+
+def test_a_feed_served_empty_offers_its_first_item(tmp_path, server):
+    routes, base = server
+    routes["/a.atom"] = (200, "application/atom+xml", atom([]))
     e = Env(tmp_path)
-    e.lens("harness", LENS.replace("args = gh:a", "items = 0\ngrows = 0\nargs = gh:a"))
-    e.run()  # gh:a is reachable but has published nothing yet
+    empty = LENS.replace("https://x.test/a.atom", f"{base}/a.atom").replace(
+        "args = gh:a", "items = 0\ngrows = 0\nargs = gh:a"
+    )
+    e.lens("harness", empty)
+    r = e.run()  # gh:a answers a valid feed that has published nothing yet
+    assert r.returncode == 0, r.stderr
     assert "--catchup sections=gh:a,web:b" in e.calls()[0]
+    assert e.notes() == []
     e.run(date="2026-11-17")
     # not a first sighting any more: fetched as usual, not caught up again
     assert "fetch sections=gh:a,web:b " in e.calls()[-1]
-    e.lens("harness")  # gh:a publishes its first item
+    e.lens("harness", empty.replace("items = 0\ngrows = 0\n", ""))  # first item
     r = e.run(date="2026-11-18")
     assert r.returncode == 0, r.stderr
     assert e.candidates("2026-11-18") == ["harness\tgh:a https://x.test/1 'Title 1'"]
     assert sum("--catchup" in c for c in e.calls()) == 1
 
 
-def test_a_feed_the_catch_up_could_not_reach_is_caught_up_next_run(tmp_path):
+NOT_A_FEED = {
+    "404": (404, "text/html", "<html><body>Not Found</body></html>"),
+    "429": (429, "text/plain", "rate limited"),
+    "503": (503, "text/html", "<html><body>Service Unavailable</body></html>"),
+    "html": (200, "text/html", "<!doctype html><html><body>a page</body></html>"),
+}
+
+
+@pytest.mark.parametrize("answer", [*NOT_A_FEED, "no server"])
+def test_a_new_source_that_answers_no_feed_is_reported_and_caught_up_later(
+    tmp_path, server, answer
+):
+    routes, base = server
+    if answer == "no server":
+        closed = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
+        bad = f"http://127.0.0.1:{closed.server_address[1]}/a.atom"
+        closed.server_close()  # nothing listens there any more
+    else:
+        routes["/bad.atom"] = NOT_A_FEED[answer]
+        bad = f"{base}/bad.atom"
+    routes["/a.atom"] = (200, "application/atom+xml", atom([1, 2]))
     e = Env(tmp_path)
-    e.lens(
-        "harness",
-        LENS.replace("args = gh:a", "items = 30\nunreachable = 1\nargs = gh:a"),
-    )
+    page = LENS.replace("args = gh:a", "items = 30\nargs = gh:a")
+    e.lens("harness", page.replace("https://x.test/a.atom", bad))
     r = e.run()
     assert r.returncode == 0, r.stderr
-    # only the reached feed is fetched; gh:a waits for its own catch-up
+    # gh:a is neither caught up nor fetched; web:b goes on as usual
+    assert "--catchup sections=web:b " in e.calls()[0]
     assert "fetch sections=web:b " in e.calls()[-1]
-    e.lens("harness", LENS.replace("args = gh:a", "items = 30\nargs = gh:a"))
+    broken = [n for n in e.notes() if "scout-broken-harness" in n]
+    assert len(broken) == 1 and "catch-up failed for gh:a" in broken[0], e.notes()
+
+    # the source answers a feed now: caught up, its backlog never offered
+    e.lens("harness", page.replace("https://x.test/a.atom", f"{base}/a.atom"))
     r = e.run(F2E_GROW="1", date="2026-11-17")
     assert r.returncode == 0, r.stderr
     assert "--catchup sections=gh:a " in e.calls()[-2]
-    # gh:a's 31 back-catalogue items were caught up, not offered
     assert e.candidates("2026-11-17") == ["harness\tweb:b https://x.test/2 'Title 2'"]
+    assert not (e.state / "broken/harness").exists()
 
 
 def test_a_quiet_first_day_writes_nothing(tmp_path):
@@ -326,7 +387,7 @@ def test_broken_lens_is_skipped_and_reported_once(tmp_path):
     e.lens("bad", LENS.replace("{item.link}", "{item.published}", 1))
     e.lens("nosources", "---\nscout: on\n---\n\n# no sources here\n")
     e.lens("exec", LENS.replace("feed2exec.plugins.echo", "feed2exec.plugins.exec"))
-    e.lens("crash", LENS.replace("url = https://x.test/b.atom", "url = FAILME"))
+    e.lens("crash", LENS.replace("args = web:b", "fake = FAILME\nargs = web:b"))
     r = e.run(F2E_GROW="1")
     assert r.returncode == 0, r.stderr
     notes = e.notes()
@@ -371,7 +432,7 @@ def test_items_are_kept_even_when_the_args_carry_no_source_tag(tmp_path):
 
 def test_items_printed_before_a_feed2exec_failure_are_kept(tmp_path):
     e = Env(tmp_path)
-    e.lens("partial", LENS.replace("url = https://x.test/b.atom", "url = PARTIAL"))
+    e.lens("partial", LENS.replace("args = web:b", "fake = PARTIAL\nargs = web:b"))
     e.run()
     r = e.run(F2E_GROW="1")
     assert r.returncode == 0, r.stderr
@@ -385,7 +446,7 @@ def test_items_printed_before_a_feed2exec_failure_are_kept(tmp_path):
 def test_items_of_earlier_lenses_survive_a_killed_run(tmp_path):
     e = Env(tmp_path)
     e.lens("a-first")
-    e.lens("z-last", LENS.replace("url = https://x.test/b.atom", "url = KILLME"))
+    e.lens("z-last", LENS.replace("args = web:b", "fake = KILLME\nargs = web:b"))
     e.run()  # the catch-up of both lenses
     r = e.run(F2E_GROW="1")
     assert r.returncode != 0  # the run was killed mid-way: no note went out

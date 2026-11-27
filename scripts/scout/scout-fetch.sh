@@ -121,8 +121,10 @@ for page in "$LENS_DIR"/*.md; do
       >/dev/null 2>"$WORK/$lens.err"; rc=$?
   else
     # First sighting: catch up the feeds not seen yet, so a new source's back
-    # catalogue is recorded as seen, not offered.
-    python3 "$HERE/scout_order.py" config "$WORK/$lens.ini" "$db" seed >"$WORK/$lens.seed.ini" \
+    # catalogue is recorded as seen, not offered. scout_order.py fetches each
+    # one itself and hands feed2exec a local copy, only when the answer was a
+    # 2xx feed: an error page must not count as caught up.
+    python3 "$HERE/scout_order.py" seed "$WORK/$lens.ini" "$db" "$WORK/$lens.seed" >"$WORK/$lens.seed.ini" \
       || { report_broken "$lens" "cannot read its feed config or database"; continue; }
     if [[ -s "$WORK/$lens.seed.ini" ]]; then
       if ! "$FEED2EXEC" -v --config "$WORK/$lens.seed.ini" --database "$db" fetch --catchup \
@@ -130,13 +132,12 @@ for page in "$LENS_DIR"/*.md; do
         report_broken "$lens" "first-sighting catch-up failed ($(tail -n1 "$WORK/$lens.err" | cut -c1-160))"
         continue
       fi
-      # a feed reached while empty is seen too: its first item must be offered
-      python3 "$HERE/scout_order.py" seeded "$WORK/$lens.seed.ini" "$db" "$WORK/$lens.err" \
+      python3 "$HERE/scout_order.py" seeded "$WORK/$lens.seed.ini" "$db" \
         || { report_broken "$lens" "cannot record its caught-up feeds"; continue; }
     fi
-    # The normal fetch covers only feeds seen before: one the catch-up could
-    # not reach today waits for tomorrow's catch-up.
-    python3 "$HERE/scout_order.py" config "$WORK/$lens.ini" "$db" fetch >"$WORK/$lens.fetch.ini" \
+    # The normal fetch covers only feeds seen before: one whose catch-up
+    # failed is reported below and caught up on a later run.
+    python3 "$HERE/scout_order.py" config "$WORK/$lens.ini" "$db" >"$WORK/$lens.fetch.ini" \
       || { report_broken "$lens" "cannot read its feed config or database"; continue; }
     rc=0
     : >"$WORK/$lens.out"
@@ -163,6 +164,10 @@ for page in "$LENS_DIR"/*.md; do
   fi
   if ((rc != 0)); then
     report_broken "$lens" "feed2exec failed ($(tail -n1 "$WORK/$lens.err" | cut -c1-160))"
+    continue
+  fi
+  if [[ -s "$WORK/$lens.seed/failed" ]]; then
+    report_broken "$lens" "first-sighting catch-up failed for $(cut -c1-300 "$WORK/$lens.seed/failed")"
     continue
   fi
   rm -f "$STATE/broken/$lens"

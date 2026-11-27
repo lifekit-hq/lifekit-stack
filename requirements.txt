@@ -4,3 +4,4 @@ pyjwt
 cryptography
 mcp==2.3.0
 pytest-timeout
+feedparser

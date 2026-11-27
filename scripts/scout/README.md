@@ -43,7 +43,7 @@ runs clean, so a later breakage is reported again). Other lenses still run.
 `SCOUT_STATE_DIR` (default `~/.local/state/lifekit-scout`):
 
 - `db/<lens>.sqlite` - feed2exec's seen-items database, one per lens, plus a
-  `scout_seeded` table of the feeds a first-sighting catch-up reached (deleting
+  `scout_seeded` table of the feeds a first-sighting catch-up recorded (deleting
   the file resets both);
 - `candidates/<date>.txt` - new items of that UTC day, `lens<TAB>` plus the
   echo-plugin line as printed (shell-quoted: split with a quoting-aware parser,
@@ -75,11 +75,13 @@ scripts/scout/scout-fetch.sh --catchup   # record current feed contents as seen;
 A feed not yet in the lens's database (a new lens, or a source just added to
 one) is caught up automatically before the normal fetch: its back catalogue is
 recorded as seen and the first offered items are the ones published after
-that. A feed the catch-up reached is recorded as seen even when it was empty,
-so its first item is offered, not caught up. A feed the catch-up could not
-reach (no `parsing feed <url>` in feed2exec's `-v` log) is left out of the
-normal fetch and caught up on the next run. `--catchup` records every feed of
-every lens as seen by hand.
+that. The catch-up fetches each new feed itself and hands feed2exec a local
+copy only when the answer is an HTTP 2xx that parses as a feed; such a feed is
+recorded as seen even when it was empty, so its first item is offered, not
+caught up. An error page (404, 429, 5xx), an HTML page or a network error is
+not a feed: that source is left out of the normal fetch, the lens is reported
+broken naming it, and the next run tries its catch-up again. `--catchup`
+records every feed of every lens as seen by hand.
 
 To offer cut or overflow lines again (operator, once), put them in their own
 file, at most 60 per lens, e.g. `candidates/<date>-reoffer.txt`: the next run
