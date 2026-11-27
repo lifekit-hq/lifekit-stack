@@ -3310,6 +3310,40 @@ sudo -u lifekit /srv/lifekit-stack/scripts/ensure-planning-reminder.sh
 it). Retire: `openclaw cron rm <id>` inside the gateway (`docker exec <gateway> openclaw cron list --all --json`
 shows the id) and revert the PR.
 
+### Kit one-shot notice (`kit-notify.sh`, #725)
+
+The route for "Kit will tell you": one notice from Kit to the owner in Telegram at a set time, with a check that
+it was delivered. `scripts/kit-notify.sh send` schedules a one-shot cron job on agent `kit`:
+
+```bash
+openclaw cron add --agent kit --at <delay> --announce --channel telegram --delivery-target owner \
+  --keep-after-run --command-argv '["echo","<text>"]' ...
+```
+
+- **What the job is.** A command payload (`echo` of the text passed in), isolated, so no model turn runs and the
+  text arrives as given. `--delivery-target owner` lets the gateway resolve the owner's DM: the script never reads,
+  passes or prints a chat id. The job is created with `--keep-after-run`, never `--delete-after-run`: a
+  self-deleting one-shot leaves no run record, so its delivery could not be confirmed.
+- **The delivery check.** `kit-notify.sh check <job-id>` reads `openclaw cron runs <id> --json`, takes the latest
+  finished run and reports `delivered` (exit 0, and only then deletes the job), `failed` (exit 1 with the run's
+  error, delivery error or suppression reason; the job stays for inspection) or `not-yet-run` (exit 3; check again
+  after the fire time). `send --wait` schedules, waits past the fire time and runs the same check, polling up to
+  `KIT_NOTIFY_WAIT_MAX` seconds (default 180) while the run is not yet recorded.
+- **Tests.** `scripts/tests/test_kit_notify.py` (stubbed gateway: the flags sent, each verdict, the deletion only on
+  `delivered`, no chat id in the output). The route was proven live on 2026-11-27 with a harmless notice:
+  `scheduled` -> `not-yet-run` -> `delivered` -> `deleted`, exit 0.
+
+**Use** (on the host, as lifekit or any account with docker access):
+
+```bash
+/srv/lifekit-stack/scripts/kit-notify.sh send --at 20m --wait "Your build finished."
+/srv/lifekit-stack/scripts/kit-notify.sh send --at 2h "Stand-up in 10 minutes."   # prints the job id
+/srv/lifekit-stack/scripts/kit-notify.sh check <job-id>                            # after the fire time
+```
+
+A job left behind by a `failed` or never-checked notice is removed with `openclaw cron rm <id>` inside the gateway
+once it has been looked at.
+
 ### Learning objective line from learnclaw (`evening-plan-note`, `today-brief`) - retired
 
 > **Retired** by "Learnclaw morning learning message" above (decision 2026-11-09, #609): Kit's `today-brief`

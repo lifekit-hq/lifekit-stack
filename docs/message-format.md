@@ -151,6 +151,13 @@ Decisions that need the owner are a typed payload with their own route, `POST /d
 message per decision id (replaced in place, cleared when answered): see
 [`decision-contract.md`](./decision-contract.md).
 
+## Kit one-shot notices
+
+A notice that Kit sends to the owner at a set time ("Kit will tell you") does not go through the relay: it is a
+one-shot OpenClaw cron job on agent `kit` that announces plain text to the owner's Telegram DM, scheduled and
+checked for delivery by `scripts/kit-notify.sh`. The envelope does not apply to it. See `docs/runbook.md`,
+"Kit one-shot notice".
+
 ## Not a notification: in-app decisions
 
 This page governs messages pushed to the owner's Telegram. Kit's decision prompts
