@@ -51,6 +51,13 @@ elif cmd[:2] == ["cron", "runs"]:
     n_file.write_text(str(n + 1))
     print(json.dumps({"entries": seq[min(n, len(seq) - 1)]}))
 elif cmd[:2] == ["cron", "rm"]:
+    if os.environ.get("FAKE_RM_FAILS"):
+        print("Error: gateway busy", file=sys.stderr)
+        sys.exit(1)
+    if not any(j["id"] == cmd[2] for j in jobs):
+        print(f"Automation not found: {cmd[2]}. Run `openclaw cron list`"
+              " to see recent automation ids.", file=sys.stderr)
+        sys.exit(1)
     jobs = [j for j in jobs if j["id"] != cmd[2]]
     jobs_file.write_text(json.dumps(jobs))
     print(json.dumps({"ok": True}))
@@ -167,6 +174,30 @@ def test_check_delivered_reports_and_deletes_the_job(tmp_path):
     assert listed(tmp_path) == []
     # The resolved chat id never reaches the output.
     assert CHAT not in r.stdout + r.stderr
+
+
+def test_check_again_after_the_delete_still_reports_delivered(tmp_path):
+    # The gateway keeps serving a deleted job's run history, and its `cron rm`
+    # then fails with "Automation not found" (seen live on the real gateway).
+    env = box(tmp_path, runs=[[DELIVERED]], jobs=[{"id": "job-1", "name": "x"}])
+    assert run(env, "check", "job-1").returncode == 0
+    r = run(env, "check", "job-1")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith("delivered: ")
+    assert "already deleted: job job-1" in r.stdout
+    assert "remove it by hand" not in r.stderr
+
+
+def test_check_delivered_but_a_failing_delete_exits_nonzero(tmp_path):
+    env = box(
+        tmp_path,
+        runs=[[DELIVERED]],
+        jobs=[{"id": "job-1", "name": "x"}],
+        env_extra={"FAKE_RM_FAILS": "1"},
+    )
+    r = run(env, "check", "job-1")
+    assert r.returncode == 1
+    assert "deleting job job-1 failed" in r.stderr and "gateway busy" in r.stderr
 
 
 def test_check_failed_exits_nonzero_with_the_reason_and_keeps_the_job(tmp_path):

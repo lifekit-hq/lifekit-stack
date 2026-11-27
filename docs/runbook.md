@@ -3325,7 +3325,8 @@ openclaw cron add --agent kit --at <delay> --announce --channel telegram --deliv
   passes or prints a chat id. The job is created with `--keep-after-run`, never `--delete-after-run`: a
   self-deleting one-shot leaves no run record, so its delivery could not be confirmed.
 - **The delivery check.** `kit-notify.sh check <job-id>` reads `openclaw cron runs <id> --json`, takes the latest
-  finished run and reports `delivered` (exit 0, and only then deletes the job), `failed` (exit 1 with the run's
+  finished run and reports `delivered` (exit 0, and only then deletes the job; a re-check after that delete still
+  reports `delivered` and says `already deleted`), `failed` (exit 1 with the run's
   error, delivery error or suppression reason, any chat id the gateway names in it masked; the job stays for
   inspection) or `not-yet-run` (exit 3; check again after the fire time). `send --wait` schedules, waits past the
   fire time and runs the same check, polling up to `KIT_NOTIFY_WAIT_MAX` seconds (default 180) while the run is not

@@ -189,9 +189,15 @@ sys.exit(1)')" || rc=$?
   case "$rc" in
     0)
       echo "$verdict"
-      docker exec "$GATEWAY" openclaw cron rm "$job_id" --json >/dev/null ||
-        die "delivered, but deleting job $job_id failed; remove it by hand"
-      echo "deleted: job $job_id"
+      # A re-check after an earlier delivered check finds the job gone: the
+      # gateway keeps serving its run history but `cron rm` says not found.
+      if out="$(docker exec "$GATEWAY" openclaw cron rm "$job_id" --json 2>&1)"; then
+        echo "deleted: job $job_id"
+      elif grep -qi "not found" <<<"$out"; then
+        echo "already deleted: job $job_id"
+      else
+        die "delivered, but deleting job $job_id failed: $(tail -n 3 <<<"$out"); remove it by hand"
+      fi
       ;;
     3) echo "$verdict" ;;
     *) echo "$verdict" >&2 ;;
