@@ -24,6 +24,9 @@
 #   OPENCLAW_CONFIG_DIR     host path of the gateway state dir
 #                           (default: /srv/openclaw/config, as in compose)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 SKILL=job-queue
 CRON_NAME="${JOB_QUEUE_CRON:-job-queue-drain}"
@@ -36,8 +39,7 @@ install -D -m 0755 "$skill_src/jobq.py" "$skill_dest/jobq.py"
 install -D -m 0644 "$skill_src/drain-gate.js" "$skill_dest/drain-gate.js"
 echo "job queue installed -> $skill_dest"
 
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
+GATEWAY="$(openclaw_gateway_id_lenient)" || exit 1
 if [ -z "$GATEWAY" ]; then
   echo "no running openclaw-gateway container; drain cron not checked"
   exit 0

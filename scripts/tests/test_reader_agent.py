@@ -343,6 +343,10 @@ def a2a_repo(tmp_path):
     # is a no-op here.
     (repo / "scripts/lib").mkdir()
     (repo / "scripts/lib/install-stamp.sh").write_text("exit 0\n")
+    shutil.copy(
+        REPO / "scripts/lib/openclaw-gateway.sh",
+        repo / "scripts/lib/openclaw-gateway.sh",
+    )
     return repo
 
 

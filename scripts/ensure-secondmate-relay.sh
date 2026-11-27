@@ -24,6 +24,9 @@
 #   OPENCLAW_CONFIG_DIR     host path of the gateway state dir
 #                           (default: /srv/openclaw/config, as in compose)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 AGENT="${SECONDMATE_RELAY_AGENT:-kit}"
 SKILL=secondmate-relay
@@ -41,8 +44,7 @@ echo "skill installed -> $skill_dest"
 
 # Read-only: is the skill on the agent's allowlist? An agent with a `skills`
 # list sees only what the list names.
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
+GATEWAY="$(openclaw_gateway_id_lenient)" || exit 1
 if [ -z "$GATEWAY" ]; then
   echo "no running openclaw-gateway container; allowlist not checked"
   exit 0

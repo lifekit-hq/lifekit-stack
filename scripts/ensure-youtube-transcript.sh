@@ -28,6 +28,9 @@
 #   OPENCLAW_CONFIG_DIR   host path of the gateway state dir
 #                         (default: /srv/openclaw/config, as in compose)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 YT_DLP_VERSION="2026.08.19"
 YT_DLP_SHA256="1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6"
@@ -60,8 +63,7 @@ echo "skill installed -> $skill_dest"
 
 # Read-only: which agents' allowlists name the skill? An agent with a `skills`
 # list sees only what the list names.
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
+GATEWAY="$(openclaw_gateway_id_lenient)" || exit 1
 if [ -z "$GATEWAY" ]; then
   echo "no running openclaw-gateway container; allowlists not checked"
   exit 0

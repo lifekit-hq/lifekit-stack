@@ -28,6 +28,9 @@
 #   KIT_AGENT             the agent id whose jobs are pinned (default: kit)
 #   KIT_CRON_MODEL        the model pinned (default: the repo's cron model)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 # shellcheck source=scripts/lib/cron-model.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-model.sh"
@@ -38,8 +41,7 @@ cron_check_args "$@"
 AGENT="${KIT_AGENT:-kit}"
 MODEL="${KIT_CRON_MODEL:-$(cron_model)}"
 
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
+GATEWAY="$(openclaw_gateway_id_lenient)" || cron_check_fail "cannot pick the openclaw-gateway container"
 if [ -z "$GATEWAY" ]; then
   [ "$CRON_CHECK" = 0 ] || cron_check_fail "no running openclaw-gateway container; cron models not checked"
   echo "no running openclaw-gateway container; cron models not checked"

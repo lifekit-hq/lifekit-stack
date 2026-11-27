@@ -53,6 +53,8 @@ set -euo pipefail
 
 DOCKER="${DOCKER:-docker}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$HERE/../lib/openclaw-gateway.sh"
 SPEND_GUARD="${SPEND_GUARD:-$HERE/spend_guard.py}"
 CHECK_AGENTS="${AUTH_CHECK_AGENTS:-kit}"
 HEALTH_WAIT="${AUTH_MODE_HEALTH_WAIT:-300}"
@@ -87,9 +89,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-cid="$("$DOCKER" ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)" ||
-  die "docker ps failed"
+cid="$(openclaw_gateway_id)" ||
+  die "cannot pick the openclaw-gateway container"
 if [[ -z "$cid" ]]; then
   say "gateway unavailable: no running openclaw-gateway container"
   exit 3
@@ -454,8 +455,7 @@ offline_profiles() {
   }
   cid=""
   for ((i = 0; i < 30; i++)); do
-    cid="$("$DOCKER" ps -q --filter label=com.docker.compose.project=openclaw \
-      --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+    cid="$(openclaw_gateway_id)" || return 1
     [[ -z "$cid" ]] || break
     sleep "$POLL"
   done

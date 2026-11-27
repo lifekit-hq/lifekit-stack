@@ -34,6 +34,12 @@
 #   ledger_finance_drift_files            number of offending files
 set -euo pipefail
 DOCKER="${DOCKER:-docker}"
+# The production gateway resolver (issue 716): next to this script in the repo,
+# or where install-host-gauges.sh puts it beside the /usr/local/bin copy.
+GATEWAY_LIB="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/openclaw-gateway.sh"
+[[ -r "$GATEWAY_LIB" ]] || GATEWAY_LIB=/usr/local/lib/lifekit/openclaw-gateway.sh
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$GATEWAY_LIB"
 AUTO_MEMORY_DIR="/home/node/.claude/projects/-home-node--openclaw-agents-finance-workspace/memory"
 WORKSPACE_DIR="/home/node/.openclaw/agents/finance/workspace"
 # Extended regexes, matched against the path relative to WORKSPACE_DIR.
@@ -68,9 +74,8 @@ die() {
   exit 2
 }
 
-cid="$("$DOCKER" ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)" ||
-  die "docker ps failed"
+cid="$(openclaw_gateway_id)" ||
+  die "cannot pick the openclaw-gateway container"
 [[ -n "$cid" ]] || die "no running openclaw-gateway container"
 
 listing="$(mktemp)"
