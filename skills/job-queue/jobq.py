@@ -5,9 +5,11 @@
                         hand an agent turn one that has run?
     jobq.py output <id> what the job's run printed, for the turn that answers it
     jobq.py list        what is waiting, running, and recently finished
+    jobq.py list --json one item envelope per job (decision 0019), as JSON, for
+                        the fleet publisher's items and stalled check
     jobq.py depth       counts only, as JSON, for the fleet status page
-    jobq.py ages        each job's state and times (no label or result), as JSON,
-                        for the fleet publisher's stalled check
+    jobq.py ages        each job's state and times (no label or result), as JSON:
+                        the publisher's older read, before `list --json`
     jobq.py drop <id>   remove one job
     jobq.py enqueue <kind> <key> ...  queue a job from a script, print its receipt
     jobq.py status <id> the receipt of one job, as it stands now
@@ -1029,8 +1031,9 @@ def depth(now: float | None = None) -> dict:
 
 
 def ages() -> dict:
-    """Each job's state and times, with no label, result or payload, for the fleet
-    publisher's stalled check (which owns the thresholds). Read-only, like `depth`."""
+    """Each job's state and times, with no label, result or payload: the fleet
+    publisher's stalled check read this before `list --json` (`envelopes`), which
+    carries the same. Read-only, like `depth`."""
     jobs = [j for _, j in _jobs(root())]
     return {
         "schema": "jobq-ages.v1",
@@ -1048,6 +1051,72 @@ def ages() -> dict:
             for j in sorted(jobs, key=lambda j: j["queued_at"])
         ],
     }
+
+
+def _since(job: dict) -> float:
+    """When the job last changed state: its finish, its claim, or its return to
+    the queue after a run (a retry or a release), else when it was queued."""
+    if job["status"] in (DONE, FAILED):
+        return job.get("finished_at") or job["queued_at"]
+    if job["status"] == RUNNING:
+        return job.get("claimed_at") or job["queued_at"]
+    return max(job["queued_at"], (job.get("run") or {}).get("ran_at") or 0)
+
+
+def _waiting(job: dict, others_running: bool) -> dict:
+    """Why a queued job has not run yet: `waiting_on` names the thing it waits
+    for, `waiting` says it in one line. A job with a probe host waits for the
+    egress (by default the PC relay); one without waits for its turn."""
+    if job["probe"]:
+        via = "the PC relay" if egress() == DEFAULT_EGRESS else "the egress"
+        return {
+            "waiting_on": "egress",
+            "waiting": f"waits for {via} to reach {job['probe']}",
+        }
+    if others_running:
+        return {"waiting_on": "turn", "waiting": "waits for the running job to end"}
+    return {"waiting_on": "turn", "waiting": "runs at the next drain"}
+
+
+def envelopes(now: float | None = None) -> dict:
+    """One item envelope per job (decision 0019's item record): `id` is
+    `jobq:<job id>`, `store` jobq and `ref` the job id; `stage` the queue's own
+    state and `state` its A2A name; `since` the last state change; and the
+    envelope fields the job carries (`origin`, `owner`, `class`, `fingerprint`,
+    `acceptance`, `thread`). `owner` is the envelope's, else the skill that
+    answers the job. A queued job says what it waits on. Never the job's label,
+    result or payload. Read-only, like `depth`: the claim stays `next`'s move."""
+    now = time.time() if now is None else now
+    keep = _int_env("JOBQ_KEEP_DAYS", DEFAULT_KEEP_DAYS) * 86400
+    jobs = [
+        j
+        for _, j in _jobs(root())
+        if j["status"] not in (DONE, FAILED) or now - j.get("finished_at", 0) <= keep
+    ]
+    others_running = any(j["status"] == RUNNING for j in jobs)
+    out = []
+    for j in sorted(jobs, key=lambda j: j["queued_at"]):
+        env = j.get("envelope") or {}
+        item = {
+            "id": f"jobq:{j['id']}",
+            "store": "jobq",
+            "ref": j["id"],
+            "kind": j["kind"],
+            "stage": j["status"],
+            "state": STATE_NAMES.get(j["status"], j["status"]),
+            "since": _since(j),
+            "queued_at": j["queued_at"],
+            "finished_at": j.get("finished_at"),
+            "attempts": j["attempts"],
+            "owner": env.get("owner") or j["owner"],
+        }
+        for k in ("origin", "class", "fingerprint", "acceptance", "thread"):
+            if env.get(k):
+                item[k] = env[k]
+        if j["status"] == QUEUED:
+            item.update(_waiting(j, others_running))
+        out.append(item)
+    return {"schema": "jobq-list.v1", "max_attempts": max_attempts(), "jobs": out}
 
 
 def drop(jid: str) -> bool:
@@ -1132,6 +1201,9 @@ def main(argv: list[str]) -> int:
         if cmd == "list" and len(argv) == 2:
             print(listing())
             return 0
+        if cmd == "list" and argv[2:] == ["--json"]:
+            print(json.dumps(envelopes()))
+            return 0
         if cmd == "depth" and len(argv) == 2:
             print(json.dumps(depth()))
             return 0
@@ -1151,7 +1223,7 @@ def main(argv: list[str]) -> int:
         print(f"jobq failed: {e}", file=sys.stderr)
         return 1
     print(
-        "usage: jobq.py next | output <id> | list | depth | ages | drop <id> | status <id>\n"
+        "usage: jobq.py next | output <id> | list [--json] | depth | ages | drop <id> | status <id>\n"
         "       jobq.py enqueue <kind> <key> --skill S --handler JSON [--probe H] [--label L]\n"
         "         [--quiet] [--payload JSON] [--url U] [--origin O --owner W --class C\n"
         "         --acceptance A [--fingerprint F] [--thread T]]",

@@ -2172,8 +2172,10 @@ docker exec "$G" openclaw cron edit "$ID" \
 - **A changed gate:** the row stores the script, so when a deploy reports the gate `DIFFERS`,
   re-apply it: `docker exec "$G" openclaw cron edit "$ID" --trigger-script /home/node/.openclaw/skills/job-queue/drain-gate.js`.
 - **What is waiting:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py list`
-  (`depth` prints the counts only, as JSON: what the fleet status page shows; `ages` prints each
-  job's state and times with no label or result: what its stalled check reads).
+  (`depth` prints the counts only, as JSON: what the fleet status page shows; `list --json`
+  prints one item envelope per job, with no label, result or payload: what its stalled
+  check and its jobq items read, a queued job naming what it waits on; `ages` is the older
+  states-and-times read).
   Do not run `jobq.py next` by hand while the egress answers: it starts the next job, and each
   `next` that hands out a run's output counts as an offer, the third unread one giving it up.
 - **Drop a job:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py drop <job id>`
