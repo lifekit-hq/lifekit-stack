@@ -391,7 +391,8 @@ line), never a guess.
   in the gateway (`docker exec`, as the job ages: the door's state is mode 700 to
   its writer and is never read as files). `FLEET_DOC_DOOR_CMD` replaces the
   command (empty skips); unset, it is skipped when `FLEET_INTAKE_CMD` is set. One
-  read feeds both the stalled rows and the queue items below.
+  read feeds both the stalled rows and the queue items below. Their threshold is
+  an optional `doc_door` block; without it the stalled source is `read: false`.
 - **Failure** of one source empties only its own rows, sets its
   `stalled_sources` entry to `read: false` and adds an `errors[]` line.
 
