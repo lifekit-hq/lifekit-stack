@@ -88,6 +88,47 @@ elif a[:2] == ["issue", "edit"]:
     d["labels"].append([a[2], a[4]]); save()
 """
 
+# A fake fleet-policy: `classify` answers STUB_FP_CELL for the step; `decide
+# --kind self` logs to self-calls.jsonl and p16.jsonl; `decide --kind call`
+# logs to calls.jsonl and holds the item through the home's hold script with a
+# reason shaped like the real one. STUB_FP_REFUSE makes decide refuse.
+FLEET_POLICY = """#!{py}
+import argparse, json, os, subprocess, sys
+st = os.environ["STUB_STATE"]
+a = sys.argv[1:]
+def log(name, ent):
+    with open(os.path.join(st, name), "a") as f:
+        f.write(json.dumps(ent) + "\\n")
+if a[0] == "classify":
+    print(json.dumps({{"class": a[1], "cell": os.environ.get("STUB_FP_CELL", "allow-and-log"),
+                      "rows": ["M2", "M7"], "subject": a[a.index("--subject") + 1]}}))
+    sys.exit(0)
+p = argparse.ArgumentParser()
+p.add_argument("cmd"); p.add_argument("id")
+for f in ("kind", "class", "subject", "rows", "question", "answer", "record", "actor", "home",
+          "title", "rec", "reason", "boundary", "step", "conflict", "no-row"):
+    p.add_argument("--" + f)
+p.add_argument("--option", action="append", default=[])
+p.add_argument("--checked", action="append", default=[])
+o = vars(p.parse_args(a))
+o["env_actor"] = os.environ.get("FLEET_POLICY_ACTOR")
+if os.environ.get("STUB_FP_REFUSE"):
+    print("decide: refused: " + os.environ["STUB_FP_REFUSE"], file=sys.stderr)
+    sys.exit(2)
+if o["kind"] == "self":
+    log("self-calls.jsonl", o)
+    log("p16.jsonl", dict(o, outcome="self"))
+    sys.exit(0)
+why = ("boundary %s: %s" % (o["boundary"], o["step"]) if o["boundary"] else
+       "conflict " + o["conflict"].replace(",", " vs ") if o["conflict"] else "no row: " + o["no_row"])
+reason = "[Tier 2 class=unlisted subject=%s] rec=%s - %s - checked: %s - %s" % (
+    o["subject"], o["rec"], why, "; ".join(o["checked"]), o["reason"])
+log("calls.jsonl", o)
+log("p16.jsonl", dict(o, outcome="filed"))
+sys.exit(subprocess.run([o["home"] + "/bin/fm-captain-hold.sh", "hold", o["id"],
+                         "--reason", reason, "--title", o["title"]]).returncode)
+"""
+
 REPOS = "lifekit-stack=lifekit-hq/lifekit-stack clip=lifekit-hq/clip"
 HEADER = (
     "# Intake index\n\n| date | kind | origin | category | source | title | gist | "
@@ -123,12 +164,18 @@ class Env:
             (self.home / "bin/fm-captain-hold.sh", HOLD),
             (bins / "tasks-axi", TASKS),
             (bins / "gh", GH),
+            (bins / "fleet-policy", FLEET_POLICY),
         ):
             path.write_text(text.format(py=sys.executable))
             path.chmod(path.stat().st_mode | stat.S_IEXEC)
         monkeypatch.setenv("STUB_STATE", str(self.state))
         monkeypatch.setenv("TASKS_AXI", str(bins / "tasks-axi"))
         monkeypatch.setenv("INTAKE_SHAPE_GH", str(bins / "gh"))
+        monkeypatch.setenv("INTAKE_SHAPE_FLEET_POLICY", str(bins / "fleet-policy"))
+        # The owner-answer tests need a held item: by default the fake table
+        # does not answer the step, so every row is held (no row). The matrix
+        # tests set allow-and-log, the real cell of github.issue-open.
+        monkeypatch.setenv("STUB_FP_CELL", "stop-and-file")
         monkeypatch.setenv("INTAKE_SHAPE_REPOS", REPOS)
         monkeypatch.setenv("INTAKE_SHAPE_FM_HOME", str(self.home))
         monkeypatch.setenv("INTAKE_SHAPE_INTAKE", str(self.intake))
@@ -157,6 +204,17 @@ class Env:
         p = self.state / "gh.json"
         return json.loads(p.read_text()) if p.exists() else {"issues": [], "labels": []}
 
+    def log(self, name: str) -> list[dict]:
+        p = self.state / name
+        return (
+            [json.loads(ln) for ln in p.read_text().splitlines()] if p.exists() else []
+        )
+
+    def report(self, key: str, text: str, rubric: str = "v8") -> None:
+        path = self.intake / f"reports/{key}.{rubric}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
     def run(self, cmd="sweep", *extra) -> int:
         return shape.main(["intake_shape.py", cmd, *extra])
 
@@ -182,6 +240,234 @@ def test_accept_creates_exactly_one_shaping_item(env):
     assert "port the rubric" in hub["shape-abc"]["reason"]
     [r] = env.rows()
     assert (r["status"], r["ref"]) == ("shaping", "shape-abc")
+
+
+# ------------------------------------------------ the decision matrix first
+
+
+@pytest.fixture
+def matrix(env, monkeypatch):
+    """The real cell of github.issue-open: the matrix answers the step."""
+    monkeypatch.setenv("STUB_FP_CELL", "allow-and-log")
+    return env
+
+
+def test_matrix_answered_row_is_filed_with_no_owner_hold(matrix):
+    env = matrix
+    env.index(row("abc"))
+    assert env.run() == 0
+    assert env.hub() == {}
+    assert env.log("calls.jsonl") == []
+    [call] = env.log("self-calls.jsonl")
+    assert (call["id"], call["kind"], call["class"]) == (
+        "shape-abc",
+        "self",
+        "github.issue-open",
+    )
+    assert call["subject"] == "lifekit-hq/lifekit-stack"
+    assert call["rows"] == "M4,M2,M7"
+    assert "system/decision-matrix.md#M4" in call["record"]
+    assert call["actor"] == call["env_actor"] == "intake-shape"
+    assert [e["outcome"] for e in env.log("p16.jsonl")] == ["self"]
+    gh = env.gh()
+    [issue] = gh["issues"]
+    assert issue["url"] == "https://github.com/lifekit-hq/lifekit-stack/issues/1"
+    for line in (
+        "- port the rubric",
+        "Owner repo: lifekit-hq/lifekit-stack",
+        "Class: dev",
+        "Decision: matrix auto-answered",
+        "Matrix: M4, M2, M7 (system/decision-matrix.md#M4; "
+        "fleet-policy decide --kind self shape-abc)",
+    ):
+        assert line in issue["body"]
+    assert shape.check_issue_body(issue["body"]) == []
+    assert gh["labels"] == [[issue["url"], "ready"]]
+    [r] = env.rows()
+    assert (r["status"], r["ref"]) == ("handed-off", issue["url"])
+    assert env.run() == 0
+    assert len(env.gh()["issues"]) == 1
+    assert len(env.log("self-calls.jsonl")) == 1
+
+
+def test_owner_repo_named_only_in_the_report_is_answered(matrix):
+    env = matrix
+    env.index(row("abc", project="goal 1; plain upgrade of a tool already run"))
+    env.report(
+        "abc",
+        "## Sources\nPin: lifekit-stack compose/openclaw-gateway/package.json\n"
+        "Blocking PR: https://github.com/lifekit-hq/lifekit-stack/pull/501\n",
+    )
+    assert env.run() == 0
+    assert env.hub() == {}
+    [issue] = env.gh()["issues"]
+    assert "Owner repo: lifekit-hq/lifekit-stack" in issue["body"]
+
+
+def test_matrix_repeat_of_filed_work_joins_its_issue(matrix):
+    env = matrix
+    env.index(row("abc", rubric="v7"))
+    assert env.run() == 0
+    [issue] = env.gh()["issues"]
+    env.append(row("abc", rubric="v8"))
+    assert env.run() == 0
+    assert len(env.gh()["issues"]) == 1 and env.hub() == {}
+    assert len(env.log("self-calls.jsonl")) == 1
+    assert [(r["status"], r["ref"]) for r in env.rows()] == [
+        ("handed-off", issue["url"])
+    ] * 2
+
+
+def test_dropped_then_filed_repeat_is_not_a_conflict(matrix):
+    env = matrix
+    env.index(
+        row("abc", rubric="v6", marks=" | dropped | shape-abc"),
+        row("abc", rubric="v7", marks=" | handed-off | https://x/issues/9"),
+    )
+    env.append(row("abc", rubric="v8"))
+    assert env.run() == 0
+    assert env.log("calls.jsonl") == [] and env.hub() == {}
+    assert env.rows()[-1]["ref"] == "https://x/issues/9"
+
+
+def test_boundary_money_is_held_with_the_reason_decide_gave(matrix):
+    env = matrix
+    env.index(row("abc"))
+    env.report(
+        "abc",
+        "## Cost of adoption\nThe pro plan is a paid plan at $20 per month.\n\n## Verdict\n",
+    )
+    assert env.run() == 0
+    assert env.gh()["issues"] == [] and env.log("self-calls.jsonl") == []
+    [call] = env.log("calls.jsonl")
+    assert (call["boundary"], call["rows"], call["rec"]) == ("H2", "M4", "approve")
+    assert "whose cost names money" in call["step"]
+    assert any("$20 per month" in c for c in call["checked"])
+    assert call["option"] == ["approve=File it as proposed", "drop=File nothing"]
+    item = env.hub()["shape-abc"]
+    assert item["reason"].startswith(
+        "[Tier 2 class=unlisted subject=shape-abc] rec=approve - boundary H2"
+    )
+    assert "Intake accepted: Title abc" in item["reason"]
+    assert item["title"] == "Shape: Title abc"
+    assert env.rows()[0]["status"] == "shaping"
+
+
+def test_a_cost_that_names_no_charge_is_not_a_boundary(matrix):
+    env = matrix
+    env.index(row("abc"))
+    env.report(
+        "abc",
+        "## Cost of adoption\nNo new credential; the free tier, no paid plan.\n"
+        "One-line change, about 10 minutes.\n",
+    )
+    assert env.run() == 0
+    assert env.hub() == {}
+    assert len(env.gh()["issues"]) == 1
+
+
+def test_repeat_of_a_dropped_item_is_a_row_conflict(matrix):
+    env = matrix
+    env.index(row("abc", rubric="v7", marks=" | dropped | shape-abc"))
+    env.append(row("abc", rubric="v8"))
+    assert env.run() == 0
+    [call] = env.log("calls.jsonl")
+    assert (call["id"], call["conflict"], call["rec"]) == (
+        "shape-abc-2",
+        "M2,M4",
+        "drop",
+    )
+    assert call["rows"] == "M2,M4"
+    item = env.hub()["shape-abc-2"]
+    assert "conflict M2 vs M4" in item["reason"]
+    assert "Repeat of shape-abc" in item["reason"]
+    assert env.gh()["issues"] == []
+
+
+def test_no_registered_repo_is_no_row_and_the_owner_picks_one(matrix):
+    env = matrix
+    env.index(row("abc", project="goal 1; nothing named"))
+    assert env.run() == 0
+    [call] = env.log("calls.jsonl")
+    assert "no registered project owns" in call["no_row"]
+    assert call["rows"] is None
+    assert call["option"] == [
+        "file-clip=File it in lifekit-hq/clip",
+        "file-lifekit-stack=File it in lifekit-hq/lifekit-stack",
+        "drop=File nothing",
+    ]
+    assert call["rec"] == "file-clip"
+    assert "repo none registered - name one" in env.hub()["shape-abc"]["reason"]
+    env.set_hub(
+        "shape-abc",
+        state="closed",
+        decision="Captain answered this call through dashboard.\nTask: shape-abc\n"
+        "Answer: file-clip\nAnswer as shown to the captain: File it in lifekit-hq/clip",
+    )
+    assert env.run() == 0
+    [issue] = env.gh()["issues"]
+    assert issue["url"] == "https://github.com/lifekit-hq/clip/issues/1"
+    assert "Decision: owner ruled" in issue["body"]
+    assert "Matrix:" not in issue["body"]
+    assert env.rows()[0]["status"] == "handed-off"
+
+
+def test_report_naming_two_projects_is_no_row(matrix):
+    env = matrix
+    env.index(row("abc", project="goal 1"))
+    env.report("abc", "touches lifekit-stack and lifekit-hq/clip\n")
+    assert env.run() == 0
+    [call] = env.log("calls.jsonl")
+    assert call["no_row"] and env.gh()["issues"] == []
+
+
+def test_no_done_when_is_no_row(matrix):
+    env = matrix
+    env.index(row("abc").replace("port the rubric; add the test", "-"))
+    assert env.run() == 0
+    [call] = env.log("calls.jsonl")
+    assert "no done-when" in call["no_row"]
+
+
+def test_refused_decide_holds_nothing_and_retries(matrix, monkeypatch):
+    env = matrix
+    env.index(row("abc", project="goal 1"))
+    monkeypatch.setenv("STUB_FP_REFUSE", "no")
+    assert env.run() == 1
+    assert env.hub() == {} and env.gh()["issues"] == []
+    assert env.rows()[0]["status"] == ""
+    monkeypatch.delenv("STUB_FP_REFUSE")
+    assert env.run() == 0
+    assert list(env.hub()) == ["shape-abc"]
+
+
+def test_failed_self_call_files_nothing(matrix, monkeypatch):
+    env = matrix
+    env.index(row("abc"))
+    monkeypatch.setenv("STUB_FP_REFUSE", "no")
+    assert env.run() == 1
+    assert env.gh()["issues"] == [] and env.hub() == {}
+    assert env.rows()[0]["status"] == ""
+
+
+def test_newest_recorded_answer_counts(env):
+    answered(
+        env,
+        "Update\n\nResolution recorded by fm-captain-hold.\n\nCaptain decision:\n"
+        "matrix: drop; nothing to file",
+    )
+    assert env.run("answer") == 0
+    assert env.rows()[0]["status"] == "dropped"
+
+
+def test_main_needs_fleet_policy(env, monkeypatch, capsys):
+    monkeypatch.setenv(
+        "INTAKE_SHAPE_FLEET_POLICY", str(env.home / "no-such-fleet-policy")
+    )
+    env.index(row("a"))
+    assert env.run() == 2
+    assert "fleet-policy not found" in capsys.readouterr().err
+    assert env.hub() == {}
 
 
 def test_park_and_drop_open_nothing(env):
@@ -251,7 +537,13 @@ def test_open_item_held_but_row_unmarked_is_joined_not_duplicated(env, monkeypat
     with monkeypatch.context() as patched:
         patched.setattr(shape, "mark_rows", boom)
         with pytest.raises(OSError):
-            shape.open_items(env.intake, shape.Hub(str(env.home)), "2026-01-01")
+            shape.open_items(
+                env.intake,
+                shape.Hub(str(env.home)),
+                "2026-01-01",
+                shape.Policy(str(env.home)),
+                shape.Gh(),
+            )
     assert env.rows()[0]["status"] == ""
     assert env.run("open") == 0
     assert list(env.hub()) == ["shape-abc"]
@@ -509,6 +801,7 @@ def run_intake_installer(tmp_path, **extra):
             "ADMIN_USER": "ops",
             "INTAKE_SHAPE_FM_HOME": "/home/ops/fm",
             "INTAKE_SHAPE_REPOS": "lifekit-stack=lifekit-hq/lifekit-stack",
+            "FLEET_POLICY": "/home/ops/.local/bin/fleet-policy",
             **extra,
         },
         capture_output=True,
@@ -529,6 +822,7 @@ def test_installer_writes_tasks_axi_and_path(tmp_path):
     unit = intake_unit(root)
     assert '"TASKS_AXI=/home/ops/.nvm/versions/node/v22/bin/tasks-axi"' in unit
     assert '"PATH=/home/ops/.nvm/versions/node/v22/bin:/usr/local/sbin:' in unit
+    assert '"INTAKE_SHAPE_FLEET_POLICY=/home/ops/.local/bin/fleet-policy"' in unit
     assert "__" not in unit
 
 
@@ -556,6 +850,34 @@ def test_installer_refuses_without_tasks_axi(tmp_path):
     assert not (root / "etc/systemd/system/lifekit-intake-shape.service").exists()
     root, res = run_intake_installer(tmp_path, TASKS_AXI="relative/tasks-axi")
     assert res.returncode == 1
+
+
+def test_installer_finds_fleet_policy_as_the_admin_account(tmp_path):
+    fake_su = tmp_path / "su"
+    fake_su.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$4" in "command -v fleet-policy") echo /home/ops/.local/bin/fleet-policy;;\n'
+        '  "command -v tasks-axi") echo /opt/bin/tasks-axi;; esac\n'
+    )
+    fake_su.chmod(0o755)
+    root, res = run_intake_installer(tmp_path, SU=str(fake_su), FLEET_POLICY="")
+    assert res.returncode == 0, res.stderr
+    assert (
+        '"INTAKE_SHAPE_FLEET_POLICY=/home/ops/.local/bin/fleet-policy"'
+        in intake_unit(root)
+    )
+
+
+def test_installer_refuses_without_fleet_policy(tmp_path):
+    fake_su = tmp_path / "su"
+    fake_su.write_text(
+        '#!/usr/bin/env bash\ncase "$4" in *tasks-axi*) echo /opt/bin/tasks-axi;; esac\n'
+    )
+    fake_su.chmod(0o755)
+    root, res = run_intake_installer(tmp_path, SU=str(fake_su), FLEET_POLICY="")
+    assert res.returncode == 1
+    assert "fleet-policy not found for ops" in res.stderr
+    assert not (root / "etc/systemd/system/lifekit-intake-shape.service").exists()
 
 
 def test_installer_renders_the_unit(tmp_path):

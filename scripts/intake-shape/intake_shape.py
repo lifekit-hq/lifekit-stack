@@ -5,12 +5,24 @@ An `accept` (or `adopt`) verdict at the intake door used to end in a vault page
 (scripts/intake-to-vault). This is the step after it, with no model turn:
 
   open    every accepted intake row dated on or after the cutoff (below) and
-          not yet shaping gets a SHAPING ITEM: a
-          captain-held task (fm-captain-hold.sh hold) carrying the proposed
-          shape and the options, shown on the Calls page. One item per source
-          (the intake key): a repeat adds a count to the open item's title, a
-          repeat of a closed item opens a new item that references it.
-  answer  once the owner's answer is recorded on the item, the step files ONE
+          not yet shaping is first answered from the decision matrix
+          (system/decision-matrix.md, decision 0017) through `fleet-policy`.
+          Filing agreed work is M4; the step is the `github.issue-open` class
+          on the owner repo. When the matrix answers it, `fleet-policy decide
+          --kind self` records the answer and its rows (self-calls.jsonl and
+          p16.jsonl) and the issue is filed at once, `Decision: matrix
+          auto-answered` with a `Matrix:` line naming the rows; nothing is held.
+          Only one of decision 0017's three reasons holds the row for the
+          owner, and `fleet-policy decide --kind call` places that hold with
+          the reason it gives: the hard boundary (H2, the report's cost names
+          money - M4's one exception), a row conflict (M2 against M4: the item
+          repeats one the owner dropped) or no row (no registered project owns
+          it, its row gives no done-when, or the P16 table does not answer the
+          step). That SHAPING ITEM is a captain-held task shown on the Calls
+          page, one per source (the intake key): a repeat adds a count to the
+          open item's title, a repeat of a closed item opens a new item that
+          references it.
+  answer  once the owner's answer is recorded on a held item, the step files ONE
           GitHub issue in the owning repo with a `## Done when` section, the
           owner repo, the class and a record of who ruled, then sets the
           `ready` label. The label is set only here, and only on an issue
@@ -19,7 +31,8 @@ An `accept` (or `adopt`) verdict at the intake door used to end in a vault page
           the item and the intake index keeps only the reference.
 
 `sweep` runs both. Each step is checked first, so a run that stopped half-way
-is completed by the next one and nothing is filed twice.
+is completed by the next one and nothing is filed twice (an auto-answered row
+whose filing failed is decided again next run: one more self-call line).
 
 An intake row gets two trailing cells, `status` and `ref`, that the original
 14-column rows lack: `shaping <item id>` while the item waits, then
@@ -36,11 +49,15 @@ Only rows dated on or after the cutoff open items, so the ideas accepted before
 this step existed are never asked about. The first run records its UTC date in
 `.shape-since` in the intake directory; `--since YYYY-MM-DD` sets it.
 
-The owner's answer is free text. `approve` (or yes/ok/ship) files the proposed
-shape; `drop` (or no/park/reject) files nothing; any answer may carry
-`repo: <owner/name>`, `class: <dev|ops|finance|life>` and `done when: <text>`
-lines that override the proposal. An answer that starts with `matrix:` is
-recorded as auto-answered by the decision matrix, any other as the owner's.
+The owner's answer is free text or a dashboard option (`approve`, `drop`,
+`file-<project>`). `approve` (or yes/ok/ship) files the proposed shape; `drop`
+(or no/park/reject) files nothing; `file-<project>` files it in that registered
+project; any answer may carry `repo: <owner/name>`, `class:
+<dev|ops|finance|life>` and `done when: <text>` lines that override the
+proposal. An answer that starts with `matrix:`, or a matrix-settlement record,
+is recorded as auto-answered by the decision matrix, any other as the owner's.
+When an item was answered more than once (reopened, answered again), the newest
+answer counts.
 
 Environment:
   INTAKE_SHAPE_FM_HOME   the firstmate home holding the captain hold (required)
@@ -49,12 +66,14 @@ Environment:
                          registered projects an issue may be filed in
   INTAKE_SHAPE_GH        the gh command (default `gh`)
   TASKS_AXI              the tasks-axi command (default `tasks-axi`)
+  INTAKE_SHAPE_FLEET_POLICY  the fleet-policy command (default `fleet-policy`)
 
 Usage: intake_shape.py [open|answer|sweep] [--since YYYY-MM-DD]
 
 Exit: 0 done or nothing to do; 1 something could not be done (the journal says
 what; the next run retries); 2 bad usage or configuration (no firstmate home,
-or no tasks-axi on TASKS_AXI/PATH: one journal line, not one per item).
+no tasks-axi on TASKS_AXI/PATH or no fleet-policy on INTAKE_SHAPE_FLEET_POLICY/
+PATH: one journal line, not one per item).
 """
 
 from __future__ import annotations
@@ -68,7 +87,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -100,6 +119,21 @@ REJECT = ("drop", "dropped", "no", "park", "reject", "rejected")
 PLACEHOLDERS = ("", "-", "n/a", "na", "none", "tbd", "todo")
 TIMEOUT = 60
 REASON_MAX = 900
+# The decision matrix (system/decision-matrix.md, decision 0017) through fleet-policy.
+STEP_CLASS = "github.issue-open"  # the step answered: file the work as an issue
+AGREED_ROW = "M4"  # agreed work needs no ceremony (money is its exception)
+ACT_CELLS = ("allow", "allow-and-log")
+ACTOR = "intake-shape"
+MATRIX_RECORD = "system/decision-matrix.md#M4"
+OPTION_MAX = 6
+# Money in the report's cost (H2): a sentence naming a charge, not one saying none.
+MONEY = re.compile(
+    r"\b(paid (plan|tier|seat|account|version)|subscription|purchase|per (month|year|seat)"
+    r"|a month|/mo\b|billing|pricing|license fee|credit card)\b|[$\u20ac\u00a3]\s?\d"
+    r"|\b\d+(\.\d+)?\s?(usd|eur|gbp)\b",
+    re.I,
+)
+NO_MONEY = re.compile(r"\b(no|not|none|free|without|zero|nothing)\b", re.I)
 
 
 def log(message: str) -> None:
@@ -270,8 +304,87 @@ class Hub:
             body = json.loads(raw)
         except ValueError:
             body = raw
-        m = re.search(r"^Captain decision:\n(.*?)(?:\n\n|\Z)", body, re.M | re.S)
-        return m[1].strip() if m else None
+        answers = re.findall(r"^Captain decision:\n(.*?)(?:\n\n|\Z)", body, re.M | re.S)
+        return answers[-1].strip() if answers else None
+
+
+class Policy:
+    """fleet-policy, the decision matrix's CLI. `classify` is read-only;
+    `decide --kind self` records an answer the matrix gave, `decide --kind
+    call` holds the item for the owner with the reason it was not answered."""
+
+    def __init__(self, home: str):
+        self.home = home
+        self.cmd = shlex.split(
+            os.environ.get("INTAKE_SHAPE_FLEET_POLICY", "fleet-policy")
+        )
+
+    def run(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [*self.cmd, *args],
+            cwd=self.home,
+            env={**os.environ, "FM_HOME": self.home, "FLEET_POLICY_ACTOR": ACTOR},
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+            check=False,
+        )
+
+    def need(self, *args: str) -> str:
+        res = self.run(*args)
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"fleet-policy {args[0]} {args[1]} exit {res.returncode}: "
+                f"{one_line(res.stderr or res.stdout)[:300]}"
+            )
+        return res.stdout
+
+    def classify(self, subject: str) -> tuple[str, list[str]]:
+        """(the P16 cell, its matrix rows) for filing an issue in `subject`."""
+        res = self.run("classify", STEP_CLASS, "--subject", subject, "--json")
+        try:
+            out = json.loads(res.stdout)
+            return str(out["cell"]), [str(r) for r in out.get("rows") or []]
+        except (ValueError, KeyError, TypeError):
+            raise RuntimeError(
+                f"fleet-policy classify {STEP_CLASS} exit {res.returncode}: "
+                f"{one_line(res.stderr or res.stdout)[:200]}"
+            ) from None
+
+    def self_call(
+        self,
+        item: str,
+        subject: str,
+        rows: list[str],
+        question: str,
+        answer: str,
+        record: str,
+    ) -> None:
+        self.need(
+            "decide", item, "--kind", "self", "--class", STEP_CLASS,
+            "--subject", subject, "--rows", ",".join(rows), "--question", question,
+            "--answer", answer, "--record", record, "--actor", ACTOR, "--home", self.home,
+        )  # fmt: skip
+
+    def call(self, item: str, title: str, verdict: Verdict, reason: str) -> None:
+        argv = [
+            "decide", item, "--kind", "call", "--class", "unlisted",
+            "--subject", item, "--title", title, "--rec", verdict.rec,
+            "--actor", ACTOR, "--home", self.home, "--reason", reason,
+        ]  # fmt: skip
+        for oid, label in verdict.options:
+            argv += ["--option", f"{oid}={label}"]
+        for fact in verdict.checked:
+            argv += ["--checked", fact]
+        if verdict.reason == "boundary":
+            argv += ["--boundary", verdict.boundary, "--step", verdict.detail]
+        elif verdict.reason == "conflict":
+            argv += ["--conflict", verdict.detail]
+        else:
+            argv += ["--no-row", verdict.detail]
+        if verdict.rows:
+            argv += ["--rows", ",".join(verdict.rows)]
+        self.need(*argv)
 
 
 # ---------------------------------------------------------------- the item
@@ -301,21 +414,148 @@ def proposed_repo(project: str) -> str:
     return projects().get(best, "")
 
 
+def report_text(intake: Path, row: Row) -> str:
+    """The judge's report for the row, or '' when it is missing or unreadable
+    (a report outside the intake directory is never read)."""
+    path = (intake / row["report"]).resolve()
+    if not row["report"] or not path.is_relative_to(intake.resolve()):
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")[:200_000]
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def named_repo(row: Row, report: str) -> str:
+    """The owner repo: the registered project the Project cell names, else
+    the one registered project (by name or owner/name) the row's next step and
+    its report name, else '' (none or several)."""
+    repo = proposed_repo(row["project"])
+    if repo:
+        return repo
+    text = f"{row['next step or why']}\n{report}".lower()
+    hits = {
+        repo
+        for name, repo in projects().items()
+        if re.search(
+            rf"(?<![a-z0-9._/-])({re.escape(name)}|{re.escape(repo.lower())})(?![a-z0-9_-])",
+            text,
+        )
+    }
+    return hits.pop() if len(hits) == 1 else ""
+
+
+def cost_money(report: str) -> str:
+    """The first sentence of the report's `## Cost of adoption` section that
+    names money being spent (H2), else ''."""
+    m = re.search(r"^## Cost of adoption[ \t]*\n(.*?)(?=^## |\Z)", report, re.M | re.S)
+    for sentence in re.split(r"(?<=[.!?])\s+|\n", m[1] if m else ""):
+        if MONEY.search(sentence) and not NO_MONEY.search(sentence):
+            return one_line(sentence)[:200]
+    return ""
+
+
+@dataclass
+class Verdict:
+    """What the decision matrix says about filing one accepted row."""
+
+    reason: str  # "answered" | "boundary" | "conflict" | "no-row"
+    repo: str
+    rows: list[str]
+    detail: str = ""  # the step crossing the boundary, the conflict pair, or why no row
+    boundary: str = ""
+    checked: list[str] = field(default_factory=list)
+    options: list[tuple[str, str]] = field(default_factory=list)
+    rec: str = ""
+
+
+def matrix_verdict(
+    policy: Policy, intake: Path, row: Row, dropped: str | None
+) -> Verdict:
+    """Answer one accepted row from the matrix, or name which of decision
+    0017's three reasons sends it to the owner."""
+    report = report_text(intake, row)
+    repo = named_repo(row, report)
+    names = sorted(projects())
+    checked = [
+        f"the intake judge accepted it (verdict {row['verdict']}, rubric {row['rubric']}, "
+        f"report {row['report'] or 'none'})",
+        f"owner repo {repo or 'not found'}: the Project cell and report checked against "
+        f"the registered projects ({', '.join(names) or 'none'})",
+    ]
+    options = [("approve", "File it as proposed"), ("drop", "File nothing")]
+    if not repo:
+        options = [
+            (f"file-{name}", f"File it in {projects()[name]}")
+            for name in names[: OPTION_MAX - 1]
+        ] + [("drop", "File nothing")]
+        why = (
+            f"no registered project owns this accepted intake row; looked at {AGREED_ROW} "
+            "(file agreed work), which needs the owner repo, and no row names one"
+        )
+        return Verdict(
+            "no-row", "", [], why, checked=checked, options=options, rec=options[0][0]
+        )
+    done = one_line(row["next step or why"])
+    if done.lower() in PLACEHOLDERS:
+        why = (
+            f"the accepted intake row gives no done-when; looked at {AGREED_ROW} (file "
+            "agreed work), which files a shaped issue and cannot write its acceptance"
+        )
+        return Verdict(
+            "no-row", repo, [], why, checked=checked, options=options, rec="approve"
+        )
+    money = cost_money(report)
+    if money:
+        checked.append(f"the report cost section names money: {money}")
+        step = f"build accepted intake item {item_name(row)} whose cost names money"
+        return Verdict(
+            "boundary", repo, [AGREED_ROW], step, "H2", checked, options, "approve"
+        )
+    if dropped:
+        checked.append(f"the same source was dropped before as {dropped}")
+        return Verdict(
+            "conflict",
+            repo,
+            ["M2", AGREED_ROW],
+            f"M2,{AGREED_ROW}",
+            checked=checked,
+            options=options,
+            rec="drop",
+        )
+    cell, class_rows = policy.classify(repo)
+    if cell not in ACT_CELLS:
+        why = (
+            f"the P16 table answers {cell} for {STEP_CLASS} on this repo; looked at "
+            f"{AGREED_ROW} (file agreed work) and the class rows {','.join(class_rows) or 'none'}"
+        )
+        checked.append(f"fleet-policy classify {STEP_CLASS} answered {cell}")
+        return Verdict(
+            "no-row", repo, [], why, checked=checked, options=options, rec="approve"
+        )
+    rows = [AGREED_ROW, *[r for r in class_rows if r != AGREED_ROW]]
+    return Verdict("answered", repo, rows, checked=checked)
+
+
+def item_name(row: Row) -> str:
+    return row.key[:80]
+
+
 def item_title(row: Row, count: int) -> str:
     seen = f" (seen {count}x)" if count > 1 else ""
     return one_line(f"Shape: {row['title']}{seen}")[:150]
 
 
-def item_reason(row: Row, previous: str | None) -> str:
-    repo = proposed_repo(row["project"]) or "none registered - name one"
+def item_reason(row: Row, previous: str | None, repo: str = "") -> str:
+    repo = repo or proposed_repo(row["project"]) or "none registered - name one"
     done = one_line(row["next step or why"]) or "none given - name one"
     again = f" Repeat of {previous}, already answered." if previous else ""
     text = (
         f"Intake accepted: {row['title']} ({row['source']}).{again} Proposed shape: "
         f"repo {repo}, class dev, done when: {done}. Options: approve to file it "
-        "as proposed; drop to file nothing; or answer with `repo: <owner/name>`, "
-        "`class: <dev|ops|finance|life>`, `done when: <text>` lines to change it. "
-        "Prefix `matrix:` when the decision matrix answers."
+        "as proposed (or file-<project> to file it there); drop to file nothing; "
+        "or answer with `repo: <owner/name>`, `class: <dev|ops|finance|life>`, "
+        "`done when: <text>` lines to change it."
     )
     return one_line(text)[:REASON_MAX]
 
@@ -356,10 +596,11 @@ def since_cutoff(intake: Path, override: str | None) -> str:
     return override
 
 
-def open_items(intake: Path, hub: Hub, since: str) -> int:
-    """Give every accepted row dated on or after `since` a shaping item;
-    returns the failures. The item is held before its rows are marked, so a
-    run that stopped between the two finds the open item and joins it."""
+def open_items(intake: Path, hub: Hub, since: str, policy: Policy, gh: Gh) -> int:
+    """Answer every accepted row dated on or after `since` from the decision
+    matrix, filing what it answers and holding the rest for the owner; returns
+    the failures. A held item is held before its rows are marked, so a run
+    that stopped between the two finds the open item and joins it."""
     failed = 0
     rows = read_rows(intake)
     marked = [r for r in rows if r["status"]]
@@ -374,26 +615,76 @@ def open_items(intake: Path, hub: Hub, since: str) -> int:
             groups.setdefault(f"shape-{slug(r.key)}", []).append(r)
     marks: dict[tuple[str, str], tuple[str, str]] = {}
     for base, members in groups.items():
+        row = members[0]
         try:
-            item, repeat, create = next_item(hub, base, members[0].key, marked)
+            item, repeat, create = next_item(hub, base, row.key, marked)
             seen = len(members) + sum(
                 1 for r in marked if r["status"] == "shaping" and r["ref"] == item
             )
-            title = item_title(members[0], seen)
-            if create:
-                hub.hold(item, title, item_reason(members[0], repeat))
-                log(f"{item}: shaping item opened for {members[0].key}")
-            else:
+            title = item_title(row, seen)
+            if not create:
                 hub.retitle(item, title)
-        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                status = ("shaping", item)
+            else:
+                # The newest answer on this source: dropped, or filed as an issue.
+                ended = [
+                    r
+                    for r in marked
+                    if r.key == row.key and r["status"] in ("dropped", "handed-off")
+                ]
+                last = ended[-1] if ended else None
+                dropped = last["ref"] if last and last["status"] == "dropped" else None
+                verdict = matrix_verdict(policy, intake, row, dropped)
+                if verdict.reason == "answered" and last:
+                    # Agreed work already filed: the repeat joins its issue.
+                    status = ("handed-off", last["ref"])
+                    log(f"{item}: repeat of filed work, joins {last['ref']}")
+                elif verdict.reason == "answered":
+                    status = file_answered(policy, gh, item, row, verdict)
+                else:
+                    policy.call(
+                        item, title, verdict, item_reason(row, repeat, verdict.repo)
+                    )
+                    log(f"{item}: held for the owner ({verdict.reason}) for {row.key}")
+                    status = ("shaping", item)
+        except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as error:
             log(f"{base}: {error}")
             failed += 1
             continue
         for m in members:
-            marks[(m["source"], m["rubric"])] = ("shaping", item)
+            marks[(m["source"], m["rubric"])] = status
     if marks:
         mark_rows(intake, marks)
     return failed
+
+
+def file_answered(
+    policy: Policy, gh: Gh, item: str, row: Row, verdict: Verdict
+) -> tuple[str, str]:
+    """Record the matrix's answer (`decide --kind self`) and file the issue;
+    the rows' new (status, ref)."""
+    shape = Shape(
+        verdict.repo,
+        "dev",
+        one_line(row["next step or why"]),
+        "matrix auto-answered",
+        f"{', '.join(verdict.rows)} ({MATRIX_RECORD}; fleet-policy decide --kind self {item})",
+    )
+    body = issue_body(shape, row, item)
+    problems = check_issue_body(body)
+    if problems:
+        raise RuntimeError(f"auto-answered shape refused: {'; '.join(problems)}")
+    policy.self_call(
+        item,
+        verdict.repo,
+        verdict.rows,
+        f"file accepted intake item {item_name(row)} ({one_line(row['title'])[:120]}) as a ready issue?",
+        f"file it in {verdict.repo}, class dev; matrix rows {','.join(verdict.rows)} answer it",
+        f"{MATRIX_RECORD}; intake {row['report'] or row['source']}",
+    )
+    url = file_issue(gh, shape, row, item)
+    log(f"{item}: matrix auto-answered ({','.join(verdict.rows)}), handed off as {url}")
+    return ("handed-off", url)
 
 
 # ---------------------------------------------------------------- the issue
@@ -405,11 +696,27 @@ class Shape:
     cls: str
     done_when: str
     ruled: str  # "matrix auto-answered" | "owner ruled"
+    matrix: str = ""  # the rows the matrix answered with, when it did
 
 
 SETTLEMENT = re.compile(
     r"^Captain answered this call through matrix settlement\b", re.I
 )
+KEYED = re.compile(r"^Captain answered this (call|decision) through\b", re.I)
+
+
+def keyed_answer(body: str) -> str | None:
+    """The `Answer:` line (plus any override lines under it) of a keyed answer
+    record (fm-captain-hold `answers`: the dashboard's option id, a chat
+    relay), else None for free text."""
+    if not KEYED.match(body) or SETTLEMENT.match(body):
+        return None
+    lines = body.splitlines()
+    for i, ln in enumerate(lines):
+        m = re.match(r"^\s*Answer\s*:\s*(.*)$", ln, re.I)
+        if m:
+            return "\n".join([m[1], *_answer_tail(lines[i + 1 :])]).strip()
+    return ""
 
 
 def settlement_answer(body: str) -> str | None:
@@ -444,6 +751,9 @@ def parse_answer(text: str, row: Row) -> Shape | str | None:
     nothing; None when the answer cannot be read as either."""
     ruled = "owner ruled"
     body = text.strip()
+    keyed = keyed_answer(body)
+    if keyed is not None:
+        body = keyed
     settled = settlement_answer(body)
     if settled is not None:
         body = (
@@ -456,6 +766,10 @@ def parse_answer(text: str, row: Row) -> Shape | str | None:
     cls = "dev"
     done = one_line(row["next step or why"])
     overrides = 0
+    chosen = re.fullmatch(r"file-([a-z0-9._-]+)", first)
+    if chosen and chosen[1] in projects():
+        repo = projects()[chosen[1]]
+        first = "approve"
     for line in body.splitlines():
         m = re.match(r"^\s*(repo|class|done[ -]when)\s*:\s*(.+?)\s*$", line, re.I)
         if not m:
@@ -495,6 +809,7 @@ def issue_body(shape: Shape, row: Row, item: str) -> str:
             f"Owner repo: {shape.repo}",
             f"Class: {shape.cls}",
             f"Decision: {shape.ruled}",
+            *([f"Matrix: {shape.matrix}"] if shape.matrix else []),
             "",
         ]
     )
@@ -502,7 +817,7 @@ def issue_body(shape: Shape, row: Row, item: str) -> str:
 
 def section(body: str, heading: str) -> str:
     m = re.search(
-        rf"^{re.escape(heading)}[ \t]*\n(.*?)(?=^## |^(?:Owner repo|Class|Decision):|\Z)",
+        rf"^{re.escape(heading)}[ \t]*\n(.*?)(?=^## |^(?:Owner repo|Class|Decision|Matrix):|\Z)",
         body,
         re.M | re.S,
     )
@@ -595,6 +910,18 @@ def set_ready(gh: Gh, url: str) -> list[str]:
     return problems
 
 
+def file_issue(gh: Gh, shape: Shape, row: Row, item: str) -> str:
+    """The item's issue (found by its marker, else created) labelled `ready`;
+    raises when the label is refused."""
+    url = gh.find(shape.repo, item) or gh.create(
+        shape.repo, one_line(row["title"])[:120], issue_body(shape, row, item)
+    )
+    problems = set_ready(gh, url)
+    if problems:
+        raise RuntimeError(f"{url} refused the label: {'; '.join(problems)}")
+    return url
+
+
 def ask_again(hub: Hub, item: str, row: Row, why: str) -> None:
     """An answer that files nothing does not end the item: the same item goes
     back under its hold, its text saying why, and the rows stay `shaping`. A
@@ -651,14 +978,7 @@ def answer_items(intake: Path, hub: Hub, gh: Gh) -> int:
                 ask_again(hub, item, row, "; ".join(problems))
                 failed += 1
                 continue
-            url = gh.find(shape.repo, item) or gh.create(
-                shape.repo, one_line(row["title"])[:120], body
-            )
-            problems = set_ready(gh, url)
-            if problems:
-                log(f"{item}: {url} refused the label: {'; '.join(problems)}")
-                failed += 1
-                continue
+            url = file_issue(gh, shape, row, item)
             mark_rows(intake, dict.fromkeys(keys, ("handed-off", url)))
             log(f"{item}: handed off as {url}")
         except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as error:
@@ -694,11 +1014,20 @@ def main(argv: list[str]) -> int:
     if not hub.tasks or not shutil.which(hub.tasks[0]):
         log("tasks-axi not found: set TASKS_AXI or put it on PATH (reinstall the unit)")
         return 2
+    policy = Policy(home)
+    if command in ("open", "sweep") and (
+        not policy.cmd or not shutil.which(policy.cmd[0])
+    ):
+        log(
+            "fleet-policy not found: set INTAKE_SHAPE_FLEET_POLICY or put it on PATH "
+            "(reinstall the unit)"
+        )
+        return 2
     intake = Path(os.environ.get("INTAKE_SHAPE_INTAKE", "/var/lib/lifekit/intake"))
     failed = 0
     if command in ("open", "sweep"):
         try:
-            failed += open_items(intake, hub, since_cutoff(intake, since))
+            failed += open_items(intake, hub, since_cutoff(intake, since), policy, Gh())
         except OSError as error:
             log(f"{intake}: {error}")
             failed += 1
