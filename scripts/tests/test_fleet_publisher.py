@@ -4824,7 +4824,7 @@ def test_finance_items_carry_the_envelope_and_their_own_acceptance(homes):
     assert page["errors"] == []
 
 
-def test_needs_you_decisions_are_kits_life_items_without_acceptance(homes):
+def test_a_needs_you_decision_lands_as_a_kit_life_item_with_its_acceptance(homes):
     ledger = homes.tmp / "kit/needs-you/open.json"
     ledger.parent.mkdir(parents=True)
     ledger.write_text(
@@ -4837,30 +4837,99 @@ def test_needs_you_decisions_are_kits_life_items_without_acceptance(homes):
                     "origin": "telegram",
                     "opened": "2027-01-10",
                 },
+                {
+                    "id": "go-on-42",
+                    "ask": "Go on the export issue?",
+                    "origin": "a2a:firstmate",
+                    "acceptance": "A go or a no is relayed to firstmate",
+                },
+                {"id": "no-options", "ask": "Anything else?"},
                 {"ask": "no id: skipped"},
             ]
         )
     )
     before = ledger.read_bytes()
-    env = {"FLEET_NOW": str(NOW), "FLEET_NEEDS_YOU_LEDGER": str(ledger)}
+    env = {"FLEET_NOW": str(NOW), "FLEET_NEEDS_YOU_CMD": f"cat {ledger}"}
     assert homes.run(side_home(homes), **env).returncode == 0
     page = status(homes)
     assert page["item_sources"]["needs_you"] == {"read": True, "reason": None}
-    assert page["items"] == [
-        {
-            "id": "needs-you:dentist-slot",
-            "source": "needs-you",
-            "kind": "decision",
-            "title": "Book the Tuesday or the Friday dentist slot?",
-            "owner": "kit",
-            "class": "life",
-            "store": "needs-you",
-            "ref": "dentist-slot",
-            "since": NOW - 5 * DAY - 8 * 3600,  # 2027-01-10
-            "origin": "telegram",
-        }
+    got = items_by_id(page)
+    assert list(got) == [
+        "needs-you:dentist-slot",
+        "needs-you:go-on-42",
+        "needs-you:no-options",
     ]
+    assert got["needs-you:dentist-slot"] == {
+        "id": "needs-you:dentist-slot",
+        "source": "needs-you",
+        "kind": "decision",
+        "title": "Book the Tuesday or the Friday dentist slot?",
+        "owner": "kit",
+        "class": "life",
+        "store": "needs-you",
+        "ref": "dentist-slot",
+        "since": NOW - 5 * DAY - 8 * 3600,  # 2027-01-10
+        "acceptance": "The owner answers in Kit's chat: Tuesday / Friday",
+        "origin": "kit",
+    }
+    # The entry's own acceptance wins; the origin is always Kit, the door.
+    assert (
+        got["needs-you:go-on-42"]["acceptance"]
+        == "A go or a no is relayed to firstmate"
+    )
+    assert got["needs-you:go-on-42"]["origin"] == "kit"
+    assert got["needs-you:go-on-42"]["since"] is None
+    assert (
+        got["needs-you:no-options"]["acceptance"] == "The owner answers in Kit's chat"
+    )
     assert ledger.read_bytes() == before  # read-only
+    assert page["errors"] == []
+
+
+def test_the_needs_you_ledger_is_read_inside_the_gateway_by_default(
+    monkeypatch, tmp_path
+):
+    """Unset FLEET_NEEDS_YOU_CMD (and FLEET_INTAKE_CMD) is one fixed read through
+    the gateway container: the 0700 config directory is never read from the host."""
+    calls = []
+    stand_in = tmp_path / "open.json"
+
+    def fake_run(argv, **_):
+        calls.append(argv)
+        if argv[:2] == ["docker", "ps"]:
+            return "gw1\n"
+        # Run the fixed read itself, against a stand-in for the gateway path.
+        script = argv[argv.index("-c") + 1]
+        return subprocess.run(
+            ["sh", "-c", script, "sh", str(stand_in)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    monkeypatch.setattr(fleet_status, "run", fake_run)
+    monkeypatch.delenv("FLEET_INTAKE_CMD", raising=False)
+    monkeypatch.delenv("FLEET_NEEDS_YOU_CMD", raising=False)
+    errors = []
+    # No ledger yet: Kit creates it on first use, so it reads as empty.
+    assert fleet_status.needs_you_items(errors) == ([], {"read": True, "reason": None})
+    stand_in.write_text(
+        json.dumps([{"id": "x", "ask": "Pick one", "options": ["A", "B"]}])
+    )
+    items, source = fleet_status.needs_you_items(errors)
+    assert source == {"read": True, "reason": None} and errors == []
+    assert [(i["id"], i["origin"], i["acceptance"]) for i in items] == [
+        ("needs-you:x", "kit", "The owner answers in Kit's chat: A / B")
+    ]
+    read = calls[-1]
+    assert read[:5] == ["docker", "exec", "gw1", "sh", "-c"]
+    assert read[-1] == "/home/node/.openclaw/agents/kit/workspace/needs-you/open.json"
+    # An empty FLEET_NEEDS_YOU_CMD skips the source.
+    monkeypatch.setenv("FLEET_NEEDS_YOU_CMD", "")
+    assert fleet_status.needs_you_items(errors) == (
+        [],
+        {"read": False, "reason": "needs-you skipped"},
+    )
 
 
 def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
@@ -4870,23 +4939,24 @@ def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
     assert page["items"] == []
     assert page["item_sources"] == {
         "finance": {"read": False, "reason": "FLEET_FINANCE_CMD is not set"},
-        "needs_you": {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"},
+        "needs_you": {"read": False, "reason": "needs-you skipped"},
         "jobq": {"read": False, "reason": "job queue skipped"},
         "doc_door": {"read": False, "reason": "doc-door skipped"},
     }
     assert page["errors"] == []
 
 
-def test_a_missing_ledger_is_empty_and_a_broken_source_is_an_error(homes):
+def test_a_broken_ledger_read_and_a_broken_source_are_errors(homes):
     env = {
         "FLEET_NOW": str(NOW),
-        "FLEET_NEEDS_YOU_LEDGER": str(homes.tmp / "nowhere/open.json"),
+        "FLEET_NEEDS_YOU_CMD": "false",
         "FLEET_FINANCE_CMD": "false",
     }
     assert homes.run(side_home(homes), **env).returncode == 0
     page = status(homes)
     assert page["items"] == []
-    assert page["item_sources"]["needs_you"] == {"read": True, "reason": None}
+    assert page["item_sources"]["needs_you"]["read"] is False
+    assert any("needs-you ledger unreadable" in e for e in page["errors"])
     assert page["item_sources"]["finance"]["read"] is False
     assert any("finance items unreadable" in e for e in page["errors"])
 

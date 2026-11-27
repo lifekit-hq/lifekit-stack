@@ -1180,7 +1180,11 @@ history and install them as `lifekit`.
 
 Decisions waiting on the owner go to the OpenClaw app, not Telegram. Kit keeps one
 ledger in its workspace (`needs-you/open.json`, closed ones in
-`needs-you/closed.jsonl`). It asks each decision with `ask_user` in its main
+`needs-you/closed.jsonl`). Kit's main session is the ledger's only writer, and only
+when a real decision comes up; the mail reader below never writes it (its run has
+no file tool), so an empty ledger with both crons green is a quiet ledger, not a
+broken one. The fleet publisher reads it into the dashboard's queue items
+(`store=needs-you`, scripts/fleet-publisher README "Queue items"). It asks each decision with `ask_user` in its main
 Control UI / WebChat session (`agent:kit:main`), which shows as a card with buttons.
 An answer closes the entry. The contract is kit's `AGENTS.md`, section "Needs you"
 (`defaults/agents/kit/workspace/`). `ask_user` exists only in primary sessions, never
@@ -3942,11 +3946,13 @@ mechanical age check over every queue; the thresholds are the one
 changing a number is a PR to that file and a re-install, never a code change.
 The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
 publisher can reach exists; the page says so. The queue items
-(`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD` and
-`FLEET_NEEDS_YOU_LEDGER`; neither the installer nor the unit sets them, so point
-them with a systemd drop-in. Unset, their `item_sources` entry says `read: false`
-and they add no items. The `jobq` items need no setting: they come from the
-stalled jobs' read (`jobq.py list --json` in the gateway, README "Jobs"). Open
+(`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD`; neither the
+installer nor the unit sets it, so point it with a systemd drop-in. Unset, its
+`item_sources` entry says `read: false` and it adds no items. The `jobq` items need no setting: they come from the
+stalled jobs' read (`jobq.py list --json` in the gateway, README "Jobs"). Kit's
+needs-you decisions need none either: the publisher reads Kit's
+`needs-you/open.json` with a fixed `cat` inside the gateway, so
+`/srv/openclaw/config` stays 0700 (`FLEET_NEEDS_YOU_CMD` overrides). Open
 doc-door documents need no drop-in either: they are read by `docker exec` into the
 gateway by default ("Document door").
 Clip and scout are two more stalled sources (`clip`, `scout` blocks of the same file:

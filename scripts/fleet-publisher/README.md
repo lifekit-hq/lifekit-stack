@@ -481,7 +481,7 @@ so the dashboard can link through. Read-only; no store is written.
 | Source | Read from | `owner` / `class` | `store` | `ref` |
 | --- | --- | --- | --- | --- |
 | `finance` | `FLEET_FINANCE_CMD`, a command printing a JSON list of `{kind, id, title, acceptance, url, since}` (`kind` one of `alert`, `companion-event`, `thesis-revision`, `recommendation`; the last three keys optional) | `finance` / `finance` | `finance-db` | `url`, else `<kind>/<id>` |
-| `needs-you` | `FLEET_NEEDS_YOU_LEDGER`, the path of Kit's `needs-you/open.json` (`kind` `decision`; a missing file is an empty ledger) | `kit` / `life` | `needs-you` | the entry `id` |
+| `needs-you` | Kit's `needs-you/open.json`, read with a fixed `cat` in the gateway (its directory is 0700 to the gateway, so it is never read from the host; `FLEET_NEEDS_YOU_CMD` overrides; `kind` `decision`; a missing file is an empty ledger) | `kit` / `life` | `needs-you` | the entry `id` |
 | `jobq` | `jobq.py list --json` in the gateway, the same read as the stalled jobs (`FLEET_JOBS_CMD` replaces it); only jobs `queued` or `running`, `kind` the job's kind | the envelope's `owner` (else the skill that answers the job) / its `class` (else `unclear`) | `jobq` | the job id |
 | `doc-door` | `door.py list --json` in the gateway (`FLEET_DOC_DOOR_CMD` overrides; `kind` `document`, `title` the report's, `null` before one is filed) | the entry's `owner` (`reader`) / `life` | `doc-door` | the doc id |
 
@@ -489,8 +489,9 @@ so the dashboard can link through. Read-only; no store is written.
   since, acceptance?, origin?, state?, fingerprint?}]`: `id` is `<store>:<native id>`, `since` the item's
   own time (epoch, `null` when it has none), `acceptance` its one-line done-when,
   `origin` its door, `state` its open state and `fingerprint` its content hash. Each is present only when the source holds it: a record
-  without one publishes without the key, never fails. The needs-you ledger holds no
-  acceptance line, so its records carry none; they carry the entry's `origin`.
+  without one publishes without the key, never fails. A needs-you record carries
+  `origin` `kit` (the door) and an `acceptance` line: the entry's own, else
+  "The owner answers in Kit's chat", with its options when it has them.
   A jobq record adds the queue's own `stage` (`queued`, `running`) and A2A `state`
   (`submitted`, `working`), and `fingerprint` and `thread` when its envelope has them;
   a queued one adds `waiting_on` (`egress`: its probe host must answer through the
