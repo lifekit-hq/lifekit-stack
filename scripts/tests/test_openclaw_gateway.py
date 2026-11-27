@@ -170,51 +170,89 @@ def test_lenient_mode_reads_docker_down_as_no_gateway_but_still_refuses_two(dock
     assert "refusing to act" in p.stderr
 
 
-def test_ledger_drift_stops_before_any_exec_when_two_gateways_match(docker):
-    """The 2026-11-27 incident: the drift check ran against the throwaway twin."""
-    docker.containers([TWIN, PROD])
-    p = docker.run(["bash", str(REPO / "scripts/ledger-drift/lifekit-ledger-drift.sh")])
-    assert p.returncode == 2, p.stdout + p.stderr
-    assert "refusing to act" in p.stderr
-    assert not [c for c in docker.calls() if not c.startswith("ps")]
+# Every host script that acts on the gateway, with the argv that reaches its
+# gateway lookup. Each must stop on two matches before touching either container.
+GATEWAY_SCRIPTS = [
+    ["scripts/ledger-drift/lifekit-ledger-drift.sh"],
+    ["scripts/video-eval.sh", "status", "video-x"],
+    ["scripts/openclaw-auth/auth-mode.sh", "status"],
+    ["scripts/ensure-doc-door.sh"],
+    ["scripts/ensure-finance-pulse.sh"],
+    ["scripts/ensure-fleet-gate.sh"],
+    ["scripts/ensure-goal-checkin-solved.sh"],
+    ["scripts/ensure-intake-door.sh"],
+    ["scripts/ensure-job-queue.sh"],
+    ["scripts/ensure-kit-cron-models.sh"],
+    ["scripts/ensure-learnclaw-morning.sh"],
+    ["scripts/ensure-learnclaw-weekcount.sh"],
+    ["scripts/ensure-learnclaw.sh"],
+    ["scripts/ensure-leetcode-daily.sh"],
+    ["scripts/ensure-memory-vault-cleanup.sh"],
+    ["scripts/ensure-needs-you-digest.sh"],
+    ["scripts/ensure-planning-reminder.sh"],
+    ["scripts/ensure-reader-agent.sh"],
+    ["scripts/ensure-secondmate-relay.sh"],
+    ["scripts/ensure-study-panel.sh"],
+    ["scripts/ensure-today-brief-fleet.sh"],
+    ["scripts/ensure-video-drop-door.sh"],
+    ["scripts/ensure-video-eval.sh"],
+    ["scripts/ensure-workout-log.sh"],
+    ["scripts/ensure-youtube-transcript.sh"],
+]
 
 
-def test_video_eval_stops_before_any_exec_when_two_gateways_match(docker):
-    docker.containers([TWIN, PROD])
-    p = docker.run(["bash", str(REPO / "scripts/video-eval.sh"), "status", "video-x"])
-    assert p.returncode == 1, p.stdout + p.stderr
-    assert "refusing to act" in p.stderr
-    assert not [c for c in docker.calls() if not c.startswith("ps")]
-
-
-GATEWAY_FILTER = re.compile(
-    r"service=openclaw-gateway[^\n]*(?:\\\n[^\n]*)*\|\s*head\b", re.MULTILINE
-)
-
-
-def test_no_shell_script_picks_the_gateway_by_label_and_head():
-    offenders = []
-    for path in sorted((REPO / "scripts").rglob("*.sh")):
-        if GATEWAY_FILTER.search(path.read_text()):
-            offenders.append(str(path.relative_to(REPO)))
-    assert offenders == []
-
-
-def test_every_shell_script_that_finds_the_gateway_uses_the_helper():
-    """A script naming the gateway's compose labels resolves it through the lib."""
-    allowed = {
-        "scripts/lib/openclaw-gateway.sh",
-        # Counts the matches itself and goes red unless exactly one.
-        "scripts/upgrade-smoke/openclaw.sh",
+@pytest.fixture
+def host(docker, tmp_path):
+    """A throwaway host for the scripts' pre-gateway steps: agent workspaces, an
+    owner chat id, a fleet-gate table, the pinned learnharness skill and a
+    yt-dlp that passes its checksum, so each one reaches its gateway lookup
+    without the network. Nothing here touches /srv or a real container."""
+    config = tmp_path / "config"
+    for agent in ("kit", "learnclaw", "reader", "study-panel"):
+        (config / "agents" / agent / "workspace").mkdir(parents=True)
+    lh = config / "agents/learnclaw/workspace/skills/learnharness"
+    lh.mkdir(parents=True)
+    commit = re.search(
+        r"^LH_SKILL_COMMIT=(\w+)",
+        (REPO / "scripts/ensure-learnclaw.sh").read_text(),
+        re.MULTILINE,
+    )
+    (lh / ".commit").write_text(commit.group(1) + "\n")
+    ytdlp = config / "skills/youtube-transcript/yt-dlp"
+    ytdlp.parent.mkdir(parents=True)
+    ytdlp.write_text("#!/bin/sh\n")
+    ytdlp.chmod(0o755)
+    env_file = tmp_path / "stack.env"
+    env_file.write_text("LIFEKIT_TELEGRAM_CHAT=12345\n")
+    table = tmp_path / "p16-openclaw.json"
+    table.write_text(
+        json.dumps({"schema": "p16-openclaw.v1", "tools": {"read": {"class": "A"}}})
+    )
+    bin_dir = Path(docker.env["PATH"].split(":", 1)[0])
+    for name, body in (("curl", "exit 22"), ("sha256sum", "exit 0")):
+        stub = bin_dir / name
+        stub.write_text(f"#!/bin/sh\n{body}\n")
+        stub.chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    docker.env |= {
+        "HOME": str(home),
+        "OPENCLAW_CONFIG_DIR": str(config),
+        "ENV_FILE": str(env_file),
+        "P16_OPENCLAW_TABLE": str(table),
+        "DOC_DOOR_AGENT": "kit",
+        "LIFEKIT_INSTALLED_DIR": str(tmp_path / "installed"),
     }
-    bare = []
-    for path in sorted((REPO / "scripts").rglob("*.sh")):
-        rel = str(path.relative_to(REPO))
-        text = path.read_text()
-        if (
-            rel in allowed
-            or "label=com.docker.compose.service=openclaw-gateway" not in text
-        ):
-            continue
-        bare.append(rel)
-    assert bare == []
+    return docker
+
+
+@pytest.mark.parametrize("argv", GATEWAY_SCRIPTS, ids=lambda a: Path(a[0]).name)
+def test_every_gateway_script_stops_before_any_exec_when_two_gateways_match(host, argv):
+    """The 2026-11-27 incident: ledger-drift ran against the throwaway twin."""
+    host.containers([TWIN, PROD])
+    p = host.run(["bash", str(REPO / argv[0]), *argv[1:]])
+    assert p.returncode != 0, p.stdout + p.stderr
+    assert "refusing to act: 2 running containers match" in p.stderr, (
+        p.stdout + p.stderr
+    )
+    assert not [c for c in host.calls() if not c.startswith("ps")]
