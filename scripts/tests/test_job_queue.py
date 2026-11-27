@@ -780,6 +780,7 @@ const out = process.argv[2];
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const exec = async ({ command }) => {
   process.stderr.write(command + "\n");
+  if (out === "REJECT") throw new Error("spawn failed");
   return { aggregated: out };
 };
 new AsyncFunction("exec", src)(exec).then(
@@ -799,12 +800,21 @@ new AsyncFunction("exec", src)(exec).then(
             "JOBQ ready\nJob a\nRun exactly: x\n",
             {"fire": True, "message": "Job a\nRun exactly: x"},
         ),
-        ("JOBQ ready\n", "THROW jobq.py next: JOBQ ready"),
-        ("jobq failed: boom\n", "THROW jobq.py next: jobq failed: boom"),
-        ("", "THROW jobq.py next: no output"),
+        ("JOBQ ready\n", "THROW job-queue gate failed: jobq.py next: JOBQ ready"),
+        (
+            "jobq failed: boom\n",
+            "THROW job-queue gate failed: jobq.py next: jobq failed: boom",
+        ),
+        ("", "THROW job-queue gate failed: jobq.py next: no output"),
+        (
+            "REJECT",
+            "THROW job-queue gate failed: could not run jobq.py next: spawn failed",
+        ),
     ],
 )
 def test_the_gate_fires_only_on_a_ready_job_and_throws_on_anything_odd(out, want):
+    # Every fault names the gate, so an alert tells it from a slow gateway's
+    # "code mode timeout exceeded" (docs/runbook.md, "Shared job queue").
     r = subprocess.run(
         ["node", "-e", GATE_RUNNER, str(SKILL / "drain-gate.js"), out],
         capture_output=True,

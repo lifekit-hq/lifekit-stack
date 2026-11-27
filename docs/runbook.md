@@ -2121,6 +2121,27 @@ answer once it is on. Video evaluations are its first kind ("Video evaluation").
   in a row did not read is given up with one message too, and one read by a turn that then
   neither filed nor released the job is taken up again after 30 minutes
   (`JOBQ_LEASE_MINUTES`).
+- **The gate's time limit, and what a failed drain row means** (lifekit-stack#711): OpenClaw
+  gives each trigger evaluation a fixed 30 s, counted from the start of the evaluation. That 30 s
+  covers the gateway's own setup, starting the exec, and `jobq.py next`. It is a constant in
+  the gateway (`HEADLESS_TRIGGER_WALL_CLOCK_MS`, OpenClaw 2026.11.9), not a config key or a cron
+  flag, so it cannot be raised from here. Measured over 2026-11-20 to 2026-11-27 (5,056
+  evaluations, from the gateway's `openclaw.exec` trace spans): `jobq.py next` took p50 0.14 s,
+  p90 1.4 s and p99 3.0 s (p50 1.3 s while a job waited on the PC egress probe). From the due
+  time to the end of that exec took p50 0.4 s, p90 3.5 s and p99 9.2 s. That span also counts
+  scheduler delay, which is not on the 30 s clock. All three timeouts in that week were the
+  gateway, not the queue: its main thread stalled for 8 to 28 s at a time (`main-thread stall`
+  in `docker logs`, next to `memory pressure: level=critical`), and the 30 s ran out before the
+  exec started (`spawn failed: ... cron trigger evaluation timed out`). Nothing ran in the queue,
+  and OpenClaw retries a timed-out row after a 30 s backoff, not a full cadence later.
+  How to read the row's error (`cron runs "$ID"`):
+  `cron trigger evaluation failed (timeout): code mode timeout exceeded` means the gateway was
+  slow and nothing failed. Act only if it repeats run after run. An error that contains
+  `job-queue gate failed:` is a real fault in the queue, and its text says which. To re-measure,
+  list the gate's exec spans (the command is 58 characters long) with each one's start and
+  duration. The due times are the row's `schedule.anchorMs` plus a multiple of 120 s:
+  `docker exec compose-tempo-1 wget -qO- "http://localhost:3200/api/search?q=%7Bname%3D%22openclaw.exec%22%20%26%26%20span.openclaw.exec.command_length%3D58%7D&start=$(( $(date +%s) - 21600 ))&end=$(date +%s)&limit=1000&spss=1"`.
+  That query covers the last 6 hours; step `start` and `end` back for older ones.
 
 Operator step, once per host, after the PR has deployed (a deploy run shows `cron:
 'job-queue-drain' is not set up` until it is done). Run as lifekit on the VPS:
