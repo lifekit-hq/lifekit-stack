@@ -143,7 +143,7 @@ and the notification policy groups by `alertname`, so a rule-name subject would 
 recoveries in one group as the same line; every other rule fires once, and its `job` label names
 the exporter that produced the series rather than what the alert is about.
 Any future producer whose whole job is to report that other things are down gets the same
-exemption; everything else goes through the relay.
+exemption; everything else goes through the relay, except Kit's one-shot notices (below).
 
 ## Decisions
 
