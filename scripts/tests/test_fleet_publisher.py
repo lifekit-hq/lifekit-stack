@@ -23,7 +23,6 @@ NO_LIVE_SOURCES = {
     "FLEET_GH": "",
     "FLEET_PROM_URL": "",
     "FLEET_CLIP_STATS": "",
-    "FLEET_CLIP_QUEUE": "/nonexistent",
     "FLEET_SCREEN_REPOS": "",
     "FLEET_INTAKE_CMD": "",
     "FLEET_INTAKE_SPOOL_CMD": "",
@@ -34,6 +33,13 @@ NO_LIVE_SOURCES = {
     "FLEET_INTENTS_CMD": "",
     "FLEET_SCHEDULED_MANIFEST": "/nonexistent",
 }
+
+
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path, monkeypatch):
+    """HOME is a temp dir with no clip-data, so no run reads the real
+    ~/clip-data/queue; clip_world builds its queue under it."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
 
 def decision(id_, key=None, **extra):
@@ -4263,6 +4269,9 @@ def test_the_side_hustle_section_is_null_and_no_stats_feed_is_read(homes):
 # --- clip queue rows and the clip and scout stalled sources -----------------------
 
 
+CLIP_QUEUE = "home/clip-data/queue"
+
+
 def clip_iso(age):
     return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(NOW - age))
 
@@ -4281,8 +4290,8 @@ def clip_channel(**over):
 
 def clip_world(homes, channels, *, egress="up", files=True, events=()):
     """A clip queue directory with its own outputs; returns the run's env."""
-    queue = homes.tmp / "clipq"
-    queue.mkdir(exist_ok=True)
+    queue = homes.tmp / CLIP_QUEUE
+    queue.mkdir(parents=True, exist_ok=True)
     if files:
         (queue / "daily-check.json").write_text(json.dumps({"channels": channels}))
         (queue / "egress.json").write_text(json.dumps({"state": egress}))
@@ -4295,10 +4304,7 @@ def clip_world(homes, channels, *, egress="up", files=True, events=()):
     for name in channels:
         pending = queue / name / "pending"
         pending.mkdir(parents=True, exist_ok=True)
-    return {
-        "FLEET_NOW": str(NOW),
-        "FLEET_CLIP_QUEUE": str(queue),
-    }
+    return {"FLEET_NOW": str(NOW)}
 
 
 def clip_rows(homes, env):
@@ -4309,7 +4315,7 @@ def clip_rows(homes, env):
 
 def test_a_healthy_clip_channel_is_published_not_stalled(homes):
     env = clip_world(homes, {"cosmos": clip_channel()})
-    pend = homes.tmp / "clipq/cosmos/pending"
+    pend = homes.tmp / CLIP_QUEUE / "cosmos/pending"
     (pend / "a").write_text(f"https://x/a\nadded: {clip_iso(7200)}\nby: seed\n")
     (pend / "b").write_text(f"https://x/b\nadded: {clip_iso(3600)}\nby: seed\n")
     page, rows = clip_rows(homes, env)
@@ -4384,7 +4390,7 @@ def test_counts_and_seven_day_events_come_from_the_queue_and_events_jsonl(homes)
         ev("published", -3600),  # a future stamp is not counted
     ]
     env = clip_world(homes, {"cosmos": clip_channel()}, events=events)
-    queue = homes.tmp / "clipq/cosmos"
+    queue = homes.tmp / CLIP_QUEUE / "cosmos"
     for state, n in (("running", 1), ("done", 3), ("failed", 2)):
         (queue / state).mkdir()
         for i in range(n):
@@ -4404,7 +4410,7 @@ def test_counts_and_seven_day_events_come_from_the_queue_and_events_jsonl(homes)
 
 def test_a_missing_events_file_is_one_unread_source_and_the_rest_still_reads(homes):
     env = clip_world(homes, {"cosmos": clip_channel()})
-    (homes.tmp / "clipq/events.jsonl").unlink()
+    (homes.tmp / CLIP_QUEUE / "events.jsonl").unlink()
     page, rows = clip_rows(homes, env)
     cosmos = rows["cosmos"]
     assert cosmos["waiting"] == 3 and cosmos["stalled"] is False
@@ -4419,7 +4425,7 @@ def test_a_missing_events_file_is_one_unread_source_and_the_rest_still_reads(hom
 
 
 def test_a_missing_clip_queue_directory_is_an_unread_source_not_an_error(homes):
-    env = {"FLEET_NOW": str(NOW), "FLEET_CLIP_QUEUE": str(homes.tmp / "no-queue")}
+    env = {"FLEET_NOW": str(NOW)}
     assert homes.run(side_home(homes), **env).returncode == 0
     page = status(homes)
     assert page["clip_queue"] is None
@@ -4464,7 +4470,7 @@ def test_a_down_egress_is_published_on_every_row(homes):
 
 def test_the_clip_queue_is_read_only(homes):
     env = clip_world(homes, {"cosmos": clip_channel()})
-    queue = homes.tmp / "clipq"
+    queue = homes.tmp / CLIP_QUEUE
     (queue / "cosmos/pending/a").write_text(f"u\nadded: {clip_iso(60)}\n")
 
     def snapshot():

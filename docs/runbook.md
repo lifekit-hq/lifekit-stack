@@ -3933,7 +3933,7 @@ project"): the alias list that folds a repo spelling naming no project, such as
 the vault's, into its project's row. It is host config, so a re-install without
 it drops the line. The clip queue rows need no installer option: the publisher
 reads clip's own default queue directory, `~/clip-data/queue` of the unit's
-account (`FLEET_CLIP_QUEUE` in a systemd drop-in overrides it). The old
+account. The old
 `FLEET_CLIP_STATS_FEED` option is gone (issue 692): the `stats.jsonl` it named
 was never written. A unit installed before it still carries the line, which the
 publisher now ignores; a re-install drops it.

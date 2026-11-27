@@ -230,7 +230,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`, `doc_door`): `{read, reason}` (`kit_held`, `shape` and `doc_door` add `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | Always `null` (retired, see "Side hustles"); the key stays so v1 consumers are unchanged |
-| `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when there is no clip queue directory (or `FLEET_CLIP_QUEUE` is set empty) |
+| `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when there is no clip queue directory |
 | `items[]`, `item_sources` | One record per open finance item, needs-you decision and doc-door document, with the item envelope (see "Queue items"), and each source's `{read, reason}` |
 | `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
 | `follow_ups[]` | The owner pages still to be written |
@@ -259,8 +259,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
   (`sudo FM_HOMES="..." FLEET_PLAN_MAP="<repo>=<project> ..." bash install-fleet-publisher.sh`),
   and a re-install without it leaves the unit with none.
 - **Clip queue**: read from clip's own default directory, `~/clip-data/queue`
-  of the account the unit runs as; `FLEET_CLIP_QUEUE` overrides it (a systemd
-  drop-in; set empty, the queue is not read). The installer has no clip option:
+  of the account the unit runs as. The installer has no clip option:
   the former `FLEET_CLIP_STATS_FEED` pointed at a `stats.jsonl` nothing writes
   (issue 692), and the publisher ignores it if an older unit still carries it.
 - **Open PRs**: `FLEET_GH` (default `gh`; empty skips) `pr list -R <owner/name>
@@ -429,8 +428,7 @@ an object, so it prints none.
 ## Clip queue (`status_page.clip_queue`)
 
 One row per clip channel, read only from the clip queue's own outputs in its
-directory (`~/clip-data/queue`, `FLEET_CLIP_QUEUE` overrides; no directory leaves
-the section `null`). Nothing is written to them and clip is not changed. Per
+directory (`~/clip-data/queue`; no directory leaves the section `null`). Nothing is written to them and clip is not changed. Per
 decision 0019 the queue directories and `events.jsonl` are the owning store;
 no derived feed is read.
 

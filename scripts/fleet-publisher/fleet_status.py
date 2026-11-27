@@ -64,9 +64,9 @@ FLEET_DOC_DOOR_CMD (the same for doc-door's open documents, `door.py list
 FLEET_INSTALLED_PROM (the release gauge's lifekit_installed.prom, which says
 per installed component whether it is behind main; unset: not read),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
-script), FLEET_CLIP_QUEUE (the clip queue directory; unset: clip's default
-~/clip-data/queue, empty: not read; a missing directory or input file is named
-in the clip source's reason, not in `errors`). A source that fails empties its own part
+script). The clip queue is read from clip's default ~/clip-data/queue; a
+missing directory or input file is named in the clip source's reason, not in
+`errors`. A source that fails empties its own part
 and adds a line to `errors`; the helper itself only fails on bad arguments.
 """
 
@@ -1212,13 +1212,9 @@ SCOUT_CANDIDATES = "candidates"
 ADDED_RE = re.compile(r"^added:\s*(\S+)\s*$", re.M)
 
 
-def clip_dir() -> Path | None:
-    """The clip queue's directory: FLEET_CLIP_QUEUE, else clip's own default
-    `~/clip-data/queue` of the account the publisher runs as. None when
-    FLEET_CLIP_QUEUE is set empty (the queue is not read)."""
-    named = os.environ.get("FLEET_CLIP_QUEUE")
-    if named is not None:
-        return Path(named) if named else None
+def clip_dir() -> Path:
+    """The clip queue's directory: clip's own default `~/clip-data/queue` of
+    the account the publisher runs as."""
     return Path.home() / "clip-data" / "queue"
 
 
@@ -1416,8 +1412,6 @@ def clip_queue(
     an `errors` line, since a missing clip output is the clip pipeline's state,
     not a publisher fault)."""
     queue = clip_dir()
-    if queue is None:
-        return None, [], {"read": False, "reason": "FLEET_CLIP_QUEUE is set empty"}
     if not queue.is_dir():
         return None, [], {"read": False, "reason": "no clip queue directory"}
     check = read_json_object(queue / CLIP_FILES[0])
