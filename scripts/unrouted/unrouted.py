@@ -15,7 +15,8 @@ This job is the mechanical safety net behind it. Once a day it:
      conversation (`claude -p`, no tools, no MCP, no settings; the cheapest
      model that passes the replay test, docs/runbook.md);
   4. looks for each one's receipt: the id the model saw cited, plus every id an
-     agent reply in the same turn shows, checked where it lives - a firstmate
+     agent reply in the same turn shows from the item's own message on (an ask
+     from the owner's message, a promise from the agent's), checked where it lives - a firstmate
      task note (`<home>/state/inbox[/handled]/<id>.note`), a captain-held or
      shaping item (`held-*`, `shape-*`, fm-captain-hold.sh in each home), an
      intake spool receipt (`spool:<key>`), a GitHub issue or pull request (gh),
@@ -23,7 +24,8 @@ This job is the mechanical safety net behind it. Once a day it:
   5. files each ask or promise with no receipt through the intake door
      (`file_intake` in the gateway, project `fleet`, redacted to the agent, the
      day and the thread - no chat words; one fingerprint per item, from the
-     conversation and the anchor message's time, so a rerun never files twice)
+     conversation, the time of the owner message that opened its turn and its
+     place among that turn's items, so a rerun never files twice)
      and writes the state file the fleet publisher lists on the fleet page as
      `unrouted` (FLEET_UNROUTED_STATE), the one place the quote is kept.
 
@@ -467,12 +469,12 @@ def turn_anchor(conv: Conversation, it: dict[str, Any]) -> int:
     return start
 
 
-def turn_replies(conv: Conversation, anchor: int) -> str:
-    """The agent replies of the turn an item was said in: from the turn's
-    anchor to the next owner message after it."""
+def turn_replies(conv: Conversation, start: int) -> str:
+    """The agent replies of the turn an item was said in: from the item's own
+    message to the next owner message after it."""
     out = []
-    for i in range(anchor, len(conv.messages)):
-        if i > anchor and conv.who(i) == "owner":
+    for i in range(start, len(conv.messages)):
+        if i > start and conv.who(i) == "owner":
             break
         if conv.who(i) == "agent":
             out.append(str(conv.messages[i].get("text") or ""))
@@ -482,17 +484,19 @@ def turn_replies(conv: Conversation, anchor: int) -> str:
 # --- one run -------------------------------------------------------------------
 
 
-def fingerprint(agent: str, day: str, session_key: str, ask_at: str) -> str:
-    """Stable across reruns: built from the conversation and the time of the
-    message the item is anchored to, never from the model's quote."""
-    h = hashlib.sha256(f"{agent}|{day}|{session_key}|{ask_at}".encode()).hexdigest()
+def fingerprint(agent: str, day: str, session_key: str, ask_at: str, nth: int) -> str:
+    """Stable across reruns: built from the conversation, the time of the owner
+    message that opened the item's turn and the item's place among that turn's
+    items, never from the model's quote or how it linked the item."""
+    key = f"{agent}|{day}|{session_key}|{ask_at}|{nth}"
+    h = hashlib.sha256(key.encode()).hexdigest()
     return f"unrouted-{agent}-{day}-{h[:10]}"
 
 
 def extract(
     conv: Conversation, model: str, errors: list[str], costs: list[float]
 ) -> list[dict[str, Any]]:
-    items: dict[int, dict[str, Any]] = {}
+    items: dict[tuple[int, int], dict[str, Any]] = {}
     for lo, hi in chunks(conv):
         try:
             answer, cost = ask_model(model, render(conv, lo, hi))
@@ -503,11 +507,13 @@ def extract(
         if cost is not None:
             costs.append(cost)
         for it in got:
-            # One item per owner turn: a promise in the turn replaces the ask.
             it["anchor"] = turn_anchor(conv, it)
-            if it["anchor"] not in items or it["kind"] == "promise":
-                items[it["anchor"]] = it
-    return [items[k] for k in sorted(items)]
+            items.setdefault((it["anchor"], it["msg"]), it)
+    out = [items[k] for k in sorted(items)]
+    for i, it in enumerate(out):
+        same_turn = i > 0 and out[i - 1]["anchor"] == it["anchor"]
+        it["nth"] = out[i - 1]["nth"] + 1 if same_turn else 0
+    return out
 
 
 def assess(
@@ -519,7 +525,7 @@ def assess(
         anchor = it["anchor"]
         verdict, rid = receipts.check(it["receipt"])
         if verdict not in ("found", "unchecked"):
-            v2, r2 = receipts.check(turn_replies(conv, anchor))
+            v2, r2 = receipts.check(turn_replies(conv, it["msg"]))
             if v2 in ("found", "unchecked") or verdict is None:
                 verdict, rid = v2, r2
         quote = it["quote"] or one_line(str(conv.messages[it["msg"]].get("text") or ""))
@@ -538,7 +544,11 @@ def assess(
                 "receipt_cited": rid if verdict == "missing" else None,
                 "routed": verdict in ("found", "unchecked"),
                 "fingerprint": fingerprint(
-                    conv.agent, day, conv.session_key, conv.messages[anchor]["ts"]
+                    conv.agent,
+                    day,
+                    conv.session_key,
+                    conv.messages[anchor]["ts"],
+                    it["nth"],
                 ),
             }
         )
