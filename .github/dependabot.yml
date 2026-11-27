@@ -9,6 +9,10 @@
 # cooldown: OpenClaw cuts several stable releases a week. Waiting 7 days after
 # a release lets upstream's own hotfix cycle (x.y.1 -> x.y.4) land first, so
 # the PR we get is the settled build, not the day-one one.
+#
+# labels: none set on purpose. Dependabot's default labels (`dependencies` plus
+# the ecosystem name) are created on first use; an explicit label that does not
+# exist in the repo is silently dropped from every PR instead.
 version: 2
 updates:
   - package-ecosystem: docker
@@ -20,9 +24,6 @@ updates:
       timezone: Europe/Dublin
     cooldown:
       default-days: 7
-    labels:
-      - dependencies
-      - openclaw
     commit-message:
       prefix: "chore(openclaw)"
     open-pull-requests-limit: 1
@@ -30,6 +31,11 @@ updates:
   # (lifekit-stack#146) via compose/openclaw-gateway/package.json. Same
   # systemic route as the docker updater above — Dependabot opens the bump
   # PR, a human merges it, CI ships it.
+  #
+  # open-pull-requests-limit: one slot per pinned package in package.json, so a
+  # held bump for one CLI (e.g. clawhub) never blocks the bump of another (the
+  # gateway's Claude Code pin). Dependabot replaces its own open PR for the
+  # same package with the newer version, so each package holds at most one.
   - package-ecosystem: npm
     directory: /compose/openclaw-gateway
     schedule:
@@ -39,9 +45,6 @@ updates:
       timezone: Europe/Dublin
     cooldown:
       default-days: 7
-    labels:
-      - dependencies
-      - openclaw
     commit-message:
       prefix: "chore(openclaw)"
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 4
