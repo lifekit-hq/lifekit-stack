@@ -4303,10 +4303,27 @@ minutes by `lifekit-intake-shape.timer` (as the admin account, which owns the fi
 has `gh` logged in and can write `/var/lib/lifekit/intake`), does two things with no model turn:
 
 1. **Open.** Every intake row whose verdict is `adopt` or `accept` (both route the same way:
-   `adopt` is "take it as it is", still shaped before anything is built) gets a **shaping
-   item**: a captain-held task `shape-<key>` (`fm-captain-hold.sh hold`) shown on the Calls
-   page. Its reason carries the proposed shape (owner repo from the report's `Project:`, class
-   `dev`, done-when from its next step) and the options. One item per source: a repeat (the
+   `adopt` is "take it as it is", still shaped before anything is built) is first answered
+   from the decision matrix (decision 0017) through `fleet-policy`. The proposed shape is the
+   owner repo (the registered project the `Project:` cell names; only when the cell names no
+   project, e.g. `goal 1; ...`, the one registered project the next step and the judge's report
+   name - a cell naming an unregistered project finds none), class `dev`, and the done-when from its
+   next step. When the matrix answers (row M4, agreed work, plus the rows
+   `fleet-policy classify github.issue-open` gives for the repo), the step records it with
+   `fleet-policy decide <item> --kind self` (a line in `self-calls.jsonl` and `p16.jsonl`)
+   and files the issue at once with `Decision: matrix auto-answered` and a `Matrix:` line
+   naming the rows; the row becomes `handed-off <issue url>` and the owner sees nothing. Only
+   the three reasons in decision 0017 reach the owner, placed by `fleet-policy decide <item>
+   --kind call`: a **boundary** (H2, a clause of the report's `## Cost of adoption` names money
+   no negation right before it governs, as in `no paid plan`), a **row
+   conflict** (M2 vs M4: a repeat of an item the owner dropped), or **no row** (no registered
+   project or no done-when, or the P16 table does not answer the step). That makes a
+   **shaping item**: a captain-held task `shape-<key>` shown on the Calls page, whose reason
+   is the one `decide` gave, then the proposed shape and the options (`approve`/`drop`, or
+   `file-<project>` per registered project when no repo was found). A refused `decide` holds
+   and files nothing; the next sweep retries. A repeat of a source whose newest answer filed an
+   issue joins that issue when the matrix answers it (no second issue). A repeat that arrives
+   while an earlier item's answer is still unprocessed waits, unmarked, for the next sweep. One item per source: a repeat (the
    same source judged again) adds `(seen Nx)` to the open item's title; a repeat of an
    answered item opens `shape-<key>-2` whose reason names the earlier one. The row gets
    `shaping <item>` in two trailing cells, `status` and `ref`. Only rows dated on or after a
@@ -4321,7 +4338,9 @@ has `gh` logged in and can write `/var/lib/lifekit/intake`), does two things wit
    only after reading the filed issue back and finding all four. The row becomes
    `handed-off <issue url>`; from then on the issue owns the item and the hub keeps the
    reference. Answer `approve` to file as proposed, `drop` to file nothing, or send
-   `repo:` / `class:` / `done when:` lines to change the proposal. A closed item the decision
+   `repo:` / `class:` / `done when:` lines to change the proposal. A dashboard answer (an
+   option id on the `Answer:` line) reads the same way, and the newest recorded answer on
+   the item counts. A closed item the decision
    matrix settled (its record opens "Captain answered this call through matrix settlement")
    is read from its `matrix:` line, else its `Answer:` line, by the same rules and counts as
    `matrix auto-answered`. An answer that cannot be
@@ -4347,9 +4366,10 @@ sudo INTAKE_SHAPE_FM_HOME=/home/denys/fm-vps \
   bash /srv/lifekit-stack/scripts/intake-shape/install-intake-shape.sh
 ```
 
-Optional `TASKS_AXI=<absolute path of tasks-axi>` (add it to the `sudo` line): the unit gets
-`TASKS_AXI=` and a `PATH` that starts with that tool's directory. Unset, the installer looks
-the tool up as the admin account (login shell, then an interactive one for a node version
+Optional `TASKS_AXI=<absolute path of tasks-axi>` and `FLEET_POLICY=<absolute path of
+fleet-policy>` (add them to the `sudo` line): the unit gets `TASKS_AXI=`, a `PATH` that starts
+with that tool's directory, and `INTAKE_SHAPE_FLEET_POLICY=`. Unset, the installer looks each
+tool up as the admin account (login shell, then an interactive one for a node version
 manager) and refuses to install when it finds none. **Reinstall** after a change to the tool's
 location, or to fix a unit installed without it: re-run the command above (it is idempotent;
 it rewrites the unit and reloads systemd), then `sudo systemctl start lifekit-intake-shape.service`
@@ -4369,7 +4389,7 @@ Only rows dated from the install day on open items; to include earlier ones, run
 an issue failed the label check, an answer the step cannot read, a `shaping` row whose hub
 item is gone - the answer was lost with it, so re-ask by hand and mark the row; an answer that cannot be filed is not a failure state, the item is reopened and waits). Every step is checked first,
 so the next run completes a half-done one and files nothing twice: the issue carries a hidden
-`intake-shape: <item>` marker the step searches before creating. Exit 2: no firstmate home, or `tasks-axi not found` (one journal line for the whole run: reinstall with `TASKS_AXI`, see above).
+`intake-shape: <item>` marker the step searches before creating. Exit 2: no firstmate home, `tasks-axi not found` or `fleet-policy not found` (one journal line for the whole run: reinstall with `TASKS_AXI` / `FLEET_POLICY`, see above). A `fleet-policy decide ... exit 2: decide: refused: ...` line names the item the matrix step refused; nothing was held or filed for it.
 
 **Undo:**
 
