@@ -229,8 +229,8 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
 | `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`, `doc_door`): `{read, reason}` (`kit_held`, `shape` and `doc_door` add `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
-| `side_hustles` | The side-hustle lines and week-sheet rows (below): `{channels[], lines[], week_rows[], credential, brief_day, week_of, feed_read}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
-| `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
+| `side_hustles` | Always `null` (retired, see "Side hustles"); the key stays so v1 consumers are unchanged |
+| `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when there is no clip queue directory (or `FLEET_CLIP_QUEUE` is set empty) |
 | `items[]`, `item_sources` | One record per open finance item, needs-you decision and doc-door document, with the item envelope (see "Queue items"), and each source's `{read, reason}` |
 | `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
 | `follow_ups[]` | The owner pages still to be written |
@@ -258,12 +258,11 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
   which the installer carries into the unit like `FM_HOMES`
   (`sudo FM_HOMES="..." FLEET_PLAN_MAP="<repo>=<project> ..." bash install-fleet-publisher.sh`),
   and a re-install without it leaves the unit with none.
-- **Clip stats feed**: `FLEET_CLIP_STATS_FEED` (absolute path of clip's
-  `stats.jsonl`; only its parent directory is read) switches on the clip queue
-  rows. It is host config the installer carries into the unit the same way
-  (`sudo FM_HOMES="..." FLEET_CLIP_STATS_FEED=/home/denys/clip-data/queue/stats.jsonl bash install-fleet-publisher.sh`,
-  plain characters `[A-Za-z0-9._/-]` only); a re-install without it leaves the
-  unit with none and the rows `null`.
+- **Clip queue**: read from clip's own default directory, `~/clip-data/queue`
+  of the account the unit runs as; `FLEET_CLIP_QUEUE` overrides it (a systemd
+  drop-in; set empty, the queue is not read). The installer has no clip option:
+  the former `FLEET_CLIP_STATS_FEED` pointed at a `stats.jsonl` nothing writes
+  (issue 692), and the publisher ignores it if an older unit still carries it.
 - **Open PRs**: `FLEET_GH` (default `gh`; empty skips) `pr list -R <owner/name>
   --state open`, cached per repo for `FLEET_PR_TTL` seconds (default 600) in
   `status-open-prs.json`. Refreshes share a 15 s budget per run; a failed or
@@ -356,7 +355,7 @@ line), never a guess.
   records reachable"}`: the page says so rather than guessing.
 - **Clip and scout** thresholds are optional blocks of `fleet-stalled.json`; a
   file without one leaves that source unread (`stalled_sources` says so). The clip
-  rows are read from the queue directory (see "Clip queue" below); the scout reads
+  rows are read from the clip queue directory (see "Clip queue" below); the scout reads
   `FLEET_SCOUT_STATE` (its state dir, `~/.local/state/lifekit-scout` by default for
   the scout's own unit; the publisher does not guess it, so unset the source is
   `read: false`), and a state dir with no candidates file yet is unread, not stalled.
@@ -419,55 +418,50 @@ publisher, so it is not a problem here until a source for it exists.
 
 ## Side hustles (`status_page.side_hustles`)
 
-Per-channel numbers for the owner's side hustles, read only from clip's stats
-feed (`stats.jsonl`, written by `clip stats`; `FLEET_CLIP_STATS_FEED` is its
-path, unset leaves the section `null`). Nothing is scraped, and clip's
-collection is not touched.
-
-- **When.** `lines` (the brief's) are filled on Monday and Thursday and empty on
-  other days; `week_rows` (the Monday week sheet's, one weekly row per channel,
-  `week_of` the Monday's date) on Monday only. The day is read in the brief's time
-  zone (`fleet-decisions.json`). `channels[]` always holds each channel's verdict.
-- **The line.** `<channel>: 7d views N · subs N · uploads N · best Short <clip> (N views)`,
-  from the channel's newest `channel` row: `days7.views`, `subscribers`, uploads
-  in the period (its `videos_recorded` less the count at the last row at least 7
-  days older) and the most-viewed Short of that run's `video` rows. A number the feed
-  does not hold is the value `no data` (never `0`; a real zero stays `0`); a channel
-  whose newest row is older than 7 days or has no Analytics window is `<channel>: no data`.
-- **Credential.** A channel whose newest row is `needs_reconsent` (or clip's
-  credentials-rejected error) shows no numbers; one shared line `Side hustles: YouTube
-  Analytics needs consent again for <channels> - owner: run clip auth ...` stands for all.
-- **Unreadable feed.** One line `Side hustles: no data (stats feed unreadable)`, one
-  `errors[]` line, and one `no_data` week row.
-- **The brief** (`scripts/ensure-today-brief-fleet.sh`) prints `lines` as given, 3 at
-  most (the credential line is always kept; the publisher folds channel lines beyond the
-  rest into `+N more channels not shown`), so the
-  12-line cap holds. The week sheet itself is drafted by firstmate in the vault from
-  `week_rows`.
+Retired (issue 692): always `null`. Its only source was clip's stats feed
+(`stats.jsonl`, written by `clip stats` alone), which no timer runs, so the
+feed never existed and every run logged it unreadable. The per-channel numbers
+the publisher can stand behind come from the clip queue's own outputs instead
+("Clip queue"); YouTube Analytics numbers (views, subscribers) have no source
+on the box today. The brief prints side-hustle lines only when the section is
+an object, so it prints none.
 
 ## Clip queue (`status_page.clip_queue`)
 
-One row per clip channel, read only from the clip queue's own outputs in the
-directory holding the stats feed (`FLEET_CLIP_STATS_FEED`'s parent; unset leaves
-the section `null`): `daily-check.json`, `egress.json`, `queue-run.json`, and
-each channel's `pending/` sources (their `added:` line, for the oldest age).
-Nothing is written to them and clip is not changed.
+One row per clip channel, read only from the clip queue's own outputs in its
+directory (`~/clip-data/queue`, `FLEET_CLIP_QUEUE` overrides; no directory leaves
+the section `null`). Nothing is written to them and clip is not changed. Per
+decision 0019 the queue directories and `events.jsonl` are the owning store;
+no derived feed is read.
+
+| Source | What it feeds |
+| --- | --- |
+| `daily-check.json` (clip-daily-check) | `waiting` (`buffer_waiting`), `buffer_days`, the stall check (`last_post`, `slot`, `checked_at`), and any channel beyond the five |
+| `egress.json` | `egress` on every row and the section's `egress` |
+| `queue-run.json` | the section's `queue_run` |
+| `events.jsonl` (appended by `clip run-queue`) | `events_7d` (`published`, `judged`, `failed` events of the last 7 days) and `last_published_at` (the newest `published` event); only its newest 4 MiB are read |
+| `<channel>/{pending,running,done,failed}/` | `counts` (files in each state directory; a state directory the channel lacks counts 0) and `oldest_age_s` (the oldest `added:` line in `pending/`) |
 
 - **Rows.** `channels[]` has `cosmos`, `mind`, `neural`, `yc` and `vice-footage`
   always (then any other channel `daily-check.json` lists), each
-  `{channel, status, waiting, oldest_age_s, buffer_days, egress, stalled,
-  stalled_reason, unavailable[]}`: `waiting` is `buffer_waiting`, `oldest_age_s` the
-  age of the oldest waiting source (`null` when nothing waits), `buffer_days` as
-  clip counts it, `egress` the queue-wide state (`up`, `pc-down`, `relay-down`,
-  `bot-check`, `cookies-stale`), `stalled` the flag the stalled sources use
-  (`stalled_reason` `no-post` or `buffer-short`). Each row also carries the item
-  envelope (see "Queue items"): `owner: "clip"` (the clip pipeline), `class:
-  "ops"`, `store: "clip-queue"`, `ref` the channel name; no `acceptance`.
+  `{channel, status, waiting, oldest_age_s, buffer_days, counts, events_7d,
+  last_published_at, egress, stalled, stalled_reason, unavailable[]}`:
+  `oldest_age_s` is `null` when nothing waits, `buffer_days` as clip counts it,
+  `egress` the queue-wide state (`up`, `pc-down`, `relay-down`, `bot-check`,
+  `cookies-stale`), `stalled` the flag the stalled sources use (`stalled_reason`
+  `no-post` or `buffer-short`). Each row also carries the item envelope (see
+  "Queue items"): `owner: "clip"` (the clip pipeline), `class: "ops"`, `store:
+  "clip-queue"`, `ref` the channel name; no `acceptance`.
 - **Unavailable, never zero.** A missing or unreadable input, or a channel absent
   from it, gives `null` for the numbers it feeds and names them in the row's
   `unavailable[]`; a real zero stays `0`. `status` is `unavailable` when the channel
-  has no `daily-check.json` entry. `unavailable[]` at the section level lists the
-  unreadable input files, with one `errors[]` line.
+  has no `daily-check.json` entry. A channel with no directory has `counts: null`.
+- **Missing sources are said once.** The section's `unavailable[]` lists the
+  unreadable input files and `stalled_sources.clip.reason` names them
+  (`unread: events.jsonl`); `read` is `false` only when `daily-check.json`, which
+  the stall check stands on, is among them. No directory at all is `{read: false,
+  reason: "no clip queue directory"}`. None of these is an `errors[]` line: a
+  missing clip output is the clip pipeline's state, not a publisher fault.
 - **Section.** `{schema: "fleet-clip-queue.v1", channels[], egress: {state, since},
   queue_run: {at, age_s}, unavailable[]}`.
 
