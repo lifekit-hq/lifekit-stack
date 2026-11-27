@@ -4424,6 +4424,31 @@ def test_a_missing_events_file_is_one_unread_source_and_the_rest_still_reads(hom
     assert not any("clip" in e for e in page["errors"])
 
 
+def test_a_cleared_clip_problem_drops_its_mark_while_events_jsonl_is_missing(homes):
+    stalled = {"cosmos": clip_channel(last_post=clip_iso(40 * 3600))}
+    env = clip_world(homes, stalled)
+    assert homes.run(side_home(homes), **env).returncode == 0
+    seen = homes.tmp / "state/problems-seen.json"
+    assert json.loads(seen.read_text())["clip:None:cosmos"]["first_seen"] == NOW
+    clip_world(homes, {"cosmos": clip_channel()})
+    (homes.tmp / CLIP_QUEUE / "events.jsonl").unlink()
+    later = {**env, "FLEET_NOW": str(NOW + DAY)}
+    assert homes.run(side_home(homes), **later).returncode == 0
+    assert status(homes)["stalled_sources"]["clip"]["read"] is False
+    assert "clip:None:cosmos" not in json.loads(seen.read_text())
+
+
+def test_a_missing_daily_check_keeps_a_clip_problem_aging(homes):
+    stalled = {"cosmos": clip_channel(last_post=clip_iso(40 * 3600))}
+    env = clip_world(homes, stalled)
+    assert homes.run(side_home(homes), **env).returncode == 0
+    (homes.tmp / CLIP_QUEUE / "daily-check.json").unlink()
+    later = {**env, "FLEET_NOW": str(NOW + DAY)}
+    assert homes.run(side_home(homes), **later).returncode == 0
+    marks = json.loads((homes.tmp / "state/problems-seen.json").read_text())
+    assert marks["clip:None:cosmos"]["first_seen"] == NOW
+
+
 def test_a_missing_clip_queue_directory_is_an_unread_source_not_an_error(homes):
     env = {"FLEET_NOW": str(NOW)}
     assert homes.run(side_home(homes), **env).returncode == 0

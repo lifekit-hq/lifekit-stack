@@ -457,7 +457,9 @@ no derived feed is read.
 - **Missing sources are said once.** The section's `unavailable[]` lists the
   unreadable input files and `stalled_sources.clip.reason` names them
   (`unread: events.jsonl`) with `read: false`; the inputs that did read still give
-  their numbers and stall check. No directory at all is `{read: false, reason: "no
+  their numbers and stall check. A clip Problems-line mark is kept or dropped by
+  whether `daily-check.json` read, not by this flag, so a missing `events.jsonl`
+  does not pin it. No directory at all is `{read: false, reason: "no
   clip queue directory"}`. None of these is an `errors[]` line: a
   missing clip output is the clip pipeline's state, not a publisher fault.
 - **Section.** `{schema: "fleet-clip-queue.v1", channels[], egress: {state, since},

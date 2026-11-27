@@ -1402,18 +1402,19 @@ def clip_channel_row(
 
 def clip_queue(
     cfg: dict[str, Any] | None, now: int
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any], bool]:
     """The clip queue's rows and its stalled rows, read-only from the queue's
     own outputs: `daily-check.json`, `egress.json`, `queue-run.json`,
     `events.jsonl` and each channel's state directories. Returns (section,
-    stalled rows, the source's `{read, reason}`). An input that is missing or
+    stalled rows, the source's `{read, reason}`, whether the stall check read
+    `daily-check.json` with its thresholds). An input that is missing or
     unreadable makes its own numbers unavailable (None), never zero, and is
     named once: in the section's `unavailable` and the source's reason (never
     an `errors` line, since a missing clip output is the clip pipeline's state,
     not a publisher fault)."""
     queue = clip_dir()
     if not queue.is_dir():
-        return None, [], {"read": False, "reason": "no clip queue directory"}
+        return None, [], {"read": False, "reason": "no clip queue directory"}, False
     check = read_json_object(queue / CLIP_FILES[0])
     egress_doc = read_json_object(queue / CLIP_FILES[1])
     run_doc = read_json_object(queue / CLIP_FILES[2])
@@ -1452,11 +1453,12 @@ def clip_queue(
         "unavailable": missing,
     }
     unread = f"unread: {', '.join(missing)}" if missing else None
-    if cfg is None or "clip" not in cfg:
+    checked = cfg is not None and "clip" in cfg
+    if not checked:
         source = {"read": False, "reason": "no clip thresholds in fleet-stalled.json"}
     else:
         source = {"read": not missing, "reason": unread}
-    return section, stalled_rows, source
+    return section, stalled_rows, source, checked and check is not None
 
 
 def envelope_item(
@@ -2402,7 +2404,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     stalled, sources, stalled_rows = None, None, None
     cfg = stalled_config(errors)
     job_doc, jobq = read_jobs(errors)
-    clip_section, clip_rows, clip_source = clip_queue(cfg, args.now)
+    clip_section, clip_rows, clip_source, clip_checked = clip_queue(cfg, args.now)
     door_entries, door_source = doc_door_read(errors)
     if cfg:
         found = backlog_stalls(records, homes, cfg, args.now)
@@ -2477,7 +2479,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     decided_cache = load_cache(state / "status-decisions.json")
     outcomes = delivered(state, args.now, errors, vault, decided_cache)
     save_cache(state / "status-decisions.json", decided_cache)
-    problem_list = problems(stalled_rows, sources, state, args.now, errors)
+    problem_sources = sources and {**sources, "clip": {"read": clip_checked}}
+    problem_list = problems(stalled_rows, problem_sources, state, args.now, errors)
     items: list[dict[str, Any]] = []
     item_sources: dict[str, dict[str, Any]] = {}
     door_read = (doc_door_items(door_entries), door_source)
