@@ -3952,11 +3952,8 @@ publisher can reach exists; the page says so. The queue items
 when set and non-empty, so a re-install without them drops the line. The one
 exception is the ledger, which defaults to Kit's
 (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`, bound read-only
-into the unit because Kit's workspace is not the admin account's to read).
-With `FLEET_NEEDS_YOU_LEDGER=` the unit carries no ledger and the publisher reads
-Kit's `needs-you/open.json` with a fixed `cat` inside the gateway instead; either
-way `/srv/openclaw/config` stays 0700 (`FLEET_NEEDS_YOU_CMD` overrides that read,
-and set empty in a drop-in turns needs-you off). On the VPS pass
+into the unit because Kit's workspace is not the admin account's to read, so
+`/srv/openclaw/config` stays 0700; `FLEET_NEEDS_YOU_LEDGER=` turns it off). On the VPS pass
 `FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py"` (the
 read-only finance-sentry command the installer puts there; README "Queue items")
 with `FLEET_FINANCE_OWNER=<owner UserId GUID>` (a GUID: the command

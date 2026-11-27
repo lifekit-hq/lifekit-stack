@@ -481,7 +481,7 @@ so the dashboard can link through. Read-only; no store is written.
 | Source | Read from | `owner` / `class` | `store` | `ref` |
 | --- | --- | --- | --- | --- |
 | `finance` | `FLEET_FINANCE_CMD`, a command printing a JSON list of `{kind, id, title, acceptance, url, since}` (`kind` one of `alert`, `companion-event`, `thesis-revision`, `recommendation`; the last three keys optional) | `finance` / `finance` | `finance-db` | `url`, else `<kind>/<id>` |
-| `needs-you` | Kit's `needs-you/open.json`: the file `FLEET_NEEDS_YOU_LEDGER` names when set (the installer's read-only bind, see "Wiring"), otherwise a fixed `cat` in the gateway (`FLEET_NEEDS_YOU_CMD` overrides; empty skips it); `kind` `decision`; a missing file is an empty ledger | `kit` / `life` | `needs-you` | the entry `id` |
+| `needs-you` | `FLEET_NEEDS_YOU_LEDGER`, the path of Kit's `needs-you/open.json` (the installer's read-only bind, see "Wiring"; `kind` `decision`; a missing file is not read, reason `needs-you ledger missing`) | `kit` / `life` | `needs-you` | the entry `id` |
 | `jobq` | `jobq.py list --json` in the gateway, the same read as the stalled jobs (`FLEET_JOBS_CMD` replaces it); only jobs `queued` or `running`, `kind` the job's kind | the envelope's `owner` (else the skill that answers the job) / its `class` (else `unclear`) | `jobq` | the job id |
 | `doc-door` | `door.py list --json` in the gateway (`FLEET_DOC_DOOR_CMD` overrides; `kind` `document`, `title` the report's, `null` before one is filed) | the entry's `owner` (`reader`) / `life` | `doc-door` | the doc id |
 
@@ -490,8 +490,8 @@ so the dashboard can link through. Read-only; no store is written.
   own time (epoch, `null` when it has none), `acceptance` its one-line done-when,
   `origin` its door, `state` its open state and `fingerprint` its content hash. Each is present only when the source holds it: a record
   without one publishes without the key, never fails. A needs-you record carries
-  `origin` `kit` (the door) and an `acceptance` line: the entry's own, else
-  "The owner answers in Kit's chat", with its options when it has them.
+  `origin` `kit` (the door) and the `acceptance` line "The owner answers in
+  Kit's chat", with its options when it has them.
   A jobq record adds the queue's own `stage` (`queued`, `running`) and A2A `state`
   (`submitted`, `working`), and `fingerprint` and `thread` when its envelope has them;
   a queued one adds `waiting_on` (`egress`: its probe host must answer through the
@@ -525,7 +525,7 @@ so the dashboard can link through. Read-only; no store is written.
   workspace is not the admin account's to read, the unit binds the ledger's
   directory read-only at `/run/lifekit-fleet-needs-you` and points the variable
   there. Installed with `FLEET_NEEDS_YOU_LEDGER=`, the unit carries no ledger and
-  the publisher falls back to the gateway `cat`.
+  needs-you is not read.
 - **Schema.** Still `fleet-status-page.v1`: `items`, `item_sources` and the clip
   rows' envelope keys are new optional keys, and a consumer that ignores them is
   unchanged. The dashboard's rendering is its own issue.

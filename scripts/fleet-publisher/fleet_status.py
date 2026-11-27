@@ -53,11 +53,7 @@ door's spool count; empty skips it, unset skips it too when FLEET_INTAKE_CMD is
 set),
 FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: none reachable),
 FLEET_FINANCE_CMD (prints finance's open items as JSON; unset: not read),
-FLEET_NEEDS_YOU_LEDGER (Kit's needs-you/open.json as a file, the installer's
-read-only bind of it; set, it is read in place of FLEET_NEEDS_YOU_CMD),
-FLEET_NEEDS_YOU_CMD (the same for Kit's needs-you ledger, `cat` of its
-needs-you/open.json in the gateway; empty skips it, unset skips it too when
-FLEET_INTAKE_CMD is set),
+FLEET_NEEDS_YOU_LEDGER (Kit's needs-you/open.json; unset: not read),
 FLEET_SCOUT_STATE (the scout's state dir, `candidates/<date>.txt` inside; unset:
 the scout is not read),
 FLEET_KIT_HELD_CMD (prints the held fleet tasks in Kit's daily notes that have
@@ -128,12 +124,6 @@ GATEWAY_SPOOL = "/home/node/.openclaw/extensions/intake-door/spool.mjs"
 # doc-door runs as the reader agent (scripts/ensure-doc-door.sh); its state is the
 # gateway's ~/.life-state/doc-door, readable only inside the container.
 GATEWAY_DOOR = "/home/node/.openclaw/agents/reader/workspace/skills/doc-door/door.py"
-# Kit's needs-you ledger (its AGENTS.md, "Needs you"): written by Kit's main
-# session, under the gateway's 0700 ~/.openclaw, so it is read inside the
-# container, never by widening that directory. A missing file is an empty ledger
-# (Kit creates it on first use).
-GATEWAY_NEEDS_YOU = "/home/node/.openclaw/agents/kit/workspace/needs-you/open.json"
-NEEDS_YOU_READ = 'if [ -e "$1" ]; then cat "$1"; else echo "[]"; fi'
 # The workflows the page explains, each by its vault owner page. A page missing
 # from the vault leaves the link out and lists it under `follow_ups`.
 WORKFLOWS = (
@@ -1468,51 +1458,32 @@ def finance_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, An
     return items, {"read": True, "reason": None}
 
 
-def needs_you_cmd() -> list[str] | None:
-    """FLEET_NEEDS_YOU_CMD as argv; [] for the gateway default; None to skip.
-    Unset, it is the default only while FLEET_INTAKE_CMD is unset too, as for
-    the job ages."""
-    cmd = os.environ.get("FLEET_NEEDS_YOU_CMD")
-    if cmd is None:
-        return [] if "FLEET_INTAKE_CMD" not in os.environ else None
-    return shlex.split(cmd) or None
-
-
 def needs_you_acceptance(entry: dict[str, Any]) -> str:
-    """The entry's own done-when, else the ledger's: the owner's answer closes it
-    (Kit's AGENTS.md, "One answer closes its decision")."""
-    if line := one_line(entry.get("acceptance"), TITLE_CUT):
-        return line
-    options = [o for o in entry.get("options") or [] if isinstance(o, str) and o]
+    """The ledger's done-when: the owner's answer closes it (Kit's AGENTS.md,
+    "One answer closes its decision"), with the entry's options when it has them."""
+    opts = entry.get("options")
+    options = (
+        [o for o in opts if isinstance(o, str) and o] if isinstance(opts, list) else []
+    )
     if options:
         return "The owner answers in Kit's chat: " + " / ".join(options)
     return "The owner answers in Kit's chat"
 
 
 def needs_you_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Kit's open needs-you decisions, read-only from its ledger
-    (`needs-you/open.json`, `cat` in the gateway; FLEET_NEEDS_YOU_CMD overrides):
-    one record per entry, origin `kit`, its options as the acceptance line.
-    FLEET_NEEDS_YOU_LEDGER, set, names the ledger file to read instead (the
-    installer's read-only bind of it into the unit); a missing file is empty."""
+    """Kit's open needs-you decisions, read-only from its ledger file
+    (`needs-you/open.json`, named by FLEET_NEEDS_YOU_LEDGER, the installer's
+    read-only bind of it into the unit): one record per entry, origin `kit`,
+    its options in the acceptance line."""
     path = os.environ.get("FLEET_NEEDS_YOU_LEDGER", "")
-    argv = None if path else needs_you_cmd()
-    if not path and argv is None:
-        return [], {"read": False, "reason": "needs-you skipped"}
+    if not path:
+        return [], {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"}
     try:
-        if path:
-            try:
-                text = Path(path).read_text()
-            except FileNotFoundError:
-                text = "[]"  # Kit creates it on first use
-        else:
-            if not argv:
-                argv = ["docker", "exec", gateway(), "sh", "-c", NEEDS_YOU_READ]
-                argv += ["sh", GATEWAY_NEEDS_YOU]
-            text = run(argv, timeout=15)
-        doc = json.loads(text)
+        doc = json.loads(Path(path).read_text())
         assert isinstance(doc, list)
-    except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as exc:
+    except FileNotFoundError:
+        return [], {"read": False, "reason": "needs-you ledger missing"}
+    except (OSError, ValueError, AssertionError) as exc:
         errors.append(f"needs-you ledger unreadable ({exc.__class__.__name__})")
         return [], {"read": False, "reason": "needs-you ledger unreadable"}
     items = []
