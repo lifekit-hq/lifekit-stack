@@ -227,7 +227,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `intake_spool` | The intake door's held hand-offs: `{pending, oldest_epoch}` (`pending` = occurrences waiting for the retry, `oldest_epoch` = when the oldest was spooled, `null` when none is), or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
-| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`): `{read, reason}` (`kit_held` adds `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
+| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`): `{read, reason}` (`kit_held` and `shape` add `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | The side-hustle lines and week-sheet rows (below): `{channels[], lines[], week_rows[], credential, brief_day, week_of, feed_read}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
 | `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
@@ -317,7 +317,7 @@ line), never a guess.
 
 | Queue | Stalled when (default) | Config key | `since` | Owner |
 | --- | --- | --- | --- | --- |
-| GitHub issue of a registered project (a project whose backlog records name a GitHub repo) | open, no `held_labels` label, no update for 7 days | `github.days`, `github.held_labels` | the issue's `updatedAt` | its `ops`/`dev`/`finance`/`life` label (or `class:<x>`), else `github.repo_owners[<owner/name>]`, else `github.default_owner` (`dev`) |
+| GitHub issue of a registered project (a project whose backlog records name a GitHub repo) | open, no `held_labels` label, not in Shape (the Shape row ages those), no update for 7 days | `github.days`, `github.held_labels` | the issue's `updatedAt` | its `ops`/`dev`/`finance`/`life` label (or `class:<x>`), else `github.repo_owners[<owner/name>]`, else `github.default_owner` (`dev`) |
 | Firstmate backlog record | `queued` or `in_flight` (held and done keep their own buckets), no status line for 48 hours | `backlog.hours` | the newer of the record's creation date and the last `[at=<epoch>]` in `<home>/state/<id>.status` | `firstmate` |
 | jobq job | attempts exhausted (`attempts` at the queue's `max_attempts`, `failed` or `queued`), or `queued` more than 24 hours | `jobq.waiting_hours` | finish time (exhausted) or `queued_at` | the envelope's `class` when it is an owner, else `firstmate` |
 | A2A thread | open and past its own `deadline`, or no turn for 24 hours | `a2a.idle_hours` | the `deadline`, or the last turn | the thread's `owner` when it is one, else `firstmate` |
