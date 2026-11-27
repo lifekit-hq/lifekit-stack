@@ -126,14 +126,16 @@ ACT_CELLS = ("allow", "allow-and-log")
 ACTOR = "intake-shape"
 MATRIX_RECORD = "system/decision-matrix.md#M4"
 OPTION_MAX = 6
-# Money in the report's cost (H2): a sentence naming a charge, not one saying none.
+# Money in the report's cost (H2): a clause naming a charge no negation governs.
 MONEY = re.compile(
     r"\b(paid (plan|tier|seat|account|version)|subscription|purchase|per (month|year|seat)"
     r"|a month|/mo\b|billing|pricing|license fee|credit card)\b|[$\u20ac\u00a3]\s?\d"
     r"|\b\d+(\.\d+)?\s?(usd|eur|gbp)\b",
     re.I,
 )
-NO_MONEY = re.compile(r"\b(no|not|none|free|without|zero|nothing)\b", re.I)
+NO_MONEY = re.compile(
+    r"\b(no|not|without|zero|free)\s+((a|an|any|new|extra)\s+)?$", re.I
+)
 
 
 def log(message: str) -> None:
@@ -426,13 +428,20 @@ def report_text(intake: Path, row: Row) -> str:
         return ""
 
 
+def names_project(project: str) -> bool:
+    """Whether the Project cell names a project: its lead (before `(`, `;` or
+    `,`) is neither a placeholder nor a goal reference."""
+    lead = re.split(r"[(;,]", project, maxsplit=1)[0].strip().lower()
+    return lead not in PLACEHOLDERS and not re.match(r"goals?\b", lead)
+
+
 def named_repo(row: Row, report: str) -> str:
-    """The owner repo: the registered project the Project cell names, else
-    the one registered project (by name or owner/name) the row's next step and
-    its report name, else '' (none or several)."""
-    repo = proposed_repo(row["project"])
-    if repo:
-        return repo
+    """The owner repo: the registered project the Project cell names; when the
+    cell names no project, the one registered project (by name or owner/name)
+    the row's next step and its report name; else '' (an unregistered project,
+    none or several)."""
+    if names_project(row["project"]):
+        return proposed_repo(row["project"])
     text = f"{row['next step or why']}\n{report}".lower()
     hits = {
         repo
@@ -446,12 +455,17 @@ def named_repo(row: Row, report: str) -> str:
 
 
 def cost_money(report: str) -> str:
-    """The first sentence of the report's `## Cost of adoption` section that
-    names money being spent (H2), else ''."""
+    """The first clause of the report's `## Cost of adoption` section that
+    names money being spent (H2), else ''. A money term is ignored only when a
+    negation right before it governs it (`no paid plan`, `without a
+    subscription`)."""
     m = re.search(r"^## Cost of adoption[ \t]*\n(.*?)(?=^## |\Z)", report, re.M | re.S)
-    for sentence in re.split(r"(?<=[.!?])\s+|\n", m[1] if m else ""):
-        if MONEY.search(sentence) and not NO_MONEY.search(sentence):
-            return one_line(sentence)[:200]
+    for clause in re.split(r"(?<=[.!?])\s+|[;,](?!\d)|\n", m[1] if m else ""):
+        if any(
+            not NO_MONEY.search(clause[: money.start()])
+            for money in MONEY.finditer(clause)
+        ):
+            return one_line(clause)[:200]
     return ""
 
 
@@ -622,6 +636,14 @@ def open_items(intake: Path, hub: Hub, since: str, policy: Policy, gh: Gh) -> in
                 1 for r in marked if r["status"] == "shaping" and r["ref"] == item
             )
             title = item_title(row, seen)
+            pending = {
+                r["ref"]
+                for r in marked
+                if r.key == row.key and r["status"] == "shaping"
+            }
+            if create and any(hub.state(ref) == "closed" for ref in pending):
+                log(f"{item}: waits for the answer on an earlier item of {row.key}")
+                continue
             if not create:
                 hub.retitle(item, title)
                 status = ("shaping", item)

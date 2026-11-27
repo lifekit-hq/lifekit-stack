@@ -366,6 +366,49 @@ def test_a_cost_that_names_no_charge_is_not_a_boundary(matrix):
     assert len(env.gh()["issues"]) == 1
 
 
+def test_money_beside_an_unrelated_negation_is_a_boundary(matrix):
+    env = matrix
+    env.index(row("abc"), row("def"))
+    for key, cost in (
+        ("abc", "- Pro plan: $15 per month; the free tier lacks the API."),
+        ("def", "No new credential; the API is $10/month."),
+    ):
+        env.report(key, f"## Cost of adoption\n{cost}\n\n## Verdict\n")
+    assert env.run() == 0
+    assert env.gh()["issues"] == [] and env.log("self-calls.jsonl") == []
+    calls = env.log("calls.jsonl")
+    assert sorted(c["id"] for c in calls) == ["shape-abc", "shape-def"]
+    assert all(c["boundary"] == "H2" for c in calls)
+    assert [(r["status"], r["ref"]) for r in env.rows()] == [
+        ("shaping", "shape-abc"),
+        ("shaping", "shape-def"),
+    ]
+
+
+def test_repeat_while_the_earlier_answer_is_unprocessed_waits(matrix):
+    env = matrix
+    env.index(row("abc", rubric="v7", project="goal 1"))
+    env.report("abc", "nothing registered here\n", rubric="v7")
+    assert env.run() == 0
+    assert list(env.hub()) == ["shape-abc"]
+    env.set_hub("shape-abc", state="closed", decision="drop")
+    env.append(row("abc", rubric="v8"))
+    assert env.run("open") == 0
+    assert env.gh()["issues"] == [] and env.log("self-calls.jsonl") == []
+    assert [(r["status"], r["ref"]) for r in env.rows()] == [
+        ("shaping", "shape-abc"),
+        ("", ""),
+    ]
+    assert env.run() == 0
+    assert env.rows()[0]["status"] == "dropped"
+    assert env.rows()[1]["status"] == ""
+    assert env.run() == 0
+    assert env.gh()["issues"] == [] and env.log("self-calls.jsonl") == []
+    call = env.log("calls.jsonl")[-1]
+    assert (call["id"], call["conflict"]) == ("shape-abc-2", "M2,M4")
+    assert env.rows()[1]["ref"] == "shape-abc-2"
+
+
 def test_repeat_of_a_dropped_item_is_a_row_conflict(matrix):
     env = matrix
     env.index(row("abc", rubric="v7", marks=" | dropped | shape-abc"))
@@ -410,6 +453,17 @@ def test_no_registered_repo_is_no_row_and_the_owner_picks_one(matrix):
     assert "Decision: owner ruled" in issue["body"]
     assert "Matrix:" not in issue["body"]
     assert env.rows()[0]["status"] == "handed-off"
+
+
+def test_unregistered_project_cell_is_no_row_even_when_the_report_names_one(matrix):
+    env = matrix
+    env.index(row("abc", project="devclaw (goal 3, console)"))
+    env.report("abc", "## Sources\nSee the lifekit-stack runbook.\n")
+    assert env.run() == 0
+    assert env.gh()["issues"] == [] and env.log("self-calls.jsonl") == []
+    [call] = env.log("calls.jsonl")
+    assert "no registered project owns" in call["no_row"]
+    assert env.rows()[0]["status"] == "shaping"
 
 
 def test_report_naming_two_projects_is_no_row(matrix):
@@ -492,8 +546,12 @@ def test_repeat_adds_a_count_to_the_open_item(env):
 def test_closed_repeat_opens_a_new_item_referencing_it(env):
     env.index(row("abc", rubric="v7"))
     env.run("open")
-    env.set_hub("shape-abc", state="closed")
+    env.set_hub("shape-abc", state="closed", decision="approve")
     env.append(row("abc", rubric="v8"))
+    env.run("open")
+    assert list(env.hub()) == ["shape-abc"]
+    assert env.rows()[1]["status"] == ""
+    env.run("answer")
     env.run("open")
     hub = env.hub()
     assert sorted(hub) == ["shape-abc", "shape-abc-2"]

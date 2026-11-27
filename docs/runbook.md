@@ -4305,22 +4305,25 @@ has `gh` logged in and can write `/var/lib/lifekit/intake`), does two things wit
 1. **Open.** Every intake row whose verdict is `adopt` or `accept` (both route the same way:
    `adopt` is "take it as it is", still shaped before anything is built) is first answered
    from the decision matrix (decision 0017) through `fleet-policy`. The proposed shape is the
-   owner repo (the registered project the `Project:` cell names, else the one registered
-   project the next step and the judge's report name), class `dev`, and the done-when from its
+   owner repo (the registered project the `Project:` cell names; only when the cell names no
+   project, e.g. `goal 1; ...`, the one registered project the next step and the judge's report
+   name - a cell naming an unregistered project finds none), class `dev`, and the done-when from its
    next step. When the matrix answers (row M4, agreed work, plus the rows
    `fleet-policy classify github.issue-open` gives for the repo), the step records it with
    `fleet-policy decide <item> --kind self` (a line in `self-calls.jsonl` and `p16.jsonl`)
    and files the issue at once with `Decision: matrix auto-answered` and a `Matrix:` line
    naming the rows; the row becomes `handed-off <issue url>` and the owner sees nothing. Only
    the three reasons in decision 0017 reach the owner, placed by `fleet-policy decide <item>
-   --kind call`: a **boundary** (H2, the report's `## Cost of adoption` names money), a **row
+   --kind call`: a **boundary** (H2, a clause of the report's `## Cost of adoption` names money
+   no negation right before it governs, as in `no paid plan`), a **row
    conflict** (M2 vs M4: a repeat of an item the owner dropped), or **no row** (no registered
    project or no done-when, or the P16 table does not answer the step). That makes a
    **shaping item**: a captain-held task `shape-<key>` shown on the Calls page, whose reason
    is the one `decide` gave, then the proposed shape and the options (`approve`/`drop`, or
    `file-<project>` per registered project when no repo was found). A refused `decide` holds
    and files nothing; the next sweep retries. A repeat of a source whose newest answer filed an
-   issue joins that issue when the matrix answers it (no second issue). One item per source: a repeat (the
+   issue joins that issue when the matrix answers it (no second issue). A repeat that arrives
+   while an earlier item's answer is still unprocessed waits, unmarked, for the next sweep. One item per source: a repeat (the
    same source judged again) adds `(seen Nx)` to the open item's title; a repeat of an
    answered item opens `shape-<key>-2` whose reason names the earlier one. The row gets
    `shaping <item>` in two trailing cells, `status` and `ref`. Only rows dated on or after a
