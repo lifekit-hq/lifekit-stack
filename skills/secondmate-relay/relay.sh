@@ -6,6 +6,10 @@
 #   relay.sh hold <item-file> [<home>] ENVELOPE --fingerprint F --thread T
 #                                        file a held item that names a fleet task
 #                                        as a shaping item on the Calls page
+#   relay.sh decide <envelope-file> [<home>]
+#                                        file a decision through fleet-policy: the
+#                                        file is one JSON envelope, sent unchanged;
+#                                        prints the host's verdict line
 #   relay.sh replies [<cursor>] [<home>] notes sent from here, with their replies
 #   relay.sh status                      the fleet summary JSON, unchanged
 # <home> is fm-vps (the default) or firstmate; the host checks it again against
@@ -30,7 +34,7 @@
 set -eu
 CONF=/run/lifekit/kit-relay/ssh_config
 FLEET_URL=http://lifekit-dashboard:8080/api/fleet
-USAGE="usage: relay.sh note <body-file> [<home>] [--origin O --owner W --class C --acceptance A [--thread T]] | hold <item-file> [<home>] --origin O --owner W --class C --acceptance A --thread T --fingerprint F | replies [<cursor>] [<home>] | status  (<home>: fm-vps | firstmate)"
+USAGE="usage: relay.sh note <body-file> [<home>] [--origin O --owner W --class C --acceptance A [--thread T]] | hold <item-file> [<home>] --origin O --owner W --class C --acceptance A --thread T --fingerprint F | decide <envelope-file> [<home>] | replies [<cursor>] [<home>] | status  (<home>: fm-vps | firstmate)"
 
 home_ok() {
   case "$1" in
@@ -157,6 +161,16 @@ case "${1-}" in
       printf '{"id":"%s","url":"relay.sh replies %s","state":"%s"}\n' "$nid" "${home:-fm-vps}" "$state"
     fi
     exit "$st"
+    ;;
+  decide)
+    { [ "$#" -eq 2 ] || [ "$#" -eq 3 ]; } || { echo "$USAGE" >&2; exit 64; }
+    [ -s "$2" ] || { echo "relay.sh: envelope file missing or empty" >&2; exit 64; }
+    home=${3-}
+    [ -z "$home" ] || home_ok "$home" || exit 64
+    # The same envelope the same UTC day is a replay: the host returns the
+    # first verdict and runs nothing twice.
+    rid="kit-dec-$(date -u +%Y%m%d)-$(sha256sum "$2" | cut -c1-16)"
+    exec ssh -F "$CONF" relay decide "$rid" ${home:+"$home"} <"$2"
     ;;
   replies)
     [ "$#" -le 3 ] || { echo "$USAGE" >&2; exit 64; }

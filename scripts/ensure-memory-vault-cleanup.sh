@@ -44,9 +44,8 @@
 # and memory-sync skips its ticks while that file is under an hour old, so a
 # half-done edit never lands in an `auto:` commit.
 #
-# Owner calls (M6) go through notify-relay, not `fleet-policy decide`:
-# fleet-policy lives in the maintainer's home on the host, which neither the
-# gateway container nor the lifekit account can reach. Every owner-facing
+# Owner calls (M6) go through notify-relay, not `fleet-policy decide`
+# (docs/runbook.md says why and names the kit-relay decide verb). Every owner-facing
 # notification in this stack speaks one grammar through one renderer
 # (docs/message-format.md); notify-relay is reachable from the gateway at
 # http://notify-relay:8090/notify with no chat id needed. Delivery is

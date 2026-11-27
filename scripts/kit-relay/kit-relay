@@ -3,13 +3,17 @@
 #
 # authorized_keys pins this script with command="..."; sshd runs it for every
 # connection that key opens and puts what the client asked for in
-# SSH_ORIGINAL_COMMAND. No shell ever parses that string. Exactly three verbs:
+# SSH_ORIGINAL_COMMAND. No shell ever parses that string. Exactly four verbs:
 #
 #   note <request-id> [<home>]     body on stdin, saved verbatim as one fm-inbox note
 #   receipts [<cursor>] [<home>]   fm-inbox receipts, reduced to the notes this key sent
 #   hold <request-id> [<home>]     Kit's key only: one held item (envelope + text)
 #                                  on stdin, filed as a shaping item on the home's
 #                                  Calls page by the pinned kit_held.py (#684)
+#   decide <request-id> [<home>]   Kit's, the gateway's and devclaw's keys: one JSON
+#                                  envelope on stdin, run as `fleet-policy decide`
+#                                  with the key's actor by the pinned kit_decide.py;
+#                                  prints the verdict (#727)
 #
 # Everything else is refused (exit 64 usage, 65 body, 75 rate limit).
 #
@@ -19,13 +23,14 @@
 # default home. A client never supplies a path: an unknown name, a path or a
 # traversal is refused (exit 64) before anything is read or written.
 #
-# One script, four keys. authorized_keys names the sender as the command's
+# One script, five keys. authorized_keys names the sender as the command's
 # argument: no argument or "kit" is Kit's key (request ids kit-*); "dashboard"
 # is the dashboard's key (dash-*); "finance-sentry" is finance-sentry's key
 # (fs-*); "openclaw" is the gateway's fleet-gate plugin key (oc-*, the P16
-# stops it files for the owner; fleet-internal, not a person's note). Each
-# sender has its own request-id prefix, rate bucket and receipts view;
-# nothing in the client's input picks the sender.
+# stops it files for the owner; fleet-internal, not a person's note);
+# "devclaw" is devclaw's key (dc-*). Each sender has its own request-id
+# prefix, rate bucket and receipts view, and decide's actor (kit, openclaw,
+# devclaw) comes from the sender; nothing in the client's input picks it.
 #
 # This is the repo copy: install-kit-relay.sh renders it with the homes
 # pinned below and installs it root-owned at
@@ -40,6 +45,10 @@ readonly ALT_HOME='__FM_HOME_ALT__'   # empty unless the installer pinned a seco
 # installer pinned TASKS_AXI, and then hold is refused (exit 78).
 readonly HELD_BIN='__KIT_HELD__'
 readonly TASKS_AXI_BIN='__TASKS_AXI__'
+# The decide verb's helper and the fleet-policy it runs; both empty unless the
+# installer pinned FLEET_POLICY (with TASKS_AXI), and then decide is refused (exit 78).
+readonly DECIDE_BIN='__KIT_DECIDE__'
+readonly FLEET_POLICY_BIN='__FLEET_POLICY__'
 readonly MAX_BYTES=32768        # refuse, never truncate
 readonly MAX_NOTES_PER_HOUR=30  # every note wakes the home's primary
 
@@ -49,14 +58,16 @@ case "$DEFAULT_HOME" in
 esac
 
 # Who this connection is: set by the pinned command= argument, never by the client.
+# ACTOR is who `decide` files as; empty for a sender that may not decide.
 case "${1-kit}" in
-  kit) ID_PREFIX=kit- ;;
-  dashboard) ID_PREFIX=dash- ;;
-  finance-sentry) ID_PREFIX=fs- ;;
-  openclaw) ID_PREFIX=oc- ;;
+  kit) ID_PREFIX=kit- ACTOR=kit ;;
+  dashboard) ID_PREFIX=dash- ACTOR= ;;
+  finance-sentry) ID_PREFIX=fs- ACTOR= ;;
+  openclaw) ID_PREFIX=oc- ACTOR=openclaw ;;
+  devclaw) ID_PREFIX=dc- ACTOR=devclaw ;;
   *) printf 'kit-relay: unknown sender\n' >&2; exit 78 ;;
 esac
-readonly ID_PREFIX
+readonly ID_PREFIX ACTOR
 
 # Set by resolve_home before any verb touches a home.
 FM_HOME=$DEFAULT_HOME
@@ -119,7 +130,7 @@ case "$cmd" in
   *[!A-Za-z0-9._:\ -]*) refuse 64 "unexpected characters in command" ;;
 esac
 read -r -a words <<<"$cmd"
-[ "${#words[@]}" -ge 1 ] || refuse 64 "usage: note <request-id> [<home>] | receipts [<cursor>] [<home>] | hold <request-id> [<home>]"
+[ "${#words[@]}" -ge 1 ] || refuse 64 "usage: note <request-id> [<home>] | receipts [<cursor>] [<home>] | hold <request-id> [<home>] | decide <request-id> [<home>]"
 
 case "${words[0]}" in
   note)
@@ -201,6 +212,38 @@ sys.stdout.write("\n")
       FM_HOME="$FM_HOME" TASKS_AXI="$TASKS_AXI_BIN" KIT_HELD_STATE="$HELD_STATE" \
       python3 "$HELD_BIN" file --request-id "$rid" <"$tmp" || status=$?
     say_log "hold rid=$rid bytes=$size sha256=$sha exit=$status$HOME_LOG"
+    exit "$status"
+    ;;
+  decide)
+    [ -n "$ACTOR" ] || refuse 64 "decide is not this key's verb"
+    { [ "${#words[@]}" -eq 2 ] || [ "${#words[@]}" -eq 3 ]; } \
+      || refuse 64 "usage: decide <request-id> [<home>] (JSON envelope on stdin)"
+    rid=${words[1]}
+    # fleet-policy takes the request id as the call's id: a slug, no colon, no "..".
+    if ! [[ $rid =~ ^${ID_PREFIX}[A-Za-z0-9._-]{1,120}$ ]] || [[ $rid == *..* ]]; then
+      refuse 64 "request id must match ${ID_PREFIX}[A-Za-z0-9._-]{1,120}"
+    fi
+    resolve_home "${words[@]:2}"
+    case "$DECIDE_BIN:$FLEET_POLICY_BIN:$TASKS_AXI_BIN" in
+      /*:/*:/*) ;;
+      *) refuse 78 "decide is not installed; reinstall kit-relay with FLEET_POLICY and TASKS_AXI pinned" ;;
+    esac
+    DECIDE_STATE="$HOME/.local/state/lifekit-kit-relay/decide/${FM_HOME##*/}"
+    recent=$({ find "$DECIDE_STATE" -maxdepth 1 -name "${ID_PREFIX}*.json" \
+      -mmin -60 2>/dev/null || true; } | wc -l)
+    if [ ! -e "$DECIDE_STATE/$rid.json" ] && [ "$recent" -ge "$MAX_NOTES_PER_HOUR" ]; then
+      refuse 75 "rate limit: $recent decisions in the last hour"
+    fi
+    read_body
+    status=0
+    # Nothing inherited: the actor and the home are pinned here, fleet-policy's
+    # FLEET_POLICY_* overrides stay unset, and tasks-axi's dir leads PATH for
+    # the home's fm-captain-hold.sh.
+    env -i HOME="$HOME" PATH="${TASKS_AXI_BIN%/*}:/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 \
+      FM_HOME="$FM_HOME" FLEET_POLICY="$FLEET_POLICY_BIN" KIT_DECIDE_ACTOR="$ACTOR" \
+      KIT_DECIDE_STATE="$DECIDE_STATE" \
+      python3 "$DECIDE_BIN" --request-id "$rid" <"$tmp" || status=$?
+    say_log "decide rid=$rid actor=$ACTOR bytes=$size sha256=$sha exit=$status$HOME_LOG"
     exit "$status"
     ;;
   *)

@@ -944,7 +944,9 @@ change.
 
 **Owner calls go through notify-relay, not `fleet-policy decide`.** fleet-policy
 lives in the maintainer's home on the host, which neither the gateway container
-nor the `lifekit` account can reach.
+nor the `lifekit` account can run directly; the only way in from the gateway is the
+kit-relay `decide` verb ("Decisions through fleet-policy"), and this job does not
+use it.
 
 **Delivery is transition-only, through notify-relay, not an OpenClaw `--announce`.**
 The job is created (and, on every re-run of the ensure script, converged) with
@@ -1324,7 +1326,9 @@ pipe: kit copies the text into a file and runs one script; it never decides what
   whole otherwise, exit 65) and `receipts [<12-digit cursor>] [<home>]` (only the notes whose
   request id starts with `kit-`, with their replies). A third verb, `hold <kit-held-id>
   [<home>]`, is Kit's key only and files a held item as a shaping item when the install
-  pinned `TASKS_AXI` ("Held items become shaping items" below). Anything else exits 64. At most
+  pinned `TASKS_AXI` ("Held items become shaping items" below). A fourth, `decide <id>
+  [<home>]`, files a decision through `fleet-policy decide` for Kit's, the gateway's and
+  devclaw's keys ("Decisions through fleet-policy" below). Anything else exits 64. At most
   30 new `kit-` notes per rolling hour (exit 75); a replay of an existing request id is
   never limited. `fm-inbox.sh` runs under `env -i`, so nothing the client sends (SendEnv,
   `FM_*_OVERRIDE`) reaches it. Each note and refusal is logged with tag `kit-relay`
@@ -2619,6 +2623,75 @@ on the Calls page; the same call again prints the same id with `"replay":true`; 
 item with the same fingerprint prints `"count":2`. `--owner kit` prints the reminder refusal.
 After the drop-in, `kit_held.py check` with the same arguments prints `[]` when every held
 fleet task carries its mark, and the fleet page's `stalled_sources.kit_held.read` is `true`.
+
+### Decisions through fleet-policy
+
+fleet-policy lives in the admin account's home on the host, out of reach of the gateway
+container, the lifekit account and devclaw. The relay's `decide` verb runs it for them,
+so Kit, learnclaw, the fleet-gate plugin and devclaw file a decision through the same
+decision-matrix rows as a worker on the box (lifekit-stack#727).
+
+- **Wire:** `decide <id> [<home>]` with one JSON envelope on stdin (1 B to 32 KiB, the
+  note limits). Keys: `kind` (`call` or `self`), `rows` (`"M4,M8"` or a list), one reason
+  for a call - `boundary` with `step`, or `conflict`, or `no_row` - and `checked` (a string
+  or a list), `subject`, `rec`, `options` (`{"<id>": "<label>"}`); optionally `class`
+  (a call without one is `unlisted`), `title`, `reason`, and for a self call `question`,
+  `answer`, `record`. Any other key exits 65; `actor`, `home` and `id` exit 65 by name,
+  because the key, the command's home word and its id set them. The meaning of every
+  field is fleet-policy's (`fleet-policy decide --help`, its `docs/decision-matrix.md`).
+- **Actor:** fixed by the key's `command=` argument: Kit's key files as `kit` (ids
+  `kit-*`), the fleet-gate key as `openclaw` (`oc-*`), devclaw's key as `devclaw`
+  (`dc-*`). The dashboard and finance-sentry keys may not decide (exit 64).
+  `scripts/kit-relay/kit_decide.py` (installed root-owned at
+  `/usr/local/libexec/kit-decide/`) builds one argv, no shell, and runs fleet-policy
+  under `env -i`, so no `FLEET_POLICY_*` override or actor reaches it from the client.
+- **Verdict:** one line, `kit-relay-decide.v1`: `verdict` is `filed` (a Tier 2 call held
+  for the owner; `id` is its id, exit 0), `recorded` (a self call, exit 0),
+  `refused-ruled` (a ruling answers it; `class` is the class to act under, exit 2),
+  `refused-repeat` (he already answered it, exit 2), `refused` (fleet-policy refused a
+  malformed call; `message` says why, exit 2) or `error` (fleet-policy failed; its exit
+  code). The verdict's `class`, `cell`, `ruling` and `rows` come from the `p16.jsonl`
+  line fleet-policy wrote for it.
+- **Replay and rate:** a request id seen before returns its first verdict with
+  `"replay":true` and runs nothing (an `error` is not kept, so a retry runs again); the
+  same id with a different envelope exits 65. At most 30 new decisions per key prefix per
+  home per rolling hour (exit 75), as for notes. Records live in
+  `~/.local/state/lifekit-kit-relay/decide/<home>/` of the relay's account.
+- **Client:** `relay.sh decide <envelope-file> [<home>]` (Kit's skill); the id is
+  `kit-dec-<UTC day>-<sha256(envelope)[:16]>`, so the same envelope the same day is a
+  replay.
+
+**Install** (operator step, once per host after the PR deploys; root, the same pins as
+before plus `FLEET_POLICY`, which needs `TASKS_AXI`):
+
+```bash
+sudo FM_HOME=<second-mate home> FM_HOME_ALT=<main home> TASKS_AXI=<absolute tasks-axi> \
+  FLEET_POLICY=<absolute fleet-policy> \
+  bash /srv/lifekit-stack/scripts/kit-relay/install-kit-relay.sh
+```
+
+Without `FLEET_POLICY` the verb exits 78, "decide is not installed", so every later
+re-install passes it. Re-run after a change to `kit_decide.py`.
+
+**devclaw's key** (when devclaw files through the relay): the same steps as the
+finance-sentry key with `devclaw-relay` for the directory and comment, mounted where
+devclaw runs, authorized with
+`restrict,command="/usr/local/libexec/kit-relay devclaw",from="172.16.0.0/12"`.
+
+**Verify** from inside the gateway with Kit's key. A self call is the smoke test: it holds
+nothing for the owner, prints `"verdict":"recorded"`, and the newest line of the admin
+account's `~/.local/state/fleet-policy/p16.jsonl` carries `"actor": "kit"` and its rows
+(a refusal's line carries no rows):
+
+```bash
+G=openclaw-openclaw-gateway-1
+printf '%s' '{"kind":"self","rows":"M4","subject":"kit-relay decide smoke test","question":"does decide reach fleet-policy from the gateway?","answer":"yes - a smoke test, nothing acted on","record":"docs/runbook.md, Decisions through fleet-policy"}' \
+  | docker exec -i "$G" ssh -F /run/lifekit/kit-relay/ssh_config relay "decide kit-dec-smoke-$(date -u +%Y%m%d)"
+tail -n 1 ~/.local/state/fleet-policy/p16.jsonl
+```
+
+**Rollback:** re-install without `FLEET_POLICY`; decide then exits 78 and the other verbs
+are unchanged.
 
 ### Fleet gate
 

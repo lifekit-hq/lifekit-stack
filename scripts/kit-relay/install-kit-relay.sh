@@ -18,6 +18,12 @@
 #     scripts/kit-held/kit_held.py with the intake_shape.py it imports, root-owned
 #     under /usr/local/libexec/kit-held/. Without it hold is refused (exit 78).
 #
+#   sudo FM_HOME=... TASKS_AXI=... FLEET_POLICY=/abs/path/to/fleet-policy bash .../install-kit-relay.sh
+#     FLEET_POLICY is optional and needs TASKS_AXI: pinning it turns on the
+#     decide verb (a decision filed through `fleet-policy decide` with the key's
+#     actor, lifekit-stack#727) and installs its helper, scripts/kit-relay/kit_decide.py,
+#     root-owned under /usr/local/libexec/kit-decide/. Without it decide is refused (exit 78).
+#
 #   FM_HOME=/path/to/second-mate/home bash install-kit-relay.sh --print
 #     render to stdout only (no root, nothing installed) - to diff against the
 #     installed copy before replacing it
@@ -25,11 +31,11 @@
 # Root owns the installed copy, so the key's holder cannot rewrite what the
 # key runs. Re-running converges.
 #
-# One installed script serves four authorized keys, told apart by the argument
+# One installed script serves five authorized keys, told apart by the argument
 # pinned in each authorized_keys command=: none (Kit's key, kit- request ids),
 # "dashboard" (the dashboard's key, dash- ids), "finance-sentry"
-# (finance-sentry's key, fs- ids) or "openclaw" (the gateway fleet-gate
-# plugin's key, oc- ids). Installing does not touch authorized_keys;
+# (finance-sentry's key, fs- ids), "openclaw" (the gateway fleet-gate
+# plugin's key, oc- ids) or "devclaw" (devclaw's key, dc- ids). Installing does not touch authorized_keys;
 # the operator adds each line (runbook).
 
 set -euo pipefail
@@ -37,6 +43,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST=/usr/local/libexec/kit-relay   # authorized_keys pins this path
 HELD_DIR=/usr/local/libexec/kit-held
+DECIDE_DIR=/usr/local/libexec/kit-decide
 
 die() { echo "install-kit-relay: $*" >&2; exit 1; }
 
@@ -73,18 +80,31 @@ if [[ -n "$TASKS_AXI" ]]; then
   HELD_BIN="$HELD_DIR/kit_held.py"
 fi
 
+FLEET_POLICY="${FLEET_POLICY:-}"
+DECIDE_BIN=
+if [[ -n "$FLEET_POLICY" ]]; then
+  [[ "$FLEET_POLICY" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "FLEET_POLICY must be an absolute path of [A-Za-z0-9._/-]"
+  [[ -x "$FLEET_POLICY" ]] || die "$FLEET_POLICY is missing or not executable"
+  [[ -n "$TASKS_AXI" ]] || die "FLEET_POLICY needs TASKS_AXI pinned too (fleet-policy files a call through tasks-axi)"
+  DECIDE_BIN="$DECIDE_DIR/kit_decide.py"
+fi
+
 rendered="$(mktemp)"
 trap 'rm -f "$rendered"' EXIT
 sed -e "s|__FM_HOME__|${FM_HOME}|" -e "s|__FM_HOME_ALT__|${FM_HOME_ALT}|" \
-  -e "s|__KIT_HELD__|${HELD_BIN}|" -e "s|__TASKS_AXI__|${TASKS_AXI}|" "$HERE/kit-relay" >"$rendered"
+  -e "s|__KIT_HELD__|${HELD_BIN}|" -e "s|__TASKS_AXI__|${TASKS_AXI}|" \
+  -e "s|__KIT_DECIDE__|${DECIDE_BIN}|" -e "s|__FLEET_POLICY__|${FLEET_POLICY}|" "$HERE/kit-relay" >"$rendered"
 grep -q "^readonly DEFAULT_HOME='${FM_HOME}'\$" "$rendered" || die "render did not pin FM_HOME"
 grep -q "^readonly ALT_HOME='${FM_HOME_ALT}'" "$rendered" || die "render did not pin FM_HOME_ALT"
 grep -q "^readonly HELD_BIN='${HELD_BIN}'\$" "$rendered" || die "render did not pin the hold helper"
 grep -q "^readonly TASKS_AXI_BIN='${TASKS_AXI}'\$" "$rendered" || die "render did not pin TASKS_AXI"
+grep -q "^readonly DECIDE_BIN='${DECIDE_BIN}'\$" "$rendered" || die "render did not pin the decide helper"
+grep -q "^readonly FLEET_POLICY_BIN='${FLEET_POLICY}'\$" "$rendered" || die "render did not pin FLEET_POLICY"
 bash -n "$rendered" || die "rendered script does not parse"
-grep -q '^  dashboard) ID_PREFIX=dash- ;;$' "$rendered" || die "rendered script lacks the dashboard sender"
-grep -q '^  finance-sentry) ID_PREFIX=fs- ;;$' "$rendered" || die "rendered script lacks the finance-sentry sender"
-grep -q '^  openclaw) ID_PREFIX=oc- ;;$' "$rendered" || die "rendered script lacks the openclaw sender"
+grep -q '^  dashboard) ID_PREFIX=dash- ACTOR= ;;$' "$rendered" || die "rendered script lacks the dashboard sender"
+grep -q '^  finance-sentry) ID_PREFIX=fs- ACTOR= ;;$' "$rendered" || die "rendered script lacks the finance-sentry sender"
+grep -q '^  openclaw) ID_PREFIX=oc- ACTOR=openclaw ;;$' "$rendered" || die "rendered script lacks the openclaw sender"
+grep -q '^  devclaw) ID_PREFIX=dc- ACTOR=devclaw ;;$' "$rendered" || die "rendered script lacks the devclaw sender"
 
 if [[ "$mode" == print ]]; then
   cat "$rendered"
@@ -98,8 +118,12 @@ if [[ -n "$HELD_BIN" ]]; then
   install -o root -g root -m 0644 "$HERE/../intake-shape/intake_shape.py" "$HELD_DIR/intake_shape.py"
   install -o root -g root -m 0755 "$HERE/../kit-held/kit_held.py" "$HELD_BIN"
 fi
+if [[ -n "$DECIDE_BIN" ]]; then
+  install -d -o root -g root -m 0755 "$DECIDE_DIR"
+  install -o root -g root -m 0755 "$HERE/kit_decide.py" "$DECIDE_BIN"
+fi
 install -o root -g root -m 0755 "$rendered" "$DEST"
-echo "kit-relay installed -> $DEST (FM_HOME=$FM_HOME${FM_HOME_ALT:+ FM_HOME_ALT=$FM_HOME_ALT}${TASKS_AXI:+ TASKS_AXI=$TASKS_AXI, hold helper $HELD_BIN})"
+echo "kit-relay installed -> $DEST (FM_HOME=$FM_HOME${FM_HOME_ALT:+ FM_HOME_ALT=$FM_HOME_ALT}${TASKS_AXI:+ TASKS_AXI=$TASKS_AXI, hold helper $HELD_BIN}${FLEET_POLICY:+ FLEET_POLICY=$FLEET_POLICY, decide helper $DECIDE_BIN})"
 
 # Record the installed commit (issue 689; the release gauge reads it).
 bash "$(dirname "${BASH_SOURCE[0]}")/../lib/install-stamp.sh" kit-relay
