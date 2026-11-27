@@ -1455,9 +1455,7 @@ def clip_queue(
     if cfg is None or "clip" not in cfg:
         source = {"read": False, "reason": "no clip thresholds in fleet-stalled.json"}
     else:
-        # daily-check.json is what the stalled check stands on; any other
-        # missing input still reads the channels, and the reason names it.
-        source = {"read": check is not None, "reason": unread}
+        source = {"read": not missing, "reason": unread}
     return section, stalled_rows, source
 
 

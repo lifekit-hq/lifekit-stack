@@ -227,7 +227,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `intake_spool` | The intake door's held hand-offs: `{pending, oldest_epoch}` (`pending` = occurrences waiting for the retry, `oldest_epoch` = when the oldest was spooled, `null` when none is), or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
-| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`, `doc_door`): `{read, reason}` (`kit_held`, `shape` and `doc_door` add `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
+| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`, `doc_door`): `{read, reason}` (`kit_held`, `shape` and `doc_door` add `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing (for `clip`, why it read only in part), or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | Always `null` (retired, see "Side hustles"); the key stays so v1 consumers are unchanged |
 | `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when there is no clip queue directory |
@@ -456,9 +456,9 @@ no derived feed is read.
   has no `daily-check.json` entry. A channel with no directory has `counts: null`.
 - **Missing sources are said once.** The section's `unavailable[]` lists the
   unreadable input files and `stalled_sources.clip.reason` names them
-  (`unread: events.jsonl`); `read` is `false` only when `daily-check.json`, which
-  the stall check stands on, is among them. No directory at all is `{read: false,
-  reason: "no clip queue directory"}`. None of these is an `errors[]` line: a
+  (`unread: events.jsonl`) with `read: false`; the inputs that did read still give
+  their numbers and stall check. No directory at all is `{read: false, reason: "no
+  clip queue directory"}`. None of these is an `errors[]` line: a
   missing clip output is the clip pipeline's state, not a publisher fault.
 - **Section.** `{schema: "fleet-clip-queue.v1", channels[], egress: {state, since},
   queue_run: {at, age_s}, unavailable[]}`.

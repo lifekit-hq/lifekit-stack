@@ -4418,7 +4418,7 @@ def test_a_missing_events_file_is_one_unread_source_and_the_rest_still_reads(hom
     assert "events_7d" in cosmos["unavailable"]
     assert page["clip_queue"]["unavailable"] == ["events.jsonl"]
     assert page["stalled_sources"]["clip"] == {
-        "read": True,
+        "read": False,
         "reason": "unread: events.jsonl",
     }
     assert not any("clip" in e for e in page["errors"])
