@@ -1180,11 +1180,11 @@ history and install them as `lifekit`.
 
 Decisions waiting on the owner go to the OpenClaw app, not Telegram. Kit keeps one
 ledger in its workspace (`needs-you/open.json`, closed ones in
-`needs-you/closed.jsonl`). Kit's main session is the ledger's only writer, and only
-when a real decision comes up; the mail reader below never writes it (its run has
-no file tool), so an empty ledger with both crons green is a quiet ledger, not a
-broken one. The fleet publisher reads it into the dashboard's queue items
-(`store=needs-you`, scripts/fleet-publisher README "Queue items"). It asks each decision with `ask_user` in its main
+`needs-you/closed.jsonl`). Kit is the ledger's only writer, and only when a real
+decision comes up; the mail reader below never writes it (its run has no file tool),
+so an empty ledger with both crons green is a quiet ledger, not a broken one. The
+fleet publisher reads it into the dashboard's queue items (`store=needs-you`,
+scripts/fleet-publisher README "Queue items"). Kit asks each decision with `ask_user` in its main
 Control UI / WebChat session (`agent:kit:main`), which shows as a card with buttons.
 An answer closes the entry. The contract is kit's `AGENTS.md`, section "Needs you"
 (`defaults/agents/kit/workspace/`). `ask_user` exists only in primary sessions, never
