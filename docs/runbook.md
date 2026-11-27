@@ -944,7 +944,9 @@ change.
 
 **Owner calls go through notify-relay, not `fleet-policy decide`.** fleet-policy
 lives in the maintainer's home on the host, which neither the gateway container
-nor the `lifekit` account can reach.
+nor the `lifekit` account can run directly; the only way in from the gateway is the
+kit-relay `decide` verb ("Decisions through fleet-policy"), and this job does not
+use it.
 
 **Delivery is transition-only, through notify-relay, not an OpenClaw `--announce`.**
 The job is created (and, on every re-run of the ensure script, converged) with
