@@ -26,9 +26,11 @@ sections"). Everything is read from structured sources, never from prose:
   clip_queue    one row per clip channel from the clip queue's own outputs
                 (daily-check.json, egress.json, queue-run.json beside the stats
                 feed, read-only): waiting, oldest age, buffer days, egress, stalled
-  items         one record per open finance item (FLEET_FINANCE_CMD) and per
-                needs-you decision (Kit's ledger), each with the item envelope
-                (owner, class, store, ref, and acceptance when the source has one)
+  items         one record per open finance item (FLEET_FINANCE_CMD), per
+                needs-you decision (Kit's ledger) and per open doc-door document
+                (`door.py list --json` in the gateway), each with the item
+                envelope (owner, class, store, ref, and acceptance when the
+                source has one)
   problems      the three oldest stalled items by first-seen age, one brief line
   side_hustles  per-channel numbers from the clip stats feed (stats.jsonl), as
                 the Monday/Thursday brief lines and the Monday week-sheet rows
@@ -53,6 +55,8 @@ FLEET_SCOUT_STATE (the scout's state dir, `candidates/<date>.txt` inside; unset:
 the scout is not read),
 FLEET_KIT_HELD_CMD (prints the held fleet tasks in Kit's daily notes that have
 no shaping item, as JSON - `kit_held.py check`; unset: not read),
+FLEET_DOC_DOOR_CMD (the same for doc-door's open documents, `door.py list
+--json`; empty skips them, unset skips them too when FLEET_INTAKE_CMD is set),
 FLEET_INSTALLED_PROM (the release gauge's lifekit_installed.prom, which says
 per installed component whether it is behind main; unset: not read),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
@@ -114,6 +118,9 @@ GATEWAY_LABELS = (
 )
 GATEWAY_JOBQ = "/home/node/.openclaw/skills/job-queue/jobq.py"
 GATEWAY_SPOOL = "/home/node/.openclaw/extensions/intake-door/spool.mjs"
+# doc-door runs as the reader agent (scripts/ensure-doc-door.sh); its state is the
+# gateway's ~/.life-state/doc-door, readable only inside the container.
+GATEWAY_DOOR = "/home/node/.openclaw/agents/reader/workspace/skills/doc-door/door.py"
 # The workflows the page explains, each by its vault owner page. A page missing
 # from the vault leaves the link out and lists it under `follow_ups`.
 WORKFLOWS = (
@@ -850,6 +857,7 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
             ("scout", ("idle_hours",)),
             ("kit_held", ("hours",)),
             ("installed", ("behind_hours",)),
+            ("doc_door", ("open_hours",)),
         ):
             if key in cfg:  # optional: absent leaves that source unread
                 block = cfg[key]
@@ -1313,10 +1321,13 @@ def envelope_item(
     since: Any = None,
     acceptance: Any = None,
     origin: Any = None,
+    state: Any = None,
+    fingerprint: Any = None,
 ) -> dict[str, Any]:
     """One item record (0019): `id` is `<store>:<native id>`, `ref` the item's URL
-    when the source gives one, else its native id. `acceptance` and `origin` are
-    present only when the source holds them: an item without one still publishes."""
+    when the source gives one, else its native id. `acceptance`, `origin`, `state`
+    and `fingerprint` are present only when the source holds them: an item without
+    one still publishes."""
     item = {
         "id": f"{envelope['store']}:{native}",
         "source": source,
@@ -1330,6 +1341,10 @@ def envelope_item(
         item["acceptance"] = line
     if line := one_line(origin, TITLE_CUT):
         item["origin"] = line
+    if line := one_line(state, TITLE_CUT):
+        item["state"] = line
+    if line := one_line(fingerprint, TITLE_CUT):
+        item["fingerprint"] = line
     return item
 
 
@@ -1400,6 +1415,111 @@ def needs_you_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, 
             )
         )
     return items, {"read": True, "reason": None}
+
+
+DOOR_REF_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+def door_cmd() -> list[str] | None:
+    """FLEET_DOC_DOOR_CMD as argv; [] for the gateway default; None to skip.
+    Unset, it is the default only while FLEET_INTAKE_CMD is unset too, as for
+    the job ages."""
+    cmd = os.environ.get("FLEET_DOC_DOOR_CMD")
+    if cmd is None:
+        return [] if "FLEET_INTAKE_CMD" not in os.environ else None
+    return shlex.split(cmd) or None
+
+
+def doc_door_read(
+    errors: list[str],
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+    """doc-door's open documents, from `door.py list --json` in the gateway (the
+    state is 0700 to its writer, so it is asked, never read as files): one
+    envelope per document, the report's title and never the document. Returns
+    the valid entries, or None when the source was not read."""
+    argv = door_cmd()
+    if argv is None:
+        return None, {"read": False, "reason": "doc-door skipped"}
+    try:
+        if not argv:
+            argv = ["docker", "exec", gateway(), "python3", GATEWAY_DOOR]
+            argv += ["list", "--json"]
+        doc = json.loads(run(argv, timeout=15))
+        assert isinstance(doc, list)
+    except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as exc:
+        errors.append(f"doc-door documents unreadable ({exc.__class__.__name__})")
+        return None, {"read": False, "reason": "doc-door documents unreadable"}
+    entries = [
+        e
+        for e in doc
+        if isinstance(e, dict)
+        and isinstance(e.get("ref"), str)
+        and DOOR_REF_RE.match(e["ref"])
+        and isinstance(e.get("state"), str)
+    ]
+    return entries, {"read": True, "reason": None}
+
+
+def doc_door_items(entries: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """One item per open document, the store's own envelope kept (owner, origin,
+    acceptance, fingerprint, state); `class` and `store` are the door's."""
+    door = {"class": "life", "store": "doc-door"}
+    return [
+        envelope_item(
+            {"owner": one_line(e.get("owner"), TITLE_CUT) or "reader", **door},
+            "doc-door",
+            "document",
+            e["ref"],
+            title=e.get("title"),
+            since=e.get("since"),
+            acceptance=e.get("acceptance"),
+            origin=e.get("origin"),
+            state=e["state"],
+            fingerprint=e.get("fingerprint"),
+        )
+        for e in entries or []
+    ]
+
+
+def doc_door_stalls(
+    entries: list[dict[str, Any]] | None,
+    source: dict[str, Any],
+    cfg: dict[str, Any] | None,
+    now: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """An open document is stalled once it has been open `doc_door.open_hours`
+    since the door took it in. A document with no intake time is never a row;
+    an unread source or no `doc_door` block leaves the source unread."""
+    if cfg is None or "doc_door" not in cfg:
+        return [], {
+            "read": False,
+            "reason": "no doc_door thresholds in fleet-stalled.json",
+        }
+    if entries is None:
+        return [], source
+    window = int(cfg["doc_door"]["open_hours"] * 3600)
+    owner = cfg["doc_door"].get("owner", "firstmate")
+    rows = []
+    for e in entries:
+        since = e.get("since")
+        if not isinstance(since, int) or isinstance(since, bool):
+            continue
+        if now - since < window:
+            continue
+        rows.append(
+            {
+                "source": "doc",
+                "id": e["ref"],
+                "home_id": None,
+                "title": one_line(e.get("title"), TITLE_CUT),
+                "url": None,
+                "reason": "open",
+                "since": since,
+                "threshold": window,
+                "owner": owner,
+            }
+        )
+    return rows, {"read": True, "reason": None, "open": len(entries)}
 
 
 def scout_stalls(
@@ -1585,6 +1705,7 @@ PROBLEM_SOURCE_KEY = {
     "scout": "scout",
     "held": "kit_held",
     "installed": "installed",
+    "doc": "doc_door",
 }
 PROBLEM_PHRASE = {
     "no-status-line": "silent",
@@ -1598,6 +1719,7 @@ PROBLEM_PHRASE = {
     "no-output": "no output",
     "not-filed": "held, not filed",
     "behind-main": "behind main",
+    "open": "document open",
 }
 
 
@@ -2175,6 +2297,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     stalled, sources, stalled_rows = None, None, None
     cfg = stalled_config(errors)
     clip_section, clip_rows, clip_source = clip_queue(cfg, args.now, errors)
+    door_entries, door_source = doc_door_read(errors)
     if cfg:
         found = backlog_stalls(records, homes, cfg, args.now)
         issues, github = issue_stalls(
@@ -2185,6 +2308,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         scout_rows, scout_source = scout_stalls(cfg, args.now)
         held_rows, held_source = held_stalls(cfg, args.now, errors)
         installed_rows, installed_source = installed_stalls(cfg, args.now)
+        door_rows, door_stalled = doc_door_stalls(
+            door_entries, door_source, cfg, args.now
+        )
         stalled_rows = (
             found
             + issues
@@ -2194,6 +2320,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             + scout_rows
             + held_rows
             + installed_rows
+            + door_rows
         )
         stalled = stalled_section(stalled_rows, cfg["owners"])
         sources = {
@@ -2210,6 +2337,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "scout": scout_source,
             "kit_held": held_source,
             "installed": installed_source,
+            "doc_door": door_stalled,
         }
     depth: dict[str, Any] | None = None
     if os.environ.get("FLEET_INTAKE_CMD") != "":
@@ -2238,7 +2366,12 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     )
     items: list[dict[str, Any]] = []
     item_sources: dict[str, dict[str, Any]] = {}
-    for name, read in (("finance", finance_items), ("needs_you", needs_you_items)):
+    door_read = (doc_door_items(door_entries), door_source)
+    for name, read in (
+        ("finance", finance_items),
+        ("needs_you", needs_you_items),
+        ("doc_door", lambda _errors: door_read),
+    ):
         got, item_sources[name] = read(errors)
         safe = [i for i in got if not withheld(i, pattern)]
         if len(safe) < len(got):

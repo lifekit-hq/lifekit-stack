@@ -2890,6 +2890,17 @@ retried by the next scan. The page edit stays a proposal in the report.
 - **Report copies.** The accepted report itself is also copied into Drive, by rclone under a
   consent of its own that holds `drive.file` only ("Report copies in Drive (rclone)" below). Off
   until that consent is in; the fleet connector and Kit's connector are not involved.
+- **On the fleet page.** `door.py list --json` prints one item envelope per open document
+  (`id` `doc-door:<doc id>`, `origin` `mail`, `owner` `reader`, `class` `life`, `fingerprint`,
+  `acceptance`, `store` `doc-door`, `ref`, `state`, `since`, and the report's `title` once one is
+  filed): never the document, its text, its file name or its mail. A document is open until its
+  report is filed, its original is in Drive, its report copy is in (once that consent is) and its
+  vault log line is appended; `state` says which of these is next (`report-pending`,
+  `drive-pending`, `copy-pending`, `log-pending`) and `since` is when the door took it in. The
+  fleet publisher runs it in the gateway (`docker exec`, as the job ages; `FLEET_DOC_DOOR_CMD`
+  overrides), so the state keeps its mode 700, and marks a document open longer than
+  `doc_door.open_hours` (24) of `fleet-stalled.json` stalled under `life`
+  (`scripts/fleet-publisher/README.md`, "Queue items").
 - **Not a queue job:** a mailbox scan and a MarkItDown conversion fit one cron tick. If either
   proves slow, move conversion to the shared job queue then.
 - **Files handed to an agent in chat** (the second source) and a Drive `Inbox` folder (the third)
@@ -3907,7 +3918,9 @@ are read by the publisher's existing run, read-only, from the directory of
 `FLEET_SCOUT_STATE` (its state dir). The installer sets the first (above); the unit never
 sets `FLEET_SCOUT_STATE`, so point it with a systemd drop-in. Unset, the page says
 `read: false`. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
-drop-in: "Held items become shaping items").
+drop-in: "Held items become shaping items"). Open doc-door documents are one more
+(`doc_door.open_hours`, 24, owner `life`), read by `docker exec` into the gateway like the job
+ages ("Document door").
 Installed components are one more (`installed.behind_hours`, 24): the publisher reads
 the release gauge's `lifekit_installed.prom` from its textfile directory
 (`FLEET_INSTALLED_PROM` overrides), and a component
