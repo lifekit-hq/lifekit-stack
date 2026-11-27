@@ -3517,8 +3517,13 @@ bash scripts/deploy.sh
 `openclaw-gateway`, `openclaw-cli` and `google-workspace-mcp` run as their own
 compose project, `openclaw` (`compose/openclaw/docker-compose.yml`), apart from
 the platform project `compose`. The gateway container is
-`openclaw-openclaw-gateway-1`; scripts find it by its compose labels
-(`com.docker.compose.project=openclaw`, `com.docker.compose.service=openclaw-gateway`).
+`openclaw-openclaw-gateway-1`; host scripts find it through
+`scripts/lib/openclaw-gateway.sh`, by its compose labels
+(`com.docker.compose.project=openclaw`, `com.docker.compose.service=openclaw-gateway`,
+not a one-off, working dir `/srv/lifekit-stack/compose/openclaw`). When more
+than one running container matches, the helper names them all and the script
+stops instead of picking one: stop the extra (rehearsal or throwaway) gateway
+and re-run.
 
 **Cutover.** The first deploy after the move does it by itself, once:
 `openclaw_phase_up` in `scripts/deploy-openclaw.sh` stops and removes the three
@@ -6723,7 +6728,11 @@ went stale while finance-sentry moved on; they were cleaned up by hand twice.
   `AGENTS.md` and `SOUL.md` persona backups (`SOUL.md.bak-*`), OpenClaw's own
   state, inbound chat media, the vault daily notes `memory/YYYY-MM-DD.md`,
   installed `skills/`, and Ledger's MCP helper scripts. It prints one `<area>: <path>` line per hit and exits 1 (0
-  clean, 2 when it cannot run). It never deletes or moves a file.
+  clean, 2 when it cannot run, including when a second container matches the
+  production gateway - see "The OpenClaw compose project: cutover and rollback"). It never deletes or
+  moves a file. The installed copy sources the gateway resolver from
+  `/usr/local/lib/lifekit/openclaw-gateway.sh`, which `install-host-gauges.sh`
+  installs beside it.
 - **The report.** `lifekit-ledger-drift.timer` runs it every 5 minutes as the
   admin account with `--textfile`, which writes
   `ledger_finance_drift_file{area,path}` (1 per hit) and
@@ -6761,8 +6770,8 @@ until the timer is installed the rule sees no data and stays quiet.
 
 **Undo:** `sudo systemctl disable --now lifekit-ledger-drift.timer && sudo rm
 /etc/systemd/system/lifekit-ledger-drift.{service,timer}
-/usr/local/bin/lifekit-ledger-drift.sh /var/lib/node_exporter/textfile/ledger_finance_drift.prom
-&& sudo systemctl daemon-reload`, and drop it from `install-host-gauges.sh` in
+/usr/local/bin/lifekit-ledger-drift.sh /usr/local/lib/lifekit/openclaw-gateway.sh
+/var/lib/node_exporter/textfile/ledger_finance_drift.prom && sudo systemctl daemon-reload`, and drop it from `install-host-gauges.sh` in
 the same PR.
 
 ## OpenClaw auth mode (API key or subscription)
