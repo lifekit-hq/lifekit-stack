@@ -500,6 +500,30 @@ so the dashboard can link through. Read-only; no store is written.
   like `stalled_sources`: unset, the source is `read: false` and says so. An
   unreadable source adds an `errors[]` line; an item matching `CREDENTIAL_RE` is
   withheld and counted in `errors[]`.
+- **The finance command.** `finance_items.py` (installed as
+  `/usr/local/bin/lifekit-fleet-finance.py`) is the VPS's `FLEET_FINANCE_CMD`: it
+  prints finance-sentry's pending thesis revisions and recommendations (not yet
+  expired) and the companion events Ledger has not delivered (held-for-digest left
+  out), each with a one-line `acceptance` and an epoch `since`. The list is the
+  raw table read and does not apply finance-sentry's reconcile step
+  (`SyncFailureReconciler`): a resolved alert's companion event can still show
+  until Ledger next polls the pending-events API, and a held-for-digest event
+  appears late, only once a Ledger poll promotes it. finance-sentry is
+  multi-user, so every list holds only the owner's rows: `FLEET_FINANCE_OWNER`
+  is the owner's finance-sentry `UserId` (a GUID, host config), passed to psql
+  as a variable; unset or empty, the command queries nothing and exits nonzero
+  with `finance owner not configured`, so the source reads `read: false`. `--base-url <the
+  app's public URL>` adds a companion event's app link as `url`; the others carry
+  none. It reads with one SELECT through `docker exec` into finance-sentry's
+  postgres container (by compose labels), in a read-only session, and exits
+  nonzero printing nothing when it cannot read.
+- **Wiring.** The installer carries `FLEET_NEEDS_YOU_LEDGER`, `FLEET_FINANCE_CMD`,
+  `FLEET_FINANCE_OWNER` (refused unless a GUID) (and `FLEET_A2A_CMD`, `FLEET_SCOUT_STATE` for the stalled sources) into the
+  unit, each only when set and non-empty. The ledger defaults to Kit's
+  (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`); since Kit's
+  workspace is not the admin account's to read, the unit binds the ledger's
+  directory read-only at `/run/lifekit-fleet-needs-you` and points the variable
+  there.
 - **Schema.** Still `fleet-status-page.v1`: `items`, `item_sources` and the clip
   rows' envelope keys are new optional keys, and a consumer that ignores them is
   unchanged. The dashboard's rendering is its own issue.

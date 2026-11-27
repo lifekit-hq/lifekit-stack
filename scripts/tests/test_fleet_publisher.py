@@ -1598,7 +1598,7 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     result = subprocess.run(
         ["bash", str(DIR / "install-fleet-publisher.sh")],
         env={
-            **os.environ,
+            **{k: v for k, v in os.environ.items() if k not in ITEM_SOURCES},
             "ADMIN_USER": "fleetadmin",
             "FM_HOMES": " /srv/fleet-home   /srv/main-home ",
             "TASKS_AXI": "/opt/tools/bin/tasks-axi",
@@ -1619,6 +1619,7 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     assert (
         service["Service"]["Environment"]
         == '"FM_HOMES=/srv/fleet-home /srv/main-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
+        ' "FLEET_NEEDS_YOU_LEDGER=/run/lifekit-fleet-needs-you/open.json"'
     )
     assert service["Service"]["Type"] == "oneshot"
     assert "__" not in (units / "lifekit-fleet-publisher.service").read_text()
@@ -1638,6 +1639,9 @@ def test_installer_renders_units_and_enables_the_timer(tmp_path):
     taken = root / "usr/local/bin/lifekit-fleet-taken.py"
     assert os.access(taken, os.X_OK)
     assert taken.read_text() == (DIR / "taken_feed.py").read_text()
+    finance = root / "usr/local/bin/lifekit-fleet-finance.py"
+    assert os.access(finance, os.X_OK)
+    assert finance.read_text() == (DIR / "finance_items.py").read_text()
     screens = root / "usr/local/bin/lifekit-fleet-screens.py"
     assert os.access(screens, os.X_OK)
     assert screens.read_text() == (DIR / "screen_changes.py").read_text()
@@ -1679,19 +1683,36 @@ def test_installer_finds_tasks_axi_through_an_interactive_admin_shell(tmp_path):
     assert "TASKS_AXI=/home/admin/.nvm/bin/tasks-axi" in unit
 
 
+ITEM_SOURCES = (
+    "FLEET_NEEDS_YOU_LEDGER",
+    "FLEET_FINANCE_CMD",
+    "FLEET_FINANCE_OWNER",
+    "FLEET_A2A_CMD",
+    "FLEET_SCOUT_STATE",
+)
+
+
 def run_installer(tmp_path, **env):
+    """The installer under INSTALL_ROOT. The needs-you ledger is off unless a test
+    names it (None: unset, so the installer's default applies)."""
     fake = tmp_path / "systemctl"
     fake.write_text("#!/usr/bin/env bash\n")
     fake.chmod(0o755)
+    merged = {
+        **{
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("FM_HOME", "FM_HOMES", *ITEM_SOURCES)
+        },
+        "TASKS_AXI": "/opt/tools/bin/tasks-axi",
+        "INSTALL_ROOT": str(tmp_path / "root"),
+        "SYSTEMCTL": str(fake),
+        "FLEET_NEEDS_YOU_LEDGER": "",
+        **env,
+    }
     return subprocess.run(
         ["bash", str(DIR / "install-fleet-publisher.sh")],
-        env={
-            **{k: v for k, v in os.environ.items() if k not in ("FM_HOME", "FM_HOMES")},
-            "TASKS_AXI": "/opt/tools/bin/tasks-axi",
-            "INSTALL_ROOT": str(tmp_path / "root"),
-            "SYSTEMCTL": str(fake),
-            **env,
-        },
+        env={k: v for k, v in merged.items() if v is not None},
         capture_output=True,
         text=True,
         check=False,
@@ -1774,6 +1795,99 @@ def test_installer_refuses_a_clip_stats_feed_it_cannot_render(tmp_path, feed):
         tmp_path, FM_HOMES="/srv/fleet-home", FLEET_CLIP_STATS_FEED=feed
     )
     assert result.returncode == 1
+    assert not (tmp_path / "root/etc/systemd").exists()
+
+
+def installed_service(tmp_path):
+    unit = tmp_path / "root/etc/systemd/system/lifekit-fleet-publisher.service"
+    service = configparser.ConfigParser(interpolation=None, strict=False)
+    service.optionxform = str
+    service.read_string(unit.read_text())
+    return service["Service"]
+
+
+KIT_LEDGER = "/srv/openclaw/config/agents/kit/workspace/needs-you/open.json"
+
+
+def test_installer_defaults_the_needs_you_ledger_to_kits_bound_read_only(tmp_path):
+    result = run_installer(
+        tmp_path, FM_HOMES="/srv/fleet-home", FLEET_NEEDS_YOU_LEDGER=None
+    )
+    assert result.returncode == 0, result.stderr
+    service = installed_service(tmp_path)
+    assert service["Environment"] == (
+        '"FM_HOMES=/srv/fleet-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
+        ' "FLEET_NEEDS_YOU_LEDGER=/run/lifekit-fleet-needs-you/open.json"'
+    )
+    # Kit's workspace is the gateway account's alone: the unit reads the ledger's
+    # directory through a read-only bind, and starts without it on a box that has none.
+    assert service["BindReadOnlyPaths"] == (
+        f"-{KIT_LEDGER.rsplit('/', 1)[0]}:/run/lifekit-fleet-needs-you"
+    )
+
+
+def test_installer_carries_every_item_source_into_the_unit(tmp_path):
+    result = run_installer(
+        tmp_path,
+        FM_HOMES="/srv/fleet-home",
+        FLEET_NEEDS_YOU_LEDGER="/srv/kit/needs-you/ledger.json",
+        FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py"
+        " --base-url https://finance.example",
+        FLEET_FINANCE_OWNER="0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01",
+        FLEET_A2A_CMD="/usr/local/bin/a2a-threads --json",
+        FLEET_SCOUT_STATE="/home/denys/.local/state/lifekit-scout",
+    )
+    assert result.returncode == 0, result.stderr
+    service = installed_service(tmp_path)
+    assert service["Environment"] == (
+        '"FM_HOMES=/srv/fleet-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
+        ' "FLEET_NEEDS_YOU_LEDGER=/run/lifekit-fleet-needs-you/ledger.json"'
+        ' "FLEET_FINANCE_CMD=python3 /usr/local/bin/lifekit-fleet-finance.py'
+        ' --base-url https://finance.example"'
+        ' "FLEET_A2A_CMD=/usr/local/bin/a2a-threads --json"'
+        ' "FLEET_FINANCE_OWNER=0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01"'
+        ' "FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout"'
+    )
+    assert service["BindReadOnlyPaths"] == (
+        "-/srv/kit/needs-you:/run/lifekit-fleet-needs-you"
+    )
+    # The finance command is installed beside the publisher.
+    assert (tmp_path / "root/usr/local/bin/lifekit-fleet-finance.py").is_file()
+
+
+def test_installer_leaves_empty_item_sources_out_of_the_unit(tmp_path):
+    env = {name: "" for name in ITEM_SOURCES}
+    result = run_installer(tmp_path, FM_HOMES="/srv/fleet-home", **env)
+    assert result.returncode == 0, result.stderr
+    service = installed_service(tmp_path)
+    assert service["Environment"] == (
+        '"FM_HOMES=/srv/fleet-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
+    )
+    assert "BindReadOnlyPaths" not in service
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("FLEET_NEEDS_YOU_LEDGER", "relative/open.json"),
+        ("FLEET_NEEDS_YOU_LEDGER", "/srv/a b/open.json"),
+        ("FLEET_NEEDS_YOU_LEDGER", "/open.json"),
+        ("FLEET_FINANCE_CMD", 'python3 "x"'),
+        ("FLEET_FINANCE_CMD", "cat /x | sh"),
+        ("FLEET_FINANCE_CMD", "echo %h"),
+        ("FLEET_A2A_CMD", "echo $HOME"),
+        ("FLEET_A2A_CMD", "a & b"),
+        ("FLEET_FINANCE_OWNER", "owner"),
+        ("FLEET_FINANCE_OWNER", "0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01 x"),
+        ("FLEET_FINANCE_OWNER", "0b8f6a523c1d4e7a9f205d6c7b8a9e01"),
+        ("FLEET_SCOUT_STATE", "relative/scout"),
+        ("FLEET_SCOUT_STATE", "/srv/a b"),
+    ],
+)
+def test_installer_refuses_an_item_source_it_cannot_render(tmp_path, name, value):
+    result = run_installer(tmp_path, FM_HOMES="/srv/fleet-home", **{name: value})
+    assert result.returncode == 1
+    assert name in result.stderr
     assert not (tmp_path / "root/etc/systemd").exists()
 
 

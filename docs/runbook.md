@@ -3943,12 +3943,22 @@ changing a number is a PR to that file and a re-install, never a code change.
 The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
 publisher can reach exists; the page says so. The queue items
 (`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD` and
-`FLEET_NEEDS_YOU_LEDGER`; neither the installer nor the unit sets them, so point
-them with a systemd drop-in. Unset, their `item_sources` entry says `read: false`
-and they add no items. The `jobq` items need no setting: they come from the
-stalled jobs' read (`jobq.py list --json` in the gateway, README "Jobs"). Open
-doc-door documents need no drop-in either: they are read by `docker exec` into the
-gateway by default ("Document door").
+`FLEET_NEEDS_YOU_LEDGER`. The installer carries both, and `FLEET_A2A_CMD` and
+`FLEET_SCOUT_STATE`, into the unit the same way as `FLEET_CLIP_STATS_FEED`: only
+when set and non-empty, so a re-install without them drops the line. The one
+exception is the ledger, which defaults to Kit's
+(`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`, bound read-only
+into the unit because Kit's workspace is not the admin account's to read;
+`FLEET_NEEDS_YOU_LEDGER=` turns it off). On the VPS pass
+`FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py"` (the
+read-only finance-sentry command the installer puts there; README "Queue items")
+with `FLEET_FINANCE_OWNER=<owner UserId GUID>` (a GUID: the command
+lists only that user's rows and reads nothing without it) and `FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout` beside `FM_HOMES`.
+Unset, their `item_sources` entry says `read: false` and they add no items. The
+`jobq` items need no setting: they come from the stalled jobs' read (`jobq.py
+list --json` in the gateway, README "Jobs"). Open doc-door documents need no
+setting either: they are read by `docker exec` into the gateway by default
+("Document door").
 Clip and scout are two more stalled sources (`clip`, `scout` blocks of the same file:
 `buffer_floor_days`, `slot_window_hours`, `idle_hours`), and
 `status_page.clip_queue` publishes one row per clip channel (cosmos, mind, neural, yc,
@@ -3956,9 +3966,8 @@ vice-footage: waiting, oldest age, buffer days, egress, stalled; README "Clip qu
 are read by the publisher's existing run, read-only, from the directory of
 `FLEET_CLIP_STATS_FEED` (the clip queue's `daily-check.json`, `egress.json`,
 `queue-run.json`; a missing input shows as unavailable, never zero) and, for the scout,
-`FLEET_SCOUT_STATE` (its state dir). The installer sets the first (above); the unit never
-sets `FLEET_SCOUT_STATE`, so point it with a systemd drop-in. Unset, the page says
-`read: false`. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
+`FLEET_SCOUT_STATE` (its state dir). The installer carries both (above). Unset, the page
+says `read: false`. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
 drop-in: "Held items become shaping items"). Open doc-door documents are one more
 (`doc_door.open_hours`, 24, owner `life`), read by `docker exec` into the gateway like the job
 ages ("Document door").
@@ -4032,9 +4041,26 @@ systemctl list-timers 'lifekit-fleet-publisher*'
 cat /var/lib/node_exporter/textfile/fleet.prom
 ```
 
+On the VPS the full set, so a re-install keeps every source (the needs-you ledger is
+the default and needs no flag):
+
+```bash
+sudo FM_HOMES="<fleet home> [<fleet home> ...]" \
+  FLEET_CLIP_STATS_FEED=/home/denys/clip-data/queue/stats.jsonl \
+  FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py" \
+  FLEET_FINANCE_OWNER=<owner UserId GUID> \
+  FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout \
+  bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
+jq '.status_page | {items: [.items[].id], item_sources}' /var/lib/lifekit-fleet/home-summary.json
+```
+
+After the next run, `item_sources.finance` and `item_sources.needs_you` are `read: true`
+and `items` lists the open finance items and needs-you decisions.
+
 `bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
-set and skips it otherwise (it passes no `FLEET_PLAN_MAP` or `FLEET_CLIP_STATS_FEED`, so re-run the
-installer by hand to restore one). Re-running the installer is how a home is
+set and skips it otherwise (it passes no `FLEET_PLAN_MAP`, `FLEET_CLIP_STATS_FEED`,
+`FLEET_FINANCE_CMD`, `FLEET_FINANCE_OWNER`, `FLEET_A2A_CMD` or `FLEET_SCOUT_STATE`, so re-run the installer by hand
+to restore one). Re-running the installer is how a home is
 added or removed: it reinstalls the script and rewrites the unit's `FM_HOMES`.
 The `lifekit-*.timer` glob in the unit gauge picks the timer up with no further
 change. Merge deploys the Grafana rule and dashboard.
