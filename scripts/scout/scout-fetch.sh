@@ -6,9 +6,15 @@
 # a candidates file and sends ONE note to firstmate's inbox (count + path). No
 # new items: no file, no note, no model call. See scripts/scout/README.md.
 #
+# A feed seen for the first time (not yet in the lens database: a new lens or
+# a source just added to one) is caught up before the normal fetch, so its back
+# catalogue is recorded as seen instead of reaching the judge as a backlog.
+# Each lens's items are written grouped by feed, newest first, at most LENS_CAP
+# per lens and day, shared fairly between its feeds.
+#
 #   scout-fetch.sh            normal run (the timer)
 #   scout-fetch.sh --catchup  record everything currently in the feeds as seen;
-#                             sends nothing (seed a new lens or a fresh state)
+#                             sends nothing (reset a lens by hand)
 #
 # Environment (all optional but FM_INBOX_BIN):
 #   FM_INBOX_BIN    path to fm-inbox.sh (required)
@@ -31,6 +37,8 @@ LENS_DIR="${SCOUT_LENS_DIR:-/srv/memory/system/scout}"
 STATE="${SCOUT_STATE_DIR:-$HOME/.local/state/lifekit-scout}"
 FEED2EXEC="${FEED2EXEC:-feed2exec}"
 TODAY="${SCOUT_DATE:-$(date -u +%F)}"
+LENS_CAP=60  # the judge's triage cap; the rest go to candidates/<date>.overflow
+HERE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 CAND="$STATE/candidates"
 
 [[ -n "${FM_INBOX_BIN:-}" ]] || { echo "scout-fetch: FM_INBOX_BIN is not set" >&2; exit 2; }
@@ -107,17 +115,59 @@ for page in "$LENS_DIR"/*.md; do
   reason="$(validate_ini "$WORK/$lens.ini")"
   [[ -z "$reason" ]] || { report_broken "$lens" "$reason"; continue; }
 
-  args=(-v --config "$WORK/$lens.ini" --database "$STATE/db/$lens.sqlite" fetch)
-  ((CATCHUP)) && args+=(--catchup)
-  "$FEED2EXEC" "${args[@]}" >"$WORK/$lens.out" 2>"$WORK/$lens.err"; rc=$?
-  # feed2exec has already marked whatever it printed as seen, so the printed
-  # lines are the only copy: keep every one, even when the run then failed.
-  if ((!CATCHUP)) && grep -q '[^[:space:]]' "$WORK/$lens.out"; then
-    grep '[^[:space:]]' "$WORK/$lens.out" | sed "s/^/$lens\t/" >>"$CAND/$TODAY.txt"
-    rm -f "$CAND/$TODAY.sent"
+  db="$STATE/db/$lens.sqlite"
+  if ((CATCHUP)); then
+    "$FEED2EXEC" -v --config "$WORK/$lens.ini" --database "$db" fetch --catchup \
+      >/dev/null 2>"$WORK/$lens.err"; rc=$?
+  else
+    # First sighting: catch up the feeds not seen yet, so a new source's back
+    # catalogue is recorded as seen, not offered. scout_order.py fetches each
+    # one itself and hands feed2exec a local copy, only when the answer was a
+    # 2xx feed: an error page must not count as caught up.
+    python3 "$HERE/scout_order.py" seed "$WORK/$lens.ini" "$db" "$WORK/$lens.seed" >"$WORK/$lens.seed.ini" \
+      || { report_broken "$lens" "cannot read its feed config or database"; continue; }
+    if [[ -s "$WORK/$lens.seed.ini" ]]; then
+      if ! "$FEED2EXEC" -v --config "$WORK/$lens.seed.ini" --database "$db" fetch --catchup \
+        >/dev/null 2>"$WORK/$lens.err"; then
+        report_broken "$lens" "first-sighting catch-up failed ($(tail -n1 "$WORK/$lens.err" | cut -c1-160))"
+        continue
+      fi
+      python3 "$HERE/scout_order.py" seeded "$WORK/$lens.seed.ini" "$db" \
+        || { report_broken "$lens" "cannot record its caught-up feeds"; continue; }
+    fi
+    # The normal fetch covers only feeds seen before: one whose catch-up
+    # failed is reported below and caught up on a later run.
+    python3 "$HERE/scout_order.py" config "$WORK/$lens.ini" "$db" >"$WORK/$lens.fetch.ini" \
+      || { report_broken "$lens" "cannot read its feed config or database"; continue; }
+    rc=0
+    : >"$WORK/$lens.out"
+    if [[ -s "$WORK/$lens.fetch.ini" ]]; then
+      PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" "$FEED2EXEC" -v --config "$WORK/$lens.fetch.ini" \
+        --database "$db" fetch >"$WORK/$lens.out" 2>"$WORK/$lens.err"; rc=$?
+    fi
+    # feed2exec has already marked whatever it printed as seen, so the printed
+    # lines are the only copy: keep every one, even when the run then failed.
+    if grep -q '[^[:space:]]' "$WORK/$lens.out"; then
+      have=0  # a later same-day run spends what is left of the lens's cap
+      [[ -f "$CAND/$TODAY.txt" ]] && have="$(awk -F'\t' -v l="$lens" '$1 == l { n++ } END { print n + 0 }' "$CAND/$TODAY.txt")"
+      budget=$((LENS_CAP > have ? LENS_CAP - have : 0))
+      if ! python3 "$HERE/scout_order.py" order "$lens" "$budget" "$CAND/$TODAY.overflow" \
+        <"$WORK/$lens.out" >"$WORK/$lens.cand"; then
+        echo "scout-fetch: ordering lens $lens failed; keeping its items in feed order" >&2
+        grep '[^[:space:]]' "$WORK/$lens.out" | cut -f3- | sed "s/^/$lens\t/" >"$WORK/$lens.cand"
+      fi
+      if [[ -s "$WORK/$lens.cand" ]]; then
+        cat "$WORK/$lens.cand" >>"$CAND/$TODAY.txt"
+        rm -f "$CAND/$TODAY.sent"
+      fi
+    fi
   fi
   if ((rc != 0)); then
     report_broken "$lens" "feed2exec failed ($(tail -n1 "$WORK/$lens.err" | cut -c1-160))"
+    continue
+  fi
+  if [[ -s "$WORK/$lens.seed/failed" ]]; then
+    report_broken "$lens" "first-sighting catch-up failed for $(cut -c1-300 "$WORK/$lens.seed/failed")"
     continue
   fi
   rm -f "$STATE/broken/$lens"
