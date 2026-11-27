@@ -2718,16 +2718,27 @@ and never messages the owner.
   A lookup that errors counts as a receipt and is listed in the run's `errors`.
 - **Filing.** Each unrouted item goes through the intake door's `file()` in the gateway
   (project `fleet`, owner `firstmate`, class `unclear`, fingerprint
-  `unrouted-<agent>-<day>-<hash>`). `filed.json` in the state dir keeps the door's receipt,
-  so a rerun files nothing twice. The thread is `<agent>/<channel>/<day>`, never the session
-  key, which holds the owner's chat id.
+  `unrouted-<agent>-<day>-<hash>`). `fleet` files into a public repo, so the item is
+  redacted: its title and body carry only the agent, the day and the thread
+  (`<agent>/<channel>/<day>`, never the session key, which holds the owner's chat id). The
+  quote never leaves the host: read it in `unrouted.json` under the item's fingerprint, or
+  in the thread. The hash is built from the conversation and the time of the message the
+  item is anchored to, not from the model's quote, so a rerun that quotes differently maps
+  to the same fingerprint; `filed.json` in the state dir keeps the door's receipt, so a
+  rerun files nothing twice.
 - **State.** `/var/lib/lifekit-fleet/unrouted/unrouted.json` keeps the last run's time and the
   unrouted items of the last 7 days. The fleet publisher reads it through
   `FLEET_UNROUTED_STATE` and shows a stalled `unrouted-check` row after 26 hours with no run
   (`unrouted.hours` in `fleet-stalled.json`). A run that cannot read the chats records
-  nothing, so that row shows it.
+  nothing, so that row shows it, titled with the first missed day (the day after the last
+  checked one).
 - **Dead-man by hand.** `python3 /srv/lifekit-stack/scripts/unrouted/unrouted.py --check`
-  prints the last run's age and exits 1 when there is none or it is older than 26 hours.
+  prints the last run's age and exits 1 when there is none or it is older than 26 hours;
+  `missed_day` names the day to rerun.
+- **A missed day.** Each run checks only the day before it, so a day the timer missed is
+  not checked again on its own. When the `unrouted-check` row appears, rerun that day as
+  the admin account, and each later day the timer also missed:
+  `python3 /srv/lifekit-stack/scripts/unrouted/unrouted.py --day <missed day> --home <main home> --home <second-mate home> --receipt-file /var/lib/lifekit/intake/index.md --receipt-file ~/.local/state/lifekit-kit-held/filed.json`.
 
 **Operator steps** (once, after the merge deploys):
 

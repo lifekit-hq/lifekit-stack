@@ -4955,6 +4955,11 @@ def test_the_unrouted_check_is_stalled_after_26_hours_without_a_run(homes):
     rows = [i for g in page["stalled"] for i in g["items"] if i["source"] == "unrouted"]
     assert [(r["id"], r["reason"]) for r in rows] == [("unrouted-check", "no-run")]
     assert rows[0]["threshold"] == 26 * 3600 and rows[0]["since"] == NOW - 27 * 3600
+    # The state's last checked day is 2027-01-14: the first missed one is the next.
+    assert (
+        rows[0]["title"]
+        == "the daily unrouted check: rerun unrouted.py --day 2027-01-15"
+    )
     group = next(g for g in page["stalled"] if g["owner"] == "firstmate")
     assert "unrouted-check" in [i["id"] for i in group["items"]]
 

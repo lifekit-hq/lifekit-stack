@@ -21,9 +21,11 @@ This job is the mechanical safety net behind it. Once a day it:
      intake spool receipt (`spool:<key>`), a GitHub issue or pull request (gh),
      or a line of a receipt file (the intake index, Kit's held-item record);
   5. files each ask or promise with no receipt through the intake door
-     (`file_intake` in the gateway, project `fleet`, one fingerprint per item so
-     a rerun never files twice) and writes the state file the fleet publisher
-     lists on the fleet page as `unrouted` (FLEET_UNROUTED_STATE).
+     (`file_intake` in the gateway, project `fleet`, redacted to the agent, the
+     day and the thread - no chat words; one fingerprint per item, from the
+     conversation and the anchor message's time, so a rerun never files twice)
+     and writes the state file the fleet publisher lists on the fleet page as
+     `unrouted` (FLEET_UNROUTED_STATE), the one place the quote is kept.
 
 It never sends a chat message and never writes an agent's memory: a false
 positive costs one line on the fleet page. A receipt it cannot check (gh or the
@@ -43,7 +45,7 @@ Usage:
 replay test). --no-file lists and writes nothing to the door or the state dir
 and prints the run's items as JSON (a dry run). --check is the dead-man: it
 prints the last run's age and exits 1 when no run is recorded or the last one
-is older than --hours (26).
+is older than --hours (26), naming the missed day to rerun with --day.
 
 Environment: UNROUTED_MODEL_CMD (argv that takes the prompt on stdin and prints
 the model's answer; default `claude -p ...` with UNROUTED_CLAUDE, default
@@ -469,9 +471,11 @@ def turn_replies(conv: Conversation, anchor: int) -> str:
 # --- one run -------------------------------------------------------------------
 
 
-def fingerprint(agent: str, day: str, quote: str) -> str:
-    h = hashlib.sha256(f"{agent}|{day}|{quote.lower()}".encode()).hexdigest()[:10]
-    return f"unrouted-{agent}-{day}-{h}"
+def fingerprint(agent: str, day: str, session_key: str, ask_at: str) -> str:
+    """Stable across reruns: built from the conversation and the time of the
+    message the item is anchored to, never from the model's quote."""
+    h = hashlib.sha256(f"{agent}|{day}|{session_key}|{ask_at}".encode()).hexdigest()
+    return f"unrouted-{agent}-{day}-{h[:10]}"
 
 
 def extract(
@@ -522,7 +526,9 @@ def assess(
                 "receipt": rid if verdict in ("found", "unchecked") else None,
                 "receipt_cited": rid if verdict == "missing" else None,
                 "routed": verdict in ("found", "unchecked"),
-                "fingerprint": fingerprint(conv.agent, day, quote),
+                "fingerprint": fingerprint(
+                    conv.agent, day, conv.session_key, conv.messages[anchor]["ts"]
+                ),
             }
         )
     return out
@@ -546,26 +552,26 @@ def door_argv() -> tuple[list[str], bool]:
 
 
 def door_item(item: dict[str, Any]) -> dict[str, Any]:
-    """The file_intake arguments. The thread names the agent, channel and day,
-    never the session key, which carries the owner's chat id."""
+    """The file_intake arguments, redacted: project `fleet` files into a public
+    repo, so no chat words leave the host. The title and body carry only the
+    agent, the day and the thread; the quote stays in unrouted.json under the
+    fingerprint. The thread names the agent, channel and day, never the session
+    key, which carries the owner's chat id."""
     what = "ask" if item["kind"] == "ask" else "promise"
+    thread = f"{item['agent']}/{item['channel'] or 'chat'}/{item['day']}"
+    where = f"this fingerprint in {DEFAULT_STATE}/unrouted.json"
     return {
         "project": "fleet",
-        "title": f"Unrouted {what} ({item['agent']}, {item['day']}): {item['quote']}"[
-            :120
-        ],
+        "title": f"Unrouted {what} ({item['agent']}, {item['day']}):"
+        " read the thread on the host",
         "body": "\n".join(
             [
                 f"The daily unrouted check found an owner {what} with no receipt.",
+                f"The words stay on the host: read the thread, or {where}.",
                 "",
                 f"- agent: {item['agent']}",
-                f"- said: {item['at']}",
-                f"- quote: {item['quote']}",
-                *(
-                    [f"- cited receipt not found: {item['receipt_cited']}"]
-                    if item.get("receipt_cited")
-                    else []
-                ),
+                f"- day: {item['day']}",
+                f"- thread: {thread}",
             ]
         ),
         "fingerprint": item["fingerprint"],
@@ -574,7 +580,7 @@ def door_item(item: dict[str, Any]) -> dict[str, Any]:
             "owner": "firstmate",
             "class": "unclear",
             "acceptance": "The ask or promise is done, or routed with a receipt the owner was shown",
-            "thread": f"{item['agent']}/{item['channel'] or 'chat'}/{item['day']}",
+            "thread": thread,
         },
     }
 
@@ -701,6 +707,15 @@ def run(args: argparse.Namespace) -> int:
     return 1 if errors else 0
 
 
+def next_day(day: Any) -> str | None:
+    """The day after the last checked one: the first day a stalled check
+    missed, to rerun with --day."""
+    try:
+        return (dt.date.fromisoformat(str(day)) + dt.timedelta(days=1)).isoformat()
+    except ValueError:
+        return None
+
+
 def check(args: argparse.Namespace) -> int:
     now = int(args.now or time.time())
     try:
@@ -718,6 +733,7 @@ def check(args: argparse.Namespace) -> int:
             {
                 "ran_at": ran,
                 "day": doc.get("day"),
+                "missed_day": next_day(doc.get("day")) if stale else None,
                 "age_hours": round(age, 1),
                 "stale": stale,
                 "unrouted": len(doc.get("items") or []),

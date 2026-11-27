@@ -329,7 +329,7 @@ line), never a guess.
 | Kit's held item | an open line of Kit's daily notes that names a fleet task and has no shaping item, for `kit_held.hours` (24) | `kit_held.hours` | when `kit_held.py check` first saw it unfiled | `kit_held.owner` (`firstmate`) |
 | Installed component (a host unit or workspace piece an `install-*`/`ensure-*` script deploys) | origin/main changed a path the component owns (`scripts/release-gauge/components.txt`) more than `installed.behind_hours` (24) ago and its installer has not run since | `installed.behind_hours` | the commit time of the oldest change on main not installed (`lifekit_component_behind_since_seconds` in `FLEET_INSTALLED_PROM`) | `installed.owner` (`ops`) |
 | Shape stage (decision 0019, amended 2026-11-26) | in Shape for `shape.days` (3): a captain-held backlog record whose id starts with one of `shape.id_prefixes` (`shape-`, the intake shape step's accepted idea; `held-`, Kit's held item), or an open issue of a registered project that carries an owner ask (a label starting with one of `shape.ask_label_prefixes`, the intake door's `intake:<fingerprint>` receipt) and not `shape.ready_label` (`ready`) | `shape.days`, `shape.id_prefixes`, `shape.ask_label_prefixes`, `shape.ready_label` | an issue's `createdAt`; a record's creation date, else the first run that saw it in Shape | `shape.owner` (`firstmate`) for a record; an issue's owner as in the GitHub row |
-| Daily unrouted check | no run for `unrouted.hours` (26: a daily job that missed a day) | `unrouted.hours` | the last run's `ran_at` in `FLEET_UNROUTED_STATE` | `unrouted.owner` (`firstmate`) |
+| Daily unrouted check | no run for `unrouted.hours` (26: a daily job that missed a day); the title names the first missed day to rerun with `--day` | `unrouted.hours` | the last run's `ran_at` in `FLEET_UNROUTED_STATE` | `unrouted.owner` (`firstmate`) |
 | Open doc-door document | open (report, Drive filing, report copy or vault log line still to do) for `doc_door.open_hours` (24) | `doc_door.open_hours` | when the door took the document in | `doc_door.owner` (`life`) |
 | Open devclaw goal or task | its `since` older than `devclaw.idle_hours` (48) | `devclaw.idle_hours` | the envelope's `since` (a goal's latest session start or end, else its creation; a task's start or creation) | the envelope's `class` when it is an owner (`dev`), else `devclaw.owner` (`dev`) |
 | fm-inbox note (`<home>/state/inbox/*.note` of each home; acknowledging moves it to `handled/`) | pending for `inbox.hours` (48) | `inbox.hours` | the note's `at` | `inbox.owner` (`firstmate`) |
@@ -417,7 +417,9 @@ line), never a guess.
 - **The daily unrouted check** (lifekit-stack#687) writes `unrouted.json`
   (`FLEET_UNROUTED_STATE`, `/var/lib/lifekit-fleet/unrouted/unrouted.json` on the
   VPS). Its dead-man is one `unrouted` row (`id` `unrouted-check`, `reason`
-  `no-run`) once its `ran_at` is `unrouted.hours` old; a run that could not read
+  `no-run`, title `the daily unrouted check: rerun unrouted.py --day <day>`, the
+  day after the state's last checked `day`) once its `ran_at` is
+  `unrouted.hours` old; a run that could not read
   the chats records nothing, so the row shows it. One read feeds the row and the
   `unrouted` items below. Unset, missing, or with no `unrouted` block, the source
   is `read: false`. Setup: docs/runbook.md, "Daily unrouted check".

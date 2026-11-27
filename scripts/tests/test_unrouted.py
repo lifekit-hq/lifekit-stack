@@ -176,6 +176,76 @@ def test_unrouted_items_are_filed_once_without_the_session_key(env):
     assert len(env.doc()["items"]) == 4
 
 
+def test_the_door_item_carries_no_chat_words(env):
+    """`fleet` files into a public repo: the filed item names the agent, the
+    day and the thread, and none of the words the chat said."""
+    assert env.run(DAY_25) == 0
+    texts = [
+        json.loads(line)["text"]
+        for line in CHATS.read_text().splitlines()
+        if json.loads(line)["ts"].startswith("2026-11-25")
+    ]
+    quotes = [i["quote"] for i in env.doc()["items"]]
+    assert quotes and all(quotes)
+    filed = env.filed()
+    assert len(filed) == 4
+    for item in filed:
+        payload = json.dumps(item)
+        for words in texts + quotes:
+            assert words not in payload
+            assert json.dumps(words)[1:-1] not in payload
+        assert item["envelope"]["thread"].endswith("/telegram/2026-11-25")
+        assert "2026-11-25" in item["title"] and "2026-11-25" in item["body"]
+
+
+def chat(ts, role, text, owner=None):
+    return {
+        "agent": "kit", "session_key": "agent:kit:telegram:direct:100000002",
+        "channel": "telegram", "chat_type": "direct", "ts": ts, "role": role,
+        "owner": owner, "text": text,
+    }  # fmt: skip
+
+
+def test_two_asks_with_the_same_words_are_both_filed(env, tmp_path):
+    chats = tmp_path / "same.jsonl"
+    chats.write_text(
+        "".join(
+            json.dumps(m) + "\n"
+            for m in (
+                chat(
+                    "2026-11-25T09:00:00.000Z", "assistant", "Plan A: rename the job."
+                ),
+                chat("2026-11-25T09:01:00.000Z", "user", "do this", owner=True),
+                chat("2026-11-25T09:01:10.000Z", "assistant", "Noted."),
+                chat(
+                    "2026-11-25T17:00:00.000Z", "assistant", "Plan B: split the page."
+                ),
+                chat("2026-11-25T17:02:00.000Z", "user", "do this", owner=True),
+                chat("2026-11-25T17:02:10.000Z", "assistant", "Noted."),
+            )
+        )
+    )
+    assert env.run(DAY_25, "--chats", str(chats)) == 0
+    items = env.doc()["items"]
+    assert [i["quote"] for i in items] == ["do this", "do this"]
+    assert len({i["fingerprint"] for i in items}) == 2
+    filed = env.filed()
+    assert len(filed) == 2
+    assert len({f["fingerprint"] for f in filed}) == 2
+
+
+def test_a_rerun_that_quotes_other_words_files_nothing_twice(env, monkeypatch):
+    assert env.run(DAY_25) == 0
+    first = env.doc()["items"]
+    assert len(env.filed()) == 4
+    monkeypatch.setenv("FAKE_MODEL_QUOTE_WORDS", "2")
+    assert env.run(DAY_25 + 3600) == 0
+    again = env.doc()["items"]
+    assert [i["quote"] for i in again] != [i["quote"] for i in first]
+    assert [i["fingerprint"] for i in again] == [i["fingerprint"] for i in first]
+    assert len(env.filed()) == 4
+
+
 def test_routed_items_are_not_listed(env):
     assert env.run(DAY_24) == 0
     assert env.filed() == []
@@ -217,8 +287,10 @@ def test_check_is_the_dead_man(env, capsys):
     assert unrouted.main(fresh) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["stale"] is False and out["unrouted"] == 4
+    assert out["missed_day"] is None
     stale = ["--check", "--state", str(env.state), "--now", str(DAY_25 + 27 * 3600)]
     assert unrouted.main(stale) == 1
+    assert json.loads(capsys.readouterr().out)["missed_day"] == "2026-11-26"
 
 
 def test_a_bad_day_is_usage(env):
