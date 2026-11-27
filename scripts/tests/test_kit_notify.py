@@ -178,6 +178,28 @@ def test_check_failed_exits_nonzero_with_the_reason_and_keeps_the_job(tmp_path):
     assert listed(tmp_path) == [{"id": "job-1", "name": "x"}]
 
 
+def test_check_failed_never_prints_the_chat_id_the_gateway_names(tmp_path):
+    # The shape OpenClaw 2026.11.9 records when Telegram refuses the owner DM
+    # (seen on a throwaway gateway against a fake Bot API): the error names
+    # the resolved chat twice. The reason must survive, the chat id must not.
+    named = {
+        **FAILED,
+        "status": "ok",
+        "deliveryStatus": "not-delivered",
+        "deliveryError": (
+            f"Telegram send failed: chat not found (chat_id={CHAT}). "
+            f'Input was: "telegram:{CHAT}". | Call to \'sendMessage\' failed! '
+            "(400: Bad Request: chat not found) | group migrated (new -100… id)"
+        ),
+    }
+    env = box(tmp_path, runs=[[named]], jobs=[{"id": "job-1", "name": "x"}])
+    r = run(env, "check", "job-1")
+    assert r.returncode == 1
+    assert "chat not found" in r.stderr and "400: Bad Request" in r.stderr
+    assert CHAT not in r.stdout + r.stderr
+    assert listed(tmp_path) == [{"id": "job-1", "name": "x"}]
+
+
 def test_check_suppressed_delivery_is_a_failure(tmp_path):
     env = box(tmp_path, runs=[[SILENT]])
     r = run(env, "check", "job-1")

@@ -164,7 +164,7 @@ check_once() {
   out="$(docker exec "$GATEWAY" openclaw cron runs "$job_id" --json 2>&1)" ||
     die "cron runs $job_id failed: $(tail -n 3 <<<"$out")"
   verdict="$(pick_json entries <<<"$out" | python3 -c '
-import json, sys
+import json, re, sys
 runs = [e for e in json.load(sys.stdin)["entries"] if e.get("action", "finished") == "finished"]
 if not runs:
     print("not-yet-run: no finished run recorded yet")
@@ -176,9 +176,12 @@ if run.get("deliveryStatus") == "delivered" and run.get("delivered") is not Fals
     where = "/".join(str(d[k]) for k in ("channel", "accountId") if d.get(k))
     print(f"delivered: run finished {when}" + (f" via {where}" if where else ""))
     sys.exit(0)
-reason = (run.get("deliveryError") or run.get("error")
-          or run.get("deliverySuppressionReason") or run.get("errorReason")
-          or "no reason recorded")
+reason = str(run.get("deliveryError") or run.get("error")
+             or run.get("deliverySuppressionReason") or run.get("errorReason")
+             or "no reason recorded")
+# The gateway names the resolved chat in its errors ("chat_id=<id>",
+# "telegram:<id>"): mask every chat-id-shaped number so none is printed.
+reason = re.sub(r"-?\b\d{5,}\b", "<chat-id>", reason)
 status, delivery = run.get("status"), run.get("deliveryStatus")
 print(f"failed: run finished {when}, status={status}, delivery={delivery}: {reason}")
 sys.exit(1)')" || rc=$?
