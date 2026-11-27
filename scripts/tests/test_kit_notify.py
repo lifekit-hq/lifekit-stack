@@ -219,7 +219,7 @@ def test_check_failed_never_prints_the_chat_id_the_gateway_names(tmp_path):
         "deliveryStatus": "not-delivered",
         "deliveryError": (
             f"Telegram send failed: chat not found (chat_id={CHAT}). "
-            f'Input was: "telegram:{CHAT}". | Call to \'sendMessage\' failed! '
+            f"Input was: \"telegram:{CHAT}\". | Call to 'sendMessage' failed! "
             "(400: Bad Request: chat not found) | group migrated (new -100… id)"
         ),
     }
