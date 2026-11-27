@@ -5,9 +5,9 @@ added to one) is caught up silently, so its back catalogue never reaches the
 judge; after that a run with new items sends exactly one note carrying the
 count and the candidates path, and a second run sends none; each feed's items
 are written newest first even when the feed lists them oldest first, and a big
-feed gets only its fair share of the per-lens cap beside small ones; reoffered
-lines are offered once; a lens page that
-cannot be fed to feed2exec safely is skipped and reported once (not every day);
+feed gets only its fair share of the per-lens cap beside small ones; a feed
+reached while empty is not caught up again when it first publishes; a lens page
+that cannot be fed to feed2exec safely is skipped and reported once (not every day);
 `scout: off` and non-lens pages are ignored; `--catchup` records items as seen
 and sends nothing; a failed note is retried instead of lost; the installer puts
 down the units without enabling the timer. feed2exec and fm-inbox.sh are stubs;
@@ -36,6 +36,8 @@ TIMER = DIR / "lifekit-scout.timer"
 # 1000*i and listed newest first, or oldest first with `order = asc`. The seen
 # database is a real feedcache table, as feed2exec keeps it. With the echo plugin
 # an item prints as the echo line; with scout_echo as feed TAB date TAB line.
+# Like feed2exec -v it logs `parsing feed <url> (...)` for each feed it reached;
+# an `unreachable` feed logs a timeout and is skipped, the run still exits 0.
 # FAILME exits 1; PARTIAL exits 1 and KILLME kills the caller after a fetch.
 FAKE_FEED2EXEC = r"""#!/usr/bin/env python3
 import configparser, os, signal, sqlite3, sys
@@ -56,6 +58,11 @@ con = sqlite3.connect(db)
 con.execute("CREATE TABLE IF NOT EXISTS feedcache (name text, guid text, PRIMARY KEY (name, guid))")
 grow = int(os.environ.get("F2E_GROW", "0"))
 for name in p.sections():
+    url = p.get(name, "url")
+    if p.getboolean(name, "unreachable", fallback=False):
+        print(f"WARNING: timeout while fetching feed {name} at {url}: x", file=sys.stderr)
+        continue
+    print(f"INFO: parsing feed {url} (100 bytes)", file=sys.stderr)
     n = p.getint(name, "items", fallback=1) + grow * p.getint(name, "grows", fallback=1)
     ids = list(range(1, n + 1))
     if p.get(name, "order", fallback="desc") != "asc":
@@ -269,39 +276,37 @@ def test_a_large_backlog_feed_cannot_crowd_out_small_feeds(tmp_path):
     )
 
 
-def test_the_lens_cap_is_configurable(tmp_path):
+def test_a_feed_reached_while_empty_offers_its_first_item(tmp_path):
     e = Env(tmp_path)
-    e.lens("harness")
-    e.run()
-    e.run(F2E_GROW="3", SCOUT_LENS_CAP="3")
-    assert tags(e.candidates()) == ["gh:a", "gh:a", "web:b"]
-    assert e.run(SCOUT_LENS_CAP="x").returncode == 2
-
-
-def test_reoffered_lines_are_offered_once_after_fresh_items(tmp_path):
-    e = Env(tmp_path)
-    e.lens("harness")
-    e.run()
-    queue = e.state / "reoffer/harness.txt"
-    queue.write_text(
-        "harness\tweb:b https://old.test/3 'Old 3'\n"
-        "harness\tgh:k https://old.test/2 'Old 2'\n"
-        "harness\tgh:k https://old.test/1 'Old 1'\n"
-    )
-    r = e.run(F2E_GROW="1", SCOUT_LENS_CAP="4")
+    e.lens("harness", LENS.replace("args = gh:a", "items = 0\ngrows = 0\nargs = gh:a"))
+    e.run()  # gh:a is reachable but has published nothing yet
+    assert "--catchup sections=gh:a,web:b" in e.calls()[0]
+    e.run(date="2026-11-17")
+    # not a first sighting any more: fetched as usual, not caught up again
+    assert "fetch sections=gh:a,web:b " in e.calls()[-1]
+    e.lens("harness")  # gh:a publishes its first item
+    r = e.run(date="2026-11-18")
     assert r.returncode == 0, r.stderr
-    assert e.candidates() == [
-        "harness\tgh:a https://x.test/2 'Title 2'",
-        "harness\tweb:b https://x.test/2 'Title 2'",
-        "harness\tweb:b https://old.test/3 'Old 3'",
-        "harness\tgh:k https://old.test/2 'Old 2'",
-    ]
-    assert queue.read_text() == "harness\tgh:k https://old.test/1 'Old 1'\n"
-    r = e.run(F2E_GROW="1", date="2026-11-17")  # feeds quiet: the queue alone
-    assert e.candidates("2026-11-17") == ["harness\tgh:k https://old.test/1 'Old 1'"]
-    assert not queue.exists()
-    e.run(F2E_GROW="1", date="2026-11-18")
-    assert e.candidates("2026-11-18") == []
+    assert e.candidates("2026-11-18") == ["harness\tgh:a https://x.test/1 'Title 1'"]
+    assert sum("--catchup" in c for c in e.calls()) == 1
+
+
+def test_a_feed_the_catch_up_could_not_reach_is_caught_up_next_run(tmp_path):
+    e = Env(tmp_path)
+    e.lens(
+        "harness",
+        LENS.replace("args = gh:a", "items = 30\nunreachable = 1\nargs = gh:a"),
+    )
+    r = e.run()
+    assert r.returncode == 0, r.stderr
+    # only the reached feed is fetched; gh:a waits for its own catch-up
+    assert "fetch sections=web:b " in e.calls()[-1]
+    e.lens("harness", LENS.replace("args = gh:a", "items = 30\nargs = gh:a"))
+    r = e.run(F2E_GROW="1", date="2026-11-17")
+    assert r.returncode == 0, r.stderr
+    assert "--catchup sections=gh:a " in e.calls()[-2]
+    # gh:a's 31 back-catalogue items were caught up, not offered
+    assert e.candidates("2026-11-17") == ["harness\tweb:b https://x.test/2 'Title 2'"]
 
 
 def test_a_quiet_first_day_writes_nothing(tmp_path):
@@ -494,11 +499,12 @@ def test_with_the_real_feed2exec_a_new_source_is_seeded_and_items_come_newest_fi
     e = Env(tmp_path)
     feed = tmp_path / "feed.atom"
     feed.write_text(atom([1, 2, 3]))  # an old-items-first feed
+    empty = tmp_path / "empty.atom"
+    empty.write_text(atom([]))  # reachable, nothing published yet
     e.lens(
         "harness",
         LENS.replace("https://x.test/a.atom", feed.as_uri()).replace(
-            "[web:b]\nurl = https://x.test/b.atom\nargs = web:b {item.link} {item.title}\n",
-            "",
+            "https://x.test/b.atom", empty.as_uri()
         ),
     )
     real = {"FEED2EXEC": shutil.which("feed2exec"), "HOME": str(tmp_path)}
@@ -506,11 +512,13 @@ def test_with_the_real_feed2exec_a_new_source_is_seeded_and_items_come_newest_fi
     assert r.returncode == 0, r.stderr
     assert e.candidates() == [] and e.notes() == []
     feed.write_text(atom([1, 2, 3, 4, 5]))
+    empty.write_text(atom([6]))
     r = e.run(**real)
     assert r.returncode == 0, r.stderr
     assert e.candidates() == [
         "harness\tgh:a https://x.test/p5 'Post 5'",
         "harness\tgh:a https://x.test/p4 'Post 4'",
+        "harness\tweb:b https://x.test/p6 'Post 6'",
     ]
 
 

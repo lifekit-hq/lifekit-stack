@@ -1,23 +1,26 @@
 """Helpers for scout-fetch.sh: which feeds to seed, and the order and cap of a lens's items.
 
     scout_order.py config <ini> <db> seed    the lens config cut to its sections
-                                             with no row in the seen database yet
-                                             (first sighting: to be caught up)
+                                             not seen yet (first sighting: to be
+                                             caught up)
     scout_order.py config <ini> <db> fetch   the config cut to its other sections,
                                              echo output swapped for scout_echo
-    scout_order.py order <lens> <budget> <overflow file> [<reoffer file>]
+    scout_order.py seeded <ini> <db> <log>   record as seen the sections of <ini>
+                                             whose feed the `feed2exec -v` run
+                                             logged in <log> reached and parsed
+    scout_order.py order <lens> <budget> <overflow file>
         stdin: scout_echo lines (<feed> TAB <epoch> TAB <echo line>)
         stdout: candidate lines (<lens> TAB <echo line>), grouped by feed in
         config order, each feed newest first, at most <budget> in all
 
-`config` prints nothing when no section qualifies. `order` shares the budget
-fairly: a feed with fewer items than its share keeps them all and the rest is
-split among the larger feeds, so one big feed can never crowd out a small one.
-What does not fit is appended to the overflow file (feed2exec has already
-marked it seen; nothing is dropped silently). Lines from the reoffer file (old
-candidate lines put back by the operator, newest first per feed) join their
-feed after its fresh items; the ones that fit are removed from that file, the
-rest wait for the next run.
+A section is seen once it has a row in feedcache or is recorded by `seeded`
+(a feed reached while still empty has no row, and must not be caught up again
+when it first publishes). Both live in the lens database, so deleting it resets
+both. `config` prints nothing when no section qualifies. `order` shares the
+budget fairly: a feed with fewer items than its share keeps them all and the
+rest is split among the larger feeds, so one big feed can never crowd out a
+small one. What does not fit is appended to the overflow file (feed2exec has
+already marked it seen; nothing is dropped silently).
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from pathlib import Path
 
 ECHO = "feed2exec.plugins.echo"
 PLUGIN = "scout_echo"
+SEEDED = "scout_seeded"
 
 
 def read_ini(path: str) -> configparser.RawConfigParser:
@@ -42,16 +46,38 @@ def read_ini(path: str) -> configparser.RawConfigParser:
 def seen_feeds(db: str) -> set[str]:
     if not Path(db).is_file():
         return set()
+    seen: set[str] = set()
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-        try:
-            rows = con.execute("SELECT DISTINCT name FROM feedcache").fetchall()
-        finally:
-            con.close()
-    except sqlite3.Error:
-        # no feedcache table yet: nothing has been seen
-        return set()
-    return {r[0] for r in rows}
+        for table in ("feedcache", SEEDED):
+            try:
+                rows = con.execute(f"SELECT DISTINCT name FROM {table}").fetchall()
+            except sqlite3.OperationalError:
+                # no such table yet: nothing recorded there
+                continue
+            seen.update(r[0] for r in rows)
+    finally:
+        con.close()
+    return seen
+
+
+def seeded(ini: str, db: str, log: str) -> None:
+    text = Path(log).read_text(errors="replace")
+    parser = read_ini(ini)
+    reached = [
+        s
+        for s in parser.sections()
+        if f"parsing feed {parser.get(s, 'url', fallback='').strip()} (" in text
+    ]
+    con = sqlite3.connect(db)
+    try:
+        con.execute(f"CREATE TABLE IF NOT EXISTS {SEEDED} (name text PRIMARY KEY)")
+        con.executemany(
+            f"INSERT OR IGNORE INTO {SEEDED} VALUES (?)", [(s,) for s in reached]
+        )
+        con.commit()
+    finally:
+        con.close()
 
 
 def config(ini: str, db: str, mode: str) -> str:
@@ -95,10 +121,9 @@ def tag(line: str) -> str:
     return line.split(" ", 1)[0]
 
 
-def order(lens: str, budget: int, overflow: str, reoffer: str | None) -> None:
-    groups: dict[str, list[tuple[int, int, str, bool]]] = {}
-    n = 0
-    for raw in sys.stdin.read().splitlines():
+def order(lens: str, budget: int, overflow: str) -> None:
+    groups: dict[str, list[tuple[int, int, str]]] = {}
+    for n, raw in enumerate(sys.stdin.read().splitlines()):
         if not raw.strip():
             continue
         parts = raw.split("\t", 2)
@@ -106,52 +131,31 @@ def order(lens: str, budget: int, overflow: str, reoffer: str | None) -> None:
             feed, stamp, line = parts[0], int(parts[1]), parts[2]
         else:  # not a scout_echo line: keep it, undated
             feed, stamp, line = tag(raw), 0, raw
-        groups.setdefault(feed or tag(line), []).append((stamp, n, line, False))
-        n += 1
-    queued: list[str] = []
-    if reoffer and Path(reoffer).is_file():
-        queued = [x for x in Path(reoffer).read_text().splitlines() if x.strip()]
-        for raw in queued:
-            line = raw.split("\t", 1)[1] if "\t" in raw else raw
-            # after every fresh item, in the file's own order
-            groups.setdefault(tag(line), []).append((-1, n, raw, True))
-            n += 1
+        groups.setdefault(feed or tag(line), []).append((stamp, n, line))
     for items in groups.values():
         items.sort(key=lambda it: (-it[0], it[1]))
     alloc = allocate({g: len(v) for g, v in groups.items()}, budget)
     kept: list[str] = []
     over: list[str] = []
-    taken: set[int] = set()
     for g, items in groups.items():
-        for i, (_, idx, line, from_queue) in enumerate(items):
-            if from_queue:
-                line = line.split("\t", 1)[1] if "\t" in line else line
-            if i < alloc[g]:
-                kept.append(f"{lens}\t{line}")
-                if from_queue:
-                    taken.add(idx)
-            elif not from_queue:
-                over.append(f"{lens}\t{line}")
+        for i, (_, _, line) in enumerate(items):
+            (kept if i < alloc[g] else over).append(f"{lens}\t{line}")
     if kept:
         sys.stdout.write("\n".join(kept) + "\n")
     if over:
         with open(overflow, "a") as f:
             f.write("\n".join(over) + "\n")
-    if reoffer and queued:
-        first = n - len(queued)
-        left = [raw for k, raw in enumerate(queued) if first + k not in taken]
-        if left:
-            Path(reoffer).write_text("\n".join(left) + "\n")
-        else:
-            Path(reoffer).unlink()
 
 
 def main(argv: list[str]) -> int:
     if len(argv) == 4 and argv[0] == "config" and argv[3] in ("seed", "fetch"):
         sys.stdout.write(config(argv[1], argv[2], argv[3]))
         return 0
-    if len(argv) in (4, 5) and argv[0] == "order" and argv[2].isdigit():
-        order(argv[1], int(argv[2]), argv[3], argv[4] if len(argv) == 5 else None)
+    if len(argv) == 4 and argv[0] == "seeded":
+        seeded(argv[1], argv[2], argv[3])
+        return 0
+    if len(argv) == 4 and argv[0] == "order" and argv[2].isdigit():
+        order(argv[1], int(argv[2]), argv[3])
         return 0
     print(__doc__, file=sys.stderr)
     return 2

@@ -42,7 +42,9 @@ runs clean, so a later breakage is reported again). Other lenses still run.
 
 `SCOUT_STATE_DIR` (default `~/.local/state/lifekit-scout`):
 
-- `db/<lens>.sqlite` - feed2exec's seen-items database, one per lens;
+- `db/<lens>.sqlite` - feed2exec's seen-items database, one per lens, plus a
+  `scout_seeded` table of the feeds a first-sighting catch-up reached (deleting
+  the file resets both);
 - `candidates/<date>.txt` - new items of that UTC day, `lens<TAB>` plus the
   echo-plugin line as printed (shell-quoted: split with a quoting-aware parser,
   never `eval`). Each lens's lines are appended as soon as its feed2exec call
@@ -50,9 +52,6 @@ runs clean, so a later breakage is reported again). Other lenses still run.
   file unmarked and the next run announces it (exit 1 meanwhile);
 - `candidates/<date>.overflow` - items past the lens cap (below), same format:
   seen, kept for the record, not announced;
-- `reoffer/<lens>.txt` - candidate lines the operator puts back (newest first
-  per feed). The next runs add them after their feed's fresh items, inside the
-  cap, and remove each line once it has been offered;
 - `broken/<lens>` - the reason a lens is currently skipped.
 
 ## Order and cap
@@ -61,9 +60,8 @@ The normal fetch runs with the lens's `feed2exec.plugins.echo` swapped for
 `scout_echo`, which prints the same line plus the item's feed and date
 (feed2exec's normalized `updated_parsed`, always present). A lens's lines are
 then written grouped by feed in config order, **each feed newest first**,
-whatever order the feed itself lists them in. At most `SCOUT_LENS_CAP`
-(default 60, the judge's triage cap) lines per lens and day go to the
-candidates file, shared fairly: a feed with fewer items than its share keeps
+whatever order the feed itself lists them in. At most 60 lines (the judge's
+triage cap) per lens and day go to the candidates file, shared fairly: a feed with fewer items than its share keeps
 them all and the larger feeds split the rest, so a big feed never crowds out a
 small one. A later same-day run gets what is left of the cap.
 
@@ -74,12 +72,19 @@ FM_INBOX_BIN=/path/to/fm-inbox.sh FM_INBOX_HOME=/path/to/home scripts/scout/scou
 scripts/scout/scout-fetch.sh --catchup   # record current feed contents as seen; sends nothing
 ```
 
-A feed with no row in the lens's database (a new lens, or a source just added
-to one) is caught up automatically before the normal fetch: its back catalogue
-is recorded as seen and the first offered items are the ones published after
-that. A feed whose catch-up got nothing (unreachable that day) is left out of
-the normal fetch and caught up on the next run. `--catchup` records every
-feed of every lens as seen by hand.
+A feed not yet in the lens's database (a new lens, or a source just added to
+one) is caught up automatically before the normal fetch: its back catalogue is
+recorded as seen and the first offered items are the ones published after
+that. A feed the catch-up reached is recorded as seen even when it was empty,
+so its first item is offered, not caught up. A feed the catch-up could not
+reach (no `parsing feed <url>` in feed2exec's `-v` log) is left out of the
+normal fetch and caught up on the next run. `--catchup` records every feed of
+every lens as seen by hand.
+
+To offer cut or overflow lines again (operator, once), put them in their own
+file, at most 60 per lens, e.g. `candidates/<date>-reoffer.txt`: the next run
+announces every candidates file without a `.sent` marker, once, with its own
+note.
 
 Note text: `scout: N new items from M lens(es); candidates: <path>`, request id
 `scout-<date>-<N>`, N being the candidates file's line count (a retry of the same content is a no-op for the inbox; a later same-day run with new items sends its own note).
