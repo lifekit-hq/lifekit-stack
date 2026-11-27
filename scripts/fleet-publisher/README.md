@@ -342,10 +342,11 @@ line), never a guess.
   (200 at most; a full page adds an `errors[]` line), read in the same per-repo
   refresh, TTL and 15 s budget as the open PR count and cached beside it in
   `status-open-prs.json`; a failed refresh keeps the last issues.
-- **Jobs** come from `jobq.py ages` in the gateway (`docker exec`, as intake):
-  id, kind, state, times and the envelope class, never a label, payload or
-  result. `FLEET_JOBS_CMD` replaces the command (empty skips); unset, it is
-  skipped when `FLEET_INTAKE_CMD` is set.
+- **Jobs** come from `jobq.py list --json` in the gateway (`docker exec`, as
+  intake), read once per run for both these rows and the jobq items (see "Queue
+  items"): one envelope per job, never a label, payload or result.
+  `FLEET_JOBS_CMD` replaces the command (empty skips); unset, it is skipped when
+  `FLEET_INTAKE_CMD` is set.
 - **A2A threads** come from `FLEET_A2A_CMD`, a command printing a JSON list of
   `{thread, owner, deadline, last_turn, state, title}` (times as epoch or ISO;
   a thread whose `state` is completed, failed, canceled or rejected is closed).
@@ -468,12 +469,13 @@ Nothing is written to them and clip is not changed.
 One record per open item of the low-volume queues that have no record of their
 own on the page, each carrying the item envelope of decision 0019 (it extends
 0016's): who owns the next move, the class, and the one store that owns the item,
-so the dashboard can link through. Read-only; neither store is written.
+so the dashboard can link through. Read-only; no store is written.
 
 | Source | Read from | `owner` / `class` | `store` | `ref` |
 | --- | --- | --- | --- | --- |
 | `finance` | `FLEET_FINANCE_CMD`, a command printing a JSON list of `{kind, id, title, acceptance, url, since}` (`kind` one of `alert`, `companion-event`, `thesis-revision`, `recommendation`; the last three keys optional) | `finance` / `finance` | `finance-db` | `url`, else `<kind>/<id>` |
 | `needs-you` | `FLEET_NEEDS_YOU_LEDGER`, the path of Kit's `needs-you/open.json` (`kind` `decision`; a missing file is an empty ledger) | `kit` / `life` | `needs-you` | the entry `id` |
+| `jobq` | `jobq.py list --json` in the gateway, the same read as the stalled jobs (`FLEET_JOBS_CMD` replaces it); only jobs `queued` or `running`, `kind` the job's kind | the envelope's `owner` (else the skill that answers the job) / its `class` (else `unclear`) | `jobq` | the job id |
 
 - **Shape.** `items[]` is `[{id, source, kind, title, owner, class, store, ref,
   since, acceptance?, origin?}]`: `id` is `<store>:<native id>`, `since` the item's
@@ -481,7 +483,12 @@ so the dashboard can link through. Read-only; neither store is written.
   `origin` its door. Both are present only when the source holds them: a record
   without one publishes without the key, never fails. The needs-you ledger holds no
   acceptance line, so its records carry none; they carry the entry's `origin`.
-- **Sources.** `item_sources` is `{finance, needs_you}`, each `{read, reason}`
+  A jobq record adds the queue's own `stage` (`queued`, `running`) and A2A `state`
+  (`submitted`, `working`), and `fingerprint` and `thread` when its envelope has them;
+  a queued one adds `waiting_on` (`egress`: its probe host must answer through the
+  egress, by default the PC relay; `turn`: it runs when no other job is running) and
+  `waiting`, that reason in one line.
+- **Sources.** `item_sources` is `{finance, needs_you, jobq}`, each `{read, reason}`
   like `stalled_sources`: unset, the source is `read: false` and says so. An
   unreadable source adds an `errors[]` line; an item matching `CREDENTIAL_RE` is
   withheld and counted in `errors[]`.

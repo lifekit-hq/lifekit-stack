@@ -28,9 +28,11 @@ sections"). Everything is read from structured sources, never from prose:
   clip_queue    one row per clip channel from the clip queue's own outputs
                 (daily-check.json, egress.json, queue-run.json beside the stats
                 feed, read-only): waiting, oldest age, buffer days, egress, stalled
-  items         one record per open finance item (FLEET_FINANCE_CMD) and per
-                needs-you decision (Kit's ledger), each with the item envelope
-                (owner, class, store, ref, and acceptance when the source has one)
+  items         one record per open finance item (FLEET_FINANCE_CMD), per
+                needs-you decision (Kit's ledger) and per waiting or running
+                job (`jobq.py list --json` in the gateway), each with the item
+                envelope (owner, class, store, ref, and acceptance when the
+                source has one)
   problems      the three oldest stalled items by first-seen age, one brief line
   side_hustles  per-channel numbers from the clip stats feed (stats.jsonl), as
                 the Monday/Thursday brief lines and the Monday week-sheet rows
@@ -43,8 +45,8 @@ wrapper finds it and node), CREDENTIAL_RE (a record whose text matches it is
 withheld), FLEET_GH (default gh; empty skips open PRs), FLEET_PR_TTL (seconds,
 default 600), FLEET_VAULT (default /srv/memory), FLEET_PLAN_MAP ("<repo>=<vault
 project> ..." where the names differ), FLEET_INTAKE_CMD (overrides the gateway
-`docker exec`; empty skips intake), FLEET_JOBS_CMD (the same for the job ages
-the stalled check reads; empty skips them, unset skips them too when
+`docker exec`; empty skips intake), FLEET_JOBS_CMD (the same for the job envelopes
+the stalled check and the items read, `jobq.py list --json`; empty skips them, unset skips them too when
 FLEET_INTAKE_CMD is set), FLEET_INTAKE_SPOOL_CMD (the same for the intake
 door's spool count; empty skips it, unset skips it too when FLEET_INTAKE_CMD is
 set),
@@ -790,7 +792,7 @@ def intake() -> dict[str, Any]:
 def spool_cmd() -> list[str] | None:
     """FLEET_INTAKE_SPOOL_CMD as argv; [] for the gateway default; None to skip.
     Unset, it is the default only while FLEET_INTAKE_CMD is unset too, as for
-    the job ages."""
+    the job envelopes."""
     cmd = os.environ.get("FLEET_INTAKE_SPOOL_CMD")
     if cmd is None:
         return [] if "FLEET_INTAKE_CMD" not in os.environ else None
@@ -1004,14 +1006,14 @@ def jobs_cmd() -> list[str] | None:
     return shlex.split(cmd) or None
 
 
-def job_stalls(
-    cfg: dict[str, Any], now: int, errors: list[str]
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Jobs whose attempts are used up, or that have waited past the threshold,
-    from `jobq.py ages` (ids, kinds, states and times: never a label or result)."""
+def read_jobs(errors: list[str]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """The job queue's item envelopes, `jobq.py list --json` in the gateway
+    (one per job: ids, states, times and the envelope, never a label, result or
+    payload), read once for both the stalled check and the items. Returns (the
+    document, the source's `{read, reason}`)."""
     argv = jobs_cmd()
     if argv is None:
-        return [], {"read": False, "reason": "job ages skipped"}
+        return None, {"read": False, "reason": "job queue skipped"}
     try:
         if not argv:
             found = run(
@@ -1025,10 +1027,17 @@ def job_stalls(
             ).split()
             if not found:
                 raise OSError("no running openclaw-gateway container")
-            argv = ["docker", "exec", found[0], "python3", GATEWAY_JOBQ, "ages"]
+            argv = [
+                "docker",
+                "exec",
+                found[0],
+                "python3",
+                GATEWAY_JOBQ,
+                "list",
+                "--json",
+            ]
         doc = json.loads(run(argv, timeout=15))
-        jobs, limit = doc["jobs"], doc["max_attempts"]
-        assert isinstance(jobs, list) and isinstance(limit, int)
+        assert isinstance(doc["jobs"], list) and isinstance(doc["max_attempts"], int)
     except (
         OSError,
         ValueError,
@@ -1037,15 +1046,34 @@ def job_stalls(
         AssertionError,
         subprocess.SubprocessError,
     ) as exc:
-        errors.append(f"job ages unreadable ({exc.__class__.__name__})")
-        return [], {"read": False, "reason": "job ages unreadable"}
+        errors.append(f"job queue unreadable ({exc.__class__.__name__})")
+        return None, {"read": False, "reason": "job queue unreadable"}
+    return doc, {"read": True, "reason": None}
+
+
+def job_native(job: Any) -> str | None:
+    """A listed job's own id in the queue (`ref`), or None for a malformed one."""
+    if not isinstance(job, dict) or job.get("store") != "jobq":
+        return None
+    ref = job.get("ref")
+    if not isinstance(ref, str) or not ref or job.get("id") != f"jobq:{ref}":
+        return None
+    return ref
+
+
+def job_stalls(
+    cfg: dict[str, Any], now: int, doc: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Jobs whose attempts are used up, or that have waited past the threshold."""
+    jobs, limit = doc["jobs"], doc["max_attempts"]
     threshold = cfg["jobq"]["waiting_hours"] * 3600
     owners = cfg["owners"]
     rows = []
     for job in jobs:
-        if not isinstance(job, dict) or not isinstance(job.get("id"), str):
+        native = job_native(job)
+        if native is None:
             continue
-        status, attempts = job.get("status"), job.get("attempts")
+        status, attempts = job.get("stage"), job.get("attempts")
         queued, finished = job.get("queued_at"), job.get("finished_at")
         if not all(isinstance(n, (int, float)) for n in (attempts, queued)):
             continue
@@ -1060,7 +1088,7 @@ def job_stalls(
         rows.append(
             {
                 "source": "job",
-                "id": job["id"],
+                "id": native,
                 "home_id": None,
                 "title": one_line(job.get("kind"), TITLE_CUT),
                 "url": None,
@@ -1070,7 +1098,41 @@ def job_stalls(
                 "owner": owner,
             }
         )
-    return rows, {"read": True, "reason": None}
+    return rows
+
+
+JOB_OPEN = ("queued", "running")
+JOB_CLASSES = ("dev", "ops", "finance", "life", "unclear")
+JOB_ITEM_KEYS = ("stage", "state", "fingerprint", "thread", "waiting_on", "waiting")
+
+
+def job_items(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """One item per job still waiting or running, from the queue's own envelopes:
+    a job carries its envelope's owner and class when it has one (else the skill
+    that answers it, and `unclear`), its queue stage and A2A state, and for a
+    queued job what it waits on (the egress, today the PC relay, or its turn)."""
+    items = []
+    for job in (doc or {}).get("jobs", []):
+        native = job_native(job)
+        if native is None or job.get("stage") not in JOB_OPEN:
+            continue
+        owner = job.get("owner") if isinstance(job.get("owner"), str) else ""
+        klass = job.get("class") if job.get("class") in JOB_CLASSES else "unclear"
+        item = envelope_item(
+            {"owner": owner or "unclear", "class": klass, "store": "jobq"},
+            "jobq",
+            one_line(job.get("kind"), TITLE_CUT) or "job",
+            native,
+            title=native,
+            since=job.get("since"),
+            acceptance=job.get("acceptance"),
+            origin=job.get("origin"),
+        )
+        for key in JOB_ITEM_KEYS:
+            if line := one_line(job.get(key), TITLE_CUT):
+                item[key] = line
+        items.append(item)
+    return items
 
 
 def thread_stalls(
@@ -2325,13 +2387,14 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     rows = projects(records, homes, pr_cache, args.now, errors)
     stalled, sources, stalled_rows = None, None, None
     cfg = stalled_config(errors)
+    job_doc, jobq = read_jobs(errors)
     clip_section, clip_rows, clip_source = clip_queue(cfg, args.now, errors)
     if cfg:
         found = backlog_stalls(records, homes, cfg, args.now)
         issues, github = issue_stalls(
             {r["github"] for r in rows if r["github"]}, pr_cache, cfg, args.now
         )
-        jobs, jobq = job_stalls(cfg, args.now, errors)
+        jobs = job_stalls(cfg, args.now, job_doc) if job_doc else []
         threads, a2a = thread_stalls(cfg, args.now, errors)
         scout_rows, scout_source = scout_stalls(cfg, args.now)
         held_rows, held_source = held_stalls(cfg, args.now, errors)
@@ -2409,6 +2472,15 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                 " they hold a credential"
             )
         items.extend(safe)
+    item_sources["jobq"] = jobq
+    got = job_items(job_doc)
+    safe = [i for i in got if not withheld(i, pattern)]
+    if len(safe) < len(got):
+        errors.append(
+            f"{len(got) - len(safe)} jobq item(s) withheld: they look like"
+            " they hold a credential"
+        )
+    items.extend(safe)
     save_cache(state / "status-records.json", record_cache)
     save_cache(state / "status-open-prs.json", pr_cache)
     return {

@@ -3646,6 +3646,22 @@ def test_screen_changes_withholds_an_item_that_looks_like_a_credential(fleet):
 DAY = 86400
 
 
+def jobq_row(ref, stage, **fields):
+    """One job as `jobq.py list --json` prints it."""
+    states = {"queued": "submitted", "running": "working", "done": "completed"}
+    return {
+        "id": f"jobq:{ref}",
+        "store": "jobq",
+        "ref": ref,
+        "stage": stage,
+        "state": states.get(stage, stage),
+        "since": fields.get("queued_at"),
+        "finished_at": None,
+        "owner": "video-eval",
+        **fields,
+    }
+
+
 def stalled_world(homes, *, a2a=True, jobs=True, issues=True):
     """The four sources of the done-when, plus what must stay quiet: a fresh
     item per queue and a held one. Returns the run's extra environment."""
@@ -3709,27 +3725,25 @@ def stalled_world(homes, *, a2a=True, jobs=True, issues=True):
     (tmp / "jobs.json").write_text(
         json.dumps(
             {
-                "schema": "jobq-ages.v1",
+                "schema": "jobq-list.v1",
                 "max_attempts": 3,
                 "jobs": [
-                    {
-                        **job,
-                        "id": "spent",
-                        "status": "failed",
-                        "attempts": 3,
-                        "finished_at": NOW - 5000,
-                        "class": "life",
-                    },
-                    {
-                        **job,
-                        "id": "waiting",
-                        "status": "queued",
-                        "queued_at": NOW - 2 * DAY,
-                        "class": None,
-                    },
-                    {**job, "id": "young", "status": "queued", "class": "life"},
-                    {**job, "id": "last-try", "status": "running", "attempts": 3},
-                    {**job, "id": "finished", "status": "done", "attempts": 1},
+                    jobq_row(
+                        "spent",
+                        "failed",
+                        **{
+                            **job,
+                            "attempts": 3,
+                            "finished_at": NOW - 5000,
+                            "class": "life",
+                        },
+                    ),
+                    jobq_row(
+                        "waiting", "queued", **{**job, "queued_at": NOW - 2 * DAY}
+                    ),
+                    jobq_row("young", "queued", **{**job, "class": "life"}),
+                    jobq_row("last-try", "running", **{**job, "attempts": 3}),
+                    jobq_row("finished", "done", **{**job, "attempts": 1}),
                 ],
             }
         )
@@ -3881,7 +3895,7 @@ def test_a_failing_source_empties_only_its_own_rows(homes):
     assert homes.run(vps, **env).returncode == 0
     page = status(homes)
     assert page["stalled_sources"]["jobq"]["read"] is False
-    assert any("job ages unreadable" in e for e in page["errors"])
+    assert any("job queue unreadable" in e for e in page["errors"])
     assert stalled_ids(page)["life"] == []
     assert stalled_ids(page)["ops"] == ["o/alpha#1"]
 
@@ -4078,7 +4092,7 @@ def test_a_problem_ages_from_its_first_run_and_resets_only_when_it_clears(homes)
     assert {p["age_days"] for p in page["problems"]["shown"]} == {3}
     # the job clears: its mark is dropped; it returns as a new problem, age 0
     (homes.tmp / "jobs.json").write_text(
-        json.dumps({"schema": "jobq-ages.v1", "max_attempts": 3, "jobs": []})
+        json.dumps({"schema": "jobq-list.v1", "max_attempts": 3, "jobs": []})
     )
     assert homes.run(vps, **day(4)).returncode == 0
     assert "job:None:spent" not in json.loads(
@@ -4087,18 +4101,18 @@ def test_a_problem_ages_from_its_first_run_and_resets_only_when_it_clears(homes)
     (homes.tmp / "jobs.json").write_text(
         json.dumps(
             {
-                "schema": "jobq-ages.v1",
+                "schema": "jobq-list.v1",
                 "max_attempts": 3,
                 "jobs": [
-                    {
-                        "id": "spent",
-                        "kind": "video",
-                        "status": "failed",
-                        "attempts": 3,
-                        "finished_at": NOW,
-                        "queued_at": NOW,
-                        "class": "life",
-                    }
+                    jobq_row(
+                        "spent",
+                        "failed",
+                        kind="video",
+                        attempts=3,
+                        finished_at=NOW,
+                        queued_at=NOW,
+                        **{"class": "life"},
+                    )
                 ],
             }
         )
@@ -4857,6 +4871,7 @@ def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
     assert page["item_sources"] == {
         "finance": {"read": False, "reason": "FLEET_FINANCE_CMD is not set"},
         "needs_you": {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"},
+        "jobq": {"read": False, "reason": "job queue skipped"},
     }
     assert page["errors"] == []
 
@@ -4873,6 +4888,110 @@ def test_a_missing_ledger_is_empty_and_a_broken_source_is_an_error(homes):
     assert page["item_sources"]["needs_you"] == {"read": True, "reason": None}
     assert page["item_sources"]["finance"]["read"] is False
     assert any("finance items unreadable" in e for e in page["errors"])
+
+
+def test_waiting_and_running_jobs_are_items_with_their_envelope(homes):
+    feed = homes.tmp / "jobs.json"
+    envelope = {
+        "origin": "kit",
+        "owner": "kit",
+        "class": "life",
+        "fingerprint": "https://example/reel",
+        "acceptance": "the reel is judged",
+        "thread": "reel-AAA111",
+    }
+    feed.write_text(
+        json.dumps(
+            {
+                "schema": "jobq-list.v1",
+                "max_attempts": 3,
+                "jobs": [
+                    jobq_row(
+                        "reel-AAA111",
+                        "queued",
+                        kind="reel",
+                        queued_at=NOW - 3600,
+                        since=NOW - 600,
+                        attempts=1,
+                        waiting_on="egress",
+                        waiting="waits for the PC relay to reach www.instagram.com",
+                        **envelope,
+                    ),
+                    jobq_row(
+                        "video-file-B",
+                        "running",
+                        kind="video",
+                        queued_at=NOW - 60,
+                        since=NOW - 30,
+                        attempts=1,
+                    ),
+                    jobq_row(
+                        "video-done", "done", kind="video", queued_at=NOW, attempts=1
+                    ),
+                    {"id": "jobq:forged", "store": "jobq", "ref": "other"},
+                    "garbage",
+                ],
+            }
+        )
+    )
+    env = {"FLEET_NOW": str(NOW), "FLEET_JOBS_CMD": f"cat {feed}"}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["jobq"] == {"read": True, "reason": None}
+    got = items_by_id(page)
+    assert set(got) == {"jobq:reel-AAA111", "jobq:video-file-B"}
+    assert got["jobq:reel-AAA111"] == {
+        "id": "jobq:reel-AAA111",
+        "source": "jobq",
+        "kind": "reel",
+        "title": "reel-AAA111",
+        "owner": "kit",
+        "class": "life",
+        "store": "jobq",
+        "ref": "reel-AAA111",
+        "since": NOW - 600,
+        "acceptance": "the reel is judged",
+        "origin": "kit",
+        "stage": "queued",
+        "state": "submitted",
+        "fingerprint": "https://example/reel",
+        "thread": "reel-AAA111",
+        "waiting_on": "egress",
+        "waiting": "waits for the PC relay to reach www.instagram.com",
+    }
+    # No envelope: the skill that answers it owns it, its class unclear.
+    run = got["jobq:video-file-B"]
+    assert (run["owner"], run["class"], run["stage"], run["state"]) == (
+        "video-eval",
+        "unclear",
+        "running",
+        "working",
+    )
+    assert "acceptance" not in run and "waiting" not in run
+    assert page["errors"] == []
+
+
+def test_an_empty_or_broken_job_queue_publishes_no_job_items(homes):
+    feed = homes.tmp / "jobs.json"
+    feed.write_text(
+        json.dumps({"schema": "jobq-list.v1", "max_attempts": 3, "jobs": []})
+    )
+    env = {"FLEET_NOW": str(NOW), "FLEET_JOBS_CMD": f"cat {feed}"}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["items"] == []
+    assert page["item_sources"]["jobq"] == {"read": True, "reason": None}
+    assert (
+        homes.run(side_home(homes), **{**env, "FLEET_JOBS_CMD": "false"}).returncode
+        == 0
+    )
+    page = status(homes)
+    assert page["items"] == []
+    assert page["item_sources"]["jobq"] == {
+        "read": False,
+        "reason": "job queue unreadable",
+    }
+    assert any("job queue unreadable" in e for e in page["errors"])
 
 
 # --- load: a busy host must not starve the stamp ------------------------------

@@ -2172,8 +2172,10 @@ docker exec "$G" openclaw cron edit "$ID" \
 - **A changed gate:** the row stores the script, so when a deploy reports the gate `DIFFERS`,
   re-apply it: `docker exec "$G" openclaw cron edit "$ID" --trigger-script /home/node/.openclaw/skills/job-queue/drain-gate.js`.
 - **What is waiting:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py list`
-  (`depth` prints the counts only, as JSON: what the fleet status page shows; `ages` prints each
-  job's state and times with no label or result: what its stalled check reads).
+  (`depth` prints the counts only, as JSON: what the fleet status page shows; `list --json`
+  prints one item envelope per job, with no label, result or payload: what its stalled
+  check and its jobq items read, a queued job naming what it waits on; `ages` is the older
+  states-and-times read).
   Do not run `jobq.py next` by hand while the egress answers: it starts the next job, and each
   `next` that hands out a run's output counts as an offer, the third unread one giving it up.
 - **Drop a job:** `docker exec "$G" python3 /home/node/.openclaw/skills/job-queue/jobq.py drop <job id>`
@@ -3895,8 +3897,9 @@ The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
 publisher can reach exists; the page says so. The queue items
 (`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD` and
 `FLEET_NEEDS_YOU_LEDGER`; neither the installer nor the unit sets them, so point
-them with a systemd drop-in. Unset, `item_sources` says `read: false` and
-`items` stays empty.
+them with a systemd drop-in. Unset, their `item_sources` entry says `read: false`
+and they add no items. The `jobq` items need no setting: they come from the
+stalled jobs' read (`jobq.py list --json` in the gateway, README "Jobs").
 Clip and scout are two more stalled sources (`clip`, `scout` blocks of the same file:
 `buffer_floor_days`, `slot_window_hours`, `idle_hours`), and
 `status_page.clip_queue` publishes one row per clip channel (cosmos, mind, neural, yc,

@@ -312,6 +312,97 @@ def test_ages_gives_states_and_times_and_no_label_or_result(q):
     assert len(json.loads(out)["jobs"]) == 2
 
 
+LIST_ENVELOPE = {
+    "origin": "kit",
+    "owner": "kit",
+    "class": "life",
+    "acceptance": "the reel is judged",
+    "fingerprint": "https://example/AAA111",
+    "thread": "reel-AAA111",
+}
+
+
+def test_list_json_gives_one_envelope_per_job_with_its_fields(q, monkeypatch):
+    monkeypatch.delenv("LIFEKIT_EGRESS_PROXY")  # the default egress: the PC relay
+    _add("AAA111", now=1000.0, envelope=LIST_ENVELOPE)
+    _add_file("BBB222", now=1001.0)
+    got = jobq.envelopes(now=1002.0)
+    assert got["schema"] == "jobq-list.v1" and got["max_attempts"] == 3
+    reel, file = got["jobs"]
+    assert reel == {
+        "id": "jobq:reel-AAA111",
+        "store": "jobq",
+        "ref": "reel-AAA111",
+        "kind": "reel",
+        "stage": "queued",
+        "state": "submitted",
+        "since": 1000.0,
+        "queued_at": 1000.0,
+        "finished_at": None,
+        "attempts": 0,
+        "origin": "kit",
+        "owner": "kit",
+        "class": "life",
+        "fingerprint": "https://example/AAA111",
+        "acceptance": "the reel is judged",
+        "thread": "reel-AAA111",
+        "waiting_on": "egress",
+        "waiting": "waits for the PC relay to reach www.instagram.com",
+    }
+    # No envelope: the skill that answers it owns it, and no field is invented.
+    assert file["id"] == "jobq:video-file-BBB222" and file["owner"] == "video-eval"
+    assert not {"origin", "class", "fingerprint", "acceptance"} & set(file)
+    assert (file["waiting_on"], file["waiting"]) == ("turn", "runs at the next drain")
+    # Never the job's label, payload or handler.
+    assert "label" not in reel and "payload" not in reel and "handler" not in reel
+
+
+def test_list_json_of_an_empty_queue_is_an_empty_list(q):
+    got = jobq.envelopes(now=1000.0)
+    assert got == {"schema": "jobq-list.v1", "max_attempts": 3, "jobs": []}
+    out = subprocess.run(
+        [sys.executable, str(SKILL / "jobq.py"), "list", "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert json.loads(out)["jobs"] == []
+
+
+def test_list_json_follows_a_job_through_its_attempts(q, monkeypatch):
+    monkeypatch.setenv("LIFEKIT_EGRESS_PROXY", "socks5h://relay.example:1080")
+    _add("AAA111", now=1000.0, envelope=LIST_ENVELOPE)
+    _add_file("BBB222", now=1001.0)
+    jobq.claim("reel-AAA111", now=1002.0)
+    running, other = jobq.envelopes(now=1003.0)["jobs"]
+    assert (running["stage"], running["state"]) == ("running", "working")
+    assert running["since"] == 1002.0 and running["attempts"] == 1
+    assert "waiting_on" not in running
+    assert other["waiting"] == "waits for the running job to end"
+    # A failed run goes back to the queue: the attempt stays counted.
+    assert jobq.retry("reel-AAA111", "the egress dropped") is False
+    again = jobq.envelopes(now=1004.0)["jobs"][0]
+    assert (again["stage"], again["state"], again["attempts"]) == (
+        "queued",
+        "submitted",
+        1,
+    )
+    assert again["waiting"] == "waits for the egress to reach www.instagram.com"
+    for t in (1005.0, 1007.0):
+        jobq.claim("reel-AAA111", now=t)
+        jobq.retry("reel-AAA111", "the egress dropped", now=t + 1)
+    spent = jobq.envelopes(now=1009.0)["jobs"][0]
+    assert (spent["stage"], spent["state"], spent["attempts"]) == (
+        "failed",
+        "failed",
+        3,
+    )
+    assert spent["since"] == 1008.0 and spent["finished_at"] == 1008.0
+    assert "waiting_on" not in spent
+    # Read-only: listing claims, prunes and changes nothing.
+    assert jobq.get("reel-AAA111")["status"] == "failed"
+
+
 def test_drop_removes_one_job(q):
     _add()
     (q / "reel-AAA111.err").write_text("")
