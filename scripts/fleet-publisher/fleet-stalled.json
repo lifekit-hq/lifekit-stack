@@ -12,6 +12,7 @@
   "clip": {"buffer_floor_days": 1, "slot_window_hours": 30, "owner": "firstmate"},
   "scout": {"idle_hours": 96, "judge_hours": 24, "owner": "firstmate"},
   "kit_held": {"hours": 24, "owner": "firstmate"},
+  "unrouted": {"hours": 26, "owner": "firstmate"},
   "installed": {"behind_hours": 24, "owner": "ops"},
   "shape": {
     "days": 3,

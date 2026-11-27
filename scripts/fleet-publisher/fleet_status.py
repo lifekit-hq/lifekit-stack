@@ -66,6 +66,9 @@ FLEET_SCOUT_JUDGE (the firstmate home that judges the scout's candidates, its
 read),
 FLEET_KIT_HELD_CMD (prints the held fleet tasks in Kit's daily notes that have
 no shaping item, as JSON - `kit_held.py check`; unset: not read),
+FLEET_UNROUTED_STATE (the daily unrouted check's unrouted.json - the owner asks
+and agent promises with no receipt, and the check's last run for its dead-man;
+unset: not read),
 FLEET_DOC_DOOR_CMD (the same for doc-door's open documents, `door.py list
 --json`; empty skips them, unset skips them too when FLEET_INTAKE_CMD is set),
 FLEET_INSTALLED_PROM (the release gauge's lifekit_installed.prom, which says
@@ -883,6 +886,7 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
             ("clip", ("buffer_floor_days", "slot_window_hours")),
             ("scout", ("idle_hours",)),
             ("kit_held", ("hours",)),
+            ("unrouted", ("hours",)),
             ("installed", ("behind_hours",)),
             ("shape", ("days",)),
             ("doc_door", ("open_hours",)),
@@ -1223,6 +1227,7 @@ CLIP_EVENTS_TAIL = 4 * 1024 * 1024  # the newest bytes of events.jsonl read per 
 CLIP_ENVELOPE = {"owner": "clip", "class": "ops", "store": "clip-queue"}
 FINANCE_ENVELOPE = {"owner": "finance", "class": "finance", "store": "finance-db"}
 NEEDS_YOU_ENVELOPE = {"owner": "kit", "class": "life", "store": "needs-you"}
+UNROUTED_ENVELOPE = {"owner": "firstmate", "class": "unclear", "store": "unrouted"}
 FINANCE_KINDS = ("alert", "companion-event", "thesis-revision", "recommendation")
 SCOUT_CANDIDATES = "candidates"
 SCOUT_DAY_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
@@ -2067,6 +2072,89 @@ def held_stalls(
     return rows, {"read": True, "reason": None, "open": listed}
 
 
+def unrouted_read(errors: list[str]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """The daily unrouted check's state (FLEET_UNROUTED_STATE, its
+    `unrouted.json`, scripts/unrouted/unrouted.py): its last run and the owner
+    asks and agent promises it found with no receipt. Unset, missing or
+    unreadable: unread, never guessed."""
+    path = os.environ.get("FLEET_UNROUTED_STATE", "")
+    if not path:
+        return None, {"read": False, "reason": "FLEET_UNROUTED_STATE is not set"}
+    try:
+        doc = json.loads(Path(path).read_text())
+        assert isinstance(doc, dict) and isinstance(doc.get("items", []), list)
+    except FileNotFoundError:
+        return None, {"read": False, "reason": "no unrouted check run recorded"}
+    except (OSError, ValueError, AssertionError) as exc:
+        errors.append(f"unrouted check state unreadable ({exc.__class__.__name__})")
+        return None, {"read": False, "reason": "unrouted check state unreadable"}
+    return doc, {"read": True, "reason": None}
+
+
+def unrouted_items(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """One `unrouted` item per ask or promise the check found with no receipt:
+    the agent, the day and a one-line quote; the door's receipt, once filed,
+    is its state."""
+    items = []
+    for e in (doc or {}).get("items") or []:
+        if not isinstance(e, dict) or not isinstance(e.get("fingerprint"), str):
+            continue
+        filed = e.get("filed") if isinstance(e.get("filed"), str) else None
+        items.append(
+            envelope_item(
+                UNROUTED_ENVELOPE,
+                "unrouted",
+                "unrouted",
+                e["fingerprint"],
+                title=f"{e.get('agent')} {e.get('day')}: {e.get('quote')}",
+                since=e.get("at"),
+                origin=e.get("agent"),
+                acceptance="done, or routed with a receipt",
+                state=f"filed {filed}" if filed else "not filed",
+                fingerprint=e["fingerprint"],
+            )
+        )
+    return items
+
+
+def unrouted_stalls(
+    doc: dict[str, Any] | None,
+    source: dict[str, Any],
+    cfg: dict[str, Any] | None,
+    now: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The check's dead-man: one row once its last run is `unrouted.hours`
+    old (26: a daily job that missed a day). `open` counts its listed items."""
+    if cfg is None or "unrouted" not in cfg:
+        return [], {
+            "read": False,
+            "reason": "no unrouted thresholds in fleet-stalled.json",
+        }
+    if doc is None:
+        return [], source
+    ran = doc.get("ran_at")
+    if not isinstance(ran, int) or isinstance(ran, bool):
+        return [], {"read": False, "reason": "unrouted check state has no ran_at"}
+    window = int(cfg["unrouted"]["hours"] * 3600)
+    rows = []
+    if now - ran >= window:
+        rows.append(
+            {
+                "source": "unrouted",
+                "id": "unrouted-check",
+                "home_id": None,
+                "title": "the daily unrouted check",
+                "url": None,
+                "reason": "no-run",
+                "since": ran,
+                "threshold": window,
+                "owner": cfg["unrouted"].get("owner", "firstmate"),
+            }
+        )
+    listed = len(unrouted_items(doc))
+    return rows, {"read": True, "reason": None, "open": listed, "ran_at": ran}
+
+
 SHAPE_DEFAULTS = {
     "ready_label": "ready",
     "ask_label_prefixes": ["intake:"],
@@ -2296,6 +2384,7 @@ PROBLEM_SOURCE_KEY = {
     "scout": "scout",
     "scout-judge": "scout_judge",
     "held": "kit_held",
+    "unrouted": "unrouted",
     "installed": "installed",
     "shape": "shape",
     "doc": "doc_door",
@@ -2314,6 +2403,7 @@ PROBLEM_PHRASE = {
     "no-output": "no output",
     "not-judged": "not judged",
     "not-filed": "held, not filed",
+    "no-run": "check not run",
     "behind-main": "behind main",
     "not-ready": "stuck in Shape",
     "open": "document open",
@@ -2717,6 +2807,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     clip_section, clip_rows, clip_source, clip_checked = clip_queue(cfg, args.now)
     door_entries, door_source = doc_door_read(errors)
     devclaw_entries, devclaw_source = devclaw_read(errors)
+    unrouted_doc, unrouted_source = unrouted_read(errors)
     if cfg:
         found = backlog_stalls(records, homes, cfg, args.now)
         issues, github = issue_stalls(
@@ -2727,6 +2818,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         scout_rows, scout_source = scout_stalls(cfg, args.now)
         judge_rows, judge_source = scout_judge_stalls(cfg, args.now)
         held_rows, held_source = held_stalls(cfg, args.now, errors)
+        unrouted_rows, unrouted_stalled = unrouted_stalls(
+            unrouted_doc, unrouted_source, cfg, args.now
+        )
         installed_rows, installed_source = installed_stalls(cfg, args.now)
         shape_rows, shape_source = shape_stalls(
             records,
@@ -2753,6 +2847,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             + scout_rows
             + judge_rows
             + held_rows
+            + unrouted_rows
             + installed_rows
             + shape_rows
             + door_rows
@@ -2774,6 +2869,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "scout": scout_source,
             "scout_judge": judge_source,
             "kit_held": held_source,
+            "unrouted": unrouted_stalled,
             "installed": installed_source,
             "shape": shape_source,
             "doc_door": door_stalled,
@@ -2812,6 +2908,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         ("needs_you", needs_you_items),
         ("doc_door", lambda _errors: door_read),
         ("devclaw", lambda _errors: devclaw_got),
+        ("unrouted", lambda _errors: (unrouted_items(unrouted_doc), unrouted_source)),
     ):
         got, item_sources[name] = read(errors)
         safe = [i for i in got if not withheld(i, pattern)]

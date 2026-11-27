@@ -50,6 +50,9 @@
 #   FLEET_SCOUT_JUDGE       the firstmate home that judges the scout (its
 #                           data/scout/judged.tsv and digest/); on the VPS the
 #                           scout note's FM_INBOX_HOME (/etc/lifekit/scout.env).
+#   FLEET_UNROUTED_STATE    the daily unrouted check's state file; on the VPS
+#                           /var/lib/lifekit-fleet/unrouted/unrouted.json
+#                           (scripts/unrouted/install-unrouted.sh).
 #
 # Tests set INSTALL_ROOT (a prefix for every installed path), SYSTEMCTL and SU; an
 # INSTALL_ROOT run needs no root and does not chown.
@@ -116,7 +119,7 @@ if [[ -n "$FLEET_FINANCE_OWNER" ]]; then
   }
   sources_env+=" \"FLEET_FINANCE_OWNER=${FLEET_FINANCE_OWNER}\""
 fi
-for name in FLEET_SCOUT_STATE FLEET_SCOUT_JUDGE; do
+for name in FLEET_SCOUT_STATE FLEET_SCOUT_JUDGE FLEET_UNROUTED_STATE; do
   value="${!name:-}"
   [[ -n "$value" ]] || continue
   [[ "$value" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
