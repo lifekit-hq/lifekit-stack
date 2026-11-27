@@ -12,5 +12,12 @@
   "clip": {"buffer_floor_days": 1, "slot_window_hours": 30, "owner": "firstmate"},
   "scout": {"idle_hours": 96, "owner": "firstmate"},
   "kit_held": {"hours": 24, "owner": "firstmate"},
-  "installed": {"behind_hours": 24, "owner": "ops"}
+  "installed": {"behind_hours": 24, "owner": "ops"},
+  "shape": {
+    "days": 3,
+    "owner": "firstmate",
+    "ready_label": "ready",
+    "ask_label_prefixes": ["intake:"],
+    "id_prefixes": ["shape-", "held-"]
+  }
 }

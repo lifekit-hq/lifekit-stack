@@ -4590,6 +4590,160 @@ def test_unset_or_unreadable_held_items_are_said_not_guessed(homes):
     assert any("held items unreadable" in e for e in page["errors"])
 
 
+# --- the Shape stage stalls on a clock (decision 0019, issue 695) ---------------
+
+
+def shape_world(homes, records, issues):
+    """A home whose records name o/alpha (so its issues are read) and a gh
+    that lists `issues` for it. Returns (home, env)."""
+    tmp = homes.tmp
+    vps = status_home(tmp, "fm-vps", records)
+    (tmp / "gh-issues.json").write_text(json.dumps(issues))
+    gh = stub(
+        tmp / "gh",
+        'if [ "$1" = issue ]; then cat ' + str(tmp / "gh-issues.json") + "\n"
+        "else echo '[]'; fi\n",
+    )
+    return vps, {"FLEET_GH": str(gh), "FLEET_PR_TTL": "0"}
+
+
+def shaping(id_, created, **extra):
+    """A captain-held shaping item of the backlog."""
+    return task(
+        id_,
+        repo="o/alpha",
+        kind="captain",
+        held="yes",
+        hold_kind="captain",
+        hold_reason="Shape: approve, drop or change",
+        created=created,
+        **extra,
+    )
+
+
+def gh_issue(number, age, labels, updated_age=3600):
+    def at(seconds):
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW - seconds))
+
+    return {
+        "number": number,
+        "title": f"Issue {number}",
+        "url": f"https://github.com/o/alpha/issues/{number}",
+        "createdAt": at(age),
+        "updatedAt": at(updated_age),
+        "labels": [{"name": n} for n in labels],
+    }
+
+
+def shape_rows(page):
+    return {
+        i["id"]: {**i, "owner": g["owner"]}
+        for g in page["stalled"]
+        for i in g["items"]
+        if i["source"] == "shape"
+    }
+
+
+def test_an_item_in_shape_past_three_days_is_stalled_with_owner_and_age(homes):
+    vps, env = shape_world(
+        homes,
+        [
+            shaping("shape-link-aaa", "2027-01-10"),  # five days in Shape
+            shaping("held-bbb", "2027-01-11"),
+        ],
+        [
+            gh_issue(5, 5 * DAY, ["intake:do-this", "ops"]),
+            gh_issue(6, 4 * DAY, ["intake:other"]),
+        ],
+    )
+    assert homes.run(vps, **env).returncode == 0
+    page = status(homes)
+    assert page["errors"] == []
+    rows = shape_rows(page)
+    assert set(rows) == {"shape-link-aaa", "held-bbb", "o/alpha#5", "o/alpha#6"}
+    idea = rows["shape-link-aaa"]
+    assert idea["reason"] == "not-ready"
+    assert idea["owner"] == "firstmate"
+    assert idea["home_id"] == "fm-vps"
+    assert idea["since"] == NOW - 5 * DAY - 8 * 3600  # 2027-01-10T00:00Z
+    assert idea["threshold"] == 3 * DAY
+    ask = rows["o/alpha#5"]
+    assert ask["owner"] == "ops"  # the issue's own class label
+    assert ask["since"] == NOW - 5 * DAY
+    assert ask["url"] == "https://github.com/o/alpha/issues/5"
+    assert rows["o/alpha#6"]["owner"] == "dev"  # the github default owner
+    got = {r["id"]: r for r in page["records"]}
+    assert got["shape-link-aaa"]["stalled"] == {
+        "since": NOW - 5 * DAY - 8 * 3600,
+        "threshold": 3 * DAY,
+        "owner": "firstmate",
+    }
+    assert page["stalled_sources"]["shape"] == {"read": True, "reason": None, "open": 4}
+    assert any("stuck in Shape" in p["label"] for p in page["problems"]["shown"])
+
+
+def test_an_item_in_shape_under_the_threshold_is_counted_not_stalled(homes):
+    vps, env = shape_world(
+        homes,
+        [shaping("shape-link-new", "2027-01-14")],
+        [gh_issue(7, 2 * DAY, ["intake:fresh"])],
+    )
+    assert homes.run(vps, **env).returncode == 0
+    page = status(homes)
+    assert shape_rows(page) == {}
+    assert {r["id"]: r for r in page["records"]}["shape-link-new"]["stalled"] is None
+    assert page["stalled_sources"]["shape"]["open"] == 2
+
+
+def test_an_item_that_became_ready_or_was_answered_leaves_the_panel(homes):
+    issues = [gh_issue(8, 10 * DAY, ["intake:asked"], updated_age=10 * DAY)]
+    records = [shaping("shape-link-ccc", "2027-01-01")]
+    vps, env = shape_world(homes, records, issues)
+    assert homes.run(vps, **env).returncode == 0
+    page = status(homes)
+    assert set(shape_rows(page)) == {"o/alpha#8", "shape-link-ccc"}
+    # An issue in Shape is aged by the Shape clock only, not also as no-update.
+    assert [
+        i["id"] for g in page["stalled"] for i in g["items"] if i["source"] == "issue"
+    ] == []
+    # The shape gate marks the issue `ready`; the owner answers the shaping item.
+    issues[0] = gh_issue(8, 10 * DAY, ["intake:asked", "ready"], updated_age=3600)
+    (homes.tmp / "gh-issues.json").write_text(json.dumps(issues))
+    (vps / "list.txt").write_text(
+        toon_list([{**records[0], "held": "no", "hold_kind": None}])
+    )
+    assert homes.run(vps, **env).returncode == 0
+    page = status(homes)
+    assert shape_rows(page) == {}
+    assert page["stalled_sources"]["shape"]["open"] == 0
+
+
+def test_a_shaping_record_with_no_creation_date_ages_from_first_seen(homes):
+    vps, env = shape_world(homes, [shaping("held-nodate", None)], [])
+    assert homes.run(vps, **env).returncode == 0
+    assert shape_rows(status(homes)) == {}
+    later = NOW + 4 * DAY
+    assert homes.run(vps, FLEET_NOW=str(later), **env).returncode == 0
+    row = shape_rows(status(homes))["held-nodate"]
+    assert row["since"] == NOW
+    seen = json.loads((homes.tmp / "state/shape-seen.json").read_text())
+    assert seen == {"fm-vps\theld-nodate": NOW}
+
+
+def test_without_a_shape_block_the_stage_is_said_unread(homes):
+    vps, env = shape_world(
+        homes, [shaping("shape-link-aaa", "2027-01-01")], [gh_issue(5, 9 * DAY, [])]
+    )
+    cfg = json.loads((DIR / "fleet-stalled.json").read_text())
+    del cfg["shape"]
+    path = homes.tmp / "stalled.json"
+    path.write_text(json.dumps(cfg))
+    assert homes.run(vps, FLEET_STALLED_CONFIG=str(path), **env).returncode == 0
+    page = status(homes)
+    assert shape_rows(page) == {}
+    assert page["stalled_sources"]["shape"]["read"] is False
+
+
 # --- queue items: the 0019 envelope on finance, needs-you and clip records -------
 
 
