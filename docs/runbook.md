@@ -3910,7 +3910,9 @@ publisher can reach exists; the page says so. The queue items
 `FLEET_NEEDS_YOU_LEDGER`; neither the installer nor the unit sets them, so point
 them with a systemd drop-in. Unset, their `item_sources` entry says `read: false`
 and they add no items. The `jobq` items need no setting: they come from the
-stalled jobs' read (`jobq.py list --json` in the gateway, README "Jobs").
+stalled jobs' read (`jobq.py list --json` in the gateway, README "Jobs"). Open
+doc-door documents need no drop-in either: they are read by `docker exec` into the
+gateway by default ("Document door").
 Clip and scout are two more stalled sources (`clip`, `scout` blocks of the same file:
 `buffer_floor_days`, `slot_window_hours`, `idle_hours`), and
 `status_page.clip_queue` publishes one row per clip channel (cosmos, mind, neural, yc,
