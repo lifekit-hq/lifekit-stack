@@ -227,7 +227,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `intake_spool` | The intake door's held hand-offs: `{pending, oldest_epoch}` (`pending` = occurrences waiting for the retry, `oldest_epoch` = when the oldest was spooled, `null` when none is), or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
-| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`): `{read, reason}` (`kit_held` adds `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
+| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`): `{read, reason}` (`kit_held` and `shape` add `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | The side-hustle lines and week-sheet rows (below): `{channels[], lines[], week_rows[], credential, brief_day, week_of, feed_read}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
 | `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
@@ -317,7 +317,7 @@ line), never a guess.
 
 | Queue | Stalled when (default) | Config key | `since` | Owner |
 | --- | --- | --- | --- | --- |
-| GitHub issue of a registered project (a project whose backlog records name a GitHub repo) | open, no `held_labels` label, no update for 7 days | `github.days`, `github.held_labels` | the issue's `updatedAt` | its `ops`/`dev`/`finance`/`life` label (or `class:<x>`), else `github.repo_owners[<owner/name>]`, else `github.default_owner` (`dev`) |
+| GitHub issue of a registered project (a project whose backlog records name a GitHub repo) | open, no `held_labels` label, not in Shape (the Shape row ages those), no update for 7 days | `github.days`, `github.held_labels` | the issue's `updatedAt` | its `ops`/`dev`/`finance`/`life` label (or `class:<x>`), else `github.repo_owners[<owner/name>]`, else `github.default_owner` (`dev`) |
 | Firstmate backlog record | `queued` or `in_flight` (held and done keep their own buckets), no status line for 48 hours | `backlog.hours` | the newer of the record's creation date and the last `[at=<epoch>]` in `<home>/state/<id>.status` | `firstmate` |
 | jobq job | attempts exhausted (`attempts` at the queue's `max_attempts`, `failed` or `queued`), or `queued` more than 24 hours | `jobq.waiting_hours` | finish time (exhausted) or `queued_at` | the envelope's `class` when it is an owner, else `firstmate` |
 | A2A thread | open and past its own `deadline`, or no turn for 24 hours | `a2a.idle_hours` | the `deadline`, or the last turn | the thread's `owner` when it is one, else `firstmate` |
@@ -325,6 +325,7 @@ line), never a guess.
 | Scout | no new candidates file for `scout.idle_hours` (96) | `scout.idle_hours` | the newest `candidates/*.txt` of `FLEET_SCOUT_STATE`, by modification time | `scout.owner` (`firstmate`) |
 | Kit's held item | an open line of Kit's daily notes that names a fleet task and has no shaping item, for `kit_held.hours` (24) | `kit_held.hours` | when `kit_held.py check` first saw it unfiled | `kit_held.owner` (`firstmate`) |
 | Installed component (a host unit or workspace piece an `install-*`/`ensure-*` script deploys) | origin/main changed a path the component owns (`scripts/release-gauge/components.txt`) more than `installed.behind_hours` (24) ago and its installer has not run since | `installed.behind_hours` | the commit time of the oldest change on main not installed (`lifekit_component_behind_since_seconds` in `FLEET_INSTALLED_PROM`) | `installed.owner` (`ops`) |
+| Shape stage (decision 0019, amended 2026-11-26) | in Shape for `shape.days` (3): a captain-held backlog record whose id starts with one of `shape.id_prefixes` (`shape-`, the intake shape step's accepted idea; `held-`, Kit's held item), or an open issue of a registered project that carries an owner ask (a label starting with one of `shape.ask_label_prefixes`, the intake door's `intake:<fingerprint>` receipt) and not `shape.ready_label` (`ready`) | `shape.days`, `shape.id_prefixes`, `shape.ask_label_prefixes`, `shape.ready_label` | an issue's `createdAt`; a record's creation date, else the first run that saw it in Shape | `shape.owner` (`firstmate`) for a record; an issue's owner as in the GitHub row |
 | Captain call | unchanged: days waited, as before | - | - | - |
 
 - **Shape.** `records[].stalled` and `queue.top[].stalled` are `null` or
@@ -332,9 +333,9 @@ line), never a guess.
   duration, an exhausted job or a passed deadline). `stalled[]` is
   `[{owner, count, items: [{source, id, home_id, title, url, reason, since,
   threshold}]}]` in the config's `owners` order (a count of 0 is kept), oldest
-  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip`, `scout`, `held` or `installed`; `reason` is
+  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip`, `scout`, `held`, `installed` or `shape`; `reason` is
   `no-status-line`, `no-update`, `attempts-exhausted`, `waiting`,
-  `past-deadline`, `no-turn`, `no-post`, `buffer-short`, `no-output`, `not-filed` or `behind-main` (an `installed` row's `id` and `title` are the component name). The schema stays `fleet-status-page.v1`; these
+  `past-deadline`, `no-turn`, `no-post`, `buffer-short`, `no-output`, `not-filed`, `behind-main` or `not-ready` (an `installed` row's `id` and `title` are the component name). The schema stays `fleet-status-page.v1`; these
   are new optional keys, and a consumer that ignores them is unchanged. The
   dashboard's rendering is its own issue.
 - **GitHub issues** come from `gh issue list -R <owner/name> --state open`
@@ -372,6 +373,18 @@ line), never a guess.
   `behind_hours` is a row. A component with no stamp yet (-1) is unknown and
   never a row; a file unset, unreadable or not rewritten for an hour leaves the
   source `read: false`.
+- **The Shape stage** (issue 695) is an optional `shape` block. Shape is a small
+  step (done-when, owner, class, one matrix answer), so an item parked there with
+  no timer is the stall this shows: a `shape` row (`reason` `not-ready`) once it
+  has been in Shape `shape.days`. It leaves the panel when it leaves Shape: an
+  issue that gets `ready` or is closed, a shaping record that is answered (its
+  captain hold released) or closed. An issue in Shape is aged by this clock
+  only, never also as a `no-update` row; a `held_labels` label does not stop
+  the clock. A record with no creation date ages from the first run that saw it
+  in Shape (`shape-seen.json` in the state dir; dropped once its home is read
+  and the record has left Shape). `stalled_sources.shape.open` counts every item
+  in Shape, stalled or not; it is `read: false` while a home's backlog or a
+  registered project's issues are unread.
 - **Failure** of one source empties only its own rows, sets its
   `stalled_sources` entry to `read: false` and adds an `errors[]` line.
 

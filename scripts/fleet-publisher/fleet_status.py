@@ -22,7 +22,9 @@ sections"). Everything is read from structured sources, never from prose:
   how_it_works  one owner page per workflow, linked only once it exists
   stalled       items whose state has not changed for their queue's threshold
                 (fleet-stalled.json beside this script): GitHub issues of the
-                registered projects, backlog items, jobq jobs, A2A threads
+                registered projects, backlog items, jobq jobs, A2A threads,
+                and items left in the Shape stage (shaping items, owner-ask
+                issues without `ready`) past `shape.days`
   clip_queue    one row per clip channel from the clip queue's own outputs
                 (daily-check.json, egress.json, queue-run.json beside the stats
                 feed, read-only): waiting, oldest age, buffer days, egress, stalled
@@ -353,6 +355,7 @@ def open_prs(
         if (
             isinstance(hit, dict)
             and "issues" in hit
+            and all("created" in i for i in hit["issues"])
             and now - int(hit.get("as_of") or 0) < ttl
         ):
             continue
@@ -399,7 +402,7 @@ def open_prs(
                     "--limit",
                     str(ISSUE_LIMIT),
                     "--json",
-                    "number,title,url,updatedAt,labels",
+                    "number,title,url,createdAt,updatedAt,labels",
                 ],
                 timeout=min(20, int(left)),
             )
@@ -429,6 +432,7 @@ def slim_issue(raw: Any) -> dict[str, Any] | None:
         "title": one_line(raw.get("title"), TITLE_CUT),
         "url": raw.get("url") if isinstance(raw.get("url"), str) else None,
         "updated": when,
+        "created": parse_time(raw.get("createdAt")),
         "labels": [
             str(label["name"]).lower()
             for label in labels
@@ -850,6 +854,7 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
             ("scout", ("idle_hours",)),
             ("kit_held", ("hours",)),
             ("installed", ("behind_hours",)),
+            ("shape", ("days",)),
         ):
             if key in cfg:  # optional: absent leaves that source unread
                 block = cfg[key]
@@ -860,6 +865,12 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
                     for f in fields
                 )
                 assert block.get("owner", "firstmate") in owners
+        if "shape" in cfg:
+            shape = cfg["shape"]
+            assert isinstance(shape.get("ready_label", "ready"), str)
+            for key in ("ask_label_prefixes", "id_prefixes"):
+                assert isinstance(shape.get(key, []), list)
+                assert all(isinstance(v, str) and v for v in shape.get(key, []))
         assert isinstance(github["held_labels"], list)
         assert isinstance(github["repo_owners"], dict)
         assert set(github["repo_owners"].values()) <= set(owners)
@@ -956,6 +967,8 @@ def issue_stalls(
             continue
         for issue in issues:
             if held & set(issue["labels"]) or now - issue["updated"] < threshold:
+                continue
+            if issue_in_shape(issue, cfg):  # the Shape clock ages it instead
                 continue
             rows.append(
                 {
@@ -1492,6 +1505,142 @@ def held_stalls(
     return rows, {"read": True, "reason": None, "open": listed}
 
 
+SHAPE_DEFAULTS = {
+    "ready_label": "ready",
+    "ask_label_prefixes": ["intake:"],
+    "id_prefixes": ["shape-", "held-"],
+}
+
+
+def shape_rule(cfg: dict[str, Any], key: str) -> Any:
+    return cfg["shape"].get(key, SHAPE_DEFAULTS[key])
+
+
+def issue_in_shape(issue: dict[str, Any], cfg: dict[str, Any]) -> bool:
+    """An open issue is in Shape (decision 0019, stage 3) while it carries an
+    owner ask - the `intake:<fingerprint>` receipt label the intake door
+    (`file_intake`) puts on what it files - and not yet the `ready` label, the
+    shape gate's one mark."""
+    if "shape" not in cfg:
+        return False
+    labels = issue["labels"]
+    if shape_rule(cfg, "ready_label").lower() in labels:
+        return False
+    asks = [p.lower() for p in shape_rule(cfg, "ask_label_prefixes")]
+    return any(label.startswith(p) for label in labels for p in asks)
+
+
+def record_in_shape(rec: dict[str, Any], cfg: dict[str, Any]) -> bool:
+    """A backlog record is in Shape while it is a captain-held shaping item: the
+    intake shape step's `shape-<key>` (an accepted idea) or Kit's held item
+    `held-<fingerprint>` (lifekit-stack#684). Answering it releases the hold or
+    closes it, and it leaves Shape."""
+    hold = rec.get("hold") or {}
+    return (
+        rec["state"] == "held"
+        and hold.get("kind") == "captain"
+        and isinstance(rec.get("id"), str)
+        and rec["id"].startswith(tuple(shape_rule(cfg, "id_prefixes")))
+    )
+
+
+def shape_stalls(
+    records: list[dict[str, Any]],
+    by_home: dict[str, list[dict[str, Any]] | None],
+    slugs: set[str],
+    pr_cache: dict[str, Any],
+    cfg: dict[str, Any],
+    now: int,
+    state: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Items in Shape longer than `shape.days` (decision 0019, amended
+    2026-11-26: Shape stalls on a clock): captain-held shaping items of the
+    backlog and open issues that carry an owner ask but not `ready`. An issue
+    ages from its creation; a record from its creation date, or, with none,
+    from the first run that saw it in Shape (`shape-seen.json` in the state
+    dir; a mark is dropped when its home is read and the record has left
+    Shape). Getting `ready`, being answered or closed takes an item off."""
+    if "shape" not in cfg:
+        return [], {
+            "read": False,
+            "reason": "no shape thresholds in fleet-stalled.json",
+        }
+    window = int(cfg["shape"]["days"] * 86400)
+    owner = cfg["shape"].get("owner", "firstmate")
+    rows: list[dict[str, Any]] = []
+    listed = 0
+    path = state / "shape-seen.json"
+    marks = load_cache(path)
+    kept: dict[str, Any] = {}
+    shaping = [r for r in records if record_in_shape(r, cfg)]
+    for rec in shaping:
+        key = f"{rec['home_id']}\t{rec['id']}"
+        mark = marks.get(key)
+        kept[key] = mark if isinstance(mark, int) and mark <= now else now
+    for key, mark in marks.items():
+        if key not in kept and by_home.get(key.split("\t", 1)[0], []) is None:
+            kept[key] = mark  # its home was not read: keep the clock
+    if kept != marks:
+        save_cache(path, kept)
+    for rec in shaping:
+        listed += 1
+        created = parse_time(f"{rec['created']}T00:00:00Z") if rec["created"] else None
+        since = (
+            created if created is not None else kept[f"{rec['home_id']}\t{rec['id']}"]
+        )
+        if now - since < window:
+            continue
+        rec["stalled"] = stall(since, window, owner)
+        rows.append(
+            {
+                "source": "shape",
+                "id": rec["id"],
+                "home_id": rec["home_id"],
+                "title": rec["title"],
+                "url": None,
+                "reason": "not-ready",
+                "since": since,
+                "threshold": window,
+                "owner": owner,
+            }
+        )
+    missing = []
+    for slug in sorted(slugs):
+        hit = pr_cache.get(slug)
+        issues = hit.get("issues") if isinstance(hit, dict) else None
+        if not isinstance(issues, list):
+            missing.append(slug)
+            continue
+        for issue in issues:
+            if not issue_in_shape(issue, cfg) or issue.get("created") is None:
+                continue
+            listed += 1
+            if now - issue["created"] < window:
+                continue
+            rows.append(
+                {
+                    "source": "shape",
+                    "id": f"{slug}#{issue['number']}",
+                    "home_id": None,
+                    "title": issue["title"],
+                    "url": issue["url"],
+                    "reason": "not-ready",
+                    "since": issue["created"],
+                    "threshold": window,
+                    "owner": issue_owner(slug, issue["labels"], cfg),
+                }
+            )
+    if any(v is None for v in by_home.values()):
+        source = {"read": False, "reason": "a home's backlog is unreadable"}
+    elif not os.environ.get("FLEET_GH", "gh"):
+        source = {"read": False, "reason": "FLEET_GH is empty"}
+    elif missing:
+        source = {"read": False, "reason": f"issues not read for {', '.join(missing)}"}
+    else:
+        source = {"read": True, "reason": None}
+    return rows, {**source, "open": listed}
+
+
 INSTALLED_PROM_FRESH = 3600  # the gauge rewrites it every 5 minutes
 INSTALLED_LINE = re.compile(
     r'^lifekit_component_behind(_since_seconds)?\{component="([a-z0-9][a-z0-9-]*)"\}'
@@ -1585,6 +1734,7 @@ PROBLEM_SOURCE_KEY = {
     "scout": "scout",
     "held": "kit_held",
     "installed": "installed",
+    "shape": "shape",
 }
 PROBLEM_PHRASE = {
     "no-status-line": "silent",
@@ -1598,6 +1748,7 @@ PROBLEM_PHRASE = {
     "no-output": "no output",
     "not-filed": "held, not filed",
     "behind-main": "behind main",
+    "not-ready": "stuck in Shape",
 }
 
 
@@ -2185,6 +2336,15 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         scout_rows, scout_source = scout_stalls(cfg, args.now)
         held_rows, held_source = held_stalls(cfg, args.now, errors)
         installed_rows, installed_source = installed_stalls(cfg, args.now)
+        shape_rows, shape_source = shape_stalls(
+            records,
+            by_home,
+            {r["github"] for r in rows if r["github"]},
+            pr_cache,
+            cfg,
+            args.now,
+            state,
+        )
         stalled_rows = (
             found
             + issues
@@ -2194,6 +2354,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             + scout_rows
             + held_rows
             + installed_rows
+            + shape_rows
         )
         stalled = stalled_section(stalled_rows, cfg["owners"])
         sources = {
@@ -2210,6 +2371,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "scout": scout_source,
             "kit_held": held_source,
             "installed": installed_source,
+            "shape": shape_source,
         }
     depth: dict[str, Any] | None = None
     if os.environ.get("FLEET_INTAKE_CMD") != "":
