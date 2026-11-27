@@ -444,7 +444,7 @@ def test_receipts_are_filtered_to_the_senders_prefix(relay):
 
 
 def test_installed_script_knows_the_dashboard_sender(relay):
-    assert "  dashboard) ID_PREFIX=dash- ;;\n" in relay.script.read_text()
+    assert "  dashboard) ID_PREFIX=dash- ACTOR= ;;\n" in relay.script.read_text()
 
 
 # ─── the finance-sentry sender ───────────────────────────────────────────────
