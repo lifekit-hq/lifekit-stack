@@ -1,11 +1,17 @@
 """The scout fetch glue (scripts/scout): lens pages -> feed2exec -> one note.
 
-What this file pins: a first run over a lens sends exactly one note carrying the
-count and the candidates path, and a second run sends none; a lens page that
+What this file pins: a feed seen for the first time (a new lens, or a source
+added to one) is caught up silently, so its back catalogue never reaches the
+judge; after that a run with new items sends exactly one note carrying the
+count and the candidates path, and a second run sends none; each feed's items
+are written newest first even when the feed lists them oldest first, and a big
+feed gets only its fair share of the per-lens cap beside small ones; reoffered
+lines are offered once; a lens page that
 cannot be fed to feed2exec safely is skipped and reported once (not every day);
 `scout: off` and non-lens pages are ignored; `--catchup` records items as seen
 and sends nothing; a failed note is retried instead of lost; the installer puts
-down the units without enabling the timer. feed2exec and fm-inbox.sh are stubs.
+down the units without enabling the timer. feed2exec and fm-inbox.sh are stubs;
+one test runs the real feed2exec (with scout_echo) over a local feed file.
 """
 
 from __future__ import annotations
@@ -25,27 +31,52 @@ FETCH = DIR / "scout-fetch.sh"
 INSTALLER = DIR / "install-scout.sh"
 TIMER = DIR / "lifekit-scout.timer"
 
-# Prints one line per `args =` in the config, placeholders filled, the way the
-# echo plugin would; a database file marks "seen". FAILME exits 1.
-FAKE_FEED2EXEC = r"""#!/usr/bin/env bash
-echo "$*" >> "$STATE_DIR/f2e-calls"
-cfg="" db="" catchup=0
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --config) cfg="$2"; shift ;;
-    --database) db="$2"; shift ;;
-    --catchup) catchup=1 ;;
-  esac
-  shift
-done
-grep -q FAILME "$cfg" && { echo "KeyError: 'published'" >&2; exit 1; }
-seen=0; [[ -e "$db" ]] && seen=1
-: > "$db"
-((seen || catchup)) && exit 0
-grep -E '^args' "$cfg" | sed -E "s/^args *= *//; s|\{item.link\}|https://x.test/item|; s|\{item.title\}|'Title one'|"
-grep -q PARTIAL "$cfg" && { echo "KeyError: 'published'" >&2; exit 1; }
-grep -q KILLME "$cfg" && kill -KILL "$PPID"
-exit 0
+# Plays feed2exec over the lens config: each section is a feed of `items` items
+# (default 1) plus `grows` (default 1) more per F2E_GROW step; item i is dated
+# 1000*i and listed newest first, or oldest first with `order = asc`. The seen
+# database is a real feedcache table, as feed2exec keeps it. With the echo plugin
+# an item prints as the echo line; with scout_echo as feed TAB date TAB line.
+# FAILME exits 1; PARTIAL exits 1 and KILLME kills the caller after a fetch.
+FAKE_FEED2EXEC = r"""#!/usr/bin/env python3
+import configparser, os, signal, sqlite3, sys
+args = sys.argv[1:]
+cfg = args[args.index("--config") + 1]
+db = args[args.index("--database") + 1]
+catchup = "--catchup" in args
+p = configparser.RawConfigParser()
+p.read(cfg)
+with open(os.environ["STATE_DIR"] + "/f2e-calls", "a") as f:
+    f.write(" ".join(args) + " sections=" + ",".join(p.sections())
+            + " output=" + p.defaults().get("output", "") + "\n")
+text = open(cfg).read()
+if "FAILME" in text:
+    print("KeyError: 'published'", file=sys.stderr)
+    sys.exit(1)
+con = sqlite3.connect(db)
+con.execute("CREATE TABLE IF NOT EXISTS feedcache (name text, guid text, PRIMARY KEY (name, guid))")
+grow = int(os.environ.get("F2E_GROW", "0"))
+for name in p.sections():
+    n = p.getint(name, "items", fallback=1) + grow * p.getint(name, "grows", fallback=1)
+    ids = list(range(1, n + 1))
+    if p.get(name, "order", fallback="desc") != "asc":
+        ids.reverse()
+    for i in ids:
+        guid = f"{name}-{i}"
+        if con.execute("SELECT 1 FROM feedcache WHERE name=? AND guid=?", (name, guid)).fetchone():
+            continue
+        if not catchup:
+            line = p.get(name, "args").replace("{item.link}", f"https://x.test/{i}")
+            line = line.replace("{item.title}", f"'Title {i}'")
+            if p.get(name, "output") == "scout_echo":
+                line = f"{name}\t{1000 * i}\t{line}"
+            print(line, flush=True)
+        con.execute("INSERT INTO feedcache VALUES (?, ?)", (name, guid))
+        con.commit()
+if not catchup and "PARTIAL" in text:
+    print("KeyError: 'published'", file=sys.stderr)
+    sys.exit(1)
+if not catchup and "KILLME" in text:
+    os.kill(os.getppid(), signal.SIGKILL)
 """
 
 # Records each call; fails when NOTE_FAIL is set.
@@ -121,48 +152,164 @@ class Env:
         f = self.stub_state / "notes"
         return f.read_text().splitlines() if f.exists() else []
 
+    def candidates(self, date: str = "2026-11-16") -> list[str]:
+        f = self.state / f"candidates/{date}.txt"
+        return f.read_text().splitlines() if f.exists() else []
 
-def test_first_run_sends_one_note_with_count_and_path_second_run_none(tmp_path):
+    def calls(self) -> list[str]:
+        f = self.stub_state / "f2e-calls"
+        return f.read_text().splitlines() if f.exists() else []
+
+
+def tags(lines: list[str]) -> list[str]:
+    """The source tag of each candidate line."""
+    return [ln.split("\t", 1)[1].split(" ", 1)[0] for ln in lines]
+
+
+def test_a_new_lens_is_caught_up_silently_then_new_items_sent_once(tmp_path):
     e = Env(tmp_path)
     e.lens("harness")
-    r = e.run()
+    r = e.run()  # first sighting: the back catalogue is recorded, not offered
+    assert r.returncode == 0, r.stderr
+    assert e.notes() == [] and e.candidates() == []
+    assert "--catchup sections=gh:a,web:b" in e.calls()[0]
+    r = e.run(F2E_GROW="1")
     assert r.returncode == 0, r.stderr
     cand = e.state / "candidates/2026-11-16.txt"
-    lines = cand.read_text().splitlines()
+    lines = e.candidates()
     assert lines == [
-        "harness\tgh:a https://x.test/item 'Title one'",
-        "harness\tweb:b https://x.test/item 'Title one'",
+        "harness\tgh:a https://x.test/2 'Title 2'",
+        "harness\tweb:b https://x.test/2 'Title 2'",
     ]
+    # the normal fetch runs through scout_echo, not the bare echo plugin
+    assert "output=scout_echo" in e.calls()[-1]
     notes = e.notes()
     assert len(notes) == 1
     assert notes[0].startswith("/fm/home|note --request-id scout-2026-11-16-2 -- ")
     assert "2 new items from 1 lens(es)" in notes[0] and str(cand) in notes[0]
 
-    r = e.run()
+    r = e.run(F2E_GROW="1")
     assert r.returncode == 0, r.stderr
     assert len(e.notes()) == 1  # quiet: nothing new, nothing sent
-    assert cand.read_text().splitlines() == lines
+    assert e.candidates() == lines
 
 
-def test_a_second_same_day_run_with_new_items_sends_its_own_note(tmp_path):
+def test_a_source_added_to_a_lens_is_caught_up_and_the_others_still_offered(
+    tmp_path,
+):
     e = Env(tmp_path)
     e.lens("harness")
     e.run()
-    e.lens("later")
-    r = e.run()
+    backlog = "[web:c]\nurl = https://x.test/c.atom\nargs = web:c {item.link} {item.title}\nitems = 40\n```\n"
+    e.lens("harness", LENS.replace("```\n", backlog))
+    r = e.run(F2E_GROW="1")
     assert r.returncode == 0, r.stderr
-    notes = e.notes()
-    assert len(notes) == 2
-    assert "--request-id scout-2026-11-16-2 " in notes[0]
-    assert "--request-id scout-2026-11-16-4 " in notes[1]
-    assert "4 new items from 2 lens(es)" in notes[1]
+    # only web:c's 41 items were caught up; then every feed was fetched as
+    # usual, and the seeded web:c had nothing new
+    assert "--catchup sections=web:c " in e.calls()[-2]
+    assert "fetch sections=gh:a,web:b,web:c " in e.calls()[-1]
+    assert e.candidates() == [
+        "harness\tgh:a https://x.test/2 'Title 2'",
+        "harness\tweb:b https://x.test/2 'Title 2'",
+    ]
+    r = e.run(F2E_GROW="2", date="2026-11-17")
+    assert r.returncode == 0, r.stderr
+    assert tags(e.candidates("2026-11-17")) == ["gh:a", "web:b", "web:c"]
+    assert "web:c https://x.test/42 'Title 42'" in e.candidates("2026-11-17")[2]
+
+
+def test_a_feed_listing_oldest_first_is_written_newest_first(tmp_path):
+    e = Env(tmp_path)
+    e.lens("harness", LENS.replace("args = gh:a", "order = asc\nargs = gh:a"))
+    e.run()
+    e.run(F2E_GROW="3")
+    assert e.candidates() == [
+        "harness\tgh:a https://x.test/4 'Title 4'",
+        "harness\tgh:a https://x.test/3 'Title 3'",
+        "harness\tgh:a https://x.test/2 'Title 2'",
+        "harness\tweb:b https://x.test/4 'Title 4'",
+        "harness\tweb:b https://x.test/3 'Title 3'",
+        "harness\tweb:b https://x.test/2 'Title 2'",
+    ]
+    assert "gh:a" in e.calls()[-1]  # the stub really listed gh:a oldest first
+
+
+def test_a_large_backlog_feed_cannot_crowd_out_small_feeds(tmp_path):
+    e = Env(tmp_path)
+    big = LENS.replace(
+        "args = gh:a {item.link} {item.title}",
+        "args = gh:a {item.link} {item.title}\ngrows = 100",
+    ).replace(
+        "args = web:b {item.link} {item.title}",
+        "args = web:b {item.link} {item.title}\ngrows = 5\n\n"
+        "[web:claude]\nurl = https://x.test/c.atom\n"
+        "args = web:claude {item.link} {item.title}\ngrows = 3",
+    )
+    e.lens("harness", big)
+    e.run()
+    r = e.run(F2E_GROW="1")
+    assert r.returncode == 0, r.stderr
+    lines = e.candidates()
+    # 60 in all: both small feeds whole, the big one gets the rest, newest first
+    assert len(lines) == 60
+    assert tags(lines) == ["gh:a"] * 52 + ["web:b"] * 5 + ["web:claude"] * 3
+    assert lines[0] == "harness\tgh:a https://x.test/101 'Title 101'"
+    assert lines[51] == "harness\tgh:a https://x.test/50 'Title 50'"
+    assert lines[52] == "harness\tweb:b https://x.test/6 'Title 6'"
+    # what did not fit is kept beside the file, not dropped and not announced
+    over = (e.state / "candidates/2026-11-16.overflow").read_text().splitlines()
+    assert len(over) == 48 and over[0] == "harness\tgh:a https://x.test/49 'Title 49'"
+    assert "60 new items" in e.notes()[0]
+    # a later same-day run only has what is left of the lens's cap
+    e.run(F2E_GROW="2")
+    assert len(e.candidates()) == 60
+    assert (
+        len((e.state / "candidates/2026-11-16.overflow").read_text().splitlines())
+        == 48 + 108
+    )
+
+
+def test_the_lens_cap_is_configurable(tmp_path):
+    e = Env(tmp_path)
+    e.lens("harness")
+    e.run()
+    e.run(F2E_GROW="3", SCOUT_LENS_CAP="3")
+    assert tags(e.candidates()) == ["gh:a", "gh:a", "web:b"]
+    assert e.run(SCOUT_LENS_CAP="x").returncode == 2
+
+
+def test_reoffered_lines_are_offered_once_after_fresh_items(tmp_path):
+    e = Env(tmp_path)
+    e.lens("harness")
+    e.run()
+    queue = e.state / "reoffer/harness.txt"
+    queue.write_text(
+        "harness\tweb:b https://old.test/3 'Old 3'\n"
+        "harness\tgh:k https://old.test/2 'Old 2'\n"
+        "harness\tgh:k https://old.test/1 'Old 1'\n"
+    )
+    r = e.run(F2E_GROW="1", SCOUT_LENS_CAP="4")
+    assert r.returncode == 0, r.stderr
+    assert e.candidates() == [
+        "harness\tgh:a https://x.test/2 'Title 2'",
+        "harness\tweb:b https://x.test/2 'Title 2'",
+        "harness\tweb:b https://old.test/3 'Old 3'",
+        "harness\tgh:k https://old.test/2 'Old 2'",
+    ]
+    assert queue.read_text() == "harness\tgh:k https://old.test/1 'Old 1'\n"
+    r = e.run(F2E_GROW="1", date="2026-11-17")  # feeds quiet: the queue alone
+    assert e.candidates("2026-11-17") == ["harness\tgh:k https://old.test/1 'Old 1'"]
+    assert not queue.exists()
+    e.run(F2E_GROW="1", date="2026-11-18")
+    assert e.candidates("2026-11-18") == []
 
 
 def test_a_quiet_first_day_writes_nothing(tmp_path):
     e = Env(tmp_path)
     e.lens("harness")
     e.run()
-    e.run(date="2026-11-17")
+    e.run(F2E_GROW="1")
+    e.run(F2E_GROW="1", date="2026-11-17")
     assert not (e.state / "candidates/2026-11-17.txt").exists()
     assert len(e.notes()) == 1
 
@@ -170,11 +317,12 @@ def test_a_quiet_first_day_writes_nothing(tmp_path):
 def test_broken_lens_is_skipped_and_reported_once(tmp_path):
     e = Env(tmp_path)
     e.lens("harness")
+    e.run()
     e.lens("bad", LENS.replace("{item.link}", "{item.published}", 1))
     e.lens("nosources", "---\nscout: on\n---\n\n# no sources here\n")
     e.lens("exec", LENS.replace("feed2exec.plugins.echo", "feed2exec.plugins.exec"))
     e.lens("crash", LENS.replace("url = https://x.test/b.atom", "url = FAILME"))
-    r = e.run()
+    r = e.run(F2E_GROW="1")
     assert r.returncode == 0, r.stderr
     notes = e.notes()
     broken = [n for n in notes if "scout-broken-" in n]
@@ -182,7 +330,7 @@ def test_broken_lens_is_skipped_and_reported_once(tmp_path):
     assert any("lens 'bad' skipped" in n and "{item.published}" in n for n in broken)
     assert any("lens 'nosources'" in n for n in broken)
     assert any("lens 'exec'" in n for n in broken)
-    assert any("lens 'crash'" in n and "feed2exec failed" in n for n in broken)
+    assert any("lens 'crash'" in n and "catch-up failed" in n for n in broken)
     # the healthy lens still ran, and is the only one in the count note
     count = [n for n in notes if "new items" in n]
     assert len(count) == 1 and "2 new items from 1 lens(es)" in count[0]
@@ -206,12 +354,12 @@ def test_items_are_kept_even_when_the_args_carry_no_source_tag(tmp_path):
             "args = web:b ", "args = web "
         ),
     )
-    r = e.run()
+    e.run()
+    r = e.run(F2E_GROW="1")
     assert r.returncode == 0, r.stderr
-    lines = (e.state / "candidates/2026-11-16.txt").read_text().splitlines()
-    assert lines == [
-        "plain\tgh https://x.test/item 'Title one'",
-        "plain\tweb https://x.test/item 'Title one'",
+    assert e.candidates() == [
+        "plain\tgh https://x.test/2 'Title 2'",
+        "plain\tweb https://x.test/2 'Title 2'",
     ]
     assert "2 new items" in e.notes()[0]
 
@@ -219,9 +367,10 @@ def test_items_are_kept_even_when_the_args_carry_no_source_tag(tmp_path):
 def test_items_printed_before_a_feed2exec_failure_are_kept(tmp_path):
     e = Env(tmp_path)
     e.lens("partial", LENS.replace("url = https://x.test/b.atom", "url = PARTIAL"))
-    r = e.run()
+    e.run()
+    r = e.run(F2E_GROW="1")
     assert r.returncode == 0, r.stderr
-    lines = (e.state / "candidates/2026-11-16.txt").read_text().splitlines()
+    lines = e.candidates()
     assert len(lines) == 2 and all(line.startswith("partial\t") for line in lines)
     notes = e.notes()
     assert any("lens 'partial' skipped, feed2exec failed" in n for n in notes)
@@ -232,13 +381,14 @@ def test_items_of_earlier_lenses_survive_a_killed_run(tmp_path):
     e = Env(tmp_path)
     e.lens("a-first")
     e.lens("z-last", LENS.replace("url = https://x.test/b.atom", "url = KILLME"))
-    r = e.run()
+    e.run()  # the catch-up of both lenses
+    r = e.run(F2E_GROW="1")
     assert r.returncode != 0  # the run was killed mid-way: no note went out
     assert e.notes() == []
-    lines = (e.state / "candidates/2026-11-16.txt").read_text().splitlines()
-    assert [line.split("\t")[0] for line in lines] == ["a-first", "a-first"]
+    assert [line.split("\t")[0] for line in e.candidates()] == ["a-first", "a-first"]
     # the next run announces what the killed one had already recorded
-    r = e.run()
+    e.lens("z-last")
+    r = e.run(F2E_GROW="1")
     assert r.returncode == 0, r.stderr
     notes = e.notes()
     assert len(notes) == 1 and "2 new items from 1 lens(es)" in notes[0]
@@ -252,7 +402,7 @@ def test_off_and_non_lens_pages_are_ignored(tmp_path):
     r = e.run()
     assert r.returncode == 0, r.stderr
     assert e.notes() == []
-    assert not (e.stub_state / "f2e-calls").exists()
+    assert e.calls() == []
 
 
 def test_unterminated_frontmatter_is_reported(tmp_path):
@@ -266,13 +416,13 @@ def test_catchup_records_items_and_sends_nothing(tmp_path):
     e = Env(tmp_path)
     e.lens("harness")
     e.lens("bad", LENS.replace("{item.link}", "{item.published}", 1))
-    r = e.run("--catchup")
+    r = e.run("--catchup", F2E_GROW="1")
     assert r.returncode == 0, r.stderr
     assert e.notes() == []
     assert not list((e.state / "candidates").glob("*"))
-    assert "--catchup" in (e.stub_state / "f2e-calls").read_text()
+    assert "--catchup" in e.calls()[0]
     # what was recorded is not new on the next normal run
-    e.run()
+    e.run(F2E_GROW="1")
     assert e.notes() == [n for n in e.notes() if "scout-broken-" in n]
     assert not list((e.state / "candidates").glob("*.txt"))
 
@@ -280,16 +430,88 @@ def test_catchup_records_items_and_sends_nothing(tmp_path):
 def test_a_failed_note_is_retried_not_lost(tmp_path):
     e = Env(tmp_path)
     e.lens("harness")
-    r = e.run(NOTE_FAIL="1")
+    e.run()
+    r = e.run(F2E_GROW="1", NOTE_FAIL="1")
     assert r.returncode == 1
     assert e.notes() == []
     assert (e.state / "candidates/2026-11-16.txt").exists()
-    r = e.run(date="2026-11-17")  # feeds are quiet now; the old file is announced
+    r = e.run(F2E_GROW="1", date="2026-11-17")  # feeds quiet; old file announced
     assert r.returncode == 0, r.stderr
     notes = e.notes()
     assert len(notes) == 1 and "--request-id scout-2026-11-16-2 " in notes[0]
-    e.run(date="2026-11-18")
+    e.run(F2E_GROW="1", date="2026-11-18")
     assert len(e.notes()) == 1
+
+
+def test_scout_echo_prints_feed_date_and_the_echo_line(capsys):
+    import calendar
+    import sys
+    import time
+
+    sys.path.insert(0, str(DIR))
+    try:
+        import scout_echo
+    finally:
+        sys.path.remove(str(DIR))
+    feed = {"name": "web:b"}
+    when = time.strptime("2026-11-26 10:00:00", "%Y-%m-%d %H:%M:%S")
+    assert scout_echo.output(
+        "web:b",
+        "https://x.test/1",
+        "A\ttab\nand newline",
+        feed=feed,
+        item={"updated_parsed": when},
+    )
+    scout_echo.output("web:b", "u", feed=feed, item={"updated_parsed": 1700000000.5})
+    scout_echo.output("web:b", "u", feed=feed, item={})
+    scout_echo.output("web:b", "u", feed={**feed, "catchup": True}, item={})
+    assert capsys.readouterr().out.splitlines() == [
+        f"web:b\t{calendar.timegm(when)}\tweb:b https://x.test/1 'A tab and newline'",
+        "web:b\t1700000000\tweb:b u",
+        "web:b\t0\tweb:b u",
+    ]
+
+
+ATOM = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>t</title><id>urn:t</id>
+<updated>2026-11-26T00:00:00Z</updated>{entries}</feed>
+"""
+
+
+def atom(days: list[int]) -> str:
+    entry = (
+        "<entry><title>Post {d}</title><id>urn:p{d}</id>"
+        '<link href="https://x.test/p{d}"/>'
+        "<updated>2026-11-{d:02d}T00:00:00Z</updated></entry>"
+    )
+    return ATOM.format(entries="".join(entry.format(d=d) for d in days))
+
+
+@pytest.mark.skipif(shutil.which("feed2exec") is None, reason="needs feed2exec")
+def test_with_the_real_feed2exec_a_new_source_is_seeded_and_items_come_newest_first(
+    tmp_path,
+):
+    e = Env(tmp_path)
+    feed = tmp_path / "feed.atom"
+    feed.write_text(atom([1, 2, 3]))  # an old-items-first feed
+    e.lens(
+        "harness",
+        LENS.replace("https://x.test/a.atom", feed.as_uri()).replace(
+            "[web:b]\nurl = https://x.test/b.atom\nargs = web:b {item.link} {item.title}\n",
+            "",
+        ),
+    )
+    real = {"FEED2EXEC": shutil.which("feed2exec"), "HOME": str(tmp_path)}
+    r = e.run(**real)
+    assert r.returncode == 0, r.stderr
+    assert e.candidates() == [] and e.notes() == []
+    feed.write_text(atom([1, 2, 3, 4, 5]))
+    r = e.run(**real)
+    assert r.returncode == 0, r.stderr
+    assert e.candidates() == [
+        "harness\tgh:a https://x.test/p5 'Post 5'",
+        "harness\tgh:a https://x.test/p4 'Post 4'",
+    ]
 
 
 def test_needs_the_inbox_binary_and_feed2exec(tmp_path):
