@@ -53,6 +53,8 @@ door's spool count; empty skips it, unset skips it too when FLEET_INTAKE_CMD is
 set),
 FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: none reachable),
 FLEET_FINANCE_CMD (prints finance's open items as JSON; unset: not read),
+FLEET_NEEDS_YOU_LEDGER (Kit's needs-you/open.json as a file, the installer's
+read-only bind of it; set, it is read in place of FLEET_NEEDS_YOU_CMD),
 FLEET_NEEDS_YOU_CMD (the same for Kit's needs-you ledger, `cat` of its
 needs-you/open.json in the gateway; empty skips it, unset skips it too when
 FLEET_INTAKE_CMD is set),
@@ -1490,15 +1492,25 @@ def needs_you_acceptance(entry: dict[str, Any]) -> str:
 def needs_you_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Kit's open needs-you decisions, read-only from its ledger
     (`needs-you/open.json`, `cat` in the gateway; FLEET_NEEDS_YOU_CMD overrides):
-    one record per entry, origin `kit`, its options as the acceptance line."""
-    argv = needs_you_cmd()
-    if argv is None:
+    one record per entry, origin `kit`, its options as the acceptance line.
+    FLEET_NEEDS_YOU_LEDGER, set, names the ledger file to read instead (the
+    installer's read-only bind of it into the unit); a missing file is empty."""
+    path = os.environ.get("FLEET_NEEDS_YOU_LEDGER", "")
+    argv = None if path else needs_you_cmd()
+    if not path and argv is None:
         return [], {"read": False, "reason": "needs-you skipped"}
     try:
-        if not argv:
-            argv = ["docker", "exec", gateway(), "sh", "-c", NEEDS_YOU_READ]
-            argv += ["sh", GATEWAY_NEEDS_YOU]
-        doc = json.loads(run(argv, timeout=15))
+        if path:
+            try:
+                text = Path(path).read_text()
+            except FileNotFoundError:
+                text = "[]"  # Kit creates it on first use
+        else:
+            if not argv:
+                argv = ["docker", "exec", gateway(), "sh", "-c", NEEDS_YOU_READ]
+                argv += ["sh", GATEWAY_NEEDS_YOU]
+            text = run(argv, timeout=15)
+        doc = json.loads(text)
         assert isinstance(doc, list)
     except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as exc:
         errors.append(f"needs-you ledger unreadable ({exc.__class__.__name__})")

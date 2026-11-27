@@ -481,7 +481,7 @@ so the dashboard can link through. Read-only; no store is written.
 | Source | Read from | `owner` / `class` | `store` | `ref` |
 | --- | --- | --- | --- | --- |
 | `finance` | `FLEET_FINANCE_CMD`, a command printing a JSON list of `{kind, id, title, acceptance, url, since}` (`kind` one of `alert`, `companion-event`, `thesis-revision`, `recommendation`; the last three keys optional) | `finance` / `finance` | `finance-db` | `url`, else `<kind>/<id>` |
-| `needs-you` | Kit's `needs-you/open.json`, read with a fixed `cat` in the gateway (its directory is 0700 to the gateway, so it is never read from the host; `FLEET_NEEDS_YOU_CMD` overrides; `kind` `decision`; a missing file is an empty ledger) | `kit` / `life` | `needs-you` | the entry `id` |
+| `needs-you` | Kit's `needs-you/open.json`: the file `FLEET_NEEDS_YOU_LEDGER` names when set (the installer's read-only bind, see "Wiring"), otherwise a fixed `cat` in the gateway (`FLEET_NEEDS_YOU_CMD` overrides; empty skips it); `kind` `decision`; a missing file is an empty ledger | `kit` / `life` | `needs-you` | the entry `id` |
 | `jobq` | `jobq.py list --json` in the gateway, the same read as the stalled jobs (`FLEET_JOBS_CMD` replaces it); only jobs `queued` or `running`, `kind` the job's kind | the envelope's `owner` (else the skill that answers the job) / its `class` (else `unclear`) | `jobq` | the job id |
 | `doc-door` | `door.py list --json` in the gateway (`FLEET_DOC_DOOR_CMD` overrides; `kind` `document`, `title` the report's, `null` before one is filed) | the entry's `owner` (`reader`) / `life` | `doc-door` | the doc id |
 
@@ -501,6 +501,31 @@ so the dashboard can link through. Read-only; no store is written.
   like `stalled_sources`: unset, the source is `read: false` and says so. An
   unreadable source adds an `errors[]` line; an item matching `CREDENTIAL_RE` is
   withheld and counted in `errors[]`.
+- **The finance command.** `finance_items.py` (installed as
+  `/usr/local/bin/lifekit-fleet-finance.py`) is the VPS's `FLEET_FINANCE_CMD`: it
+  prints finance-sentry's pending thesis revisions and recommendations (not yet
+  expired) and the companion events Ledger has not delivered (held-for-digest left
+  out), each with a one-line `acceptance` and an epoch `since`. The list is the
+  raw table read and does not apply finance-sentry's reconcile step
+  (`SyncFailureReconciler`): a resolved alert's companion event can still show
+  until Ledger next polls the pending-events API, and a held-for-digest event
+  appears late, only once a Ledger poll promotes it. finance-sentry is
+  multi-user, so every list holds only the owner's rows: `FLEET_FINANCE_OWNER`
+  is the owner's finance-sentry `UserId` (a GUID, host config), passed to psql
+  as a variable; unset or empty, the command queries nothing and exits nonzero
+  with `finance owner not configured`, so the source reads `read: false`. `--base-url <the
+  app's public URL>` adds a companion event's app link as `url`; the others carry
+  none. It reads with one SELECT through `docker exec` into finance-sentry's
+  postgres container (by compose labels), in a read-only session, and exits
+  nonzero printing nothing when it cannot read.
+- **Wiring.** The installer carries `FLEET_NEEDS_YOU_LEDGER`, `FLEET_FINANCE_CMD`,
+  `FLEET_FINANCE_OWNER` (refused unless a GUID) (and `FLEET_A2A_CMD`, `FLEET_SCOUT_STATE` for the stalled sources) into the
+  unit, each only when set and non-empty. The ledger defaults to Kit's
+  (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`); since Kit's
+  workspace is not the admin account's to read, the unit binds the ledger's
+  directory read-only at `/run/lifekit-fleet-needs-you` and points the variable
+  there. Installed with `FLEET_NEEDS_YOU_LEDGER=`, the unit carries no ledger and
+  the publisher falls back to the gateway `cat`.
 - **Schema.** Still `fleet-status-page.v1`: `items`, `item_sources` and the clip
   rows' envelope keys are new optional keys, and a consumer that ignores them is
   unchanged. The dashboard's rendering is its own issue.
