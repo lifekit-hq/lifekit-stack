@@ -5,9 +5,10 @@ Description=Publish the fleet summary and fleet metrics for the dashboard and Pr
 Type=oneshot
 # The account that owns the fleet homes and Lavish state (README "VPS users").
 # The installer substitutes the placeholders; FM_HOMES is space-separated;
-# the FLEET_PLAN_MAP, FLEET_CLIP_STATS_FEED and item source placeholders are
-# empty unless the installer was given one (FLEET_NEEDS_YOU_LEDGER and its
-# read-only bind default to Kit's ledger).
+# the FLEET_PLAN_MAP and item source placeholders are empty unless the
+# installer was given one (FLEET_NEEDS_YOU_LEDGER and its read-only bind
+# default to Kit's ledger). The clip queue is read from the account's
+# ~/clip-data/queue (clip's default).
 User=__ADMIN_USER__
-Environment="FM_HOMES=__FM_HOMES__" "TASKS_AXI=__TASKS_AXI__"__FLEET_PLAN_MAP_ENV____FLEET_CLIP_STATS_FEED_ENV____FLEET_SOURCES_ENV____NEEDS_YOU_BIND__
+Environment="FM_HOMES=__FM_HOMES__" "TASKS_AXI=__TASKS_AXI__"__FLEET_PLAN_MAP_ENV____FLEET_SOURCES_ENV____NEEDS_YOU_BIND__
 ExecStart=/usr/local/bin/lifekit-fleet-publisher.sh /var/lib/lifekit-fleet /var/lib/node_exporter/textfile

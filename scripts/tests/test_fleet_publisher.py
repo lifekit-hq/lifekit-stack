@@ -35,6 +35,13 @@ NO_LIVE_SOURCES = {
 }
 
 
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path, monkeypatch):
+    """HOME is a temp dir with no clip-data, so no run reads the real
+    ~/clip-data/queue; clip_world builds its queue under it."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+
 def decision(id_, key=None, **extra):
     return {"id": id_, "key": key or id_, "verb": "captain-hold", **extra}
 
@@ -1764,38 +1771,18 @@ def test_installer_refuses_a_plan_map_it_cannot_render(tmp_path, plan_map):
     assert not (tmp_path / "root/etc/systemd").exists()
 
 
-def test_installer_carries_the_clip_stats_feed_into_the_unit(tmp_path):
-    feed = "/home/denys/clip-data/queue/stats.jsonl"
+def test_installer_carries_no_clip_stats_feed_into_the_unit(tmp_path):
+    # Issue 692: the clip queue is read from ~/clip-data/queue; a leftover
+    # FLEET_CLIP_STATS_FEED in the installer's environment is not rendered.
     result = run_installer(
-        tmp_path, FM_HOMES="/srv/fleet-home", FLEET_CLIP_STATS_FEED=feed
+        tmp_path,
+        FM_HOMES="/srv/fleet-home",
+        FLEET_CLIP_STATS_FEED="/home/x/clip-data/queue/stats.jsonl",
     )
     assert result.returncode == 0, result.stderr
     assert installed_environment(tmp_path) == (
         '"FM_HOMES=/srv/fleet-home" "TASKS_AXI=/opt/tools/bin/tasks-axi"'
-        f' "FLEET_CLIP_STATS_FEED={feed}"'
     )
-
-
-@pytest.mark.parametrize("feed", [None, ""])
-def test_installer_leaves_the_clip_stats_feed_out_of_the_unit_when_unset(
-    tmp_path, feed
-):
-    env = {} if feed is None else {"FLEET_CLIP_STATS_FEED": feed}
-    result = run_installer(tmp_path, FM_HOMES="/srv/fleet-home", **env)
-    assert result.returncode == 0, result.stderr
-    assert "FLEET_CLIP_STATS_FEED" not in installed_environment(tmp_path)
-
-
-@pytest.mark.parametrize(
-    "feed",
-    ["relative/stats.jsonl", "/srv/a b/stats.jsonl", '/srv/a"b', "/srv/a|b", "/srv/$x"],
-)
-def test_installer_refuses_a_clip_stats_feed_it_cannot_render(tmp_path, feed):
-    result = run_installer(
-        tmp_path, FM_HOMES="/srv/fleet-home", FLEET_CLIP_STATS_FEED=feed
-    )
-    assert result.returncode == 1
-    assert not (tmp_path / "root/etc/systemd").exists()
 
 
 def installed_service(tmp_path):
@@ -4256,31 +4243,7 @@ def test_a_broken_mark_file_posts_no_problems_line(homes):
     assert any("problems-seen.json" in e for e in page["errors"])
 
 
-# --- the Monday and Thursday side-hustle lines -----------------------------
-
-MONDAY = NOW + 3 * DAY  # 2027-01-18 08:00 UTC
-THURSDAY = NOW + 6 * DAY  # 2027-01-21 08:00 UTC
-
-
-def iso(epoch):
-    return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(epoch))
-
-
-def feed_rows(name, at, **over):
-    """One clip stats run for a channel: two Short rows and the channel row."""
-    stamp = iso(at)
-    videos = [
-        {"at": stamp, "kind": "video", "channel": name, "clip": f"{name}_a.mp4",
-         "video_id": "a", "found": True, "views": 120},
-        {"at": stamp, "kind": "video", "channel": name, "clip": f"{name}_b.mp4",
-         "video_id": "b", "found": True, "views": 900},
-    ]  # fmt: skip
-    channel = {
-        "at": stamp, "kind": "channel", "channel": name, "videos_recorded": 5,
-        "subscribers": 1234, "status": "ok",
-        "days7": {"views": 4321, "subscribers_gained": 7},
-    }  # fmt: skip
-    return [*videos, {**channel, **over}]
+# --- the retired side-hustle section -------------------------------------------
 
 
 def side_home(homes):
@@ -4289,151 +4252,24 @@ def side_home(homes):
     return home if home.exists() else status_home(homes.tmp, "fm-vps", [])
 
 
-def side_world(homes, rows, now, name="stats.jsonl", raw=None):
-    feed = homes.tmp / name
-    feed.write_text(
-        raw if raw is not None else "".join(json.dumps(r) + "\n" for r in rows)
-    )
-    vps = side_home(homes)
-    res = homes.run(vps, FLEET_NOW=str(now), FLEET_CLIP_STATS_FEED=str(feed))
-    assert res.returncode == 0, res.stderr
-    return status(homes)["side_hustles"]
-
-
-def week_before(name, now):
-    """The same channel a week earlier, 3 uploads fewer."""
-    return feed_rows(name, now - 7 * DAY - 3600, videos_recorded=2)
-
-
-def test_monday_and_thursday_carry_one_line_per_channel_with_the_four_numbers(homes):
-    for now in (MONDAY, THURSDAY):
-        rows = [*week_before("alpha", now), *feed_rows("alpha", now - 3600)]
-        rows += [*week_before("beta", now), *feed_rows("beta", now - 3600)]
-        side = side_world(homes, rows, now)
-        assert side["brief_day"] is True and side["credential"] is None
-        assert side["lines"] == [
-            f"{c}: 7d views 4,321 · subs 1,234 · uploads 3 · best Short {c}_b.mp4 (900 views)"
-            for c in ("alpha", "beta")
-        ]
-
-
-def test_other_days_carry_no_brief_line(homes):
-    rows = [*week_before("alpha", NOW), *feed_rows("alpha", NOW - 3600)]
-    for now in (NOW, MONDAY + DAY, MONDAY + 2 * DAY, THURSDAY + DAY):
-        side = side_world(homes, rows, now)
-        assert side["brief_day"] is False and side["lines"] == []
-        assert side["week_rows"] == []
-        assert side["channels"][0]["status"] in ("ok", "no_data")
-
-
-def test_the_monday_week_sheet_has_one_weekly_row_per_channel_and_thursday_none(homes):
-    now = MONDAY
-    rows = [*week_before("alpha", now), *feed_rows("alpha", now - 3600)]
-    rows += feed_rows("beta", now - 3600)  # no row a week back: uploads unknown
-    side = side_world(homes, rows, now)
-    assert [r["channel"] for r in side["week_rows"]] == ["alpha", "beta"]
-    alpha, beta = side["week_rows"]
-    assert alpha == {
-        "channel": "alpha", "week_of": "2027-01-18", "status": "ok",
-        "views_7d": 4321, "subscribers": 1234, "uploads": 3,
-        "best_short": {"clip": "alpha_b.mp4", "views": 900},
-    }  # fmt: skip
-    assert beta["uploads"] == "no data" and beta["views_7d"] == 4321
-    thursday = side_world(homes, rows, THURSDAY)
-    assert thursday["week_rows"] == [] and len(thursday["lines"]) == 2
-
-
-def test_a_channel_with_no_data_in_the_window_says_no_data_not_zeros(homes):
-    now = MONDAY
-    stale = feed_rows("alpha", now - 9 * DAY)  # the last run is older than the window
-    empty = feed_rows("beta", now - 3600, days7=None, subscribers=None)
-    rows = [*stale, *empty, *feed_rows("gamma", now - 3600, days7={"views": 0})]
-    side = side_world(homes, rows, now)
-    assert side["lines"][0] == "alpha: no data"
-    assert side["lines"][1] == "beta: no data"
-    # a real zero is a number; what the feed does not hold is "no data"
-    gamma = side["lines"][2]
-    assert gamma.startswith("gamma: 7d views 0 · subs 1,234 · uploads no data")
-    rows_by = {r["channel"]: r for r in side["week_rows"]}
-    assert (
-        rows_by["alpha"]["status"] == "no_data" and "views_7d" not in rows_by["alpha"]
-    )
-    assert (
-        rows_by["gamma"]["views_7d"] == 0 and rows_by["gamma"]["uploads"] == "no data"
-    )
-
-
-def test_a_rejected_analytics_scope_is_one_credential_line_and_no_numbers(homes):
-    now = THURSDAY
-    consent = {"status": "needs_reconsent", "subscribers": None, "days7": None}
-    rejected = {
-        "status": "error",
-        "reason": "Google rejected the stored credentials; run `clip auth --channel b`",
-    }
-    rows = [*week_before("alpha", now), *feed_rows("alpha", now - 3600)]
-    rows += feed_rows("beta", now - 3600, **consent)
-    rows += feed_rows("gamma", now - 3600, **rejected)
-    side = side_world(homes, rows, now)
-    credential = side["credential"]
-    assert credential.startswith("Side hustles: YouTube Analytics needs consent again")
-    assert "beta, gamma" in credential and "clip auth" in credential
-    assert side["lines"] == [side["lines"][0], credential]
-    assert side["lines"][0].startswith("alpha: 7d views 4,321")
-    assert not any(c.isdigit() for c in credential)  # no number of any kind
-    by = {c["channel"]: c["status"] for c in side["channels"]}
-    assert by == {"alpha": "ok", "beta": "needs_consent", "gamma": "needs_consent"}
-
-
-def test_an_unreadable_feed_shows_the_no_data_line_and_the_same_run_with_a_valid_feed_the_numbers(
-    homes,
-):
-    now = MONDAY
-    # blocked case: the feed path is a directory, so it cannot be read
-    (homes.tmp / "gone").mkdir()
-    vps = side_home(homes)
+def test_the_side_hustle_section_is_null_and_no_stats_feed_is_read(homes):
+    # Issue 692: clip's stats.jsonl was never written; its reader is gone, so a
+    # run never names it, even with the old variable still in the environment.
     res = homes.run(
-        vps, FLEET_NOW=str(now), FLEET_CLIP_STATS_FEED=str(homes.tmp / "gone")
+        side_home(homes),
+        FLEET_NOW=str(NOW),
+        FLEET_CLIP_STATS_FEED=str(homes.tmp / "stats.jsonl"),
     )
     assert res.returncode == 0, res.stderr
-    blocked = status(homes)
-    side = blocked["side_hustles"]
-    assert side["feed_read"] is False
-    assert side["lines"] == ["Side hustles: no data (stats feed unreadable)"]
-    assert side["week_rows"][0]["status"] == "no_data"
-    assert any("clip stats feed unreadable" in e for e in blocked["errors"])
-    # allowed case: the same run with a valid feed
-    rows = [*week_before("alpha", now), *feed_rows("alpha", now - 3600)]
-    allowed = side_world(homes, rows, now)
-    assert allowed["feed_read"] is True
-    assert allowed["lines"][0].startswith("alpha: 7d views 4,321 · subs 1,234")
-
-
-def test_the_brief_keeps_its_cap_with_many_channels_and_a_credential(homes):
-    now = MONDAY
-    rows = []
-    for name in ("a", "b", "c", "d"):
-        rows += [*week_before(name, now), *feed_rows(name, now - 3600)]
-    rows += feed_rows("e", now - 3600, status="needs_reconsent")
-    side = side_world(homes, rows, now)
-    assert len(side["lines"]) == fleet_status.SIDE_LINES == 3
-    assert side["lines"][0].startswith("a: 7d views")
-    assert side["lines"][1] == "+3 more channels not shown"
-    assert side["lines"][2] == side["credential"]
-    assert "needs consent again for e" in side["lines"][2]
-    assert len(side["week_rows"]) == 5  # the sheet still has every channel
-
-
-def test_no_feed_configured_or_an_empty_feed(homes):
-    vps = side_home(homes)
-    assert homes.run(vps, FLEET_NOW=str(MONDAY)).returncode == 0
-    assert status(homes)["side_hustles"] is None
-    side = side_world(homes, [], MONDAY, raw="not json\n")
-    assert side["lines"] == [
-        "Side hustles: no data (no channel rows in the stats feed)"
-    ]
+    page = status(homes)
+    assert page["side_hustles"] is None
+    assert not any("stats feed" in e for e in page["errors"])
 
 
 # --- clip queue rows and the clip and scout stalled sources -----------------------
+
+
+CLIP_QUEUE = "home/clip-data/queue"
 
 
 def clip_iso(age):
@@ -4452,23 +4288,23 @@ def clip_channel(**over):
     return {**base, **over}
 
 
-def clip_world(homes, channels, *, egress="up", files=True):
-    """A clip queue directory beside the stats feed; returns the run's env."""
-    queue = homes.tmp / "clipq"
-    queue.mkdir(exist_ok=True)
+def clip_world(homes, channels, *, egress="up", files=True, events=()):
+    """A clip queue directory with its own outputs; returns the run's env."""
+    queue = homes.tmp / CLIP_QUEUE
+    queue.mkdir(parents=True, exist_ok=True)
     if files:
         (queue / "daily-check.json").write_text(json.dumps({"channels": channels}))
         (queue / "egress.json").write_text(json.dumps({"state": egress}))
         (queue / "queue-run.json").write_text(
             json.dumps({"at": clip_iso(900), "ran": [], "idle": list(channels)})
         )
+        (queue / "events.jsonl").write_text(
+            "".join(e if isinstance(e, str) else json.dumps(e) + "\n" for e in events)
+        )
     for name in channels:
         pending = queue / name / "pending"
         pending.mkdir(parents=True, exist_ok=True)
-    return {
-        "FLEET_NOW": str(NOW),
-        "FLEET_CLIP_STATS_FEED": str(queue / "stats.jsonl"),
-    }
+    return {"FLEET_NOW": str(NOW)}
 
 
 def clip_rows(homes, env):
@@ -4479,7 +4315,7 @@ def clip_rows(homes, env):
 
 def test_a_healthy_clip_channel_is_published_not_stalled(homes):
     env = clip_world(homes, {"cosmos": clip_channel()})
-    pend = homes.tmp / "clipq/cosmos/pending"
+    pend = homes.tmp / CLIP_QUEUE / "cosmos/pending"
     (pend / "a").write_text(f"https://x/a\nadded: {clip_iso(7200)}\nby: seed\n")
     (pend / "b").write_text(f"https://x/b\nadded: {clip_iso(3600)}\nby: seed\n")
     page, rows = clip_rows(homes, env)
@@ -4489,6 +4325,9 @@ def test_a_healthy_clip_channel_is_published_not_stalled(homes):
         "waiting": 3,
         "oldest_age_s": 7200,
         "buffer_days": 3.0,
+        "counts": {"pending": 2, "running": 0, "done": 0, "failed": 0},
+        "events_7d": {"published": 0, "judged": 0, "failed": 0},
+        "last_published_at": None,
         "egress": "up",
         "stalled": False,
         "stalled_reason": None,
@@ -4520,13 +4359,106 @@ def test_missing_clip_inputs_are_unavailable_never_zero(homes):
     for row in rows.values():
         assert row["waiting"] is None and row["buffer_days"] is None
         assert row["egress"] is None and row["stalled"] is None
+        assert row["events_7d"] is None and row["last_published_at"] is None
     assert page["clip_queue"]["unavailable"] == [
         "daily-check.json",
         "egress.json",
         "queue-run.json",
+        "events.jsonl",
     ]
-    assert page["stalled_sources"]["clip"]["read"] is False
-    assert any("clip queue input unreadable" in e for e in page["errors"])
+    # Named once, as the unread source; never an errors line.
+    assert page["stalled_sources"]["clip"] == {
+        "read": False,
+        "reason": "unread: daily-check.json, egress.json, queue-run.json, events.jsonl",
+    }
+    assert not any("clip" in e for e in page["errors"])
+
+
+def test_counts_and_seven_day_events_come_from_the_queue_and_events_jsonl(homes):
+    def ev(kind, age, channel="cosmos"):
+        return {"at": clip_iso(age), "channel": channel, "kind": kind}
+
+    events = [
+        ev("published", 9 * DAY),  # outside the window: last time only
+        ev("published", 2 * DAY),
+        ev("published", 3600),
+        ev("judged", 2 * 3600),
+        ev("failed", 3 * 3600),
+        ev("queued", 3600),  # a kind the row does not count
+        ev("published", 600, channel="mind"),
+        "not json\n",
+        ev("published", -3600),  # a future stamp is not counted
+    ]
+    env = clip_world(homes, {"cosmos": clip_channel()}, events=events)
+    queue = homes.tmp / CLIP_QUEUE / "cosmos"
+    for state, n in (("running", 1), ("done", 3), ("failed", 2)):
+        (queue / state).mkdir()
+        for i in range(n):
+            (queue / state / f"s{i}").write_text("u\n")
+    page, rows = clip_rows(homes, env)
+    cosmos = rows["cosmos"]
+    assert cosmos["counts"] == {"pending": 0, "running": 1, "done": 3, "failed": 2}
+    assert cosmos["events_7d"] == {"published": 2, "judged": 1, "failed": 1}
+    assert cosmos["last_published_at"] == NOW - 3600
+    assert rows["mind"]["events_7d"]["published"] == 1
+    assert rows["mind"]["counts"] is None  # no channel directory: unavailable
+    assert "counts" in rows["mind"]["unavailable"]
+    assert rows["yc"]["events_7d"] == {"published": 0, "judged": 0, "failed": 0}
+    assert page["clip_queue"]["unavailable"] == []
+    assert page["stalled_sources"]["clip"] == {"read": True, "reason": None}
+
+
+def test_a_missing_events_file_is_one_unread_source_and_the_rest_still_reads(homes):
+    env = clip_world(homes, {"cosmos": clip_channel()})
+    (homes.tmp / CLIP_QUEUE / "events.jsonl").unlink()
+    page, rows = clip_rows(homes, env)
+    cosmos = rows["cosmos"]
+    assert cosmos["waiting"] == 3 and cosmos["stalled"] is False
+    assert cosmos["events_7d"] is None
+    assert "events_7d" in cosmos["unavailable"]
+    assert page["clip_queue"]["unavailable"] == ["events.jsonl"]
+    assert page["stalled_sources"]["clip"] == {
+        "read": False,
+        "reason": "unread: events.jsonl",
+    }
+    assert not any("clip" in e for e in page["errors"])
+
+
+def test_a_cleared_clip_problem_drops_its_mark_while_events_jsonl_is_missing(homes):
+    stalled = {"cosmos": clip_channel(last_post=clip_iso(40 * 3600))}
+    env = clip_world(homes, stalled)
+    assert homes.run(side_home(homes), **env).returncode == 0
+    seen = homes.tmp / "state/problems-seen.json"
+    assert json.loads(seen.read_text())["clip:None:cosmos"]["first_seen"] == NOW
+    clip_world(homes, {"cosmos": clip_channel()})
+    (homes.tmp / CLIP_QUEUE / "events.jsonl").unlink()
+    later = {**env, "FLEET_NOW": str(NOW + DAY)}
+    assert homes.run(side_home(homes), **later).returncode == 0
+    assert status(homes)["stalled_sources"]["clip"]["read"] is False
+    assert "clip:None:cosmos" not in json.loads(seen.read_text())
+
+
+def test_a_missing_daily_check_keeps_a_clip_problem_aging(homes):
+    stalled = {"cosmos": clip_channel(last_post=clip_iso(40 * 3600))}
+    env = clip_world(homes, stalled)
+    assert homes.run(side_home(homes), **env).returncode == 0
+    (homes.tmp / CLIP_QUEUE / "daily-check.json").unlink()
+    later = {**env, "FLEET_NOW": str(NOW + DAY)}
+    assert homes.run(side_home(homes), **later).returncode == 0
+    marks = json.loads((homes.tmp / "state/problems-seen.json").read_text())
+    assert marks["clip:None:cosmos"]["first_seen"] == NOW
+
+
+def test_a_missing_clip_queue_directory_is_an_unread_source_not_an_error(homes):
+    env = {"FLEET_NOW": str(NOW)}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["clip_queue"] is None
+    assert page["stalled_sources"]["clip"] == {
+        "read": False,
+        "reason": "no clip queue directory",
+    }
+    assert not any("clip" in e for e in page["errors"])
 
 
 def test_an_empty_buffer_is_a_stalled_channel_with_a_real_zero(homes):
@@ -4563,7 +4495,7 @@ def test_a_down_egress_is_published_on_every_row(homes):
 
 def test_the_clip_queue_is_read_only(homes):
     env = clip_world(homes, {"cosmos": clip_channel()})
-    queue = homes.tmp / "clipq"
+    queue = homes.tmp / CLIP_QUEUE
     (queue / "cosmos/pending/a").write_text(f"u\nadded: {clip_iso(60)}\n")
 
     def snapshot():
@@ -4656,7 +4588,7 @@ def test_a_stale_or_missing_installed_gauge_is_unread_not_current(homes):
     }
 
 
-def test_an_unset_scout_or_clip_feed_is_said_not_guessed(homes):
+def test_an_unset_scout_or_an_absent_clip_queue_is_said_not_guessed(homes):
     assert homes.run(side_home(homes), FLEET_NOW=str(NOW)).returncode == 0
     page = status(homes)
     assert page["clip_queue"] is None

@@ -3935,11 +3935,12 @@ environment gains `FLEET_PLAN_MAP` only when the installer is given one
 (`FLEET_PLAN_MAP="<repo>=<project> ..."` beside `FM_HOMES`; README "One row per
 project"): the alias list that folds a repo spelling naming no project, such as
 the vault's, into its project's row. It is host config, so a re-install without
-it drops the line. `FLEET_CLIP_STATS_FEED` works the same way and is what
-turns the clip queue rows on: on the VPS pass
-`FLEET_CLIP_STATS_FEED=/home/denys/clip-data/queue/stats.jsonl` beside
-`FM_HOMES` (an absolute path of `[A-Za-z0-9._/-]`; only its parent directory is
-read); unset, the unit carries none and those rows stay `null`.
+it drops the line. The clip queue rows need no installer option: the publisher
+reads clip's own default queue directory, `~/clip-data/queue` of the unit's
+account. The old
+`FLEET_CLIP_STATS_FEED` option is gone (issue 692): the `stats.jsonl` it named
+was never written. A unit installed before it still carries the line, which the
+publisher now ignores; a re-install drops it.
 Stalled items (`status_page.stalled`, README "Stalled items") are marked by one
 mechanical age check over every queue; the thresholds are the one
 `scripts/fleet-publisher/fleet-stalled.json` (installed beside the helper), so
@@ -3948,7 +3949,7 @@ The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
 publisher can reach exists; the page says so. The queue items
 (`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD` and
 `FLEET_NEEDS_YOU_LEDGER`. The installer carries both, and `FLEET_A2A_CMD` and
-`FLEET_SCOUT_STATE`, into the unit the same way as `FLEET_CLIP_STATS_FEED`: only
+`FLEET_SCOUT_STATE`, into the unit the same way as `FLEET_PLAN_MAP`: only
 when set and non-empty, so a re-install without them drops the line. The one
 exception is the ledger, which defaults to Kit's
 (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`, bound read-only
@@ -3966,12 +3967,16 @@ setting either: they are read by `docker exec` into the gateway by default
 Clip and scout are two more stalled sources (`clip`, `scout` blocks of the same file:
 `buffer_floor_days`, `slot_window_hours`, `idle_hours`), and
 `status_page.clip_queue` publishes one row per clip channel (cosmos, mind, neural, yc,
-vice-footage: waiting, oldest age, buffer days, egress, stalled; README "Clip queue"). Both
-are read by the publisher's existing run, read-only, from the directory of
-`FLEET_CLIP_STATS_FEED` (the clip queue's `daily-check.json`, `egress.json`,
-`queue-run.json`; a missing input shows as unavailable, never zero) and, for the scout,
-`FLEET_SCOUT_STATE` (its state dir). The installer carries both (above). Unset, the page
-says `read: false`. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
+vice-footage: waiting, oldest age, buffer days, state counts, 7-day events, egress,
+stalled; README "Clip queue"). Both are read by the publisher's existing run, read-only:
+the clip sources are the queue directory's own outputs (`daily-check.json` for waiting,
+buffer days and the stall check, `egress.json`, `queue-run.json`, `events.jsonl` for the
+7-day published/judged/failed counts and the last publish, and each channel's
+`pending/`, `running/`, `done/`, `failed/` directories for the counts and the oldest
+waiting age). A missing directory or file is named once, in `stalled_sources.clip`'s
+reason, and its numbers are unavailable, never zero; it is not an `errors` line. The
+scout reads `FLEET_SCOUT_STATE` (its state dir), which the installer carries (above).
+Unset, the page says `read: false`. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
 drop-in: "Held items become shaping items"). Open doc-door documents are one more
 (`doc_door.open_hours`, 24, owner `life`), read by `docker exec` into the gateway like the job
 ages ("Document door").
@@ -4050,7 +4055,6 @@ the default and needs no flag):
 
 ```bash
 sudo FM_HOMES="<fleet home> [<fleet home> ...]" \
-  FLEET_CLIP_STATS_FEED=/home/denys/clip-data/queue/stats.jsonl \
   FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py" \
   FLEET_FINANCE_OWNER=<owner UserId GUID> \
   FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout \
@@ -4062,7 +4066,7 @@ After the next run, `item_sources.finance` and `item_sources.needs_you` are `rea
 and `items` lists the open finance items and needs-you decisions.
 
 `bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
-set and skips it otherwise (it passes no `FLEET_PLAN_MAP`, `FLEET_CLIP_STATS_FEED`,
+set and skips it otherwise (it passes no `FLEET_PLAN_MAP`,
 `FLEET_FINANCE_CMD`, `FLEET_FINANCE_OWNER`, `FLEET_A2A_CMD` or `FLEET_SCOUT_STATE`, so re-run the installer by hand
 to restore one). Re-running the installer is how a home is
 added or removed: it reinstalls the script and rewrites the unit's `FM_HOMES`.

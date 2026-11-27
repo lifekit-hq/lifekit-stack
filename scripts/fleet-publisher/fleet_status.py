@@ -26,8 +26,10 @@ sections"). Everything is read from structured sources, never from prose:
                 and items left in the Shape stage (shaping items, owner-ask
                 issues without `ready`) past `shape.days`
   clip_queue    one row per clip channel from the clip queue's own outputs
-                (daily-check.json, egress.json, queue-run.json beside the stats
-                feed, read-only): waiting, oldest age, buffer days, egress, stalled
+                (daily-check.json, egress.json, queue-run.json, events.jsonl
+                and the channel state directories, read-only): waiting, oldest
+                age, buffer days, state counts, 7-day event counts, egress,
+                stalled
   items         one record per open finance item (FLEET_FINANCE_CMD), per
                 needs-you decision (Kit's ledger), per waiting or running job
                 (`jobq.py list --json` in the gateway) and per open doc-door
@@ -35,8 +37,7 @@ sections"). Everything is read from structured sources, never from prose:
                 envelope (owner, class, store, ref, and acceptance when the
                 source has one)
   problems      the three oldest stalled items by first-seen age, one brief line
-  side_hustles  per-channel numbers from the clip stats feed (stats.jsonl), as
-                the Monday/Thursday brief lines and the Monday week-sheet rows
+  side_hustles  always null: retired, its stats feed was never written
 
 Usage: fleet_status.py --home <id>=<path> [--home ...] --now <epoch>
          --state-dir <dir> [--daily <jsonl> ...] [--remote <json> ...]
@@ -63,8 +64,9 @@ FLEET_DOC_DOOR_CMD (the same for doc-door's open documents, `door.py list
 FLEET_INSTALLED_PROM (the release gauge's lifekit_installed.prom, which says
 per installed component whether it is behind main; unset: not read),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
-script), FLEET_CLIP_STATS_FEED (path of clip's stats.jsonl, whose directory is
-the clip queue's: unset: no side_hustles or clip_queue section, or clip source, an unreadable file: its "no data" line). A source that fails empties its own part
+script). The clip queue is read from clip's default ~/clip-data/queue; a
+missing directory or input file is named in the clip source's reason, not in
+`errors`. A source that fails empties its own part
 and adds a line to `errors`; the helper itself only fails on bad arguments.
 """
 
@@ -1194,7 +1196,11 @@ def thread_stalls(
 
 
 CLIP_CHANNELS = ("cosmos", "mind", "neural", "yc", "vice-footage")
-CLIP_FILES = ("daily-check.json", "egress.json", "queue-run.json")
+CLIP_FILES = ("daily-check.json", "egress.json", "queue-run.json", "events.jsonl")
+CLIP_STATES = ("pending", "running", "done", "failed")
+CLIP_EVENT_KINDS = ("published", "judged", "failed")
+CLIP_EVENT_WINDOW = 7 * 86400
+CLIP_EVENTS_TAIL = 4 * 1024 * 1024  # the newest bytes of events.jsonl read per run
 # The 0019 item envelope each adapter stamps on its records: who owns the next
 # move, its class (0016), and the one store that owns the item. `ref` is the
 # item's native id (or URL) in that store.
@@ -1206,11 +1212,65 @@ SCOUT_CANDIDATES = "candidates"
 ADDED_RE = re.compile(r"^added:\s*(\S+)\s*$", re.M)
 
 
-def clip_dir() -> Path | None:
-    """The clip queue's directory: where the stats feed (FLEET_CLIP_STATS_FEED)
-    lives. None when the feed is not wired."""
-    feed = os.environ.get("FLEET_CLIP_STATS_FEED", "")
-    return Path(feed).parent if feed else None
+def clip_dir() -> Path:
+    """The clip queue's directory: clip's own default `~/clip-data/queue` of
+    the account the publisher runs as."""
+    return Path.home() / "clip-data" / "queue"
+
+
+def clip_counts(queue: Path, channel: str) -> dict[str, int] | None:
+    """The number of sources in each of the channel's state directories
+    (pending, running, done, failed). A state directory the channel does not
+    have yet holds none; an unreadable channel directory gives None."""
+    if not CHANNEL_RE.match(channel) or not (queue / channel).is_dir():
+        return None
+    counts = {}
+    try:
+        for state in CLIP_STATES:
+            d = queue / channel / state
+            counts[state] = (
+                sum(1 for f in d.iterdir() if f.is_file()) if d.is_dir() else 0
+            )
+    except OSError:
+        return None
+    return counts
+
+
+def clip_events(path: Path, now: int) -> dict[str, dict[str, Any]] | None:
+    """Per channel, the events.jsonl counts of the last 7 days by kind
+    (published, judged, failed) and the newest `published` time (epoch). Only
+    the newest CLIP_EVENTS_TAIL bytes are read; None when the file is
+    missing or unreadable. A line that does not parse is skipped."""
+    try:
+        with path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - CLIP_EVENTS_TAIL))
+            raw = f.read()
+    except OSError:
+        return None
+    lines = raw.decode("utf-8", "replace").splitlines()
+    if size > CLIP_EVENTS_TAIL and lines:
+        lines = lines[1:]  # the first line may be cut mid-row
+    out: dict[str, dict[str, Any]] = {}
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        name, kind, at = ev.get("channel"), ev.get("kind"), feed_epoch(ev.get("at"))
+        if not isinstance(name, str) or kind not in CLIP_EVENT_KINDS or at is None:
+            continue
+        rec = out.setdefault(
+            name, {"week": dict.fromkeys(CLIP_EVENT_KINDS, 0), "last_published": None}
+        )
+        if 0 <= now - at <= CLIP_EVENT_WINDOW:
+            rec["week"][kind] += 1
+        if kind == "published" and at <= now:
+            rec["last_published"] = max(rec["last_published"] or 0, at)
+    return out
 
 
 def read_json_object(path: Path) -> dict[str, Any] | None:
@@ -1246,6 +1306,7 @@ def clip_channel_row(
     name: str,
     check: dict[str, Any] | None,
     egress: str | None,
+    events: dict[str, dict[str, Any]] | None,
     queue: Path,
     cfg: dict[str, Any] | None,
     now: int,
@@ -1270,6 +1331,16 @@ def clip_channel_row(
         unavailable.append("oldest_age_s")
     if egress is None:
         unavailable.append("egress")
+    counts = clip_counts(queue, name)
+    if counts is None:
+        unavailable.append("counts")
+    if events is None:
+        unavailable += ["events_7d", "last_published_at"]
+        week = last_published = None
+    else:
+        mine = events.get(name)
+        week = dict(mine["week"]) if mine else dict.fromkeys(CLIP_EVENT_KINDS, 0)
+        last_published = mine["last_published"] if mine else None
     stalled = reason = None
     since = cut = 0
     if rec is not None and cfg is not None and "clip" in cfg:
@@ -1303,6 +1374,9 @@ def clip_channel_row(
         "waiting": waiting,
         "oldest_age_s": oldest if readable else None,
         "buffer_days": buffer_days,
+        "counts": counts,
+        "events_7d": week,
+        "last_published_at": last_published,
         "egress": egress,
         "stalled": stalled,
         "stalled_reason": reason,
@@ -1327,28 +1401,31 @@ def clip_channel_row(
 
 
 def clip_queue(
-    cfg: dict[str, Any] | None, now: int, errors: list[str]
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any]]:
+    cfg: dict[str, Any] | None, now: int
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any], bool]:
     """The clip queue's rows and its stalled rows, read-only from the queue's
-    own `daily-check.json`, `egress.json` and `queue-run.json` (and each
-    channel's pending sources for the oldest age). Returns (section, stalled
-    rows, the source's `{read, reason}`). An input that is missing or unreadable
-    makes its own numbers unavailable (None), never zero."""
+    own outputs: `daily-check.json`, `egress.json`, `queue-run.json`,
+    `events.jsonl` and each channel's state directories. Returns (section,
+    stalled rows, the source's `{read, reason}`, whether the stall check read
+    `daily-check.json` with its thresholds). An input that is missing or
+    unreadable makes its own numbers unavailable (None), never zero, and is
+    named once: in the section's `unavailable` and the source's reason (never
+    an `errors` line, since a missing clip output is the clip pipeline's state,
+    not a publisher fault)."""
     queue = clip_dir()
-    if queue is None:
-        return None, [], {"read": False, "reason": "FLEET_CLIP_STATS_FEED is not set"}
+    if not queue.is_dir():
+        return None, [], {"read": False, "reason": "no clip queue directory"}, False
     check = read_json_object(queue / CLIP_FILES[0])
     egress_doc = read_json_object(queue / CLIP_FILES[1])
     run_doc = read_json_object(queue / CLIP_FILES[2])
+    events = clip_events(queue / CLIP_FILES[3], now)
     if check is not None and not isinstance(check.get("channels"), dict):
         check = None
     missing = [
         n
-        for n, d in zip(CLIP_FILES, (check, egress_doc, run_doc), strict=True)
+        for n, d in zip(CLIP_FILES, (check, egress_doc, run_doc, events), strict=True)
         if d is None
     ]
-    if missing:
-        errors.append(f"clip queue input unreadable: {', '.join(missing)}")
     state = egress_doc.get("state") if egress_doc else None
     egress = state if isinstance(state, str) and state else None
     names = list(CLIP_CHANNELS)
@@ -1356,7 +1433,7 @@ def clip_queue(
         names += sorted(n for n in check["channels"] if n not in CLIP_CHANNELS)
     rows, stalled_rows = [], []
     for name in names:
-        row, hit = clip_channel_row(name, check, egress, queue, cfg, now)
+        row, hit = clip_channel_row(name, check, egress, events, queue, cfg, now)
         rows.append(row)
         if hit:
             stalled_rows.append(hit)
@@ -1375,13 +1452,13 @@ def clip_queue(
         },
         "unavailable": missing,
     }
-    if cfg is None or "clip" not in cfg:
+    unread = f"unread: {', '.join(missing)}" if missing else None
+    checked = cfg is not None and "clip" in cfg
+    if not checked:
         source = {"read": False, "reason": "no clip thresholds in fleet-stalled.json"}
-    elif check is None:
-        source = {"read": False, "reason": "daily-check.json unreadable"}
     else:
-        source = {"read": True, "reason": None}
-    return section, stalled_rows, source
+        source = {"read": not missing, "reason": unread}
+    return section, stalled_rows, source, checked and check is not None
 
 
 def envelope_item(
@@ -2025,16 +2102,9 @@ def problems(
     }
 
 
-# --- side hustles ----------------------------------------------------------------
+# --- clip feed parsing -----------------------------------------------------------
 
-SIDE_SCHEMA = "fleet-side-hustles.v1"
-SIDE_BRIEF_DAYS = (0, 3)  # Monday and Thursday, in the brief's time zone
-SIDE_WEEK_SHEET_DAY = 0
-SIDE_WINDOW = 7 * 86400
-SIDE_LINES = 3  # brief lines at most: the brief keeps its 12-line cap
-NO_DATA = "no data"
 CHANNEL_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-SIDE_CLIP_CUT = 40
 
 
 def feed_epoch(value: Any) -> int | None:
@@ -2053,181 +2123,6 @@ def feed_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
     return value
-
-
-def needs_consent(row: dict[str, Any]) -> bool:
-    """The latest channel row says the YouTube Analytics scope is rejected or
-    expired: clip's own `needs_reconsent`, or its credential-rejected error."""
-    if row.get("status") == "needs_reconsent":
-        return True
-    return row.get("status") == "error" and "clip auth" in str(row.get("reason") or "")
-
-
-def side_hustle_numbers(
-    chan_rows: list[dict[str, Any]],
-    video_rows: list[dict[str, Any]],
-    now: int,
-    pattern: re.Pattern[str] | None,
-) -> dict[str, Any]:
-    """The four numbers of one channel from its rows, oldest first, or a
-    `no_data` / `needs_consent` verdict. Never a zero for a missing number."""
-    latest = chan_rows[-1]
-    at = feed_epoch(latest.get("at"))
-    if needs_consent(latest):
-        return {"status": "needs_consent"}
-    week = latest.get("days7")
-    if (
-        latest.get("status") != "ok"
-        or at is None
-        or now - at > SIDE_WINDOW
-        or not isinstance(week, dict)
-    ):
-        return {"status": "no_data"}
-    views = feed_int(week.get("views"))
-    subscribers = feed_int(latest.get("subscribers"))
-    uploads = None
-    now_count = feed_int(latest.get("videos_recorded"))
-    # Uploads in the period: the videos clip has recorded now, less the count
-    # at the last row from at least a week earlier. No such row: no data.
-    base = [
-        r
-        for r in chan_rows[:-1]
-        if (e := feed_epoch(r.get("at"))) is not None and at - e >= SIDE_WINDOW
-    ]
-    base_count = feed_int(base[-1].get("videos_recorded")) if base else None
-    if now_count is not None and base_count is not None and now_count >= base_count:
-        uploads = now_count - base_count
-    best = None
-    for r in video_rows:
-        v = feed_int(r.get("views"))
-        if r.get("at") != latest.get("at") or r.get("found") is not True or v is None:
-            continue
-        clip = one_line(r.get("clip"), SIDE_CLIP_CUT)
-        if (
-            clip
-            and not (pattern and pattern.search(clip))
-            and (best is None or v > best[1])
-        ):
-            best = (clip, v)
-    return {
-        "status": "ok",
-        "views_7d": views,
-        "subscribers": subscribers,
-        "uploads": uploads,
-        "best_short": {"clip": best[0], "views": best[1]} if best else None,
-    }
-
-
-def side_hustle_row(name: str, week_of: str, n: dict[str, Any]) -> dict[str, Any]:
-    """One weekly sheet row: the numbers, each a number or "no data"."""
-    row: dict[str, Any] = {"channel": name, "week_of": week_of, "status": n["status"]}
-    if n["status"] == "ok":
-        for k in ("views_7d", "subscribers", "uploads"):
-            row[k] = NO_DATA if n[k] is None else n[k]
-        best = n["best_short"]
-        row["best_short"] = NO_DATA if best is None else best
-    return row
-
-
-def side_hustle_cells(n: dict[str, Any]) -> list[str]:
-    def num(v: int | None) -> str:
-        return NO_DATA if v is None else f"{v:,}"
-
-    best = n["best_short"]
-    best_text = NO_DATA if best is None else f"{best['clip']} ({best['views']:,} views)"
-    return [num(n["views_7d"]), num(n["subscribers"]), num(n["uploads"]), best_text]
-
-
-def side_hustles(
-    now: int, tz: str, errors: list[str], pattern: re.Pattern[str] | None
-) -> dict[str, Any] | None:
-    """Per-channel side-hustle numbers from clip's stats feed, read-only and
-    only from that feed (`FLEET_CLIP_STATS_FEED`). None when it is not set.
-
-    `channels` always holds the verdicts; `lines` (the brief's, on Monday and
-    Thursday only) and `week_rows` (Monday only) are what the surfaces print.
-    A channel whose Analytics scope needs consent again gets no numbers: one
-    shared credential line names them. An unreadable feed gives one no-data line."""
-    feed = os.environ.get("FLEET_CLIP_STATS_FEED", "")
-    if not feed:
-        return None
-    zone = zoneinfo.ZoneInfo(tz)
-    local = dt.datetime.fromtimestamp(now, zone)
-    brief_day = local.weekday() in SIDE_BRIEF_DAYS
-    sheet_day = local.weekday() == SIDE_WEEK_SHEET_DAY
-    week_of = (local.date() - dt.timedelta(days=local.weekday())).isoformat()
-    out: dict[str, Any] = {
-        "schema": SIDE_SCHEMA,
-        "feed_read": True,
-        "brief_day": brief_day,
-        "week_of": week_of,
-        "channels": [],
-        "credential": None,
-        "lines": [],
-        "week_rows": [],
-    }
-    chans: dict[str, list[dict[str, Any]]] = {}
-    videos: dict[str, list[dict[str, Any]]] = {}
-    try:
-        text = Path(feed).read_text()
-    except (OSError, UnicodeDecodeError) as exc:
-        errors.append(f"clip stats feed unreadable ({exc.__class__.__name__})")
-        out["feed_read"] = False
-        if brief_day:
-            out["lines"] = [f"Side hustles: {NO_DATA} (stats feed unreadable)"]
-        if sheet_day:
-            out["week_rows"] = [
-                {"channel": "all channels", "week_of": week_of, "status": "no_data"}
-            ]
-        return out
-    for raw in text.splitlines():
-        try:
-            row = json.loads(raw)
-        except ValueError:
-            continue
-        name = row.get("channel") if isinstance(row, dict) else None
-        if not isinstance(name, str) or not CHANNEL_RE.match(name):
-            continue
-        if row.get("kind") == "channel":
-            chans.setdefault(name, []).append(row)
-        elif row.get("kind") == "video":
-            videos.setdefault(name, []).append(row)
-    consent: list[str] = []
-    lines: list[str] = []
-    for name in sorted(chans):
-        n = side_hustle_numbers(chans[name], videos.get(name, []), now, pattern)
-        out["channels"].append({"channel": name, **n})
-        cells = side_hustle_cells(n) if n["status"] == "ok" else None
-        if n["status"] == "needs_consent":
-            consent.append(name)
-        elif cells is None:
-            lines.append(f"{name}: {NO_DATA}")
-        else:
-            views, subs, uploads, best = cells
-            lines.append(
-                f"{name}: 7d views {views} · subs {subs} · uploads {uploads} · best Short {best}"
-            )
-        if sheet_day:
-            out["week_rows"].append(side_hustle_row(name, week_of, n))
-    if consent:
-        out["credential"] = (
-            "Side hustles: YouTube Analytics needs consent again for "
-            + ", ".join(consent)
-            + " - owner: run `clip auth --channel <name>` on the PC; no numbers shown"
-        )
-    if not chans:
-        lines = [f"Side hustles: {NO_DATA} (no channel rows in the stats feed)"]
-    room = SIDE_LINES - (1 if consent else 0)
-    if len(lines) > room:
-        lines = [
-            *lines[: room - 1],
-            f"+{len(lines) - room + 1} more channels not shown",
-        ]
-    if consent:
-        lines.append(out["credential"])
-    if brief_day:
-        out["lines"] = lines
-    return out
 
 
 # --- assembly --------------------------------------------------------------------
@@ -2523,7 +2418,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     stalled, sources, stalled_rows = None, None, None
     cfg = stalled_config(errors)
     job_doc, jobq = read_jobs(errors)
-    clip_section, clip_rows, clip_source = clip_queue(cfg, args.now, errors)
+    clip_section, clip_rows, clip_source, clip_checked = clip_queue(cfg, args.now)
     door_entries, door_source = doc_door_read(errors)
     if cfg:
         found = backlog_stalls(records, homes, cfg, args.now)
@@ -2598,10 +2493,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     decided_cache = load_cache(state / "status-decisions.json")
     outcomes = delivered(state, args.now, errors, vault, decided_cache)
     save_cache(state / "status-decisions.json", decided_cache)
-    problem_list = problems(stalled_rows, sources, state, args.now, errors)
-    side = side_hustles(
-        args.now, decisions_config(errors)["brief"]["tz"], errors, pattern
-    )
+    problem_sources = sources and {**sources, "clip": {"read": clip_checked}}
+    problem_list = problems(stalled_rows, problem_sources, state, args.now, errors)
     items: list[dict[str, Any]] = []
     item_sources: dict[str, dict[str, Any]] = {}
     door_read = (doc_door_items(door_entries), door_source)
@@ -2643,7 +2536,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "stalled_sources": sources,
         "delivered": outcomes,
         "problems": problem_list,
-        "side_hustles": side,
+        # Retired (lifekit-stack#692): its only source, clip's stats.jsonl,
+        # was never written. The key stays null so v1 consumers are unchanged.
+        "side_hustles": None,
         "clip_queue": clip_section,
         "items": items,
         "item_sources": item_sources,
