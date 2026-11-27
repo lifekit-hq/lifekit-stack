@@ -227,11 +227,11 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `intake_spool` | The intake door's held hand-offs: `{pending, oldest_epoch}` (`pending` = occurrences waiting for the retry, `oldest_epoch` = when the oldest was spooled, `null` when none is), or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
-| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`, `doc_door`): `{read, reason}` (`kit_held`, `shape` and `doc_door` add `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing, or `null` with `stalled` |
+| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `unrouted`, `installed`, `shape`, `doc_door`): `{read, reason}` (`kit_held`, `unrouted`, `shape` and `doc_door` add `open`, every listed item, stalled or not; `unrouted` adds `ran_at`); `read: false` says why a source contributed nothing, or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | The side-hustle lines and week-sheet rows (below): `{channels[], lines[], week_rows[], credential, brief_day, week_of, feed_read}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
 | `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when `FLEET_CLIP_STATS_FEED` is unset |
-| `items[]`, `item_sources` | One record per open finance item, needs-you decision and doc-door document, with the item envelope (see "Queue items"), and each source's `{read, reason}` |
+| `items[]`, `item_sources` | One record per open finance item, needs-you decision, doc-door document and unrouted ask or promise, with the item envelope (see "Queue items"), and each source's `{read, reason}` |
 | `delivered[]` | The 3-line outcomes of accepted decisions whose items are all closed (see "Delivered decisions"), or `null` when the mark file could not be read |
 | `follow_ups[]` | The owner pages still to be written |
 | `errors[]` | One line per source that could not be read this run |
@@ -326,6 +326,7 @@ line), never a guess.
 | Kit's held item | an open line of Kit's daily notes that names a fleet task and has no shaping item, for `kit_held.hours` (24) | `kit_held.hours` | when `kit_held.py check` first saw it unfiled | `kit_held.owner` (`firstmate`) |
 | Installed component (a host unit or workspace piece an `install-*`/`ensure-*` script deploys) | origin/main changed a path the component owns (`scripts/release-gauge/components.txt`) more than `installed.behind_hours` (24) ago and its installer has not run since | `installed.behind_hours` | the commit time of the oldest change on main not installed (`lifekit_component_behind_since_seconds` in `FLEET_INSTALLED_PROM`) | `installed.owner` (`ops`) |
 | Shape stage (decision 0019, amended 2026-11-26) | in Shape for `shape.days` (3): a captain-held backlog record whose id starts with one of `shape.id_prefixes` (`shape-`, the intake shape step's accepted idea; `held-`, Kit's held item), or an open issue of a registered project that carries an owner ask (a label starting with one of `shape.ask_label_prefixes`, the intake door's `intake:<fingerprint>` receipt) and not `shape.ready_label` (`ready`) | `shape.days`, `shape.id_prefixes`, `shape.ask_label_prefixes`, `shape.ready_label` | an issue's `createdAt`; a record's creation date, else the first run that saw it in Shape | `shape.owner` (`firstmate`) for a record; an issue's owner as in the GitHub row |
+| Daily unrouted check | no run for `unrouted.hours` (26: a daily job that missed a day) | `unrouted.hours` | the last run's `ran_at` in `FLEET_UNROUTED_STATE` | `unrouted.owner` (`firstmate`) |
 | Open doc-door document | open (report, Drive filing, report copy or vault log line still to do) for `doc_door.open_hours` (24) | `doc_door.open_hours` | when the door took the document in | `doc_door.owner` (`life`) |
 | Captain call | unchanged: days waited, as before | - | - | - |
 
@@ -393,6 +394,13 @@ line), never a guess.
   command (empty skips); unset, it is skipped when `FLEET_INTAKE_CMD` is set. One
   read feeds both the stalled rows and the queue items below. Their threshold is
   an optional `doc_door` block; without it the stalled source is `read: false`.
+- **The daily unrouted check** (lifekit-stack#687) writes `unrouted.json`
+  (`FLEET_UNROUTED_STATE`, `/var/lib/lifekit-fleet/unrouted/unrouted.json` on the
+  VPS). Its dead-man is one `unrouted` row (`id` `unrouted-check`, `reason`
+  `no-run`) once its `ran_at` is `unrouted.hours` old; a run that could not read
+  the chats records nothing, so the row shows it. One read feeds the row and the
+  `unrouted` items below. Unset, missing, or with no `unrouted` block, the source
+  is `read: false`. Setup: docs/runbook.md, "Daily unrouted check".
 - **Failure** of one source empties only its own rows, sets its
   `stalled_sources` entry to `read: false` and adds an `errors[]` line.
 
@@ -484,6 +492,7 @@ so the dashboard can link through. Read-only; no store is written.
 | `needs-you` | `FLEET_NEEDS_YOU_LEDGER`, the path of Kit's `needs-you/open.json` (the installer's read-only bind, see "Wiring"; `kind` `decision`; a missing file is not read, reason `needs-you ledger missing`) | `kit` / `life` | `needs-you` | the entry `id` |
 | `jobq` | `jobq.py list --json` in the gateway, the same read as the stalled jobs (`FLEET_JOBS_CMD` replaces it); only jobs `queued` or `running`, `kind` the job's kind | the envelope's `owner` (else the skill that answers the job) / its `class` (else `unclear`) | `jobq` | the job id |
 | `doc-door` | `door.py list --json` in the gateway (`FLEET_DOC_DOOR_CMD` overrides; `kind` `document`, `title` the report's, `null` before one is filed) | the entry's `owner` (`reader`) / `life` | `doc-door` | the doc id |
+| `unrouted` | `FLEET_UNROUTED_STATE`, the daily unrouted check's `unrouted.json` (`kind` `unrouted`, `title` `<agent> <day>: <quote>`, `origin` the agent, `state` `filed <door receipt>` or `not filed`; the asks and promises of the last 7 days with no receipt; a missing file is not read) | `firstmate` / `unclear` | `unrouted` | the item's fingerprint |
 
 - **Shape.** `items[]` is `[{id, source, kind, title, owner, class, store, ref,
   since, acceptance?, origin?, state?, fingerprint?}]`: `id` is `<store>:<native id>`, `since` the item's
@@ -497,7 +506,7 @@ so the dashboard can link through. Read-only; no store is written.
   a queued one adds `waiting_on` (`egress`: its probe host must answer through the
   egress, by default the PC relay; `turn`: it runs when no other job is running) and
   `waiting`, that reason in one line.
-- **Sources.** `item_sources` is `{finance, needs_you, jobq, doc_door}`, each `{read, reason}`
+- **Sources.** `item_sources` is `{finance, needs_you, jobq, doc_door, unrouted}`, each `{read, reason}`
   like `stalled_sources`: unset, the source is `read: false` and says so. An
   unreadable source adds an `errors[]` line; an item matching `CREDENTIAL_RE` is
   withheld and counted in `errors[]`.
@@ -519,7 +528,7 @@ so the dashboard can link through. Read-only; no store is written.
   postgres container (by compose labels), in a read-only session, and exits
   nonzero printing nothing when it cannot read.
 - **Wiring.** The installer carries `FLEET_NEEDS_YOU_LEDGER`, `FLEET_FINANCE_CMD`,
-  `FLEET_FINANCE_OWNER` (refused unless a GUID) (and `FLEET_A2A_CMD`, `FLEET_SCOUT_STATE` for the stalled sources) into the
+  `FLEET_FINANCE_OWNER` (refused unless a GUID) (and `FLEET_A2A_CMD`, `FLEET_SCOUT_STATE` for the stalled sources, `FLEET_UNROUTED_STATE` for both) into the
   unit, each only when set and non-empty. The ledger defaults to Kit's
   (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`); since Kit's
   workspace is not the admin account's to read, the unit binds the ledger's

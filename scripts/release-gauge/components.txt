@@ -38,6 +38,7 @@ ops-door-escalate scripts/ops-door/install-ops-door.sh scripts/ops-door/ops-door
 reply-pusher scripts/reply-pusher/install-reply-pusher.sh scripts/reply-pusher/reply_pusher.py scripts/reply-pusher/lifekit-reply-pusher.service scripts/reply-pusher/lifekit-reply-pusher.path
 runner-restart scripts/runner-restart
 scout scripts/scout/install-scout.sh scripts/scout/lifekit-scout.service scripts/scout/lifekit-scout.timer
+unrouted scripts/unrouted/install-unrouted.sh scripts/unrouted/lifekit-unrouted.service scripts/unrouted/lifekit-unrouted.timer
 vault-audit scripts/memory-audit/install-vault-audit.sh scripts/memory-audit/lifekit-vault-audit.service scripts/memory-audit/lifekit-vault-audit.timer
 vault-door scripts/vault-door/install-vault-door.sh scripts/vault-door/vault_door.py scripts/vault-door/lifekit-vault-door-bridge.service scripts/vault-door/lifekit-vault-door-bridge.timer
 workspace-pointers scripts/workspace-pointers defaults/workspace-pointers

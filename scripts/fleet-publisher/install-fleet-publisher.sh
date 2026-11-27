@@ -41,6 +41,9 @@
 #   FLEET_A2A_CMD           prints the open A2A threads; none exists yet.
 #   FLEET_SCOUT_STATE       the scout's state dir; on the VPS
 #                           /home/denys/.local/state/lifekit-scout.
+#   FLEET_UNROUTED_STATE    the daily unrouted check's state file; on the VPS
+#                           /var/lib/lifekit-fleet/unrouted/unrouted.json
+#                           (scripts/unrouted/install-unrouted.sh).
 #
 # Tests set INSTALL_ROOT (a prefix for every installed path), SYSTEMCTL and SU; an
 # INSTALL_ROOT run needs no root and does not chown.
@@ -123,6 +126,14 @@ if [[ -n "$FLEET_SCOUT_STATE" ]]; then
     exit 1
   }
   sources_env+=" \"FLEET_SCOUT_STATE=${FLEET_SCOUT_STATE}\""
+fi
+FLEET_UNROUTED_STATE="${FLEET_UNROUTED_STATE:-}"
+if [[ -n "$FLEET_UNROUTED_STATE" ]]; then
+  [[ "$FLEET_UNROUTED_STATE" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+    echo "FLEET_UNROUTED_STATE must be an absolute path of [A-Za-z0-9._/-]" >&2
+    exit 1
+  }
+  sources_env+=" \"FLEET_UNROUTED_STATE=${FLEET_UNROUTED_STATE}\""
 fi
 owner=(-o "$ADMIN_USER" -g "$ADMIN_USER")
 if [[ -n "$INSTALL_ROOT" ]]; then

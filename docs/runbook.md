@@ -2620,6 +2620,74 @@ item with the same fingerprint prints `"count":2`. `--owner kit` prints the remi
 After the drop-in, `kit_held.py check` with the same arguments prints `[]` when every held
 fleet task carries its mark, and the fleet page's `stalled_sources.kit_held.read` is `true`.
 
+### Daily unrouted check
+
+The mechanical safety net behind the receipts block (lifekit-stack#687): once a day,
+`scripts/unrouted/unrouted.py` reads every agent's chat of the previous UTC day and checks
+that each owner ask and each agent promise has a receipt. One with none is filed through
+the intake door and listed on the dashboard fleet page as `unrouted`. A false positive costs
+one line on that page: the job never sends a chat message, never writes an agent's memory
+and never messages the owner.
+
+- **Reading.** `scripts/unrouted/chats.mjs` runs in the gateway (`docker exec`, the
+  container found by its compose labels). It opens each agent's
+  `agents/<id>/agent/openclaw-agent.sqlite` read-only and prints that day's user and
+  assistant messages; the text stays in the job's memory on the host. Only conversations
+  with a message the gateway marked `senderIsOwner` are kept; cron runs and deploy smoke
+  turns are left out.
+- **Extracting.** `claude -p` with no tools, no MCP and no settings lists the asks and
+  promises of each conversation (`--model`, default `haiku`; see "Model choice" below).
+- **Receipts.** The id the model saw cited, plus every id the agent's replies in that turn
+  show, checked where it lives: a firstmate task note (`<home>/state/inbox[/handled]/<id>.note`),
+  a `held-`/`shape-` item (`fm-captain-hold.sh` in each home), a `spool:` door receipt, a
+  GitHub issue or pull request (`gh`), or a line of the intake index or Kit's held-item record.
+  A lookup that errors counts as a receipt and is listed in the run's `errors`.
+- **Filing.** Each unrouted item goes through the intake door's `file()` in the gateway
+  (project `fleet`, owner `firstmate`, class `unclear`, fingerprint
+  `unrouted-<agent>-<day>-<hash>`). `filed.json` in the state dir keeps the door's receipt,
+  so a rerun files nothing twice. The thread is `<agent>/<channel>/<day>`, never the session
+  key, which holds the owner's chat id.
+- **State.** `/var/lib/lifekit-fleet/unrouted/unrouted.json` keeps the last run's time and the
+  unrouted items of the last 7 days. The fleet publisher reads it through
+  `FLEET_UNROUTED_STATE` and shows a stalled `unrouted-check` row after 26 hours with no run
+  (`unrouted.hours` in `fleet-stalled.json`). A run that cannot read the chats records
+  nothing, so that row shows it.
+- **Dead-man by hand.** `python3 /srv/lifekit-stack/scripts/unrouted/unrouted.py --check`
+  prints the last run's age and exits 1 when there is none or it is older than 26 hours.
+
+**Operator steps** (once, after the merge deploys):
+
+1. Install the timer (daily at 03:30 UTC, `Persistent=true`). It runs as the admin
+   account, which reaches the gateway (docker group), the firstmate homes, `gh` and a
+   logged-in Claude Code:
+   ```bash
+   sudo UNROUTED_FM_HOMES="<main home> <second-mate home>" \
+     bash /srv/lifekit-stack/scripts/unrouted/install-unrouted.sh
+   ```
+   The unit runs the deploy checkout's `unrouted.py`, so a merge is live on the next run.
+2. Point the fleet publisher at the state by re-running its installer with the variables it
+   already uses, plus `FLEET_UNROUTED_STATE=/var/lib/lifekit-fleet/unrouted/unrouted.json`.
+3. Optionally, run a dry pass on yesterday's chats. It lists the items and files and writes
+   nothing:
+   `python3 /srv/lifekit-stack/scripts/unrouted/unrouted.py --no-file --home <main home> --home <second-mate home>`.
+
+Verify: `systemctl list-timers lifekit-unrouted.timer` shows the next run; after it,
+`unrouted.py --check` exits 0, and the fleet page's `stalled_sources.unrouted.read` is `true`.
+
+**Model choice and the replay test.** The job uses the cheapest model that passes the
+replay test in `scripts/tests/test_unrouted.py`. The test replays a set of chats through
+the extractor, and it must catch the asks the issue names. The repository carries only
+synthetic chats of the same shape, with a stand-in model. The real chats are private and
+stay on the host: the real replay reads the JSONL at `UNROUTED_REPLAY` (default
+`~/.local/share/lifekit-unrouted/replay.jsonl`, `chats.mjs` lines) when it is present and
+`claude` is on PATH:
+```bash
+UNROUTED_REPLAY=<private corpus> .venv/bin/python -m pytest -q scripts/tests/test_unrouted.py -k real
+```
+To try another model, set `UNROUTED_MODEL=<model>` for that run. If a cheaper model passes,
+change `DEFAULT_MODEL`. `haiku` passed on 2026-11-27 (record in the PR for
+lifekit-stack#687).
+
 ### Fleet gate
 
 Part of the P16 permission engine: an OpenClaw agent that reaches an action the owner has

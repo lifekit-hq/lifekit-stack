@@ -1689,6 +1689,7 @@ ITEM_SOURCES = (
     "FLEET_FINANCE_OWNER",
     "FLEET_A2A_CMD",
     "FLEET_SCOUT_STATE",
+    "FLEET_UNROUTED_STATE",
 )
 
 
@@ -1836,6 +1837,7 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         FLEET_FINANCE_OWNER="0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01",
         FLEET_A2A_CMD="/usr/local/bin/a2a-threads --json",
         FLEET_SCOUT_STATE="/home/denys/.local/state/lifekit-scout",
+        FLEET_UNROUTED_STATE="/var/lib/lifekit-fleet/unrouted/unrouted.json",
     )
     assert result.returncode == 0, result.stderr
     service = installed_service(tmp_path)
@@ -1847,6 +1849,7 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         ' "FLEET_A2A_CMD=/usr/local/bin/a2a-threads --json"'
         ' "FLEET_FINANCE_OWNER=0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01"'
         ' "FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout"'
+        ' "FLEET_UNROUTED_STATE=/var/lib/lifekit-fleet/unrouted/unrouted.json"'
     )
     assert service["BindReadOnlyPaths"] == (
         "-/srv/kit/needs-you:/run/lifekit-fleet-needs-you"
@@ -1882,6 +1885,8 @@ def test_installer_leaves_empty_item_sources_out_of_the_unit(tmp_path):
         ("FLEET_FINANCE_OWNER", "0b8f6a523c1d4e7a9f205d6c7b8a9e01"),
         ("FLEET_SCOUT_STATE", "relative/scout"),
         ("FLEET_SCOUT_STATE", "/srv/a b"),
+        ("FLEET_UNROUTED_STATE", "relative/unrouted.json"),
+        ("FLEET_UNROUTED_STATE", "/srv/a b/unrouted.json"),
     ],
 )
 def test_installer_refuses_an_item_source_it_cannot_render(tmp_path, name, value):
@@ -4718,6 +4723,92 @@ def test_unset_or_unreadable_held_items_are_said_not_guessed(homes):
     assert any("held items unreadable" in e for e in page["errors"])
 
 
+# --- the daily unrouted check (issue 687) ---------------------------------------
+
+
+def unrouted_state(homes, ran_at, items):
+    path = homes.tmp / "unrouted.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "lifekit-unrouted.v1",
+                "ran_at": ran_at,
+                "day": "2027-01-14",
+                "items": items,
+                "errors": [],
+            }
+        )
+    )
+    return path
+
+
+UNROUTED_ITEM = {
+    "agent": "kit",
+    "channel": "telegram",
+    "day": "2027-01-14",
+    "at": "2027-01-14T22:11:55.000Z",
+    "ask_at": "2027-01-14T22:11:42.000Z",
+    "kind": "promise",
+    "quote": "I've saved this for tomorrow.",
+    "receipt": None,
+    "receipt_cited": None,
+    "fingerprint": "unrouted-kit-2027-01-14-0123456789",
+    "filed": "spool:0123456789abcdef",
+}
+
+
+def test_an_unrouted_ask_is_listed_with_agent_day_and_quote(homes):
+    path = unrouted_state(homes, NOW - 3600, [UNROUTED_ITEM, {"no": "fingerprint"}])
+    env = {"FLEET_NOW": str(NOW), "FLEET_UNROUTED_STATE": str(path)}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["unrouted"] == {"read": True, "reason": None}
+    (item,) = [i for i in page["items"] if i["source"] == "unrouted"]
+    assert item["kind"] == "unrouted"
+    assert item["title"] == "kit 2027-01-14: I've saved this for tomorrow."
+    assert item["owner"] == "firstmate" and item["store"] == "unrouted"
+    assert item["since"] == NOW - 9 * 3600 - 48 * 60 - 5  # 2027-01-14T22:11:55Z
+    # A fresh run: no dead-man row.
+    assert not [
+        i for g in page["stalled"] for i in g["items"] if i["source"] == "unrouted"
+    ]
+    assert page["stalled_sources"]["unrouted"] == {
+        "read": True,
+        "reason": None,
+        "open": 1,
+        "ran_at": NOW - 3600,
+    }
+    assert page["errors"] == []
+
+
+def test_the_unrouted_check_is_stalled_after_26_hours_without_a_run(homes):
+    path = unrouted_state(homes, NOW - 27 * 3600, [])
+    env = {"FLEET_NOW": str(NOW), "FLEET_UNROUTED_STATE": str(path)}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    rows = [i for g in page["stalled"] for i in g["items"] if i["source"] == "unrouted"]
+    assert [(r["id"], r["reason"]) for r in rows] == [("unrouted-check", "no-run")]
+    assert rows[0]["threshold"] == 26 * 3600 and rows[0]["since"] == NOW - 27 * 3600
+    group = next(g for g in page["stalled"] if g["owner"] == "firstmate")
+    assert "unrouted-check" in [i["id"] for i in group["items"]]
+
+
+def test_a_missing_or_unreadable_unrouted_state_is_said_not_guessed(homes):
+    env = {"FLEET_NOW": str(NOW), "FLEET_UNROUTED_STATE": str(homes.tmp / "none.json")}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["unrouted"]["read"] is False
+    assert page["stalled_sources"]["unrouted"]["read"] is False
+    assert page["errors"] == []
+    bad = homes.tmp / "bad.json"
+    bad.write_text("not json")
+    env["FLEET_UNROUTED_STATE"] = str(bad)
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["unrouted"]["read"] is False
+    assert any("unrouted check state unreadable" in e for e in page["errors"])
+
+
 # --- the Shape stage stalls on a clock (decision 0019, issue 695) ---------------
 
 
@@ -5004,6 +5095,7 @@ def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
         "needs_you": {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"},
         "jobq": {"read": False, "reason": "job queue skipped"},
         "doc_door": {"read": False, "reason": "doc-door skipped"},
+        "unrouted": {"read": False, "reason": "FLEET_UNROUTED_STATE is not set"},
     }
     assert page["errors"] == []
 

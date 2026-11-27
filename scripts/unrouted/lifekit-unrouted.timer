@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the daily unrouted check on yesterday's chats
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
