@@ -510,11 +510,14 @@ def test_installer_refuses_a_bad_fleet_policy_pin(box, env, reason):
     assert reason in out.stderr
 
 
-def test_installer_without_fleet_policy_pins_nothing(box):
+def test_installer_without_fleet_policy_installs_no_decide(box):
     out = render(box.home)
     assert out.returncode == 0, out.stderr
-    assert "readonly DECIDE_BIN=''\n" in out.stdout
-    assert "readonly FLEET_POLICY_BIN=''\n" in out.stdout
+    script = write_exec(box.tmp / "kit-relay-bare", out.stdout)
+    r = box.run("decide kit-dec-1", script=script)
+    assert r.returncode == 78
+    assert b"decide is not installed" in r.stderr
+    assert box.calls() == []
 
 
 # ─── the client, end to end through the forced command ───────────────────────
