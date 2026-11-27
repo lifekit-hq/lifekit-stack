@@ -12,11 +12,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/ask-agent/ask-agent.sh"
 TOKEN = "tok-" + "z" * 16
@@ -44,9 +44,9 @@ def gateway():
             pass
 
     srv = HTTPServer(("127.0.0.1", 0), H)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    serve(srv)
     yield f"http://127.0.0.1:{srv.server_port}/hooks-x/agent", seen, state
-    srv.shutdown()
+    stop(srv)
 
 
 def run(args, env_extra, tmp_path):

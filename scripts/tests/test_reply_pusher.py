@@ -16,11 +16,11 @@ import os
 import stat
 import subprocess
 import sys
-import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 
 REPO = Path(__file__).resolve().parents[2]
 DIR = REPO / "scripts/reply-pusher"
@@ -121,11 +121,10 @@ class Gateway:
 
         self.server = HTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_port}"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        serve(self.server)
 
     def close(self):
-        self.server.shutdown()
-        self.server.server_close()
+        stop(self.server)
 
 
 @pytest.fixture

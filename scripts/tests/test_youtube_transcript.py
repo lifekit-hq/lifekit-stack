@@ -18,10 +18,10 @@ import socket
 import socketserver
 import subprocess
 import sys
-import threading
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 
 REPO = Path(__file__).resolve().parents[2]
 SKILL = REPO / "skills/youtube-transcript"
@@ -195,11 +195,10 @@ class FakeSocks:
 
         self.server = Server(("127.0.0.1", 0), Handler)
         self.port = self.server.server_address[1]
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        serve(self.server)
 
     def close(self):
-        self.server.shutdown()
-        self.server.server_close()
+        stop(self.server)
 
 
 @pytest.fixture

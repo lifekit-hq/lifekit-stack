@@ -18,12 +18,12 @@ import os
 import re
 import subprocess
 import sys
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from fakeserver import serve, stop
 
 WGER = Path(__file__).resolve().parents[2] / "skills/workout-log/wger.py"
 SKILL_MD = WGER.parent / "SKILL.md"
@@ -355,7 +355,7 @@ def wger():
         for (i, e, d, r, w, u) in LOGS
     ]
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeWger)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    serve(server)
     base = f"http://127.0.0.1:{server.server_port}"
 
     def run(*args: str, token: str | None = TOKEN):
@@ -371,7 +371,7 @@ def wger():
         )
 
     yield run
-    server.shutdown()
+    stop(server)
     assert FakeWger.rejected == [], "the client sent what wger 2.7's schema rejects"
 
 

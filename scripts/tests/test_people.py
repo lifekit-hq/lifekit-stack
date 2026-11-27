@@ -15,6 +15,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 from test_logto_admin import (
     APP_ID,
     APP_SECRET,
@@ -33,7 +34,7 @@ HOST = "box.example.ts.net"
 def people(tmp_path):
     fake = FakeLogto()
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(fake))
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    serve(server)
     outputs: list[str] = []
     ledger = tmp_path / "ledger.jsonl"
 
@@ -60,7 +61,7 @@ def people(tmp_path):
     run.fake = fake
     run.ledger = ledger
     yield run
-    server.shutdown()
+    stop(server)
     for out in outputs:
         assert APP_SECRET not in out
         assert TOKEN not in out

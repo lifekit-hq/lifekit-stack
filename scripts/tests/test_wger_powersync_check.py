@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 
 REPO = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location(
@@ -44,10 +45,10 @@ def server():
             pass
 
     httpd = HTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    serve(httpd)
     base = f"http://127.0.0.1:{httpd.server_port}"
     yield base, routes
-    httpd.shutdown()
+    stop(httpd)
 
 
 def test_all_paths_answering_passes(server, capsys):

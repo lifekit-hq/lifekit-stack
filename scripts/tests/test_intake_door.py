@@ -20,11 +20,11 @@ import re
 import shutil
 import stat
 import subprocess
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from fakeserver import serve, stop
 
 REPO = Path(__file__).resolve().parents[2]
 PLUGIN = REPO / "compose/openclaw-gateway/plugins/intake-door"
@@ -124,7 +124,7 @@ class FakeDevclaw:
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/mcp"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        serve(self.server)
 
     def file(self, a):
         repo = self.projects.get(a["project_id"])
@@ -175,7 +175,7 @@ class FakeDevclaw:
         }
 
     def close(self):
-        self.server.shutdown()
+        stop(self.server)
 
 
 @pytest.fixture

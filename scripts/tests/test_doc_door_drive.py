@@ -15,13 +15,13 @@ import re
 import shutil
 import stat
 import sys
-import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fakeserver import serve, stop
 import yaml
 from test_doc_door import (
     GOOD,
@@ -545,7 +545,7 @@ def mirror(monkeypatch, tmp_path):
     _Serve.body = zpath.read_bytes()
     _Serve.agents = []
     srv = HTTPServer(("127.0.0.1", 0), _Serve)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    serve(srv)
     import hashlib
 
     monkeypatch.setattr(
@@ -560,7 +560,7 @@ def mirror(monkeypatch, tmp_path):
         {**drive_upload.RCLONE_SUMS, arch: hashlib.sha256(_Serve.body).hexdigest()},
     )
     yield SimpleNamespace(arch=arch, bin=tmp_path / "door" / "bin" / "rclone")
-    srv.shutdown()
+    stop(srv)
 
 
 def test_install_rclone_checks_the_pin_then_installs_once(mirror, capsys):

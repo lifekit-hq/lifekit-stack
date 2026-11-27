@@ -278,6 +278,7 @@ def test_a_missing_response_fails(tmp_path):
     assert any("no response came back" in b for b in judge(out))
 
 
+@pytest.mark.timeout(960)
 def test_the_live_canary_passes_on_the_shipped_entry():
     proc = subprocess.run(
         ["bash", str(CANARY / "run.sh")],
