@@ -17,7 +17,7 @@ This job is the mechanical safety net behind it. Once a day it:
   4. looks for each one's receipt: the id the model saw cited, plus every id an
      agent reply in the same turn shows from the item's own message on (an ask
      from the owner's message, a promise from the agent's) that the model did not
-     cite for another item of the turn, checked where it lives - a firstmate
+     cite for another item of the conversation, checked where it lives - a firstmate
      task note (`<home>/state/inbox[/handled]/<id>.note`), a captain-held or
      shaping item (`held-*`, `shape-*`, fm-captain-hold.sh in each home), an
      intake spool receipt (`spool:<key>`), a GitHub issue or pull request (gh),
@@ -523,7 +523,7 @@ def assess(
 ) -> list[dict[str, Any]]:
     """Each item with its receipt verdict, its time and, when unrouted, its
     fingerprint. A reply's receipt the model cited for another item of the
-    turn never routes this one."""
+    conversation never routes this one."""
     cited = [set(receipts.ids(it["receipt"] or "")) for it in items]
     nth: dict[int, int] = {}
     out = []
@@ -531,13 +531,7 @@ def assess(
         anchor = it["anchor"]
         verdict, rid = receipts.check(it["receipt"])
         if verdict not in ("found", "unchecked"):
-            others = set().union(
-                *(
-                    c
-                    for m, c in enumerate(cited)
-                    if m != n and items[m]["anchor"] == anchor
-                )
-            )
+            others = set().union(*(c for m, c in enumerate(cited) if m != n))
             v2, r2 = receipts.check(turn_replies(conv, it["msg"]), others)
             if v2 in ("found", "unchecked") or verdict is None:
                 verdict, rid = v2, r2

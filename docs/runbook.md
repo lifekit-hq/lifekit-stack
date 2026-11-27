@@ -2714,7 +2714,7 @@ and never messages the owner.
 - **Receipts.** Each item of a turn needs its own: the id the model saw cited, plus every
   id the agent's replies in that turn show from the item's own message on (an ask from the
   owner's message, a promise from the agent's) that the model did not cite for another item
-  of the turn, so one item's receipt never routes a later promise or a second ask in the
+  of the conversation, so one item's receipt never routes a later promise or a second ask in the
   same message, checked where it lives: a firstmate task note (`<home>/state/inbox[/handled]/<id>.note`),
   a `held-`/`shape-` item (`fm-captain-hold.sh` in each home), a `spool:` door receipt, a
   GitHub issue or pull request (`gh`), or a line of the intake index or Kit's held-item record.

@@ -389,6 +389,43 @@ def test_two_promises_in_one_message_are_both_filed(env, tmp_path, monkeypatch):
     assert len(env.filed()) == 2
 
 
+def test_a_receipt_for_a_later_ask_does_not_route_an_earlier_promise(
+    env, tmp_path, monkeypatch
+):
+    """The agent's one reply files the second ask and promises the first: the
+    receipt the model cited for the ask in the later turn does not route the
+    promise it links back to the earlier turn."""
+    talk = Scripted(
+        env,
+        tmp_path,
+        monkeypatch,
+        (
+            chat("2026-11-25T10:00:00.000Z", "user", "Fix X.", owner=True),
+            chat("2026-11-25T10:00:20.000Z", "assistant", "ok"),
+            chat("2026-11-25T10:01:00.000Z", "user", "Also file Y.", owner=True),
+            chat(
+                "2026-11-25T10:01:20.000Z",
+                "assistant",
+                "Filed acme/x#12; I'll fix X tomorrow.",
+            ),
+        ),
+    )
+    doc = talk.run(
+        DAY_25,
+        [
+            item("ask", 2, "Also file Y", receipt="acme/x#12"),
+            item("promise", 3, "fix X tomorrow", about=0),
+        ],
+    )
+    assert doc["asks_and_promises"] == 2 and doc["routed"] == 1
+    (it,) = doc["items"]
+    assert it["kind"] == "promise" and it["at"] == "2026-11-25T10:01:20.000Z"
+    assert it["receipt"] is None
+    (filed,) = env.filed()
+    assert filed["fingerprint"] == it["fingerprint"]
+    assert "fix X" not in json.dumps(filed)
+
+
 def test_routed_items_are_not_listed(env):
     assert env.run(DAY_24) == 0
     assert env.filed() == []
