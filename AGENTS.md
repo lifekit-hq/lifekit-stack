@@ -59,7 +59,7 @@ into the image or loaded via `plugins.load.paths` loads untrusted and silently g
   notify-relay `node:test` suite (the memory-audit logic moved to the vault `bin/` on 2026-09-14 -
   shellcheck covers its wrapper). Owner notifications have one wire format,
   [`docs/message-format.md`](./docs/message-format.md): notify-relay is the only renderer, and
-  the Grafana dead-man rules are the one named exemption.
+  the Grafana dead-man rules and Kit's one-shot notices are the named exemptions.
 - **Platform contract** (deploy-time, not CI): every compose service carries `lifekit.contract` labels
   (`v1` or `none`), or `deploy.sh` stops before `up`; a `v1` service that fails an enforced item
   at runtime turns the deploy red. No waivers - fix the service, or add the item to `ENFORCED`

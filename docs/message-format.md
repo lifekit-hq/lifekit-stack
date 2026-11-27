@@ -143,13 +143,20 @@ and the notification policy groups by `alertname`, so a rule-name subject would 
 recoveries in one group as the same line; every other rule fires once, and its `job` label names
 the exporter that produced the series rather than what the alert is about.
 Any future producer whose whole job is to report that other things are down gets the same
-exemption; everything else goes through the relay.
+exemption; everything else goes through the relay, except Kit's one-shot notices (below).
 
 ## Decisions
 
 Decisions that need the owner are a typed payload with their own route, `POST /decision`, one
 message per decision id (replaced in place, cleared when answered): see
 [`decision-contract.md`](./decision-contract.md).
+
+## Kit one-shot notices
+
+A notice that Kit sends to the owner at a set time ("Kit will tell you") does not go through the relay: it is a
+one-shot OpenClaw cron job on agent `kit` that announces plain text to the owner's Telegram DM, scheduled and
+checked for delivery by `scripts/kit-notify.sh`. The envelope does not apply to it. See `docs/runbook.md`,
+"Kit one-shot notice".
 
 ## Not a notification: in-app decisions
 
