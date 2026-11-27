@@ -1458,10 +1458,23 @@ def finance_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, An
     return items, {"read": True, "reason": None}
 
 
+def needs_you_acceptance(entry: dict[str, Any]) -> str:
+    """The ledger's done-when: the owner's answer closes it (Kit's AGENTS.md,
+    "One answer closes its decision"), with the entry's options when it has them."""
+    opts = entry.get("options")
+    options = (
+        [o for o in opts if isinstance(o, str) and o] if isinstance(opts, list) else []
+    )
+    if options:
+        return "The owner answers in Kit's chat: " + " / ".join(options)
+    return "The owner answers in Kit's chat"
+
+
 def needs_you_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Kit's open needs-you decisions, read-only from its ledger file
-    (`needs-you/open.json`, named by FLEET_NEEDS_YOU_LEDGER): one record per
-    entry. The ledger holds no acceptance line, so its records carry none."""
+    (`needs-you/open.json`, named by FLEET_NEEDS_YOU_LEDGER, the installer's
+    read-only bind of it into the unit): one record per entry, origin `kit`,
+    its options in the acceptance line."""
     path = os.environ.get("FLEET_NEEDS_YOU_LEDGER", "")
     if not path:
         return [], {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"}
@@ -1469,8 +1482,8 @@ def needs_you_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, 
         doc = json.loads(Path(path).read_text())
         assert isinstance(doc, list)
     except FileNotFoundError:
-        return [], {"read": True, "reason": None}  # Kit creates it on first use
-    except (OSError, ValueError, UnicodeDecodeError, AssertionError) as exc:
+        return [], {"read": False, "reason": "needs-you ledger missing"}
+    except (OSError, ValueError, AssertionError) as exc:
         errors.append(f"needs-you ledger unreadable ({exc.__class__.__name__})")
         return [], {"read": False, "reason": "needs-you ledger unreadable"}
     items = []
@@ -1485,7 +1498,8 @@ def needs_you_items(errors: list[str]) -> tuple[list[dict[str, Any]], dict[str, 
                 e["id"],
                 title=e.get("ask"),
                 since=e.get("opened"),
-                origin=e.get("origin"),
+                acceptance=needs_you_acceptance(e),
+                origin="kit",
             )
         )
     return items, {"read": True, "reason": None}

@@ -1180,7 +1180,11 @@ history and install them as `lifekit`.
 
 Decisions waiting on the owner go to the OpenClaw app, not Telegram. Kit keeps one
 ledger in its workspace (`needs-you/open.json`, closed ones in
-`needs-you/closed.jsonl`). It asks each decision with `ask_user` in its main
+`needs-you/closed.jsonl`). Kit is the ledger's only writer, and only when a real
+decision comes up; the mail reader below never writes it (its run has no file tool),
+so an empty ledger with both crons green is a quiet ledger, not a broken one. The
+fleet publisher reads it into the dashboard's queue items (`store=needs-you`,
+scripts/fleet-publisher README "Queue items"). Kit asks each decision with `ask_user` in its main
 Control UI / WebChat session (`agent:kit:main`), which shows as a card with buttons.
 An answer closes the entry. The contract is kit's `AGENTS.md`, section "Needs you"
 (`defaults/agents/kit/workspace/`). `ask_user` exists only in primary sessions, never
@@ -3948,8 +3952,8 @@ publisher can reach exists; the page says so. The queue items
 when set and non-empty, so a re-install without them drops the line. The one
 exception is the ledger, which defaults to Kit's
 (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`, bound read-only
-into the unit because Kit's workspace is not the admin account's to read;
-`FLEET_NEEDS_YOU_LEDGER=` turns it off). On the VPS pass
+into the unit because Kit's workspace is not the admin account's to read, so
+`/srv/openclaw/config` stays 0700; `FLEET_NEEDS_YOU_LEDGER=` turns it off). On the VPS pass
 `FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py"` (the
 read-only finance-sentry command the installer puts there; README "Queue items")
 with `FLEET_FINANCE_OWNER=<owner UserId GUID>` (a GUID: the command

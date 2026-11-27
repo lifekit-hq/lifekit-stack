@@ -4938,7 +4938,7 @@ def test_finance_items_carry_the_envelope_and_their_own_acceptance(homes):
     assert page["errors"] == []
 
 
-def test_needs_you_decisions_are_kits_life_items_without_acceptance(homes):
+def test_a_needs_you_decision_lands_as_a_kit_life_item_with_its_acceptance(homes):
     ledger = homes.tmp / "kit/needs-you/open.json"
     ledger.parent.mkdir(parents=True)
     ledger.write_text(
@@ -4951,6 +4951,9 @@ def test_needs_you_decisions_are_kits_life_items_without_acceptance(homes):
                     "origin": "telegram",
                     "opened": "2027-01-10",
                 },
+                {"id": "no-options", "ask": "Anything else?"},
+                {"id": "options-a-number", "ask": "Which?", "options": 2},
+                {"id": "options-a-string", "ask": "When?", "options": "Tuesday"},
                 {"ask": "no id: skipped"},
             ]
         )
@@ -4960,21 +4963,35 @@ def test_needs_you_decisions_are_kits_life_items_without_acceptance(homes):
     assert homes.run(side_home(homes), **env).returncode == 0
     page = status(homes)
     assert page["item_sources"]["needs_you"] == {"read": True, "reason": None}
-    assert page["items"] == [
-        {
-            "id": "needs-you:dentist-slot",
-            "source": "needs-you",
-            "kind": "decision",
-            "title": "Book the Tuesday or the Friday dentist slot?",
-            "owner": "kit",
-            "class": "life",
-            "store": "needs-you",
-            "ref": "dentist-slot",
-            "since": NOW - 5 * DAY - 8 * 3600,  # 2027-01-10
-            "origin": "telegram",
-        }
+    got = items_by_id(page)
+    assert list(got) == [
+        "needs-you:dentist-slot",
+        "needs-you:no-options",
+        "needs-you:options-a-number",
+        "needs-you:options-a-string",
     ]
+    assert got["needs-you:dentist-slot"] == {
+        "id": "needs-you:dentist-slot",
+        "source": "needs-you",
+        "kind": "decision",
+        "title": "Book the Tuesday or the Friday dentist slot?",
+        "owner": "kit",
+        "class": "life",
+        "store": "needs-you",
+        "ref": "dentist-slot",
+        "since": NOW - 5 * DAY - 8 * 3600,  # 2027-01-10
+        "acceptance": "The owner answers in Kit's chat: Tuesday / Friday",
+        "origin": "kit",
+    }
+    # Kit's contract makes options a list of labels; anything else is none.
+    for ref in ("no-options", "options-a-number", "options-a-string"):
+        assert (
+            got[f"needs-you:{ref}"]["acceptance"] == "The owner answers in Kit's chat"
+        )
+        assert got[f"needs-you:{ref}"]["origin"] == "kit"
+    assert got["needs-you:no-options"]["since"] is None
     assert ledger.read_bytes() == before  # read-only
+    assert page["errors"] == []
 
 
 def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
@@ -4991,7 +5008,7 @@ def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
     assert page["errors"] == []
 
 
-def test_a_missing_ledger_is_empty_and_a_broken_source_is_an_error(homes):
+def test_a_missing_ledger_is_not_read_and_a_broken_source_is_an_error(homes):
     env = {
         "FLEET_NOW": str(NOW),
         "FLEET_NEEDS_YOU_LEDGER": str(homes.tmp / "nowhere/open.json"),
@@ -5000,9 +5017,39 @@ def test_a_missing_ledger_is_empty_and_a_broken_source_is_an_error(homes):
     assert homes.run(side_home(homes), **env).returncode == 0
     page = status(homes)
     assert page["items"] == []
-    assert page["item_sources"]["needs_you"] == {"read": True, "reason": None}
+    assert page["item_sources"]["needs_you"] == {
+        "read": False,
+        "reason": "needs-you ledger missing",
+    }
+    assert not any("needs-you" in e for e in page["errors"])
     assert page["item_sources"]["finance"]["read"] is False
     assert any("finance items unreadable" in e for e in page["errors"])
+
+
+@pytest.mark.parametrize(
+    "text, error",
+    [
+        ("{}", "AssertionError"),
+        ("[{", "JSONDecodeError"),
+        (b"\xff", "UnicodeDecodeError"),
+        (None, "IsADirectoryError"),
+    ],
+)
+def test_a_broken_ledger_file_is_an_error(monkeypatch, tmp_path, text, error):
+    ledger = tmp_path / "open.json"
+    if text is None:
+        ledger.mkdir()
+    elif isinstance(text, bytes):
+        ledger.write_bytes(text)
+    else:
+        ledger.write_text(text)
+    monkeypatch.setenv("FLEET_NEEDS_YOU_LEDGER", str(ledger))
+    errors = []
+    assert fleet_status.needs_you_items(errors) == (
+        [],
+        {"read": False, "reason": "needs-you ledger unreadable"},
+    )
+    assert errors == [f"needs-you ledger unreadable ({error})"]
 
 
 def test_waiting_and_running_jobs_are_items_with_their_envelope(homes):
