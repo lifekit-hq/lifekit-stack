@@ -15,13 +15,18 @@ for a companion event with an app path when --base-url is given (the app's
 public base URL; no link is guessed for the others). The publisher stamps the
 item envelope (`owner` finance, `class` finance, `store` finance-db).
 
+Only the owner's rows: finance-sentry is multi-user, so every list is filtered by
+"UserId" = FLEET_FINANCE_OWNER (the owner's finance-sentry UserId, a GUID; host
+config, set by the installer). Unset or empty, nothing is queried: the command
+exits nonzero with "finance owner not configured" on stderr.
+
 Read-only: one SELECT through `docker exec` into finance-sentry's postgres
 container (found by its compose labels), in a session whose transactions are
 read-only (`default_transaction_read_only`), so the database refuses any write. A failed read exits nonzero with a one-line reason on
 stderr and prints nothing, so the publisher reports the source unreadable rather
 than empty.
 
-  python3 finance_items.py [--base-url URL]
+  FLEET_FINANCE_OWNER=<owner UserId> python3 finance_items.py [--base-url URL]
 """
 
 from __future__ import annotations
@@ -29,6 +34,8 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
+import re
 import subprocess
 import sys
 from typing import Any
@@ -37,6 +44,7 @@ POSTGRES_LABELS = (
     "label=com.docker.compose.project=finance-sentry",
     "label=com.docker.compose.service=postgres",
 )
+GUID = re.compile(r"[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 # GetPendingCompanionEventsQuery's undelivered set, held-for-digest excluded.
 UNDELIVERED = ("Pending", "Dispatched", "DeferredQuietHours", "SuppressedByRateLimit")
 # One document: the three lists, each row with the columns the items need.
@@ -47,21 +55,26 @@ SELECT json_build_object(
            extract(epoch FROM "CreatedAt")::bigint AS since,
            extract(epoch FROM "ExpiresAt")::bigint AS expires
     FROM research.thesis_revisions
-    WHERE "Status" = 'Pending' AND ("ExpiresAt" IS NULL OR "ExpiresAt" > now())) r),
+    WHERE "UserId" = :'owner' AND "Status" = 'Pending'
+      AND ("ExpiresAt" IS NULL OR "ExpiresAt" > now())) r),
   'recommendations', (SELECT coalesce(json_agg(r ORDER BY r.since), '[]') FROM (
     SELECT "Id" AS id, "Action" AS action, "Ticker" AS ticker,
            extract(epoch FROM "CreatedAt")::bigint AS since,
            extract(epoch FROM "ExpiresAt")::bigint AS expires
     FROM research.recommendations
-    WHERE "Status" = 'Pending' AND ("ExpiresAt" IS NULL OR "ExpiresAt" > now())) r),
+    WHERE "UserId" = :'owner' AND "Status" = 'Pending'
+      AND ("ExpiresAt" IS NULL OR "ExpiresAt" > now())) r),
   'events', (SELECT coalesce(json_agg(r ORDER BY r.since), '[]') FROM (
     SELECT "Id" AS id, "Kind" AS kind, "Subject" AS subject, "Summary" AS summary,
            "AppPath" AS app_path, extract(epoch FROM "OccurredAt")::bigint AS since
     FROM companion.companion_events
-    WHERE "Disposition" IN ({undelivered})) r)
+    WHERE "UserId" = :'owner' AND "Disposition" IN ({undelivered})) r)
 );
 """.format(undelivered=", ".join(f"'{d}'" for d in UNDELIVERED))
-PSQL = 'exec psql -X -q -A -t -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+PSQL = (
+    'exec psql -X -q -A -t -v ON_ERROR_STOP=1 -v owner="$1"'
+    ' -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+)
 
 
 def postgres_container() -> str:
@@ -78,7 +91,7 @@ def postgres_container() -> str:
     return found[0]
 
 
-def read_rows(container: str) -> dict[str, Any]:
+def read_rows(container: str, owner: str) -> dict[str, Any]:
     out = subprocess.run(
         [
             "docker",
@@ -90,6 +103,8 @@ def read_rows(container: str) -> dict[str, Any]:
             "sh",
             "-c",
             PSQL,
+            "sh",
+            owner,
         ],
         input=QUERY,
         capture_output=True,
@@ -166,8 +181,15 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base-url", help="the finance app's public base URL")
     args = ap.parse_args(argv)
+    owner = os.environ.get("FLEET_FINANCE_OWNER") or ""
+    if not owner:
+        print("finance owner not configured", file=sys.stderr)
+        return 1
+    if not GUID.fullmatch(owner):
+        print("finance owner is not a GUID", file=sys.stderr)
+        return 1
     try:
-        doc = read_rows(postgres_container())
+        doc = read_rows(postgres_container(), owner)
         listed = items(doc, args.base_url)
     except (
         OSError,

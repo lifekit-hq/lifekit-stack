@@ -1686,6 +1686,7 @@ def test_installer_finds_tasks_axi_through_an_interactive_admin_shell(tmp_path):
 ITEM_SOURCES = (
     "FLEET_NEEDS_YOU_LEDGER",
     "FLEET_FINANCE_CMD",
+    "FLEET_FINANCE_OWNER",
     "FLEET_A2A_CMD",
     "FLEET_SCOUT_STATE",
 )
@@ -1832,6 +1833,7 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         FLEET_NEEDS_YOU_LEDGER="/srv/kit/needs-you/ledger.json",
         FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py"
         " --base-url https://finance.example",
+        FLEET_FINANCE_OWNER="0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01",
         FLEET_A2A_CMD="/usr/local/bin/a2a-threads --json",
         FLEET_SCOUT_STATE="/home/denys/.local/state/lifekit-scout",
     )
@@ -1843,6 +1845,7 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         ' "FLEET_FINANCE_CMD=python3 /usr/local/bin/lifekit-fleet-finance.py'
         ' --base-url https://finance.example"'
         ' "FLEET_A2A_CMD=/usr/local/bin/a2a-threads --json"'
+        ' "FLEET_FINANCE_OWNER=0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01"'
         ' "FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout"'
     )
     assert service["BindReadOnlyPaths"] == (
@@ -1874,6 +1877,9 @@ def test_installer_leaves_empty_item_sources_out_of_the_unit(tmp_path):
         ("FLEET_FINANCE_CMD", "echo %h"),
         ("FLEET_A2A_CMD", "echo $HOME"),
         ("FLEET_A2A_CMD", "a & b"),
+        ("FLEET_FINANCE_OWNER", "owner"),
+        ("FLEET_FINANCE_OWNER", "0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01 x"),
+        ("FLEET_FINANCE_OWNER", "0b8f6a523c1d4e7a9f205d6c7b8a9e01"),
         ("FLEET_SCOUT_STATE", "relative/scout"),
         ("FLEET_SCOUT_STATE", "/srv/a b"),
     ],

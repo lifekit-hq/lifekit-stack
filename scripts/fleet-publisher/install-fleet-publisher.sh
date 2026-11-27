@@ -35,6 +35,9 @@
 #   FLEET_FINANCE_CMD       the finance items command; on the VPS
 #                           "python3 /usr/local/bin/lifekit-fleet-finance.py"
 #                           (finance_items.py, installed here).
+#   FLEET_FINANCE_OWNER     the owner's finance-sentry UserId (a GUID); the
+#                           finance command lists only that user's rows and
+#                           reads nothing without it.
 #   FLEET_A2A_CMD           prints the open A2A threads; none exists yet.
 #   FLEET_SCOUT_STATE       the scout's state dir; on the VPS
 #                           /home/denys/.local/state/lifekit-scout.
@@ -105,6 +108,14 @@ for name in FLEET_FINANCE_CMD FLEET_A2A_CMD; do
   }
   sources_env+=" \"${name}=${value}\""
 done
+FLEET_FINANCE_OWNER="${FLEET_FINANCE_OWNER:-}"
+if [[ -n "$FLEET_FINANCE_OWNER" ]]; then
+  [[ "$FLEET_FINANCE_OWNER" =~ ^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$ ]] || {
+    echo "FLEET_FINANCE_OWNER must be a GUID (the owner's finance-sentry UserId)" >&2
+    exit 1
+  }
+  sources_env+=" \"FLEET_FINANCE_OWNER=${FLEET_FINANCE_OWNER}\""
+fi
 FLEET_SCOUT_STATE="${FLEET_SCOUT_STATE:-}"
 if [[ -n "$FLEET_SCOUT_STATE" ]]; then
   [[ "$FLEET_SCOUT_STATE" =~ ^/[A-Za-z0-9._/-]+$ ]] || {

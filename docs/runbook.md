@@ -3952,7 +3952,8 @@ into the unit because Kit's workspace is not the admin account's to read;
 `FLEET_NEEDS_YOU_LEDGER=` turns it off). On the VPS pass
 `FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py"` (the
 read-only finance-sentry command the installer puts there; README "Queue items")
-and `FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout` beside `FM_HOMES`.
+with `FLEET_FINANCE_OWNER=<owner UserId GUID>` (a GUID: the command
+lists only that user's rows and reads nothing without it) and `FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout` beside `FM_HOMES`.
 Unset, their `item_sources` entry says `read: false` and they add no items. The
 `jobq` items need no setting: they come from the stalled jobs' read (`jobq.py
 list --json` in the gateway, README "Jobs"). Open doc-door documents need no
@@ -4047,6 +4048,7 @@ the default and needs no flag):
 sudo FM_HOMES="<fleet home> [<fleet home> ...]" \
   FLEET_CLIP_STATS_FEED=/home/denys/clip-data/queue/stats.jsonl \
   FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py" \
+  FLEET_FINANCE_OWNER=<owner UserId GUID> \
   FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout \
   bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
 jq '.status_page | {items: [.items[].id], item_sources}' /var/lib/lifekit-fleet/home-summary.json
@@ -4057,7 +4059,7 @@ and `items` lists the open finance items and needs-you decisions.
 
 `bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
 set and skips it otherwise (it passes no `FLEET_PLAN_MAP`, `FLEET_CLIP_STATS_FEED`,
-`FLEET_FINANCE_CMD`, `FLEET_A2A_CMD` or `FLEET_SCOUT_STATE`, so re-run the installer by hand
+`FLEET_FINANCE_CMD`, `FLEET_FINANCE_OWNER`, `FLEET_A2A_CMD` or `FLEET_SCOUT_STATE`, so re-run the installer by hand
 to restore one). Re-running the installer is how a home is
 added or removed: it reinstalls the script and rewrites the unit's `FM_HOMES`.
 The `lifekit-*.timer` glob in the unit gauge picks the timer up with no further
