@@ -686,15 +686,36 @@ def test_a_document_the_door_has_finished_is_not_listed(env, capsys):
 
 
 @pytest.mark.parametrize(
-    "rec, state",
+    "consent, rec, state",
     [
-        ({"status": "converted"}, "report-pending"),
-        ({"status": "reported"}, "drive-pending"),
-        ({"status": "reported", "drive": "filed"}, "log-pending"),
-        ({"status": "reported", "drive": "filed", "logged": True}, None),
+        (False, {"status": "converted"}, "report-pending"),
+        (False, {"status": "reported"}, "drive-pending"),
+        (False, {"status": "reported", "drive": "filed"}, "log-pending"),
+        (False, {"status": "reported", "drive": "filed", "logged": True}, None),
+        (True, {"status": "converted"}, "report-pending"),
+        (True, {"status": "reported"}, "drive-pending"),
+        (True, {"status": "reported", "drive": "filed"}, "copy-pending"),
+        (
+            True,
+            {"status": "reported", "drive": "filed", "logged": True},
+            "copy-pending",
+        ),
+        (
+            True,
+            {"status": "reported", "drive": "filed", "copy": "filed"},
+            "log-pending",
+        ),
+        (
+            True,
+            {"status": "reported", "drive": "filed", "copy": "filed", "logged": True},
+            None,
+        ),
     ],
 )
-def test_open_state_follows_what_the_door_still_has_to_do(rec, state):
+def test_open_state_follows_what_the_door_still_has_to_do(
+    monkeypatch, consent, rec, state
+):
+    monkeypatch.setattr(drive_upload, "configured", lambda: consent)
     assert door.open_state(rec) == state
 
 
