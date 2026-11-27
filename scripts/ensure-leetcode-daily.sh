@@ -48,6 +48,9 @@
 #                         alert (default: LIFEKIT_TELEGRAM_CHAT from ENV_FILE)
 #   ENV_FILE              host env file (default: /srv/lifekit-secrets/stack.env)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 # shellcheck source=scripts/lib/cron-check.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
@@ -90,8 +93,7 @@ if bad or not days:
     sys.exit(f"refusing: cron {sys.argv[1]!r} fires on an office day or Sunday (cron day numbers {bad})")
 PY
 
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+GATEWAY="$(openclaw_gateway_id)" || cron_check_fail "cannot pick the openclaw-gateway container"
 [ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 
 DAILY=/home/node/.openclaw/agents/learnclaw/workspace/skills/leetcode-daily/daily.py

@@ -55,6 +55,9 @@
 #   VIDEO_EVAL_AGENT     agent whose workspace has the skill (default: kit)
 #   DOCKER               the docker command (default: docker)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 usage() {
   sed -n '7,39p' "$0" | sed 's/^# \{0,1\}//' >&2
@@ -70,8 +73,7 @@ SCRIPT="/home/node/.openclaw/agents/${AGENT}/workspace/skills/video-eval/video.p
 cmd="$1"
 shift
 
-GATEWAY="$($DOCKER ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
+GATEWAY="$(openclaw_gateway_id_lenient)" || exit 1
 if [ -z "$GATEWAY" ]; then
   echo "video-eval: no running openclaw-gateway container" >&2
   exit 1

@@ -28,6 +28,9 @@
 #   OPENCLAW_CONFIG_DIR  host path of the gateway state dir
 #                        (default: /srv/openclaw/config, as in compose)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 AGENT="${WORKOUT_LOG_AGENT:-kit}"
 SKILL=workout-log
@@ -45,8 +48,7 @@ install -D -m 0755 "$skill_src/day-check.sh" "$skill_dest/day-check.sh"
 install -D -m 0755 "$skill_src/wger.py" "$skill_dest/wger.py"
 echo "skill installed -> $skill_dest"
 
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
+GATEWAY="$(openclaw_gateway_id_lenient)" || exit 1
 if [ -z "$GATEWAY" ]; then
   echo "no running openclaw-gateway container; allowlist and cron not checked"
   exit 0

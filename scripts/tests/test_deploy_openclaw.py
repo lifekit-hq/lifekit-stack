@@ -29,6 +29,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 OPENCLAW = REPO / "scripts/deploy-openclaw.sh"
 LIB = REPO / "scripts/lib/deploy-common.sh"
+GATEWAY_LIB = REPO / "scripts/lib/openclaw-gateway.sh"
 OPENCLAW_SERVICES = ("openclaw-cli", "openclaw-gateway", "google-workspace-mcp")
 
 # LEGACY_CONTAINERS: "<service>=<id> ..." - the containers `docker ps` finds
@@ -1048,6 +1049,8 @@ def post_up_ytt(env, tmp_path, ensure=None, curl_fail=False):
     (fake / "scripts").mkdir(parents=True, exist_ok=True)
     for name in ("ensure-video-eval.sh", "ensure-job-queue.sh", "ensure-learnclaw.sh"):
         shutil.copy(REPO / "scripts" / name, fake / "scripts" / name)
+    (fake / "scripts/lib").mkdir(parents=True, exist_ok=True)
+    shutil.copy(GATEWAY_LIB, fake / "scripts/lib/openclaw-gateway.sh")
     # The doc-door script drives the gateway container; its own tests cover it.
     # So does the reader agent's (its own tests: test_reader_agent.py), and the
     # intake door's (test_intake_door.py).

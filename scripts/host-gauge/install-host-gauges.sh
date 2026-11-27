@@ -33,6 +33,8 @@ for gauge in host-gauge/host-group-gauge tmp-gauge/tmp-usage-gauge unit-gauge/un
     > "/etc/systemd/system/$name.service"
   install -m 644 "$SCRIPTS_DIR/$gauge.timer" "/etc/systemd/system/$name.timer"
 done
+# lifekit-ledger-drift.sh sources the shared gateway resolver (issue 716).
+install -D -m 644 "$SCRIPTS_DIR/lib/openclaw-gateway.sh" /usr/local/lib/lifekit/openclaw-gateway.sh
 systemctl daemon-reload
 systemctl enable --now host-group-gauge.timer tmp-usage-gauge.timer unit-gauge.timer \
   lifekit-release-gauge.timer lifekit-ledger-drift.timer lifekit-openclaw-spend-guard.timer

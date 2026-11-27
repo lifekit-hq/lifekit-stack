@@ -34,6 +34,9 @@
 #   OPENCLAW_CONFIG_DIR     host path of the gateway state dir
 #                           (default: /srv/openclaw/config, as in compose)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 PLUGIN=fleet-gate
 TABLE_NAME=p16-openclaw.json
@@ -73,8 +76,7 @@ done
 chmod 0755 "$dest"
 
 reload_gateway() {
-  GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-    --filter label=com.docker.compose.service=openclaw-gateway 2>/dev/null | head -n 1 || true)"
+  GATEWAY="$(openclaw_gateway_id_lenient)" || exit 1
   if [ -z "$GATEWAY" ]; then
     echo "no running openclaw-gateway container; it loads the plugin when it starts"
     return 0

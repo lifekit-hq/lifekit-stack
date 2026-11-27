@@ -807,7 +807,11 @@ def ensure(tmp_path):
 
     def make_repo(matching_pin: bool) -> Path:
         repo = tmp_path / ("repo-pinned" if matching_pin else "repo-real")
-        (repo / "scripts").mkdir(parents=True)
+        (repo / "scripts/lib").mkdir(parents=True)
+        shutil.copy(
+            REPO / "scripts/lib/openclaw-gateway.sh",
+            repo / "scripts/lib/openclaw-gateway.sh",
+        )
         shutil.copytree(SKILL, repo / "skills/youtube-transcript")
         text = ENSURE.read_text()
         if matching_pin:

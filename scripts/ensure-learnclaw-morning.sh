@@ -53,6 +53,9 @@
 #                            alert (default: LIFEKIT_TELEGRAM_CHAT from ENV_FILE)
 #   ENV_FILE                 host env file (default: /srv/lifekit-secrets/stack.env)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 # shellcheck source=scripts/lib/cron-check.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
@@ -99,8 +102,7 @@ if 0 in days or not days:
     sys.exit(f"refusing: cron {sys.argv[1]!r} can fire on Sunday")
 PY
 
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+GATEWAY="$(openclaw_gateway_id)" || cron_check_fail "cannot pick the openclaw-gateway container"
 [ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 
 MESSAGE="Morning learning message for the owner. Read only: use the read tool, and only on the vault page /home/node/memory/domains/learning.md, the weekly count file named in line 4, and the JSON files of the LearnHarness mirror under /home/node/.openclaw/agents/learnclaw/workspace/learnharness-mirror (the sessions and the knowledge graph). Read nothing else, write nothing anywhere, record no row, send nothing yourself, start no subagent, open no web page, run no command.

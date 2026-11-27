@@ -32,6 +32,9 @@
 # `openclaw cron edit --message` hot-reloads; nothing is restarted, and the
 # row's schedule, delivery and tools are not touched.
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 # shellcheck source=scripts/lib/cron-check.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
@@ -39,8 +42,7 @@ cron_check_args "$@"
 
 # The gateway container of the `openclaw` compose project, found by its
 # compose labels rather than a fixed container name.
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+GATEWAY="$(openclaw_gateway_id)" || cron_check_fail "cannot pick the openclaw-gateway container"
 [ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 JOB_NAME=today-brief
 

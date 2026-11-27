@@ -22,6 +22,9 @@
 # DRY_RUN=1 prints the new message instead of editing. Undo: delete the text
 # between the markers, or re-apply the message saved first.
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 # shellcheck source=scripts/lib/cron-check.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-check.sh"
@@ -35,8 +38,7 @@ BLOCK="${MARK_START}
 LeetCode count: do not ask the owner how many LeetCode problems were solved by hand this week. It is learnclaw's record, read-only: run 'python3 ${DAILY} week' (one command, nothing else from that script) and take the number on its first line ('solved: <n> (Monday <date> to Sunday <date>, by hand)') as the week's count, with the titles it lists under it. If the command fails or prints no 'solved:' line, say once that the count is unavailable and ask for it.
 ${MARK_END}"
 
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+GATEWAY="$(openclaw_gateway_id)" || cron_check_fail "cannot pick the openclaw-gateway container"
 [ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 
 # The gateway CLI may interleave JSON log lines with its result: keep the first

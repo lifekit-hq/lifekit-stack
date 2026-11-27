@@ -45,6 +45,9 @@
 #   ENV_FILE         host env file (default: /srv/lifekit-secrets/stack.env)
 #   OPENCLAW_CONFIG_DIR  host path of the gateway state dir (default: /srv/openclaw/config)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 # shellcheck source=scripts/lib/cron-model.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/cron-model.sh"
@@ -91,8 +94,7 @@ if [ "$CRON_CHECK" = 0 ]; then
   echo "skill installed -> $skill_dest"
 fi
 
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+GATEWAY="$(openclaw_gateway_id)" || cron_check_fail "cannot pick the openclaw-gateway container"
 [ -n "$GATEWAY" ] || cron_check_fail "no running openclaw-gateway container in compose project openclaw"
 
 container_skill=/home/node/.openclaw/agents/${AGENT}/workspace/skills/${SKILL}

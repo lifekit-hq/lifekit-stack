@@ -36,6 +36,9 @@
 #   OPENCLAW_CONFIG_DIR     host path of the gateway state dir
 #                           (default: /srv/openclaw/config, as in compose)
 set -euo pipefail
+# The production gateway container, never a second labelled one (issue 716).
+# shellcheck source=scripts/lib/openclaw-gateway.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/openclaw-gateway.sh"
 
 AGENT=reader
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,8 +49,7 @@ door=/home/node/.openclaw/agents/${AGENT}/workspace/skills/doc-door/door.py
 check_only=0
 [ "${1:-}" = "--check" ] && check_only=1
 
-GATEWAY="$(docker ps -q --filter label=com.docker.compose.project=openclaw \
-  --filter label=com.docker.compose.service=openclaw-gateway | head -n 1)"
+GATEWAY="$(openclaw_gateway_id)" || exit 1
 [ -n "$GATEWAY" ] || { echo "no running openclaw-gateway container in compose project openclaw" >&2; exit 1; }
 
 # The CLI may interleave log lines with its JSON: keep the first JSON value that
