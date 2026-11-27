@@ -504,7 +504,11 @@ so the dashboard can link through. Read-only; no store is written.
   `/usr/local/bin/lifekit-fleet-finance.py`) is the VPS's `FLEET_FINANCE_CMD`: it
   prints finance-sentry's pending thesis revisions and recommendations (not yet
   expired) and the companion events Ledger has not delivered (held-for-digest left
-  out), each with a one-line `acceptance` and an epoch `since`. `--base-url <the
+  out), each with a one-line `acceptance` and an epoch `since`. The list is the
+  raw table read and does not apply finance-sentry's reconcile step
+  (`SyncFailureReconciler`): a resolved alert's companion event can still show
+  until Ledger next polls the pending-events API, and a held-for-digest event
+  appears late, only once a Ledger poll promotes it. `--base-url <the
   app's public URL>` adds a companion event's app link as `url`; the others carry
   none. It reads with one SELECT through `docker exec` into finance-sentry's
   postgres container (by compose labels), in a read-only session, and exits

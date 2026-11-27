@@ -6,7 +6,11 @@ The publisher's FLEET_FINANCE_CMD (README "Queue items"): prints one JSON list o
 `thesis-revision` (a pending revision not yet expired), `recommendation` (a
 pending recommendation not yet expired) or `companion-event` (an event Ledger has
 not delivered yet: the dispositions finance-sentry's own pending-events query
-returns, held-for-digest left out). `since` is an epoch, `url` is present only
+returns, held-for-digest left out). The list is the raw table read: it does not
+apply finance-sentry's reconcile step (SyncFailureReconciler), so a resolved
+alert's companion event can still show until Ledger next polls the
+pending-events API, and a held-for-digest event appears late, only once a Ledger
+poll promotes it. `since` is an epoch, `url` is present only
 for a companion event with an app path when --base-url is given (the app's
 public base URL; no link is guessed for the others). The publisher stamps the
 item envelope (`owner` finance, `class` finance, `store` finance-db).
