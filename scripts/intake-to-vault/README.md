@@ -37,5 +37,6 @@ Behaviour worth knowing:
 Tests: `scripts/tests/test_intake_to_vault.py`.
 
 What happens next is the [intake shape step](../intake-shape/intake_shape.py) (runbook "Intake
-shape step"): an `adopt` or `accept` row also gets a captain-held shaping item, and the owner's
-answer files the issue and sets `ready`. This job's vault step is unchanged.
+shape step"): an `adopt` or `accept` row is answered from the decision matrix and filed as a
+`ready` issue, or held as a captain-held shaping item until the owner answers. This job's vault
+step is unchanged.
