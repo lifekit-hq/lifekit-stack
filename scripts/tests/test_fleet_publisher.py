@@ -4872,6 +4872,7 @@ def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
         "finance": {"read": False, "reason": "FLEET_FINANCE_CMD is not set"},
         "needs_you": {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"},
         "jobq": {"read": False, "reason": "job queue skipped"},
+        "doc_door": {"read": False, "reason": "doc-door skipped"},
     }
     assert page["errors"] == []
 
@@ -4992,6 +4993,112 @@ def test_an_empty_or_broken_job_queue_publishes_no_job_items(homes):
         "reason": "job queue unreadable",
     }
     assert any("job queue unreadable" in e for e in page["errors"])
+
+
+# --- doc-door: open documents through `door.py list --json` ------------------------
+
+DOOR = REPO / "skills/doc-door/door.py"
+
+
+def door_world(homes, docs):
+    """A doc-door state dir with `docs` ({doc id: (record, intake age)}), read by
+    the real `door.py list --json` as the publisher's FLEET_DOC_DOOR_CMD."""
+    state = homes.tmp / "doc-door"
+    (state / "documents").mkdir(parents=True)
+    (state / "state.json").write_text(
+        json.dumps({"docs": {d: rec for d, (rec, _) in docs.items()}})
+    )
+    for d, (_, age) in docs.items():
+        original = state / "documents" / f"{d}.pdf"
+        original.write_bytes(b"%PDF private")
+        os.utime(original, (NOW - age, NOW - age))
+    return {
+        "FLEET_NOW": str(NOW),
+        "DOC_DOOR_DIR": str(state),
+        "FLEET_DOC_DOOR_CMD": f"python3 {DOOR} list --json",
+    }
+
+
+def test_open_documents_are_life_items_and_stall_after_the_threshold(homes):
+    pdf = {"filename": "payslip.pdf", "subject": "Your payslip", "from": "hr"}
+    env = door_world(
+        homes,
+        {
+            "aaaaaaaaaaaaaaaa": ({**pdf, "status": "converted"}, 2 * DAY),
+            "bbbbbbbbbbbbbbbb": (
+                {**pdf, "status": "reported", "title": "Payslip", "logged": True},
+                3600,
+            ),
+            "cccccccccccccccc": (
+                {
+                    **pdf,
+                    "status": "reported",
+                    "title": "Done",
+                    "drive": "filed",
+                    "logged": True,
+                },
+                5 * DAY,
+            ),
+        },
+    )
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["doc_door"] == {"read": True, "reason": None}
+    got = items_by_id(page)
+    assert set(got) == {"doc-door:aaaaaaaaaaaaaaaa", "doc-door:bbbbbbbbbbbbbbbb"}
+    assert got["doc-door:bbbbbbbbbbbbbbbb"] == {
+        "id": "doc-door:bbbbbbbbbbbbbbbb",
+        "source": "doc-door",
+        "kind": "document",
+        "title": "Payslip",
+        "owner": "reader",
+        "class": "life",
+        "store": "doc-door",
+        "ref": "bbbbbbbbbbbbbbbb",
+        "since": NOW - 3600,
+        "acceptance": "the original is filed in its Drive subject folder",
+        "origin": "mail",
+        "state": "drive-pending",
+        "fingerprint": "sha256:bbbbbbbbbbbbbbbb",
+    }
+    waiting = got["doc-door:aaaaaaaaaaaaaaaa"]
+    assert waiting["title"] is None and waiting["state"] == "report-pending"
+    for private in ("payslip.pdf", "Your payslip"):  # the title only
+        assert private not in json.dumps(page["items"])
+    rows = [i for g in page["stalled"] for i in g["items"] if i["source"] == "doc"]
+    assert [(r["id"], r["reason"]) for r in rows] == [("aaaaaaaaaaaaaaaa", "open")]
+    assert rows[0]["since"] == NOW - 2 * DAY and rows[0]["threshold"] == DAY
+    group = next(g for g in page["stalled"] if g["owner"] == "life")
+    assert [i["id"] for i in group["items"]] == ["aaaaaaaaaaaaaaaa"]
+    assert page["stalled_sources"]["doc_door"] == {
+        "read": True,
+        "reason": None,
+        "open": 2,
+    }
+    assert page["errors"] == []
+
+
+def test_an_empty_door_reads_as_no_documents(homes):
+    env = {
+        "FLEET_NOW": str(NOW),
+        "DOC_DOOR_DIR": str(homes.tmp / "no-door-yet"),
+        "FLEET_DOC_DOOR_CMD": f"python3 {DOOR} list --json",
+    }
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["items"] == []
+    assert page["item_sources"]["doc_door"] == {"read": True, "reason": None}
+    assert page["stalled_sources"]["doc_door"]["open"] == 0
+    assert page["errors"] == []
+
+
+def test_an_unreadable_door_is_said_not_guessed(homes):
+    env = {"FLEET_NOW": str(NOW), "FLEET_DOC_DOOR_CMD": "false"}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["doc_door"]["read"] is False
+    assert page["stalled_sources"]["doc_door"]["read"] is False
+    assert any("doc-door documents unreadable" in e for e in page["errors"])
 
 
 # --- load: a busy host must not starve the stamp ------------------------------

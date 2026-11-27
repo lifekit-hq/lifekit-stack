@@ -9,6 +9,9 @@ them on the server and keep one cited report per document (SKILL.md).
     door.py report <doc id> --title T --folder F --page P --proposal X --fact L...
                                           the same report as arguments, one line each
     door.py status                        counts per state, one line each
+    door.py list --json                   one item envelope per open document,
+                                          as JSON (the fleet page's read: title
+                                          only, never the document or its mail)
     door.py check                         the scan job's gate: "DOOR idle" or "DOOR wake"
     door.py mail-check                    the mail reader's gate: "MAIL idle" or "MAIL wake"
     door.py mail-idle                     when mail-check last found nothing
@@ -754,6 +757,72 @@ def status() -> int:
     return 0
 
 
+# --- list: the open documents as fleet items (decision 0019) -----------------------
+
+# What closes a document in each open state; the first that applies is its state,
+# in the order check() wakes the job for them.
+OPEN_STATES = (
+    ("report-pending", "a cited report is filed for the document (door.py report)"),
+    ("drive-pending", "the original is filed in its Drive subject folder"),
+    ("copy-pending", "the accepted report is copied to Drive"),
+    ("log-pending", "the vault log line for the report is appended"),
+)
+
+
+def open_state(rec: dict) -> str | None:
+    """The document's open state, or None once the door has nothing left to do."""
+    if rec.get("status") != "reported":
+        return "report-pending"
+    if rec.get("drive", "pending") != "filed":
+        return "drive-pending"
+    if drive_upload.configured() and rec.get("copy") != "filed":
+        return "copy-pending"
+    if not rec.get("logged"):
+        return "log-pending"
+    return None
+
+
+def taken_in(doc_id: str, rec: dict) -> int | None:
+    """When the door took the document in: the stored original's modification time
+    (written once by the scan, never rewritten), else its converted text's."""
+    folder = HOME / "documents"
+    kind = kind_of(rec.get("filename", "")) or ""
+    for f in (folder / f"{doc_id}.{kind}", folder / f"{doc_id}.md"):
+        try:
+            return int(f.stat().st_mtime)
+        except OSError:
+            continue
+    return None
+
+
+def list_open() -> list[dict]:
+    """One item envelope per open document, oldest first. Only the report's title
+    leaves the door: never the document, its text, its file name or its mail."""
+    items = []
+    for doc_id, rec in sorted(load_state()["docs"].items()):
+        state = open_state(rec)
+        if state is None:
+            continue
+        items.append(
+            {
+                "id": f"doc-door:{doc_id}",
+                "origin": "mail",
+                "owner": "reader",
+                "class": "life",
+                # The doc id is the first 16 hex digits of the original's SHA-256.
+                "fingerprint": f"sha256:{doc_id}",
+                "acceptance": dict(OPEN_STATES)[state],
+                "store": "doc-door",
+                "ref": doc_id,
+                "state": state,
+                "since": taken_in(doc_id, rec),
+                "title": rec.get("title"),  # set by an accepted report only
+            }
+        )
+    items.sort(key=lambda i: (i["since"] is None, i["since"] or 0, i["ref"]))
+    return items
+
+
 # --- gates: does a scheduled tick need a model turn at all? -------------------------------
 
 
@@ -875,6 +944,9 @@ def main(argv: list[str]) -> int:
         return 0
     if cmd == "status":
         return status()
+    if cmd == "list" and rest == ["--json"]:
+        print(json.dumps(list_open()))
+        return 0
     if cmd == "check":
         return check()
     if cmd == "mail-check":
