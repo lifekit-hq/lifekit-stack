@@ -629,3 +629,96 @@ def test_a_cut_document_names_the_full_path_to_read_the_rest(env, capsys):
     n = int(cut.split("--from ")[1].split("`")[0])
     assert f"`{SKILL / 'door.py'} show doc1 --from {n}`" in cut
     assert f"L{n - 1}:" in out and f"L{n}:" not in out.replace(cut, "")
+
+
+# --- list --json: the open documents as fleet items ----------------------------------
+
+
+def listed(capsys):
+    assert run(["list", "--json"]) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_list_of_an_empty_door_is_an_empty_json_list(env, capsys):
+    assert not door.HOME.exists()
+    assert listed(capsys) == []
+    assert not door.HOME.exists()  # a read: nothing is created
+
+
+def test_list_prints_one_envelope_per_open_document_and_never_its_content(env, capsys):
+    run(["scan"])
+    capsys.readouterr()
+    d = doc_id()
+    taken = int((door.HOME / "documents" / f"{d}.pdf").stat().st_mtime)
+    [item] = listed(capsys)
+    assert item == {
+        "id": f"doc-door:{d}",
+        "origin": "mail",
+        "owner": "reader",
+        "class": "life",
+        "fingerprint": f"sha256:{d}",
+        "acceptance": "a cited report is filed for the document (door.py report)",
+        "store": "doc-door",
+        "ref": d,
+        "state": "report-pending",
+        "since": taken,
+        "title": None,  # no report yet: no title, and nothing from the mail
+    }
+    FakeMcp.drive_error = "quota exceeded"
+    assert run(["report", d], GOOD) == 0
+    capsys.readouterr()
+    [item] = listed(capsys)
+    assert item["state"] == "drive-pending" and item["title"] == "Offer letter"
+    assert item["acceptance"] == "the original is filed in its Drive subject folder"
+    assert item["since"] == taken
+    text = json.dumps(item)
+    for private in ("January", "two months", "offer.pdf", "Your offer", "hr@", "M1"):
+        assert private not in text
+
+
+def test_a_document_the_door_has_finished_is_not_listed(env, capsys):
+    run(["scan"])
+    assert run(["report", doc_id()], GOOD) == 0
+    capsys.readouterr()
+    rec = door.load_state()["docs"][doc_id()]
+    assert rec["drive"] == "filed" and rec["logged"] is True
+    assert listed(capsys) == []
+
+
+@pytest.mark.parametrize(
+    "consent, rec, state",
+    [
+        (False, {"status": "converted"}, "report-pending"),
+        (False, {"status": "reported"}, "drive-pending"),
+        (False, {"status": "reported", "drive": "filed"}, "log-pending"),
+        (False, {"status": "reported", "drive": "filed", "logged": True}, None),
+        (True, {"status": "converted"}, "report-pending"),
+        (True, {"status": "reported"}, "drive-pending"),
+        (True, {"status": "reported", "drive": "filed"}, "copy-pending"),
+        (
+            True,
+            {"status": "reported", "drive": "filed", "logged": True},
+            "copy-pending",
+        ),
+        (
+            True,
+            {"status": "reported", "drive": "filed", "copy": "filed"},
+            "log-pending",
+        ),
+        (
+            True,
+            {"status": "reported", "drive": "filed", "copy": "filed", "logged": True},
+            None,
+        ),
+    ],
+)
+def test_open_state_follows_what_the_door_still_has_to_do(
+    monkeypatch, consent, rec, state
+):
+    monkeypatch.setattr(drive_upload, "configured", lambda: consent)
+    assert door.open_state(rec) == state
+
+
+def test_list_takes_only_the_json_form():
+    with pytest.raises(SystemExit):
+        door.main(["door.py", "list"])
