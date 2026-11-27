@@ -12,13 +12,12 @@ public base URL; no link is guessed for the others). The publisher stamps the
 item envelope (`owner` finance, `class` finance, `store` finance-db).
 
 Read-only: one SELECT through `docker exec` into finance-sentry's postgres
-container (found by its compose labels; --container names another), in a session
-whose transactions are read-only (`default_transaction_read_only`), so the
-database refuses any write. A failed read exits nonzero with a one-line reason on
+container (found by its compose labels), in a session whose transactions are
+read-only (`default_transaction_read_only`), so the database refuses any write. A failed read exits nonzero with a one-line reason on
 stderr and prints nothing, so the publisher reports the source unreadable rather
 than empty.
 
-  python3 finance_items.py [--base-url URL] [--container NAME]
+  python3 finance_items.py [--base-url URL]
 """
 
 from __future__ import annotations
@@ -162,10 +161,9 @@ def items(doc: dict[str, Any], base_url: str | None) -> list[dict[str, Any]]:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base-url", help="the finance app's public base URL")
-    ap.add_argument("--container", help="the postgres container (default: by label)")
     args = ap.parse_args(argv)
     try:
-        doc = read_rows(args.container or postgres_container())
+        doc = read_rows(postgres_container())
         listed = items(doc, args.base_url)
     except (
         OSError,

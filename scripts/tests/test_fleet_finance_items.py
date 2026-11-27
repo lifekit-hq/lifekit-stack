@@ -166,13 +166,6 @@ def test_the_read_is_one_select_in_a_read_only_session(tmp_path):
     assert "HeldForDigest" not in query
 
 
-def test_a_named_container_skips_the_label_lookup(tmp_path):
-    result, calls = run(tmp_path, "--container", "pg-1")
-    assert result.returncode == 0, result.stderr
-    assert [c["argv"][0] for c in calls] == ["exec"]
-    assert calls[0]["argv"][4] == "pg-1"
-
-
 def test_an_unreadable_source_fails_and_prints_nothing(tmp_path):
     for env, out in (
         ({"DOCKER_FAIL": "1"}, None),
