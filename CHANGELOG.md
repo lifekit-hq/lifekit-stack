@@ -18,6 +18,81 @@ below it is the manually maintained pre-release history (kept verbatim).
 
 ---
 
+## [0.1.15](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.14...v0.1.15) (2026-11-28)
+
+
+### Features
+
+* **compose:** self-host wger workout manager as compose project ([#616](https://github.com/lifekit-hq/lifekit-stack/issues/616)) ([b393d4e](https://github.com/lifekit-hq/lifekit-stack/commit/b393d4ec42555ce9ac35766aae44396c6eb5046c))
+* **deploy:** report each installed host component behind main in the deploy log ([#762](https://github.com/lifekit-hq/lifekit-stack/issues/762)) ([c72e591](https://github.com/lifekit-hq/lifekit-stack/commit/c72e591bdc95f566bc892b06bc8bd9ebe2f3a247))
+* **fleet-publisher:** add optional FLEET_CLIP_STATS_FEED to the installer ([#646](https://github.com/lifekit-hq/lifekit-stack/issues/646)) ([a72a57c](https://github.com/lifekit-hq/lifekit-stack/commit/a72a57c4bde63ac1df3e63435366a6a55f08a2dc))
+* **fleet-publisher:** clip queue rows and stalled thresholds for clip and scout ([#644](https://github.com/lifekit-hq/lifekit-stack/issues/644)) ([5f39bb2](https://github.com/lifekit-hq/lifekit-stack/commit/5f39bb228921add8cfcb2e9582649fad4a2ff3d2))
+* **fleet-publisher:** derive clip numbers from the queue and events.jsonl, drop the stats feed ([#753](https://github.com/lifekit-hq/lifekit-stack/issues/753)) ([4404aac](https://github.com/lifekit-hq/lifekit-stack/commit/4404aaca18f3c21ad08b1fa6d28549fe383abbbd))
+* **fleet-publisher:** finance, needs-you and clip records carry the queue envelope ([#681](https://github.com/lifekit-hq/lifekit-stack/issues/681)) ([745658b](https://github.com/lifekit-hq/lifekit-stack/commit/745658b9ea4b607a5ce814104d3aa71c2bba07df))
+* **fleet-publisher:** mark a scout day announced but not judged as stalled ([#765](https://github.com/lifekit-hq/lifekit-stack/issues/765)) ([6f384fd](https://github.com/lifekit-hq/lifekit-stack/commit/6f384fd111c1a4e069910bc47ac1d1ad06817ae3)), closes [#736](https://github.com/lifekit-hq/lifekit-stack/issues/736)
+* **fleet-publisher:** mark items left in the Shape stage past three days as stalled ([#746](https://github.com/lifekit-hq/lifekit-stack/issues/746)) ([203a3d4](https://github.com/lifekit-hq/lifekit-stack/commit/203a3d4ddec63ed6b7c94f03a769ba15683db04c))
+* **fleet-publisher:** publish needs-you decisions with kit origin and an acceptance line ([#752](https://github.com/lifekit-hq/lifekit-stack/issues/752)) ([2dbf4f0](https://github.com/lifekit-hq/lifekit-stack/commit/2dbf4f0a3939b2a9a3edfb6658df3f42f94c02b6))
+* **fleet-publisher:** publish one list of scheduled work ([#702](https://github.com/lifekit-hq/lifekit-stack/issues/702)) ([eec1ac3](https://github.com/lifekit-hq/lifekit-stack/commit/eec1ac3b7b1d8e2ff4f10db67568724e0bc7dd61))
+* **fleet-publisher:** read devclaw tasks --json as an items source ([#763](https://github.com/lifekit-hq/lifekit-stack/issues/763)) ([0b663e4](https://github.com/lifekit-hq/lifekit-stack/commit/0b663e49addcf451274352a4d82bb41800b9fc2e))
+* **fleet-publisher:** show stalled fm-inbox notes past a 48 h inbox threshold ([#766](https://github.com/lifekit-hq/lifekit-stack/issues/766)) ([12a4539](https://github.com/lifekit-hq/lifekit-stack/commit/12a4539cdf34afee0e399eb16e121decbf18d147))
+* **fleet-publisher:** surface open doc-door documents as fleet items and stalled rows ([#747](https://github.com/lifekit-hq/lifekit-stack/issues/747)) ([d73e51b](https://github.com/lifekit-hq/lifekit-stack/commit/d73e51b19f1b875a5808d70866b04f5ce2e58fa2))
+* **fleet-publisher:** wire needs-you, finance, a2a and scout sources into the installer and unit ([#749](https://github.com/lifekit-hq/lifekit-stack/issues/749)) ([52e0a38](https://github.com/lifekit-hq/lifekit-stack/commit/52e0a387a59cae647dbea26a259acfe7d176a352))
+* **intake-shape:** answer accepted intake rows from the decision matrix before holding them ([#757](https://github.com/lifekit-hq/lifekit-stack/issues/757)) ([623ba98](https://github.com/lifekit-hq/lifekit-stack/commit/623ba988e0eacfae89855bc81cd8fd6d200fb55c))
+* **job-queue:** list --json envelopes per job, read by the fleet publisher as items ([#748](https://github.com/lifekit-hq/lifekit-stack/issues/748)) ([c9772f2](https://github.com/lifekit-hq/lifekit-stack/commit/c9772f2996b84b65914819cf6f98aa28ed842b71))
+* **kit-relay:** add a decide verb that files through fleet-policy with the key's actor ([#761](https://github.com/lifekit-hq/lifekit-stack/issues/761)) ([500ce38](https://github.com/lifekit-hq/lifekit-stack/commit/500ce384e52242259d7d6a16098449347b2f71cf))
+* **learn-mcp:** add a claude.ai connector over learnclaw's learning record ([#710](https://github.com/lifekit-hq/lifekit-stack/issues/710)) ([fa2d3bd](https://github.com/lifekit-hq/lifekit-stack/commit/fa2d3bdb00fc428305bca98000ee51a813921e11))
+* **openclaw-gateway:** add an intake door that spools failed hand-offs instead of refusing ([#706](https://github.com/lifekit-hq/lifekit-stack/issues/706)) ([2bc6acc](https://github.com/lifekit-hq/lifekit-stack/commit/2bc6acc815676ade7119e0b06c97fbd07d5d638c))
+* **scripts:** add data-flow lint gating stores against the vault Data flow table ([#701](https://github.com/lifekit-hq/lifekit-stack/issues/701)) ([2e66423](https://github.com/lifekit-hq/lifekit-stack/commit/2e66423076eebe13729f8f307367c7abc9852e23))
+* **scripts:** add Kit's one-shot Telegram notice with a delivery check ([#750](https://github.com/lifekit-hq/lifekit-stack/issues/750)) ([469afe5](https://github.com/lifekit-hq/lifekit-stack/commit/469afe5a2eef52b1e916c1f77259ec8530cd5b2e))
+* **scripts:** add weekly hand-solved count to the learnclaw morning message ([#621](https://github.com/lifekit-hq/lifekit-stack/issues/621)) ([c90a3e5](https://github.com/lifekit-hq/lifekit-stack/commit/c90a3e5030c3a93c58d5398afe50d1737d42349c))
+* **scripts:** add weekly Monday planning reminder cron ([#619](https://github.com/lifekit-hq/lifekit-stack/issues/619)) ([#623](https://github.com/lifekit-hq/lifekit-stack/issues/623)) ([a370653](https://github.com/lifekit-hq/lifekit-stack/commit/a370653159ac1b1cf55950f89d5de43b16cb41d6))
+* **scripts:** check every declared cron job against live on each deploy ([#682](https://github.com/lifekit-hq/lifekit-stack/issues/682)) ([e803d41](https://github.com/lifekit-hq/lifekit-stack/commit/e803d41c69dba5353e169b48872e7f9e6faa2249))
+* **scripts:** escalate idle worker lanes beside ready work at 15 and 30 minutes ([#633](https://github.com/lifekit-hq/lifekit-stack/issues/633)) ([b69ed31](https://github.com/lifekit-hq/lifekit-stack/commit/b69ed31ffde16d02d16120ffe1deee694164a898))
+* **scripts:** give every standing intent an end date and list it as expired once that date passes ([#707](https://github.com/lifekit-hq/lifekit-stack/issues/707)) ([e6f28ad](https://github.com/lifekit-hq/lifekit-stack/commit/e6f28ad7eda4ee7f60412851d37d80f1d16ca3cf))
+* **scripts:** learnclaw weekly count line is written by tested code, not counted by the model ([#635](https://github.com/lifekit-hq/lifekit-stack/issues/635)) ([aef7767](https://github.com/lifekit-hq/lifekit-stack/commit/aef7767ef172cf4fc3aa2e06b53a9df53a9eb22e))
+* **scripts:** open a shaping item for accepted intake ideas and set ready only after the shape step ([#654](https://github.com/lifekit-hq/lifekit-stack/issues/654)) ([e942ac8](https://github.com/lifekit-hq/lifekit-stack/commit/e942ac83bac1a9e579294ce0db20af77eab1c001))
+* **scripts:** stamp installed commits and report components behind main ([#705](https://github.com/lifekit-hq/lifekit-stack/issues/705)) ([db9788a](https://github.com/lifekit-hq/lifekit-stack/commit/db9788ac084cd4db6cec215447c3cc9ccd9aad09))
+* **skills:** add biceps curl spelling and log-delete command to wger.py ([#672](https://github.com/lifekit-hq/lifekit-stack/issues/672)) ([09bae51](https://github.com/lifekit-hq/lifekit-stack/commit/09bae5113d5d049f49d4218c4bb7c6e543a40007))
+* **skills:** add nutrition, profile and log-write commands to wger.py ([#667](https://github.com/lifekit-hq/lifekit-stack/issues/667)) ([0bc45d9](https://github.com/lifekit-hq/lifekit-stack/commit/0bc45d94e24870d92a800c86bb67da0e727a9420))
+* **skills:** every agent files an owner ask or commitment as a receipt in the same turn ([#700](https://github.com/lifekit-hq/lifekit-stack/issues/700)) ([ddbd4cf](https://github.com/lifekit-hq/lifekit-stack/commit/ddbd4cf6829f94ce18af7764b9ed0a351e3d26a8))
+* **skills:** file a held fleet task as a shaping item when Kit holds it ([#704](https://github.com/lifekit-hq/lifekit-stack/issues/704)) ([4812c8e](https://github.com/lifekit-hq/lifekit-stack/commit/4812c8e19d3cbe5aa21a2df1c5d9d31125206da6))
+* **skills:** Kit writes routines into wger and reads workout logs back ([#634](https://github.com/lifekit-hq/lifekit-stack/issues/634)) ([9a88528](https://github.com/lifekit-hq/lifekit-stack/commit/9a885281f65e6c8f9366059b30a97bcb71e756a5))
+* **skills:** port video-eval rubric to v8 so it judges adoptable parts ([#640](https://github.com/lifekit-hq/lifekit-stack/issues/640)) ([5339cf7](https://github.com/lifekit-hq/lifekit-stack/commit/5339cf7581297caf721dd5ef5d5f53414bccb872))
+* **study-door:** browser study panel door and tool-less study-panel agent ([#624](https://github.com/lifekit-hq/lifekit-stack/issues/624)) ([8ec6641](https://github.com/lifekit-hq/lifekit-stack/commit/8ec66417f9b20fe3744f3634de59faea5f4c361f))
+* **unrouted:** add daily check that every owner ask and agent promise has a receipt ([#767](https://github.com/lifekit-hq/lifekit-stack/issues/767)) ([090ed53](https://github.com/lifekit-hq/lifekit-stack/commit/090ed535a24bdf55ba78630189b254ab0bcdb277))
+* **wger:** run PowerSync sync service behind the wger nginx /ps/ path ([#670](https://github.com/lifekit-hq/lifekit-stack/issues/670)) ([26fe3b3](https://github.com/lifekit-hq/lifekit-stack/commit/26fe3b35aae932a87dd11b0e39030aea2875022a))
+
+
+### Bug Fixes
+
+* **bootstrap:** add the admin account to the lifekit group ([#712](https://github.com/lifekit-hq/lifekit-stack/issues/712)) ([26a4f80](https://github.com/lifekit-hq/lifekit-stack/commit/26a4f8032498dfcc0776e66e13b5b2bb3309f2be))
+* **deploy:** skip a refused doc-door cron.update with one line instead of ending red ([#659](https://github.com/lifekit-hq/lifekit-stack/issues/659)) ([272b646](https://github.com/lifekit-hq/lifekit-stack/commit/272b646f6fa381dd39fe845ff1650dd547afde14)), closes [#656](https://github.com/lifekit-hq/lifekit-stack/issues/656)
+* **edge:** study door route matches nothing while its secret is empty ([#630](https://github.com/lifekit-hq/lifekit-stack/issues/630)) ([af08ada](https://github.com/lifekit-hq/lifekit-stack/commit/af08ada5fe11c81c52a189ca2a5e5ed5b5a98139))
+* **fleet-publisher:** read the production gateway only, pin Kit's held-items check, mark A2A as intentionally unread ([#768](https://github.com/lifekit-hq/lifekit-stack/issues/768)) ([fde4d45](https://github.com/lifekit-hq/lifekit-stack/commit/fde4d459f32ef0a1e573a3b4bdf057a121bce521))
+* **intake-shape:** read the answer out of matrix-settlement records so settled items stop re-opening ([#671](https://github.com/lifekit-hq/lifekit-stack/issues/671)) ([d28ee98](https://github.com/lifekit-hq/lifekit-stack/commit/d28ee981529b78c8874b288d3307edfc2425ad77))
+* **job-queue:** record a dead run's exit status and stderr instead of a silent give-up ([#664](https://github.com/lifekit-hq/lifekit-stack/issues/664)) ([d584dbf](https://github.com/lifekit-hq/lifekit-stack/commit/d584dbfc8ce8b63364134715ddfa37c6a58f019f))
+* **job-queue:** tell a failed drain gate from a slow gateway and record its measured time ([#717](https://github.com/lifekit-hq/lifekit-stack/issues/717)) ([92b3164](https://github.com/lifekit-hq/lifekit-stack/commit/92b316420321cb36acb45cbcba403941604b5dee))
+* **openclaw-auth:** treat an unset auth path as the default and hold the metric through a gateway restart ([#661](https://github.com/lifekit-hq/lifekit-stack/issues/661)) ([ee32380](https://github.com/lifekit-hq/lifekit-stack/commit/ee32380aa4e3cc2b40ed2bb8217b3ac329b4bcbb))
+* **openclaw:** bump gateway pin 2026.11.4 -&gt; 2026.11.9 and teach the rehearsal the new ownership lock and schema ([#655](https://github.com/lifekit-hq/lifekit-stack/issues/655)) ([ab80fd7](https://github.com/lifekit-hq/lifekit-stack/commit/ab80fd76a7f2e073e0ece0140ec325adafd13b60))
+* **scripts:** allow agent-to-agent for kit and ledger, refuse only a reachable reader ([#653](https://github.com/lifekit-hq/lifekit-stack/issues/653)) ([4ee53fd](https://github.com/lifekit-hq/lifekit-stack/commit/4ee53fd844f44c5cc43740076d88d236fc073251))
+* **scripts:** catch up new scout feeds and write each feed newest first under a fair per-lens cap ([#718](https://github.com/lifekit-hq/lifekit-stack/issues/718)) ([4904c8d](https://github.com/lifekit-hq/lifekit-stack/commit/4904c8d6fd336a3880939de6c7b86d5b0e3657eb))
+* **scripts:** fill board_url, ask.link and open_url from a record's board address in fleet-publisher ([#637](https://github.com/lifekit-hq/lifekit-stack/issues/637)) ([2889bff](https://github.com/lifekit-hq/lifekit-stack/commit/2889bff823f806c65262c0c20514ecf3f066eefc))
+* **scripts:** keep fleet publisher stamp fresh under load and own its working directory ([#647](https://github.com/lifekit-hq/lifekit-stack/issues/647)) ([8acdbd8](https://github.com/lifekit-hq/lifekit-stack/commit/8acdbd869c78eb8fbc357e4ee7858bd37502538b))
+* **scripts:** let every defined agent message Kit over agent-to-agent, keep the reader unreachable ([#696](https://github.com/lifekit-hq/lifekit-stack/issues/696)) ([3038e94](https://github.com/lifekit-hq/lifekit-stack/commit/3038e94f173da377458f8dac08db8e8074000d64))
+* **scripts:** make the reader canary accept Claude Code's ToolSearch loader and deferred allowed tools ([#674](https://github.com/lifekit-hq/lifekit-stack/issues/674)) ([ded24a4](https://github.com/lifekit-hq/lifekit-stack/commit/ded24a4adfc951ed85be8e7fb573c870f25e4999))
+* **scripts:** pin the needs-you digest to kit's main session with no delivery ([#769](https://github.com/lifekit-hq/lifekit-stack/issues/769)) ([d6ce3fc](https://github.com/lifekit-hq/lifekit-stack/commit/d6ce3fce89fbfc2b52c140b59152d3785e1165c1))
+* **scripts:** resolve the production OpenClaw gateway through one helper that refuses a second match ([#724](https://github.com/lifekit-hq/lifekit-stack/issues/724)) ([98ba999](https://github.com/lifekit-hq/lifekit-stack/commit/98ba999577b76315122557fc45947e3df747d780))
+* **scripts:** retry live config reads and keep the OpenClaw spend metric fresh ([#631](https://github.com/lifekit-hq/lifekit-stack/issues/631)) ([7acef66](https://github.com/lifekit-hq/lifekit-stack/commit/7acef664cd08defe7a26a504003cb3f335fd9047))
+* **scripts:** write TASKS_AXI and PATH into the intake shape unit and fail once when tasks-axi is missing ([#658](https://github.com/lifekit-hq/lifekit-stack/issues/658)) ([b15bd39](https://github.com/lifekit-hq/lifekit-stack/commit/b15bd39389f64d3c302cb5adb0879edb4db6e0a9))
+* **skills:** log-write resolves to the routine's exercise and names it in the dry-run ([#675](https://github.com/lifekit-hq/lifekit-stack/issues/675)) ([10b5ea6](https://github.com/lifekit-hq/lifekit-stack/commit/10b5ea6611c9e9c66266f5217127a4a194994680))
+* **skills:** start job-queue runs outside the exec tree and record how a killed runner died ([#677](https://github.com/lifekit-hq/lifekit-stack/issues/677)) ([532e9d4](https://github.com/lifekit-hq/lifekit-stack/commit/532e9d42fbf5a52f3d61cd944609b9558c993b2f))
+* **wger:** configure the JWT keypair for the app's token login ([#652](https://github.com/lifekit-hq/lifekit-stack/issues/652)) ([f303a8f](https://github.com/lifekit-hq/lifekit-stack/commit/f303a8f506cbc7edaaa3d8dc5943ae7e31314e0c))
+
+
+### Documentation
+
+* add CONTEXT.md domain glossary ([#643](https://github.com/lifekit-hq/lifekit-stack/issues/643)) ([fefb5e7](https://github.com/lifekit-hq/lifekit-stack/commit/fefb5e76966566e87d43a565bda1c3f40694ad4f))
+
 ## [0.1.14](https://github.com/lifekit-hq/lifekit-stack/compare/v0.1.13...v0.1.14) (2026-11-23)
 
 
