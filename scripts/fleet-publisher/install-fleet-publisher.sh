@@ -33,9 +33,23 @@
 #   FLEET_FINANCE_OWNER     the owner's finance-sentry UserId (a GUID); the
 #                           finance command lists only that user's rows and
 #                           reads nothing without it.
-#   FLEET_A2A_CMD           prints the open A2A threads; none exists yet.
+#   FLEET_A2A_CMD           prints the open A2A threads; none exists yet, so
+#                           the VPS leaves it unset (the page says why).
+#   FLEET_KIT_HELD_CMD      Kit's held items with no shaping item; on the VPS
+#                           "python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py
+#                           check --notes /srv/memory/agents/kit/memory --home
+#                           <main home> --home <second-mate home> --seen
+#                           /var/lib/lifekit-fleet/kit-held-seen.json"
+#                           (docs/runbook.md "Held items become shaping items").
+#   FLEET_DEVCLAW_CMD       the devclaw items command; on the VPS
+#                           "python3 /usr/local/bin/lifekit-fleet-devclaw.py"
+#                           (devclaw_items.py, installed here: devclaw's own
+#                           read-only `devclaw tasks --json` in its container).
 #   FLEET_SCOUT_STATE       the scout's state dir; on the VPS
 #                           /home/denys/.local/state/lifekit-scout.
+#   FLEET_SCOUT_JUDGE       the firstmate home that judges the scout (its
+#                           data/scout/judged.tsv and digest/); on the VPS the
+#                           scout note's FM_INBOX_HOME (/etc/lifekit/scout.env).
 #
 # Tests set INSTALL_ROOT (a prefix for every installed path), SYSTEMCTL and SU; an
 # INSTALL_ROOT run needs no root and does not chown.
@@ -85,7 +99,7 @@ if [[ -n "$FLEET_NEEDS_YOU_LEDGER" ]]; then
   needs_you_bind="\nBindReadOnlyPaths=-${FLEET_NEEDS_YOU_LEDGER%/*}:${NEEDS_YOU_BIND}"
   sources_env+=" \"FLEET_NEEDS_YOU_LEDGER=${NEEDS_YOU_BIND}/${FLEET_NEEDS_YOU_LEDGER##*/}\""
 fi
-for name in FLEET_FINANCE_CMD FLEET_A2A_CMD; do
+for name in FLEET_FINANCE_CMD FLEET_A2A_CMD FLEET_DEVCLAW_CMD FLEET_KIT_HELD_CMD; do
   value="${!name:-}"
   [[ -n "$value" ]] || continue
   [[ "$value" =~ ^/?[A-Za-z0-9._/=:,\ -]+$ ]] || {
@@ -102,14 +116,15 @@ if [[ -n "$FLEET_FINANCE_OWNER" ]]; then
   }
   sources_env+=" \"FLEET_FINANCE_OWNER=${FLEET_FINANCE_OWNER}\""
 fi
-FLEET_SCOUT_STATE="${FLEET_SCOUT_STATE:-}"
-if [[ -n "$FLEET_SCOUT_STATE" ]]; then
-  [[ "$FLEET_SCOUT_STATE" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
-    echo "FLEET_SCOUT_STATE must be an absolute path of [A-Za-z0-9._/-]" >&2
+for name in FLEET_SCOUT_STATE FLEET_SCOUT_JUDGE; do
+  value="${!name:-}"
+  [[ -n "$value" ]] || continue
+  [[ "$value" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+    echo "$name must be an absolute path of [A-Za-z0-9._/-]" >&2
     exit 1
   }
-  sources_env+=" \"FLEET_SCOUT_STATE=${FLEET_SCOUT_STATE}\""
-fi
+  sources_env+=" \"${name}=${value}\""
+done
 owner=(-o "$ADMIN_USER" -g "$ADMIN_USER")
 if [[ -n "$INSTALL_ROOT" ]]; then
   owner=()
@@ -154,6 +169,8 @@ install -m 755 "$HERE/activity_journal.py" "$INSTALL_ROOT/usr/local/bin/lifekit-
 install -m 755 "$HERE/scheduled.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-scheduled.py"
 # The finance items command (FLEET_FINANCE_CMD), read-only against finance-sentry.
 install -m 755 "$HERE/finance_items.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-finance.py"
+# The devclaw items command (FLEET_DEVCLAW_CMD), devclaw's read-only export.
+install -m 755 "$HERE/devclaw_items.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-devclaw.py"
 manifest_tmp="$(mktemp)"
 python3 -I "$HERE/scheduled.py" manifest --repo "$(cd "$HERE/../.." && pwd)" > "$manifest_tmp"
 install -m 644 "$manifest_tmp" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-scheduled.json"

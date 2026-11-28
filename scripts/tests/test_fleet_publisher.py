@@ -1696,6 +1696,9 @@ ITEM_SOURCES = (
     "FLEET_FINANCE_OWNER",
     "FLEET_A2A_CMD",
     "FLEET_SCOUT_STATE",
+    "FLEET_DEVCLAW_CMD",
+    "FLEET_SCOUT_JUDGE",
+    "FLEET_KIT_HELD_CMD",
 )
 
 
@@ -1823,6 +1826,9 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         FLEET_FINANCE_OWNER="0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01",
         FLEET_A2A_CMD="/usr/local/bin/a2a-threads --json",
         FLEET_SCOUT_STATE="/home/denys/.local/state/lifekit-scout",
+        FLEET_DEVCLAW_CMD="python3 /usr/local/bin/lifekit-fleet-devclaw.py",
+        FLEET_SCOUT_JUDGE="/srv/fleet-home",
+        FLEET_KIT_HELD_CMD="python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py check --notes /srv/memory/agents/kit/memory --home /srv/fleet-home --seen /var/lib/lifekit-fleet/kit-held-seen.json",
     )
     assert result.returncode == 0, result.stderr
     service = installed_service(tmp_path)
@@ -1832,14 +1838,22 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         ' "FLEET_FINANCE_CMD=python3 /usr/local/bin/lifekit-fleet-finance.py'
         ' --base-url https://finance.example"'
         ' "FLEET_A2A_CMD=/usr/local/bin/a2a-threads --json"'
+        ' "FLEET_DEVCLAW_CMD=python3 /usr/local/bin/lifekit-fleet-devclaw.py"'
+        ' "FLEET_KIT_HELD_CMD=python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py'
+        " check --notes /srv/memory/agents/kit/memory --home /srv/fleet-home"
+        ' --seen /var/lib/lifekit-fleet/kit-held-seen.json"'
         ' "FLEET_FINANCE_OWNER=0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01"'
         ' "FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout"'
+        ' "FLEET_SCOUT_JUDGE=/srv/fleet-home"'
     )
     assert service["BindReadOnlyPaths"] == (
         "-/srv/kit/needs-you:/run/lifekit-fleet-needs-you"
     )
     # The finance command is installed beside the publisher.
     assert (tmp_path / "root/usr/local/bin/lifekit-fleet-finance.py").is_file()
+    devclaw = tmp_path / "root/usr/local/bin/lifekit-fleet-devclaw.py"
+    assert os.access(devclaw, os.X_OK)
+    assert devclaw.read_text() == (DIR / "devclaw_items.py").read_text()
 
 
 def test_installer_leaves_empty_item_sources_out_of_the_unit(tmp_path):
@@ -1864,11 +1878,16 @@ def test_installer_leaves_empty_item_sources_out_of_the_unit(tmp_path):
         ("FLEET_FINANCE_CMD", "echo %h"),
         ("FLEET_A2A_CMD", "echo $HOME"),
         ("FLEET_A2A_CMD", "a & b"),
+        ("FLEET_DEVCLAW_CMD", "docker exec x sh -c 'devclaw tasks'"),
+        ("FLEET_DEVCLAW_CMD", "devclaw tasks --json; rm x"),
+        ("FLEET_KIT_HELD_CMD", "kit_held.py check --notes $HOME"),
         ("FLEET_FINANCE_OWNER", "owner"),
         ("FLEET_FINANCE_OWNER", "0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01 x"),
         ("FLEET_FINANCE_OWNER", "0b8f6a523c1d4e7a9f205d6c7b8a9e01"),
         ("FLEET_SCOUT_STATE", "relative/scout"),
         ("FLEET_SCOUT_STATE", "/srv/a b"),
+        ("FLEET_SCOUT_JUDGE", "relative/fm"),
+        ("FLEET_SCOUT_JUDGE", "/srv/a b"),
     ],
 )
 def test_installer_refuses_an_item_source_it_cannot_render(tmp_path, name, value):
@@ -2331,6 +2350,40 @@ def test_quota_snapshot_comes_from_the_gauge_textfile(fleet):
 _SPEC = importlib.util.spec_from_file_location("fleet_status", DIR / "fleet_status.py")
 fleet_status = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(fleet_status)
+
+
+def test_the_gateway_is_found_by_compose_only_labels(monkeypatch):
+    """The image carries the project and service labels itself, so a canary or
+    rehearsal `docker run` of it matches those; only the container compose
+    started from the deploy checkout carries oneoff=False and its working dir."""
+    seen = []
+
+    def fake_run(cmd, **_):
+        seen.append(cmd)
+        return "abc123\n"
+
+    monkeypatch.setattr(fleet_status, "run", fake_run)
+    assert fleet_status.gateway() == "abc123"
+    filters = [seen[0][i + 1] for i, a in enumerate(seen[0]) if a == "--filter"]
+    assert filters == [
+        "label=com.docker.compose.project=openclaw",
+        "label=com.docker.compose.service=openclaw-gateway",
+        "label=com.docker.compose.oneoff=False",
+        "label=com.docker.compose.project.working_dir=/srv/lifekit-stack/compose/openclaw",
+    ]
+
+
+def test_more_than_one_gateway_is_refused_not_guessed(monkeypatch):
+    monkeypatch.setattr(fleet_status, "run", lambda cmd, **_: "new1\nold2\n")
+    with pytest.raises(OSError, match="more than one"):
+        fleet_status.gateway()
+    errors = []
+    monkeypatch.delenv("FLEET_JOBS_CMD", raising=False)
+    monkeypatch.delenv("FLEET_INTAKE_CMD", raising=False)
+    doc, source = fleet_status.read_jobs(errors)
+    assert doc is None
+    assert source == {"read": False, "reason": "job queue unreadable"}
+
 
 LIST_COLUMNS = (
     "id,state,kind,repo,title,held,hold_kind,hold_until,hold_reason,priority,"
@@ -3984,7 +4037,7 @@ def test_an_unreachable_a2a_source_is_said_not_guessed(homes):
     page = status(homes)
     assert page["stalled_sources"]["a2a"] == {
         "read": False,
-        "reason": "no relay or session records reachable",
+        "reason": "intentionally unread: no A2A thread store exists yet",
     }
     assert page["errors"] == []
     assert stalled_ids(page)["finance"] == []
@@ -4531,6 +4584,96 @@ def test_the_scout_is_stalled_when_its_output_is_older_than_the_interval(homes):
     assert page["stalled_sources"]["scout"] == {"read": True, "reason": None}
 
 
+def scout_days(homes, days, sent_age=2 * DAY):
+    """Candidates files for `days` ({day: lines}), each announced (`.sent`)
+    `sent_age` seconds before NOW; returns the scout state dir."""
+    cand = homes.tmp / "scout/candidates"
+    cand.mkdir(parents=True, exist_ok=True)
+    for day, lines in days.items():
+        (cand / f"{day}.txt").write_text("".join(f"{line}\n" for line in lines))
+        sent = cand / f"{day}.sent"
+        sent.write_text("")
+        os.utime(sent, (NOW - sent_age, NOW - sent_age))
+    return homes.tmp / "scout"
+
+
+def judge_rows(page):
+    return [
+        i for g in page["stalled"] for i in g["items"] if i["source"] == "scout-judge"
+    ]
+
+
+def test_an_announced_scout_day_without_a_judge_record_is_stalled(homes):
+    # Issue 736: the week of 2026-11-18..24 was fetched and announced, never judged.
+    week = [f"2026-11-{d}" for d in range(18, 25)]
+    state = scout_days(
+        homes,
+        {
+            "2026-11-17": ["harness\tgh:a x y"],
+            **{day: ["harness\tgh:a x y"] * 3 + ["agentic\tgh:b x y"] for day in week},
+            "2026-11-25": ["harness\tgh:a x y"],
+        },
+    )
+    judge = homes.tmp / "fm"
+    (judge / "data/scout/digest").mkdir(parents=True)
+    # 11-17 judged by a row, 11-25 by a digest alone.
+    (judge / "data/scout/judged.tsv").write_text("2026-11-17\tgh:a\taccept\n")
+    (judge / "data/scout/digest/2026-11-25.md").write_text("# digest\n")
+    # A day announced less than judge_hours ago is not stalled yet; a day never
+    # announced (no .sent) is the fetch's, not the judge's.
+    fresh = scout_days(homes, {"2026-11-26": ["harness\tgh:a x y"]}, sent_age=3600)
+    (fresh / "candidates/2026-11-27.txt").write_text("harness\tgh:a x y\n")
+    env = {
+        "FLEET_NOW": str(NOW),
+        "FLEET_SCOUT_STATE": str(state),
+        "FLEET_SCOUT_JUDGE": str(judge),
+    }
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    rows = judge_rows(page)
+    assert [r["id"] for r in rows] == week
+    row = rows[0]
+    assert row["reason"] == "not-judged" and row["threshold"] == 24 * 3600
+    assert row["since"] == NOW - 2 * DAY
+    assert row["lenses"] == {"agentic": 1, "harness": 3}
+    assert row["title"] == "scout 2026-11-18: 4 lines not judged (agentic 1, harness 3)"
+    (group,) = [g for g in page["stalled"] if any(i in g["items"] for i in rows)]
+    assert group["owner"] == "firstmate"
+    assert page["stalled_sources"]["scout_judge"] == {
+        "read": True,
+        "reason": None,
+        "announced": 10,
+    }
+    # The judge's row for a day clears it.
+    with (judge / "data/scout/judged.tsv").open("a") as fh:
+        fh.write("2026-11-18\tgh:a\tdrop\n")
+    assert homes.run(side_home(homes), **env).returncode == 0
+    assert [r["id"] for r in judge_rows(status(homes))] == week[1:]
+
+
+def test_a_missing_judge_record_leaves_scout_judging_unread(homes):
+    state = scout_days(homes, {"2026-11-18": ["harness\tgh:a x y"]})
+    judge = homes.tmp / "fm"
+    judge.mkdir()
+    env = {"FLEET_NOW": str(NOW), "FLEET_SCOUT_STATE": str(state)}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert not judge_rows(page)
+    assert page["stalled_sources"]["scout_judge"] == {
+        "read": False,
+        "reason": "FLEET_SCOUT_JUDGE is not set",
+    }
+    assert (
+        homes.run(side_home(homes), FLEET_SCOUT_JUDGE=str(judge), **env).returncode == 0
+    )
+    page = status(homes)
+    assert not judge_rows(page)
+    assert page["stalled_sources"]["scout_judge"] == {
+        "read": False,
+        "reason": "no judge record in the judging home",
+    }
+
+
 def installed_prom(homes, *lines, age=0):
     """The release gauge's lifekit_installed.prom in the publisher's textfile dir."""
     prom = homes.tmp / "prom/lifekit_installed.prom"
@@ -5027,6 +5170,7 @@ def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
         "needs_you": {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"},
         "jobq": {"read": False, "reason": "job queue skipped"},
         "doc_door": {"read": False, "reason": "doc-door skipped"},
+        "devclaw": {"read": False, "reason": "FLEET_DEVCLAW_CMD is not set"},
     }
     assert page["errors"] == []
 
@@ -5283,6 +5427,113 @@ def test_an_unreadable_door_is_said_not_guessed(homes):
     assert page["item_sources"]["doc_door"]["read"] is False
     assert page["stalled_sources"]["doc_door"]["read"] is False
     assert any("doc-door documents unreadable" in e for e in page["errors"])
+
+
+# --- devclaw: open goals and tasks through `devclaw tasks --json` ----------------
+
+
+def devclaw_world(homes, envelopes):
+    """A `devclaw tasks --json` export, printed by `cat` as the publisher's
+    FLEET_DEVCLAW_CMD."""
+    feed = homes.tmp / "devclaw.json"
+    feed.write_text(json.dumps(envelopes))
+    return {"FLEET_NOW": str(NOW), "FLEET_DEVCLAW_CMD": f"cat {feed}"}
+
+
+def devclaw_envelope(id_, since, **over):
+    return {
+        "id": f"devclaw:{id_}",
+        "kind": "goal",
+        "store": "devclaw",
+        "ref": "lifekit-hq/devclaw#1061",
+        "refs": ["lifekit-hq/devclaw#1061", "lifekit-hq/devclaw#1062"],
+        "stage": "build",
+        "state": "running",
+        "since": since,
+        "owner": "devclaw",
+        "class": "dev",
+        **over,
+    }
+
+
+def test_devclaw_envelopes_are_items_as_given_and_stall_after_the_threshold(homes):
+    env = devclaw_world(
+        homes,
+        [
+            devclaw_envelope("night-1", "2027-01-15T07:00:00Z"),
+            devclaw_envelope(
+                "goal-2",
+                "2027-01-12T08:00:00Z",
+                ref="lifekit-hq/lifekit-stack#754",
+                refs=["lifekit-hq/lifekit-stack#754"],
+                state="blocked",
+                owner="owner",
+            ),
+            devclaw_envelope(
+                "task-3", "2027-01-15T08:00:00Z", kind="task", state="pending"
+            ),
+            {**devclaw_envelope("other", NOW), "store": "jobq"},  # not devclaw's
+            {**devclaw_envelope("x", NOW), "id": "jobq:x"},
+            "garbage",
+        ],
+    )
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["devclaw"] == {"read": True, "reason": None}
+    got = items_by_id(page)
+    assert set(got) == {"devclaw:night-1", "devclaw:goal-2", "devclaw:task-3"}
+    assert got["devclaw:night-1"] == {
+        "id": "devclaw:night-1",
+        "source": "devclaw",
+        "kind": "goal",
+        "title": "lifekit-hq/devclaw#1061",
+        "owner": "devclaw",
+        "class": "dev",
+        "store": "devclaw",
+        "ref": "lifekit-hq/devclaw#1061",
+        "refs": ["lifekit-hq/devclaw#1061", "lifekit-hq/devclaw#1062"],
+        "since": NOW - 3600,
+        "stage": "build",
+        "state": "running",
+    }
+    blocked = got["devclaw:goal-2"]
+    assert blocked["owner"] == "owner" and blocked["state"] == "blocked"
+    assert got["devclaw:task-3"]["kind"] == "task"
+    rows = [i for g in page["stalled"] for i in g["items"] if i["source"] == "devclaw"]
+    assert [(r["id"], r["reason"]) for r in rows] == [("devclaw:goal-2", "idle")]
+    assert rows[0]["since"] == NOW - 3 * DAY and rows[0]["threshold"] == 2 * DAY
+    group = next(g for g in page["stalled"] if g["owner"] == "dev")
+    assert "devclaw:goal-2" in [i["id"] for i in group["items"]]
+    assert page["stalled_sources"]["devclaw"] == {
+        "read": True,
+        "reason": None,
+        "open": 3,
+    }
+    assert page["errors"] == []
+
+
+def test_an_empty_devclaw_export_reads_as_no_items(homes):
+    env = devclaw_world(homes, [])
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["items"] == []
+    assert page["item_sources"]["devclaw"] == {"read": True, "reason": None}
+    assert page["stalled_sources"]["devclaw"]["open"] == 0
+    assert page["errors"] == []
+
+
+@pytest.mark.parametrize("cmd", ["false", "echo {}", "echo [{"])
+def test_a_failing_devclaw_command_is_unread_and_the_page_still_publishes(homes, cmd):
+    env = {"FLEET_NOW": str(NOW), "FLEET_DEVCLAW_CMD": cmd}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["devclaw"] == {
+        "read": False,
+        "reason": "devclaw tasks unreadable",
+    }
+    assert page["stalled_sources"]["devclaw"]["read"] is False
+    assert any("devclaw tasks unreadable" in e for e in page["errors"])
+    assert page["schema"] == "fleet-status-page.v1"
 
 
 # --- load: a busy host must not starve the stamp ------------------------------

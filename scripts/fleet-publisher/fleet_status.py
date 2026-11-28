@@ -23,8 +23,9 @@ sections"). Everything is read from structured sources, never from prose:
   stalled       items whose state has not changed for their queue's threshold
                 (fleet-stalled.json beside this script): GitHub issues of the
                 registered projects, backlog items, jobq jobs, A2A threads,
-                and items left in the Shape stage (shaping items, owner-ask
-                issues without `ready`) past `shape.days`
+                devclaw goals and tasks, and items left in the Shape stage
+                (shaping items, owner-ask issues without `ready`) past
+                `shape.days`
   clip_queue    one row per clip channel from the clip queue's own outputs
                 (daily-check.json, egress.json, queue-run.json, events.jsonl
                 and the channel state directories, read-only): waiting, oldest
@@ -32,8 +33,9 @@ sections"). Everything is read from structured sources, never from prose:
                 stalled
   items         one record per open finance item (FLEET_FINANCE_CMD), per
                 needs-you decision (Kit's ledger), per waiting or running job
-                (`jobq.py list --json` in the gateway) and per open doc-door
-                document (`door.py list --json` in the gateway), each with the item
+                (`jobq.py list --json` in the gateway), per open doc-door
+                document (`door.py list --json` in the gateway) and per open
+                devclaw goal or task (FLEET_DEVCLAW_CMD), each with the item
                 envelope (owner, class, store, ref, and acceptance when the
                 source has one)
   problems      the three oldest stalled items by first-seen age, one brief line
@@ -52,11 +54,16 @@ the stalled check and the items read, `jobq.py list --json`; empty skips them, u
 FLEET_INTAKE_CMD is set), FLEET_INTAKE_SPOOL_CMD (the same for the intake
 door's spool count; empty skips it, unset skips it too when FLEET_INTAKE_CMD is
 set),
-FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: none reachable),
+FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: intentionally unread,
+no A2A thread store exists yet),
 FLEET_FINANCE_CMD (prints finance's open items as JSON; unset: not read),
+FLEET_DEVCLAW_CMD (prints `devclaw tasks --json`; unset: not read),
 FLEET_NEEDS_YOU_LEDGER (Kit's needs-you/open.json; unset: not read),
 FLEET_SCOUT_STATE (the scout's state dir, `candidates/<date>.txt` inside; unset:
 the scout is not read),
+FLEET_SCOUT_JUDGE (the firstmate home that judges the scout's candidates, its
+`data/scout/judged.tsv` and `data/scout/digest/<day>.md`; unset: judging is not
+read),
 FLEET_KIT_HELD_CMD (prints the held fleet tasks in Kit's daily notes that have
 no shaping item, as JSON - `kit_held.py check`; unset: not read),
 FLEET_DOC_DOOR_CMD (the same for doc-door's open documents, `door.py list
@@ -64,7 +71,9 @@ FLEET_DOC_DOOR_CMD (the same for doc-door's open documents, `door.py list
 FLEET_INSTALLED_PROM (the release gauge's lifekit_installed.prom, which says
 per installed component whether it is behind main; unset: not read),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
-script). The clip queue is read from clip's default ~/clip-data/queue; a
+script), OPENCLAW_GATEWAY_WORKDIR (the deploy checkout's compose dir that picks
+the production gateway for the `docker exec` reads, default
+/srv/lifekit-stack/compose/openclaw). The clip queue is read from clip's default ~/clip-data/queue; a
 missing directory or input file is named in the clip source's reason, not in
 `errors`. A source that fails empties its own part
 and adds a line to `errors`; the helper itself only fails on bad arguments.
@@ -117,9 +126,16 @@ SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 # outside world ends an external wait, and firstmate's own parked holds (and
 # any kind it does not know) restart on its date.
 HOLD_OWNER = {"captain": "captain", "external": "external"}
+# The production gateway, as scripts/lib/openclaw-gateway.sh finds it (issue
+# 716): the image carries the project and service labels itself, so any
+# `docker run` of it (a canary, a rehearsal) matches those two. Only the
+# container compose started from the deploy checkout also has these.
 GATEWAY_LABELS = (
     "label=com.docker.compose.project=openclaw",
     "label=com.docker.compose.service=openclaw-gateway",
+    "label=com.docker.compose.oneoff=False",
+    "label=com.docker.compose.project.working_dir="
+    + os.environ.get("OPENCLAW_GATEWAY_WORKDIR", "/srv/lifekit-stack/compose/openclaw"),
 )
 GATEWAY_JOBQ = "/home/node/.openclaw/skills/job-queue/jobq.py"
 GATEWAY_SPOOL = "/home/node/.openclaw/extensions/intake-door/spool.mjs"
@@ -773,12 +789,16 @@ def queue(records: list[dict[str, Any]], paths: list[str], now: int) -> dict[str
 
 
 def gateway() -> str:
+    """The production gateway's container id; more than one match is refused,
+    never guessed between."""
     found = run(
         ["docker", "ps", "-q", *(a for f in GATEWAY_LABELS for a in ("--filter", f))],
         timeout=10,
     ).split()
     if not found:
         raise OSError("no running openclaw-gateway container")
+    if len(found) > 1:
+        raise OSError("more than one openclaw-gateway container")
     return found[0]
 
 
@@ -866,6 +886,7 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
             ("installed", ("behind_hours",)),
             ("shape", ("days",)),
             ("doc_door", ("open_hours",)),
+            ("devclaw", ("idle_hours",)),
             ("inbox", ("hours",)),
         ):
             if key in cfg:  # optional: absent leaves that source unread
@@ -877,6 +898,10 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
                     for f in fields
                 )
                 assert block.get("owner", "firstmate") in owners
+        if "judge_hours" in cfg.get("scout", {}):  # optional: absent, judging unread
+            judge = cfg["scout"]["judge_hours"]
+            assert isinstance(judge, (int, float)) and not isinstance(judge, bool)
+            assert judge > 0
         if "shape" in cfg:
             shape = cfg["shape"]
             assert isinstance(shape.get("ready_label", "ready"), str)
@@ -1026,21 +1051,10 @@ def read_jobs(errors: list[str]) -> tuple[dict[str, Any] | None, dict[str, Any]]
         return None, {"read": False, "reason": "job queue skipped"}
     try:
         if not argv:
-            found = run(
-                [
-                    "docker",
-                    "ps",
-                    "-q",
-                    *(a for f in GATEWAY_LABELS for a in ("--filter", f)),
-                ],
-                timeout=10,
-            ).split()
-            if not found:
-                raise OSError("no running openclaw-gateway container")
             argv = [
                 "docker",
                 "exec",
-                found[0],
+                gateway(),
                 "python3",
                 GATEWAY_JOBQ,
                 "list",
@@ -1150,13 +1164,14 @@ def thread_stalls(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Open A2A threads past their own deadline, or with no turn inside the
     threshold, from FLEET_A2A_CMD (a JSON list of `{thread, owner, deadline,
-    last_turn, state}`). With no such source the section says so: a thread's age
-    is never guessed."""
+    last_turn, state}`). No relay or session store holds such threads yet, so
+    unset is the deliberate default and the page says why: a thread's age is
+    never guessed."""
     argv = shlex.split(os.environ.get("FLEET_A2A_CMD") or "")
     if not argv:
         return [], {
             "read": False,
-            "reason": "no relay or session records reachable",
+            "reason": "intentionally unread: no A2A thread store exists yet",
         }
     try:
         doc = json.loads(run(argv, timeout=15))
@@ -1210,6 +1225,7 @@ FINANCE_ENVELOPE = {"owner": "finance", "class": "finance", "store": "finance-db
 NEEDS_YOU_ENVELOPE = {"owner": "kit", "class": "life", "store": "needs-you"}
 FINANCE_KINDS = ("alert", "companion-event", "thesis-revision", "recommendation")
 SCOUT_CANDIDATES = "candidates"
+SCOUT_DAY_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 ADDED_RE = re.compile(r"^added:\s*(\S+)\s*$", re.M)
 
 
@@ -1688,6 +1704,107 @@ def doc_door_stalls(
     return rows, {"read": True, "reason": None, "open": len(entries)}
 
 
+DEVCLAW_ID_RE = re.compile(r"^devclaw:\S+$")
+DEVCLAW_ITEM_KEYS = ("stage", "state")
+
+
+def devclaw_read(
+    errors: list[str],
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+    """devclaw's open goals and tasks from FLEET_DEVCLAW_CMD, a command printing
+    `devclaw tasks --json` (devclaw_items.py runs it in the devclaw container):
+    a JSON list of envelopes `{id, kind, store, ref, refs, stage, state, since,
+    owner, class}`. Returns the entries with a `devclaw:` id and store `devclaw`,
+    or None when the source was not read. Unset, the source says so."""
+    argv = shlex.split(os.environ.get("FLEET_DEVCLAW_CMD") or "")
+    if not argv:
+        return None, {"read": False, "reason": "FLEET_DEVCLAW_CMD is not set"}
+    try:
+        doc = json.loads(run(argv, timeout=15))
+        assert isinstance(doc, list)
+    except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as exc:
+        errors.append(f"devclaw tasks unreadable ({exc.__class__.__name__})")
+        return None, {"read": False, "reason": "devclaw tasks unreadable"}
+    entries = [
+        e
+        for e in doc
+        if isinstance(e, dict)
+        and isinstance(e.get("id"), str)
+        and DEVCLAW_ID_RE.match(e["id"])
+        and e.get("store") == "devclaw"
+    ]
+    return entries, {"read": True, "reason": None}
+
+
+def devclaw_items(entries: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """One item per envelope, its fields published as given (`since` as the
+    page's epoch). The export carries no issue text, so the title is the `ref`."""
+    items = []
+    for e in entries or []:
+        ref = one_line(e.get("ref"), TITLE_CUT)
+        item = {
+            "id": e["id"],
+            "source": "devclaw",
+            "kind": one_line(e.get("kind"), TITLE_CUT),
+            "title": ref,
+            "owner": one_line(e.get("owner"), TITLE_CUT),
+            "class": one_line(e.get("class"), TITLE_CUT),
+            "store": "devclaw",
+            "ref": ref or e["id"].removeprefix("devclaw:"),
+            "since": parse_time(e.get("since")),
+        }
+        refs = e.get("refs")
+        if isinstance(refs, list) and all(isinstance(r, str) for r in refs):
+            item["refs"] = refs
+        for key in DEVCLAW_ITEM_KEYS:
+            if line := one_line(e.get(key), TITLE_CUT):
+                item[key] = line
+        items.append(item)
+    return items
+
+
+def devclaw_stalls(
+    entries: list[dict[str, Any]] | None,
+    source: dict[str, Any],
+    cfg: dict[str, Any] | None,
+    now: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """An open devclaw goal or task is stalled once its `since` (its latest
+    session's start or end, else its creation) is `devclaw.idle_hours` old. Its
+    owner is the envelope's `class` when that is an owner, else `devclaw.owner`.
+    An entry with no time is never a row; an unread source or no `devclaw` block
+    leaves the source unread."""
+    if cfg is None or "devclaw" not in cfg:
+        return [], {
+            "read": False,
+            "reason": "no devclaw thresholds in fleet-stalled.json",
+        }
+    if entries is None:
+        return [], source
+    window = int(cfg["devclaw"]["idle_hours"] * 3600)
+    fallback = cfg["devclaw"].get("owner", "firstmate")
+    rows = []
+    for e in entries:
+        since = parse_time(e.get("since"))
+        if since is None or now - since < window:
+            continue
+        klass = e.get("class")
+        rows.append(
+            {
+                "source": "devclaw",
+                "id": e["id"],
+                "home_id": None,
+                "title": one_line(e.get("ref"), TITLE_CUT),
+                "url": None,
+                "reason": "idle",
+                "since": since,
+                "threshold": window,
+                "owner": klass if klass in cfg["owners"] else fallback,
+            }
+        )
+    return rows, {"read": True, "reason": None, "open": len(entries)}
+
+
 INBOX_DIR = ("state", "inbox")
 INBOX_HEAD = 4096
 INBOX_FIELD_RE = re.compile(r"^([a-z_]+)=(.*)$")
@@ -1819,6 +1936,85 @@ def scout_stalls(
             "owner": cfg["scout"].get("owner", "firstmate"),
         }
     ], {"read": True, "reason": None}
+
+
+def scout_judge_stalls(
+    cfg: dict[str, Any] | None, now: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """A candidates day the scout announced (`candidates/<day>.sent` beside
+    `<day>.txt` in FLEET_SCOUT_STATE) is judged once the judging home
+    (FLEET_SCOUT_JUDGE) holds a `data/scout/judged.tsv` row dated that day or a
+    `data/scout/digest/<day>.md`. A day announced longer than
+    `scout.judge_hours` ago and not judged is stalled, from its `.sent` time, with
+    the day's line count per lens. `.sent` is the announcement, not the judge's
+    claim, so only the judge's own record clears it. Unset paths, a missing
+    threshold or a judging home with neither record: unread, never guessed."""
+    if cfg is None or "judge_hours" not in cfg.get("scout", {}):
+        return [], {
+            "read": False,
+            "reason": "no scout.judge_hours in fleet-stalled.json",
+        }
+    state = os.environ.get("FLEET_SCOUT_STATE", "")
+    judge = os.environ.get("FLEET_SCOUT_JUDGE", "")
+    if not state:
+        return [], {"read": False, "reason": "FLEET_SCOUT_STATE is not set"}
+    if not judge:
+        return [], {"read": False, "reason": "FLEET_SCOUT_JUDGE is not set"}
+    record = Path(judge) / "data" / "scout"
+    judged_tsv, digests = record / "judged.tsv", record / "digest"
+    judged: set[str] = set()
+    try:
+        if not judged_tsv.is_file() and not digests.is_dir():
+            return [], {"read": False, "reason": "no judge record in the judging home"}
+        if judged_tsv.is_file():
+            for line in judged_tsv.read_text(errors="replace").splitlines():
+                day = line.split("\t", 1)[0].strip()
+                if SCOUT_DAY_RE.fullmatch(day):
+                    judged.add(day)
+        if digests.is_dir():
+            judged.update(
+                f.stem for f in digests.glob("*.md") if SCOUT_DAY_RE.fullmatch(f.stem)
+            )
+        cand = Path(state) / SCOUT_CANDIDATES
+        announced = []
+        for f in sorted(cand.glob("*.txt")):
+            sent = cand / f"{f.stem}.sent"
+            day = SCOUT_DAY_RE.match(f.stem)
+            if f.is_file() and day and sent.exists():
+                announced.append((f, day.group(1), int(sent.stat().st_mtime)))
+    except OSError:
+        return [], {"read": False, "reason": "scout output or judge record unreadable"}
+    window = int(cfg["scout"]["judge_hours"] * 3600)
+    owner = cfg["scout"].get("owner", "firstmate")
+    rows = []
+    for f, day, since in announced:
+        if day in judged or now - since < window:
+            continue
+        lenses: dict[str, int] = {}
+        try:
+            for line in f.read_text(errors="replace").splitlines():
+                if line.strip():
+                    lens = line.split("\t", 1)[0]
+                    lenses[lens] = lenses.get(lens, 0) + 1
+        except OSError:
+            pass
+        counts = ", ".join(f"{k} {v}" for k, v in sorted(lenses.items()))
+        rows.append(
+            {
+                "source": "scout-judge",
+                "id": f.stem,
+                "home_id": None,
+                "title": f"scout {f.stem}: {sum(lenses.values())} lines not judged"
+                + (f" ({counts})" if counts else ""),
+                "url": None,
+                "reason": "not-judged",
+                "since": since,
+                "threshold": window,
+                "owner": owner,
+                "lenses": lenses,
+            }
+        )
+    return rows, {"read": True, "reason": None, "announced": len(announced)}
 
 
 def held_stalls(
@@ -2098,10 +2294,12 @@ PROBLEM_SOURCE_KEY = {
     "thread": "a2a",
     "clip": "clip",
     "scout": "scout",
+    "scout-judge": "scout_judge",
     "held": "kit_held",
     "installed": "installed",
     "shape": "shape",
     "doc": "doc_door",
+    "devclaw": "devclaw",
     "note": "inbox",
 }
 PROBLEM_PHRASE = {
@@ -2114,10 +2312,12 @@ PROBLEM_PHRASE = {
     "no-post": "no post",
     "buffer-short": "buffer short",
     "no-output": "no output",
+    "not-judged": "not judged",
     "not-filed": "held, not filed",
     "behind-main": "behind main",
     "not-ready": "stuck in Shape",
     "open": "document open",
+    "idle": "idle",
     "unacknowledged": "not acknowledged",
 }
 
@@ -2516,6 +2716,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     job_doc, jobq = read_jobs(errors)
     clip_section, clip_rows, clip_source, clip_checked = clip_queue(cfg, args.now)
     door_entries, door_source = doc_door_read(errors)
+    devclaw_entries, devclaw_source = devclaw_read(errors)
     if cfg:
         found = backlog_stalls(records, homes, cfg, args.now)
         issues, github = issue_stalls(
@@ -2524,6 +2725,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         jobs = job_stalls(cfg, args.now, job_doc) if job_doc else []
         threads, a2a = thread_stalls(cfg, args.now, errors)
         scout_rows, scout_source = scout_stalls(cfg, args.now)
+        judge_rows, judge_source = scout_judge_stalls(cfg, args.now)
         held_rows, held_source = held_stalls(cfg, args.now, errors)
         installed_rows, installed_source = installed_stalls(cfg, args.now)
         shape_rows, shape_source = shape_stalls(
@@ -2538,6 +2740,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         door_rows, door_stalled = doc_door_stalls(
             door_entries, door_source, cfg, args.now
         )
+        devclaw_rows, devclaw_stalled = devclaw_stalls(
+            devclaw_entries, devclaw_source, cfg, args.now
+        )
         inbox_rows, inbox_source = inbox_stalls(homes, cfg, args.now, errors)
         stalled_rows = (
             found
@@ -2546,10 +2751,12 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             + threads
             + clip_rows
             + scout_rows
+            + judge_rows
             + held_rows
             + installed_rows
             + shape_rows
             + door_rows
+            + devclaw_rows
             + inbox_rows
         )
         stalled = stalled_section(stalled_rows, cfg["owners"])
@@ -2565,10 +2772,12 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "a2a": a2a,
             "clip": clip_source,
             "scout": scout_source,
+            "scout_judge": judge_source,
             "kit_held": held_source,
             "installed": installed_source,
             "shape": shape_source,
             "doc_door": door_stalled,
+            "devclaw": devclaw_stalled,
             "inbox": inbox_source,
         }
     depth: dict[str, Any] | None = None
@@ -2597,10 +2806,12 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     item_sources: dict[str, dict[str, Any]] = {}
     door_read = (doc_door_items(door_entries), door_source)
+    devclaw_got = (devclaw_items(devclaw_entries), devclaw_source)
     for name, read in (
         ("finance", finance_items),
         ("needs_you", needs_you_items),
         ("doc_door", lambda _errors: door_read),
+        ("devclaw", lambda _errors: devclaw_got),
     ):
         got, item_sources[name] = read(errors)
         safe = [i for i in got if not withheld(i, pattern)]

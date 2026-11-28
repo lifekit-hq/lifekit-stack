@@ -10,7 +10,7 @@
   "jobq": {"waiting_hours": 24},
   "a2a": {"idle_hours": 24},
   "clip": {"buffer_floor_days": 1, "slot_window_hours": 30, "owner": "firstmate"},
-  "scout": {"idle_hours": 96, "owner": "firstmate"},
+  "scout": {"idle_hours": 96, "judge_hours": 24, "owner": "firstmate"},
   "kit_held": {"hours": 24, "owner": "firstmate"},
   "installed": {"behind_hours": 24, "owner": "ops"},
   "shape": {
@@ -21,5 +21,6 @@
     "id_prefixes": ["shape-", "held-"]
   },
   "doc_door": {"open_hours": 24, "owner": "life"},
+  "devclaw": {"idle_hours": 48, "owner": "dev"},
   "inbox": {"hours": 48, "owner": "firstmate"}
 }

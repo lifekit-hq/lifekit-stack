@@ -335,6 +335,22 @@ def intent_reader():
     return module.INTENT_READER
 
 
+def test_the_gateway_is_one_compose_started_container(monkeypatch):
+    """A canary `docker run` of the image carries the project and service labels
+    too: the lookup also needs the compose-only ones, and two matches are refused."""
+    spec = importlib.util.spec_from_file_location("scheduled", HELPER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert "label=com.docker.compose.oneoff=False" in module.GATEWAY_LABELS
+    assert (
+        "label=com.docker.compose.project.working_dir=/srv/lifekit-stack/compose/openclaw"
+        in module.GATEWAY_LABELS
+    )
+    monkeypatch.setattr(module, "run", lambda cmd, **_: "a1\nb2\n")
+    with pytest.raises(OSError, match="more than one"):
+        module.gateway_container()
+
+
 def test_an_agent_without_a_store_or_table_does_not_hide_the_others_intents(tmp_path):
     kit = tmp_path / "kit" / "agent.sqlite"
     kit.parent.mkdir()
