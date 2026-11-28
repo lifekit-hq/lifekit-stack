@@ -1697,6 +1697,7 @@ ITEM_SOURCES = (
     "FLEET_A2A_CMD",
     "FLEET_SCOUT_STATE",
     "FLEET_DEVCLAW_CMD",
+    "FLEET_KIT_HELD_CMD",
 )
 
 
@@ -1825,6 +1826,7 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         FLEET_A2A_CMD="/usr/local/bin/a2a-threads --json",
         FLEET_SCOUT_STATE="/home/denys/.local/state/lifekit-scout",
         FLEET_DEVCLAW_CMD="python3 /usr/local/bin/lifekit-fleet-devclaw.py",
+        FLEET_KIT_HELD_CMD="python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py check --notes /srv/memory/agents/kit/memory --home /srv/fleet-home --seen /var/lib/lifekit-fleet/kit-held-seen.json",
     )
     assert result.returncode == 0, result.stderr
     service = installed_service(tmp_path)
@@ -1835,6 +1837,9 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         ' --base-url https://finance.example"'
         ' "FLEET_A2A_CMD=/usr/local/bin/a2a-threads --json"'
         ' "FLEET_DEVCLAW_CMD=python3 /usr/local/bin/lifekit-fleet-devclaw.py"'
+        ' "FLEET_KIT_HELD_CMD=python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py'
+        " check --notes /srv/memory/agents/kit/memory --home /srv/fleet-home"
+        ' --seen /var/lib/lifekit-fleet/kit-held-seen.json"'
         ' "FLEET_FINANCE_OWNER=0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01"'
         ' "FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout"'
     )
@@ -1872,6 +1877,7 @@ def test_installer_leaves_empty_item_sources_out_of_the_unit(tmp_path):
         ("FLEET_A2A_CMD", "a & b"),
         ("FLEET_DEVCLAW_CMD", "docker exec x sh -c 'devclaw tasks'"),
         ("FLEET_DEVCLAW_CMD", "devclaw tasks --json; rm x"),
+        ("FLEET_KIT_HELD_CMD", "kit_held.py check --notes $HOME"),
         ("FLEET_FINANCE_OWNER", "owner"),
         ("FLEET_FINANCE_OWNER", "0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01 x"),
         ("FLEET_FINANCE_OWNER", "0b8f6a523c1d4e7a9f205d6c7b8a9e01"),
@@ -2339,6 +2345,40 @@ def test_quota_snapshot_comes_from_the_gauge_textfile(fleet):
 _SPEC = importlib.util.spec_from_file_location("fleet_status", DIR / "fleet_status.py")
 fleet_status = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(fleet_status)
+
+
+def test_the_gateway_is_found_by_compose_only_labels(monkeypatch):
+    """The image carries the project and service labels itself, so a canary or
+    rehearsal `docker run` of it matches those; only the container compose
+    started from the deploy checkout carries oneoff=False and its working dir."""
+    seen = []
+
+    def fake_run(cmd, **_):
+        seen.append(cmd)
+        return "abc123\n"
+
+    monkeypatch.setattr(fleet_status, "run", fake_run)
+    assert fleet_status.gateway() == "abc123"
+    filters = [seen[0][i + 1] for i, a in enumerate(seen[0]) if a == "--filter"]
+    assert filters == [
+        "label=com.docker.compose.project=openclaw",
+        "label=com.docker.compose.service=openclaw-gateway",
+        "label=com.docker.compose.oneoff=False",
+        "label=com.docker.compose.project.working_dir=/srv/lifekit-stack/compose/openclaw",
+    ]
+
+
+def test_more_than_one_gateway_is_refused_not_guessed(monkeypatch):
+    monkeypatch.setattr(fleet_status, "run", lambda cmd, **_: "new1\nold2\n")
+    with pytest.raises(OSError, match="more than one"):
+        fleet_status.gateway()
+    errors = []
+    monkeypatch.delenv("FLEET_JOBS_CMD", raising=False)
+    monkeypatch.delenv("FLEET_INTAKE_CMD", raising=False)
+    doc, source = fleet_status.read_jobs(errors)
+    assert doc is None
+    assert source == {"read": False, "reason": "job queue unreadable"}
+
 
 LIST_COLUMNS = (
     "id,state,kind,repo,title,held,hold_kind,hold_until,hold_reason,priority,"
@@ -3992,7 +4032,7 @@ def test_an_unreachable_a2a_source_is_said_not_guessed(homes):
     page = status(homes)
     assert page["stalled_sources"]["a2a"] == {
         "read": False,
-        "reason": "no relay or session records reachable",
+        "reason": "intentionally unread: no A2A thread store exists yet",
     }
     assert page["errors"] == []
     assert stalled_ids(page)["finance"] == []

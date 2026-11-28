@@ -350,9 +350,10 @@ line), never a guess.
 - **A2A threads** come from `FLEET_A2A_CMD`, a command printing a JSON list of
   `{thread, owner, deadline, last_turn, state, title}` (times as epoch or ISO;
   a thread whose `state` is completed, failed, canceled or rejected is closed).
-  Today no relay or session store the publisher can reach holds those, so
-  unset, `stalled_sources.a2a` is `{read: false, reason: "no relay or session
-  records reachable"}`: the page says so rather than guessing.
+  Today no relay or session store holds those, so the source is intentionally
+  not read: the installer pins no `FLEET_A2A_CMD`, and unset,
+  `stalled_sources.a2a` is `{read: false, reason: "intentionally unread: no A2A thread store exists yet"}`:
+  the page says so rather than guessing. Wire it once such a store exists.
 - **Clip and scout** thresholds are optional blocks of `fleet-stalled.json`; a
   file without one leaves that source unread (`stalled_sources` says so). The clip
   rows are read from the clip queue directory (see "Clip queue" below); the scout reads
@@ -535,7 +536,7 @@ so the dashboard can link through. Read-only; no store is written.
   printing nothing, so the source reads `read: false` with an `errors[]` line
   and the rest of the page still publishes.
 - **Wiring.** The installer carries `FLEET_NEEDS_YOU_LEDGER`, `FLEET_FINANCE_CMD`,
-  `FLEET_FINANCE_OWNER` (refused unless a GUID), `FLEET_DEVCLAW_CMD` (and `FLEET_A2A_CMD`, `FLEET_SCOUT_STATE` for the stalled sources) into the
+  `FLEET_FINANCE_OWNER` (refused unless a GUID), `FLEET_DEVCLAW_CMD` (and `FLEET_A2A_CMD`, `FLEET_KIT_HELD_CMD`, `FLEET_SCOUT_STATE` for the stalled sources) into the
   unit, each only when set and non-empty. The ledger defaults to Kit's
   (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`); since Kit's
   workspace is not the admin account's to read, the unit binds the ledger's
