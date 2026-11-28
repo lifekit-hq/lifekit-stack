@@ -358,6 +358,64 @@ def test_an_unreadable_manifest_keeps_the_previous_file_and_fails(gauge, stack):
     assert before[("lifekit_component_behind", "a")] == 1
 
 
+# --- the deploy's "behind main" report (issue 734) ------------------------------
+
+BEHIND = REPO / "scripts/release-gauge/installed-behind.sh"
+
+
+def behind_report(tmp_path, stack, expect):
+    """Run installed-behind.sh with no gh on PATH: it must never read GitHub."""
+    bin_dir = tmp_path / "nogh"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "gh").write_text("#!/bin/sh\necho gh called >&2\nexit 99\n")
+    (bin_dir / "gh").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    env["LIFEKIT_INSTALLED_DIR"] = str(stack.stamps)
+    proc = subprocess.run(
+        ["bash", str(BEHIND), str(stack.repo)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == expect, proc.stdout + proc.stderr
+    assert "gh called" not in proc.stderr
+    return proc.stdout.splitlines()
+
+
+def test_the_report_prints_a_behind_main_line_per_stale_component(tmp_path, stack):
+    first, _ = world(stack)
+    head = stack.git("rev-parse", "HEAD")
+    for c in "bcd":
+        stack.stamp(c, head)
+    stack.stamp("a", first)
+    lines = behind_report(tmp_path, stack, expect=1)
+    assert lines == [
+        f"✗ a: behind main since 2023-11-15 22:13 UTC (installed {first[:12]})"
+    ]
+
+
+def test_the_report_lists_unstamped_components_and_is_silent_when_current(
+    tmp_path, stack
+):
+    world(stack)
+    head = stack.git("rev-parse", "HEAD")
+    stack.stamp("a", head)
+    stack.stamp("b", head)
+    lines = behind_report(tmp_path, stack, expect=1)
+    assert len(lines) == 1 and lines[0].startswith("? 2 component(s)")
+    assert lines[0].endswith(": c d")
+    stack.stamp("c", head)
+    stack.stamp("d", head)
+    assert behind_report(tmp_path, stack, expect=0) == []
+
+
+def test_the_report_fails_distinctly_when_the_stamps_cannot_be_read(tmp_path, stack):
+    world(stack)
+    stack.commit(T1 + 120, **{"scripts__release-gauge__components.txt": "Bad x\n"})
+    assert behind_report(tmp_path, stack, expect=2) == []
+
+
 # --- the stamp and who writes it ------------------------------------------------
 
 STAMP = REPO / "scripts/lib/install-stamp.sh"
