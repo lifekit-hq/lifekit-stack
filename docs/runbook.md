@@ -4109,7 +4109,7 @@ The A2A source is `FLEET_A2A_CMD`, intentionally unset until a relay or session
 store holding A2A threads exists; the page says so (`stalled_sources.a2a.reason`). The queue items
 (`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD`,
 `FLEET_DEVCLAW_CMD` and `FLEET_NEEDS_YOU_LEDGER`. The installer carries them, and
-`FLEET_A2A_CMD`, `FLEET_KIT_HELD_CMD`, `FLEET_SCOUT_STATE` and `FLEET_SCOUT_JUDGE`, into the unit the same way as `FLEET_PLAN_MAP`: only
+`FLEET_A2A_CMD`, `FLEET_KIT_HELD_CMD`, `FLEET_SCOUT_STATE`, `FLEET_SCOUT_JUDGE` and `FLEET_UNROUTED_STATE`, into the unit the same way as `FLEET_PLAN_MAP`: only
 when set and non-empty, so a re-install without them drops the line. The one
 exception is the ledger, which defaults to Kit's
 (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`, bound read-only
@@ -4145,7 +4145,8 @@ Unset, the page says `read: false`. Scout judging is its own stalled source
 (`scout.judge_hours`, 24): a candidates day the scout announced (`.sent`) with no
 `judged.tsv` row and no `digest/<day>.md` in the judging home (`FLEET_SCOUT_JUDGE`)
 is a stalled row under `firstmate`, with its line count per lens. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
-drop-in: "Held items become shaping items"). Open doc-door documents are one more
+drop-in: "Held items become shaping items"). The daily unrouted check is one more
+(`unrouted.hours`, 26, `FLEET_UNROUTED_STATE`: "Daily unrouted check"). Open doc-door documents are one more
 (`doc_door.open_hours`, 24, owner `life`), read by `docker exec` into the gateway like the job
 ages ("Document door").
 Pending fm-inbox notes are one more (`inbox.hours`, 48, owner `firstmate`): each
@@ -4231,13 +4232,14 @@ sudo FM_HOMES="<fleet home> [<fleet home> ...]" \
   FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout \
   FLEET_SCOUT_JUDGE=<the scout note's FM_INBOX_HOME> \
   FLEET_KIT_HELD_CMD="python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py check --notes /srv/memory/agents/kit/memory --home <main home> --home <second-mate home> --seen /var/lib/lifekit-fleet/kit-held-seen.json" \
+  FLEET_UNROUTED_STATE=/var/lib/lifekit-fleet/unrouted/unrouted.json \
   bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
 jq '.status_page | {items: [.items[].id], item_sources, stalled_sources, intake_spool}' /var/lib/lifekit-fleet/home-summary.json
 ```
 
 After the next run, every `item_sources` entry (`finance`, `needs_you`, `jobq`,
-`doc_door`, `devclaw`) is `read: true` and `items` lists the open finance items,
-needs-you decisions, jobs, open documents and devclaw goals and tasks. Every
+`doc_door`, `devclaw`, `unrouted`) is `read: true` and `items` lists the open finance items,
+needs-you decisions, jobs, open documents, devclaw goals and tasks and unrouted asks and promises. Every
 `stalled_sources` entry is `read: true` except `a2a`, intentionally unread (its
 reason says so), and `intake_spool` is an object, not `null`. `jobq`, `doc_door`
 and the intake spool need no variable: they are read by `docker exec` into the
@@ -4248,7 +4250,7 @@ the one optional pin left out here: pass it only when a repo spelling needs fold
 
 `bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
 set and skips it otherwise (it passes no `FLEET_PLAN_MAP`,
-`FLEET_FINANCE_CMD`, `FLEET_FINANCE_OWNER`, `FLEET_DEVCLAW_CMD`, `FLEET_A2A_CMD`, `FLEET_KIT_HELD_CMD`, `FLEET_SCOUT_STATE` or `FLEET_SCOUT_JUDGE`, so re-run the installer by hand
+`FLEET_FINANCE_CMD`, `FLEET_FINANCE_OWNER`, `FLEET_DEVCLAW_CMD`, `FLEET_A2A_CMD`, `FLEET_KIT_HELD_CMD`, `FLEET_SCOUT_STATE`, `FLEET_SCOUT_JUDGE` or `FLEET_UNROUTED_STATE`, so re-run the installer by hand
 to restore one). Re-running the installer is how a home is
 added or removed: it reinstalls the script and rewrites the unit's `FM_HOMES`.
 The `lifekit-*.timer` glob in the unit gauge picks the timer up with no further
