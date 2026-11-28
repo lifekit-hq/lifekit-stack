@@ -54,7 +54,8 @@ the stalled check and the items read, `jobq.py list --json`; empty skips them, u
 FLEET_INTAKE_CMD is set), FLEET_INTAKE_SPOOL_CMD (the same for the intake
 door's spool count; empty skips it, unset skips it too when FLEET_INTAKE_CMD is
 set),
-FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: none reachable),
+FLEET_A2A_CMD (prints the open A2A threads as JSON; unset: intentionally unread,
+no A2A thread store exists yet),
 FLEET_FINANCE_CMD (prints finance's open items as JSON; unset: not read),
 FLEET_DEVCLAW_CMD (prints `devclaw tasks --json`; unset: not read),
 FLEET_NEEDS_YOU_LEDGER (Kit's needs-you/open.json; unset: not read),
@@ -70,7 +71,9 @@ FLEET_DOC_DOOR_CMD (the same for doc-door's open documents, `door.py list
 FLEET_INSTALLED_PROM (the release gauge's lifekit_installed.prom, which says
 per installed component whether it is behind main; unset: not read),
 FLEET_STALLED_CONFIG (the thresholds file, else fleet-stalled.json beside this
-script). The clip queue is read from clip's default ~/clip-data/queue; a
+script), OPENCLAW_GATEWAY_WORKDIR (the deploy checkout's compose dir that picks
+the production gateway for the `docker exec` reads, default
+/srv/lifekit-stack/compose/openclaw). The clip queue is read from clip's default ~/clip-data/queue; a
 missing directory or input file is named in the clip source's reason, not in
 `errors`. A source that fails empties its own part
 and adds a line to `errors`; the helper itself only fails on bad arguments.

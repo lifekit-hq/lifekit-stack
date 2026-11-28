@@ -288,7 +288,11 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
   gives the row of nulls with `idle_reason` `capacity-unpublished`; one that
   is not that document does the same and adds an `errors[]` line.
 - **Intake** runs `jobq.py depth` in the running `openclaw-gateway` container
-  (found by compose labels) with `docker exec`; `FLEET_INTAKE_CMD` replaces
+  with `docker exec`. That is the production gateway, found as
+  `scripts/lib/openclaw-gateway.sh` finds it: its compose labels plus
+  `oneoff=False` and the deploy checkout's compose dir
+  (`OPENCLAW_GATEWAY_WORKDIR`), so a canary or rehearsal of the same image is
+  never asked; two matches are an error, not a guess. `FLEET_INTAKE_CMD` replaces
   that command (empty skips intake). Counts only: no job, label or result.
 - **Intake spool** runs `node spool.mjs count` from the gateway's
   `intake-door` plugin the same way (`docs/runbook.md`, "Intake door");
