@@ -4053,6 +4053,8 @@ Unset, the page says `read: false`. Kit's held items are one more (`kit_held.hou
 drop-in: "Held items become shaping items"). Open doc-door documents are one more
 (`doc_door.open_hours`, 24, owner `life`), read by `docker exec` into the gateway like the job
 ages ("Document door").
+Pending fm-inbox notes are one more (`inbox.hours`, 48, owner `firstmate`): each
+`FM_HOMES` home's `state/inbox/*.note`, needing no setting (README "Stalled items").
 Installed components are one more (`installed.behind_hours`, 24): the publisher reads
 the release gauge's `lifekit_installed.prom` from its textfile directory
 (`FLEET_INSTALLED_PROM` overrides), and a component
