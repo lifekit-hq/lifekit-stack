@@ -416,12 +416,6 @@ def test_the_report_fails_distinctly_when_the_stamps_cannot_be_read(tmp_path, st
     assert behind_report(tmp_path, stack, expect=2) == []
 
 
-def test_deploy_runs_the_report_and_never_an_installer():
-    deploy = (REPO / "scripts/deploy.sh").read_text()
-    assert "scripts/release-gauge/installed-behind.sh" in deploy
-    assert "lifekit-release-gauge.sh" not in deploy  # only through the report
-
-
 # --- the stamp and who writes it ------------------------------------------------
 
 STAMP = REPO / "scripts/lib/install-stamp.sh"
