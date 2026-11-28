@@ -4968,11 +4968,15 @@ def test_the_unrouted_check_is_stalled_after_26_hours_without_a_run(homes):
 
 
 def test_a_missing_or_unreadable_unrouted_state_is_said_not_guessed(homes):
-    env = {"FLEET_NOW": str(NOW), "FLEET_UNROUTED_STATE": str(homes.tmp / "none.json")}
+    missing = homes.tmp / "no-state-dir" / "unrouted.json"
+    env = {"FLEET_NOW": str(NOW), "FLEET_UNROUTED_STATE": str(missing)}
     assert homes.run(side_home(homes), **env).returncode == 0
     page = status(homes)
     assert page["item_sources"]["unrouted"]["read"] is False
     assert page["stalled_sources"]["unrouted"]["read"] is False
+    assert not [
+        i for g in page["stalled"] for i in g["items"] if i["source"] == "unrouted"
+    ]
     assert page["errors"] == []
     bad = homes.tmp / "bad.json"
     bad.write_text("not json")
@@ -4981,6 +4985,41 @@ def test_a_missing_or_unreadable_unrouted_state_is_said_not_guessed(homes):
     page = status(homes)
     assert page["item_sources"]["unrouted"]["read"] is False
     assert any("unrouted check state unreadable" in e for e in page["errors"])
+
+
+def never_ran_unrouted(homes, installed_at):
+    """The installer made the state dir at `installed_at`; no run wrote
+    unrouted.json since."""
+    state_dir = homes.tmp / "unrouted-state"
+    state_dir.mkdir()
+    os.utime(state_dir, (installed_at, installed_at))
+    env = {
+        "FLEET_NOW": str(NOW),
+        "FLEET_UNROUTED_STATE": str(state_dir / "unrouted.json"),
+    }
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    rows = [i for g in page["stalled"] for i in g["items"] if i["source"] == "unrouted"]
+    return page, rows
+
+
+def test_an_unrouted_check_that_never_ran_is_stalled_26_hours_after_install(homes):
+    page, rows = never_ran_unrouted(homes, NOW - 27 * 3600)
+    assert [(r["id"], r["reason"]) for r in rows] == [("unrouted-check", "no-run")]
+    assert rows[0]["since"] == NOW - 27 * 3600
+    assert rows[0]["threshold"] == 26 * 3600
+    assert rows[0]["title"] == "the daily unrouted check"
+    assert page["stalled_sources"]["unrouted"]["open"] == 0
+    assert page["stalled_sources"]["unrouted"]["ran_at"] is None
+    assert page["item_sources"]["unrouted"]["read"] is False
+    assert page["errors"] == []
+
+
+def test_an_unrouted_check_installed_under_26_hours_ago_is_not_stalled(homes):
+    page, rows = never_ran_unrouted(homes, NOW - 25 * 3600)
+    assert rows == []
+    assert page["stalled_sources"]["unrouted"]["ran_at"] is None
+    assert page["errors"] == []
 
 
 # --- the Shape stage stalls on a clock (decision 0019, issue 695) ---------------

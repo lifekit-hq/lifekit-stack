@@ -329,7 +329,7 @@ line), never a guess.
 | Kit's held item | an open line of Kit's daily notes that names a fleet task and has no shaping item, for `kit_held.hours` (24) | `kit_held.hours` | when `kit_held.py check` first saw it unfiled | `kit_held.owner` (`firstmate`) |
 | Installed component (a host unit or workspace piece an `install-*`/`ensure-*` script deploys) | origin/main changed a path the component owns (`scripts/release-gauge/components.txt`) more than `installed.behind_hours` (24) ago and its installer has not run since | `installed.behind_hours` | the commit time of the oldest change on main not installed (`lifekit_component_behind_since_seconds` in `FLEET_INSTALLED_PROM`) | `installed.owner` (`ops`) |
 | Shape stage (decision 0019, amended 2026-11-26) | in Shape for `shape.days` (3): a captain-held backlog record whose id starts with one of `shape.id_prefixes` (`shape-`, the intake shape step's accepted idea; `held-`, Kit's held item), or an open issue of a registered project that carries an owner ask (a label starting with one of `shape.ask_label_prefixes`, the intake door's `intake:<fingerprint>` receipt) and not `shape.ready_label` (`ready`) | `shape.days`, `shape.id_prefixes`, `shape.ask_label_prefixes`, `shape.ready_label` | an issue's `createdAt`; a record's creation date, else the first run that saw it in Shape | `shape.owner` (`firstmate`) for a record; an issue's owner as in the GitHub row |
-| Daily unrouted check | no run for `unrouted.hours` (26: a daily job that missed a day); the title names the first missed day to rerun with `--day` | `unrouted.hours` | the last run's `ran_at` in `FLEET_UNROUTED_STATE` | `unrouted.owner` (`firstmate`) |
+| Daily unrouted check | no run for `unrouted.hours` (26: a daily job that missed a day); the title names the first missed day to rerun with `--day` | `unrouted.hours` | the last run's `ran_at` in `FLEET_UNROUTED_STATE`; before a first run, the modification time of the file's directory (the installer's state dir) | `unrouted.owner` (`firstmate`) |
 | Open doc-door document | open (report, Drive filing, report copy or vault log line still to do) for `doc_door.open_hours` (24) | `doc_door.open_hours` | when the door took the document in | `doc_door.owner` (`life`) |
 | Open devclaw goal or task | its `since` older than `devclaw.idle_hours` (48) | `devclaw.idle_hours` | the envelope's `since` (a goal's latest session start or end, else its creation; a task's start or creation) | the envelope's `class` when it is an owner (`dev`), else `devclaw.owner` (`dev`) |
 | fm-inbox note (`<home>/state/inbox/*.note` of each home; acknowledging moves it to `handled/`) | pending for `inbox.hours` (48) | `inbox.hours` | the note's `at` | `inbox.owner` (`firstmate`) |
@@ -340,9 +340,9 @@ line), never a guess.
   duration, an exhausted job or a passed deadline). `stalled[]` is
   `[{owner, count, items: [{source, id, home_id, title, url, reason, since,
   threshold}]}]` in the config's `owners` order (a count of 0 is kept), oldest
-  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip`, `scout`, `scout-judge`, `held`, `installed`, `shape`, `doc`, `devclaw` or `note`; `reason` is
+  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip`, `scout`, `scout-judge`, `held`, `installed`, `shape`, `doc`, `devclaw`, `note` or `unrouted`; `reason` is
   `no-status-line`, `no-update`, `attempts-exhausted`, `waiting`,
-  `past-deadline`, `no-turn`, `no-post`, `buffer-short`, `no-output`, `not-judged`, `not-filed`, `behind-main`, `not-ready`, `open`, `idle` or `unacknowledged` (an `installed` row's `id` and `title` are the component name; a `doc` row's `id` is the doc id and its `title` the report's, `null` before one is filed; a `devclaw` row's `id` is the envelope's `id` and its `title` the `ref`; a `scout-judge` row's `id` is the candidates file's name and it adds `lenses`, the file's line count per lens, also in its `title`; a `note` row's `id` is the note's `id` and its `title` `fm-inbox note from <source>`, never the body). The schema stays `fleet-status-page.v1`; these
+  `past-deadline`, `no-turn`, `no-post`, `buffer-short`, `no-output`, `not-judged`, `not-filed`, `behind-main`, `not-ready`, `open`, `idle`, `unacknowledged` or `no-run` (an `installed` row's `id` and `title` are the component name; a `doc` row's `id` is the doc id and its `title` the report's, `null` before one is filed; a `devclaw` row's `id` is the envelope's `id` and its `title` the `ref`; a `scout-judge` row's `id` is the candidates file's name and it adds `lenses`, the file's line count per lens, also in its `title`; a `note` row's `id` is the note's `id` and its `title` `fm-inbox note from <source>`, never the body). The schema stays `fleet-status-page.v1`; these
   are new optional keys, and a consumer that ignores them is unchanged. The
   dashboard's rendering is its own issue.
 - **GitHub issues** come from `gh issue list -R <owner/name> --state open`
@@ -421,9 +421,13 @@ line), never a guess.
   day after the state's `last_day`, the latest day checked, which a `--day`
   rerun of an older day leaves alone) once its `ran_at` is
   `unrouted.hours` old; a run that could not read
-  the chats records nothing, so the row shows it. One read feeds the row and the
-  `unrouted` items below. Unset, missing, or with no `unrouted` block, the source
-  is `read: false`. Setup: docs/runbook.md, "Daily unrouted check".
+  the chats records nothing, so the row shows it. With no `unrouted.json` yet, the
+  row (titled `the daily unrouted check`) counts from the modification time of its
+  directory, the state dir the installer creates, so a check that never ran once
+  stalls too; the items source is then `read: false` and adds that time as
+  `installed_at`. One read feeds the row and the `unrouted` items below. Unset, or
+  missing with no directory either, or with no `unrouted` block, the source is
+  `read: false`. Setup: docs/runbook.md, "Daily unrouted check".
 - **Failure** of one source empties only its own rows, sets its
   `stalled_sources` entry to `read: false` and adds an `errors[]` line.
 

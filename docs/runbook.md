@@ -2742,7 +2742,9 @@ and never messages the owner.
   (`unrouted.hours` in `fleet-stalled.json`). A run that cannot read the chats records
   nothing, so that row shows it, titled with the first missed day: the day after
   `last_day`, the latest day any run checked, which a `--day` rerun of an older day
-  leaves alone.
+  leaves alone. Before any run has written the file, the 26 hours count from the
+  modification time of `/var/lib/lifekit-fleet/unrouted/` (the installer creates it), so a
+  check that never ran once shows the row too.
 - **Dead-man by hand.** `python3 /srv/lifekit-stack/scripts/unrouted/unrouted.py --check`
   prints the last run's age and exits 1 when there is none or it is older than 26 hours;
   `missed_day` names the day to rerun.

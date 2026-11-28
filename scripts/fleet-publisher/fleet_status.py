@@ -2076,7 +2076,9 @@ def unrouted_read(errors: list[str]) -> tuple[dict[str, Any] | None, dict[str, A
     """The daily unrouted check's state (FLEET_UNROUTED_STATE, its
     `unrouted.json`, scripts/unrouted/unrouted.py): its last run and the owner
     asks and agent promises it found with no receipt. Unset, missing or
-    unreadable: unread, never guessed."""
+    unreadable: unread, never guessed. Missing in a state dir that exists (the
+    installer's, before a first run): `installed_at`, the dir's mtime, dates
+    the wait for that run."""
     path = os.environ.get("FLEET_UNROUTED_STATE", "")
     if not path:
         return None, {"read": False, "reason": "FLEET_UNROUTED_STATE is not set"}
@@ -2084,7 +2086,12 @@ def unrouted_read(errors: list[str]) -> tuple[dict[str, Any] | None, dict[str, A
         doc = json.loads(Path(path).read_text())
         assert isinstance(doc, dict) and isinstance(doc.get("items", []), list)
     except FileNotFoundError:
-        return None, {"read": False, "reason": "no unrouted check run recorded"}
+        source = {"read": False, "reason": "no unrouted check run recorded"}
+        try:
+            source["installed_at"] = int(Path(path).parent.stat().st_mtime)
+        except OSError:
+            pass
+        return None, source
     except (OSError, ValueError, AssertionError) as exc:
         errors.append(f"unrouted check state unreadable ({exc.__class__.__name__})")
         return None, {"read": False, "reason": "unrouted check state unreadable"}
@@ -2126,7 +2133,7 @@ def unrouted_stalls(
     """The check's dead-man: one row once its last run is `unrouted.hours`
     old (26: a daily job that missed a day), its title naming the first missed
     day (the one after `last_day`, the latest day checked) to rerun with
-    `--day`. `open`
+    `--day`. Never run, it counts from the state dir's `installed_at`. `open`
     counts its listed items."""
     if cfg is None or "unrouted" not in cfg:
         return [], {
@@ -2134,16 +2141,19 @@ def unrouted_stalls(
             "reason": "no unrouted thresholds in fleet-stalled.json",
         }
     if doc is None:
-        return [], source
-    ran = doc.get("ran_at")
-    if not isinstance(ran, int) or isinstance(ran, bool):
-        return [], {"read": False, "reason": "unrouted check state has no ran_at"}
+        if "installed_at" not in source:
+            return [], source
+        ran, since = None, source["installed_at"]
+    else:
+        ran = since = doc.get("ran_at")
+        if not isinstance(ran, int) or isinstance(ran, bool):
+            return [], {"read": False, "reason": "unrouted check state has no ran_at"}
     window = int(cfg["unrouted"]["hours"] * 3600)
     rows = []
-    if now - ran >= window:
+    if now - since >= window:
         title = "the daily unrouted check"
         try:
-            last = dt.date.fromisoformat(str(doc.get("last_day")))
+            last = dt.date.fromisoformat(str((doc or {}).get("last_day")))
             missed = (last + dt.timedelta(days=1)).isoformat()
             title += f": rerun unrouted.py --day {missed}"
         except ValueError:
@@ -2156,7 +2166,7 @@ def unrouted_stalls(
                 "title": title,
                 "url": None,
                 "reason": "no-run",
-                "since": ran,
+                "since": since,
                 "threshold": window,
                 "owner": cfg["unrouted"].get("owner", "firstmate"),
             }
