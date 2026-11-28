@@ -767,6 +767,29 @@ if [[ "${FIREWALL_STATUS}" != 0 ]]; then
   printf '\033[1;31m✗ host firewall: the box has not converged on the repository ruleset (installed copy, unit enabled and active, no nftables.service or ufw); apply it with the timed-rollback cutover in docs/runbook.md "Host firewall (nftables)"\033[0m\n' >&2
 fi
 
+# ─── Installed host components: behind main, report-only ────────────────────
+#
+# Host components (fleet publisher, kit-relay, release gauge, intake-shape,
+# ...) are installed by root installers the deploy cannot run; each stamps
+# /var/lib/lifekit/installed/<component> with the commit it installed. This
+# prints one "behind main" line per component whose owned paths
+# (scripts/release-gauge/components.txt) changed on main after its stamp, and
+# lists the unstamped ones, so a merged-but-never-installed component is never
+# silent (issue 734). Same reading as the lifekit_installed.prom gauge. Never
+# installs and never turns the deploy red; the fix is the component's
+# installer, run as the host step its docs/runbook.md section names.
+say "installed host components (host fact, report-only)"
+INSTALLED_STATUS=0
+INSTALLED_OUT="$(bash "${REPO_DIR}/scripts/release-gauge/installed-behind.sh" "${REPO_DIR}")" || INSTALLED_STATUS=$?
+case "${INSTALLED_STATUS}" in
+  0) echo "  every installed component is current with main" ;;
+  2) warn "installed host components: could not read the install stamps (output above); drift undetermined" ;;
+  *)
+    printf '\033[1;31m%s\033[0m\n' "${INSTALLED_OUT}" >&2
+    printf '\033[1;31m✗ installed host components: re-run each listed installer as the host step its docs/runbook.md section names\033[0m\n' >&2
+    ;;
+esac
+
 # ─── Identity provider: host facts, report-only ─────────────────────────────
 #
 # Publishing the identity ports on the tailnet (`tailscale serve`) and the

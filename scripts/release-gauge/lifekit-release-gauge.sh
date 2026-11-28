@@ -43,12 +43,22 @@
 # unreadable checkout or manifest leaves lifekit_installed.prom untouched (it
 # goes stale) and fails the unit after the release part has run.
 #
+# --installed-only (before the directory argument) writes lifekit_installed.prom
+# and exits with the drift status, reading nothing from GitHub: deploy.sh runs
+# it from the deploy checkout into a temp directory to print each component
+# behind main (scripts/release-gauge/installed-behind.sh).
+#
 # Inputs (env): RELEASE_REPOS, the space-separated owner/name list (default the
 # four lifekit-hq repos that ship weekly-release.yml). If any read fails the
 # script exits nonzero without touching weekly_release.prom, so the unit goes
 # failed (host-unit-down-or-failed) and the file goes stale
 # (textfile-collector-stale) instead of a blocked release reading as healthy.
 set -euo pipefail
+INSTALLED_ONLY=0
+if [[ "${1:-}" == --installed-only ]]; then
+  INSTALLED_ONLY=1
+  shift
+fi
 OUT_DIR="${1:-/var/lib/node_exporter/textfile}"
 REPOS="${RELEASE_REPOS:-lifekit-hq/finance-sentry lifekit-hq/lifekit-stack lifekit-hq/lifekit-dashboard lifekit-hq/devclaw}"
 WORKFLOW=weekly-release.yml
@@ -122,6 +132,7 @@ else
   rm -f "$drift_tmp"
   drift_rc=1
 fi
+((INSTALLED_ONLY)) && exit "$drift_rc"
 
 tmp="$(mktemp "$OUT_DIR/.weekly_release.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
