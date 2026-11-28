@@ -58,6 +58,12 @@
 # that session stored the literal route "last" every run failed with
 # "Unsupported channel: last" (issue 751). Never set --channel webchat: it is
 # not a deliverable channel.
+# The digest waits in kit's main session turn queue behind any active turn,
+# but in OpenClaw 2026.11.9 that wait does not count toward --timeout-seconds:
+# the cron runner reports the session-turn admission as a lane wait
+# (withCronSessionPreparation -> onLaneWait), and the cron agent watchdog
+# pauses the job timer and the setup watchdog while the run is lane-waiting
+# (noteLaneWait/noteLaneAdmitted). So 300 s bounds only the digest's own turn.
 #
 # Never Telegram: the script does not trust that to stay an accident. After
 # converging it re-reads the live row and refuses to finish (exit 1, with the

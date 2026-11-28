@@ -1242,7 +1242,13 @@ delivery: the turn runs in that conversation, its reply is a message there, and 
 route is resolved, so nothing goes to Telegram. (Until issue 751 it was a `current`
 job with announce delivery, whose default channel `last` resolved through the main
 session's remembered route; a stored literal `last` route failed every run with
-`Unsupported channel: last`.) After converging, the script re-reads the live row and
+`Unsupported channel: last`. The one setup timeout in the same window, the 09:00
+Europe/Dublin run on 2026-11-27 (09:00 UTC), was deploy-build load: the #720 deploy
+was building the gateway image then (image created 09:06 UTC, gateway recreated
+09:08 UTC), and the 09:01 retry delivered; no code change for it.) The 300 s
+`--timeout-seconds` bounds only the digest's own turn: the wait in kit's main
+session queue behind an active turn is a lane wait, during which the cron watchdog
+pauses the job and setup timers. After converging, the script re-reads the live row and
 exits non-zero unless its delivery is `none` with no channel, target or account and
 its session target is `session:agent:kit:main` (cadence policy: vault
 `domains/agent-behavior.md`, "Adopted workflow policies P1-P6").
