@@ -69,6 +69,8 @@ def apply(job, f):
         job["sessionTarget"] = f["--session"]
     if "--session-key" in f:
         job["sessionKey"] = f["--session-key"]
+    if "--clear-session-key" in f:
+        job.pop("sessionKey", None)
     if "--cron" in f:
         job["schedule"] = {"kind": "cron", "expr": f["--cron"], "tz": f.get("--tz")}
     job["delivery"] = {"mode": "none" if "--no-deliver" in f else "announce"}
@@ -773,6 +775,42 @@ def test_the_mail_reader_moves_to_the_reader_and_the_digest_stays_on_kit(box):
         "google-workspace__get_gmail_messages_content_batch",
     }
     assert reader["delivery"] == {"mode": "none"}
+
+
+def test_the_digest_is_pinned_to_kits_main_session_with_no_delivery(box):
+    # issue 751: announce resolved "last" through the main session's stored route
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    box.put("jobs", [{"id": "digest1", "name": "needs-you-digest", "agentId": "kit"}])
+    row = box.get("jobs")[0]
+    row |= {"sessionTarget": "current", "sessionKey": "agent:kit:main"}
+    box.put("jobs", [row])
+    done = box.script("ensure-needs-you-digest.sh")
+    assert done.returncode == 0, done.stderr
+    (edit,) = [c for c in box.calls() if c[:3] == ["cron", "edit", "digest1"]]
+    assert edit[edit.index("--session") + 1] == "session:agent:kit:main"
+    assert "--no-deliver" in edit and "--announce" not in edit
+    assert "--session-key" not in edit and "--clear-session-key" in edit
+    digest = box.job("needs-you-digest")
+    assert digest["sessionTarget"] == "session:agent:kit:main"
+    assert "sessionKey" not in digest
+    assert digest["delivery"] == {"mode": "none"}
+
+
+def test_a_digest_row_that_could_announce_is_refused(box):
+    box.put("entry", ENTRY)
+    assert box.run().returncode == 0
+    done = box.script("ensure-needs-you-digest.sh")
+    assert done.returncode == 0, done.stderr
+    rows = box.get("jobs")
+    for row in rows:
+        if row["name"] == "needs-you-digest":
+            row["delivery"] = {"mode": "announce", "channel": "last"}
+    box.put("jobs", rows)
+    check = box.script("ensure-needs-you-digest.sh", "--check")
+    assert check.returncode == 1
+    assert "delivery.mode='announce', want none" in check.stderr
+    assert "delivery.channel is set" in check.stderr
 
 
 def test_a_mail_reader_row_on_another_agent_is_refused(box):

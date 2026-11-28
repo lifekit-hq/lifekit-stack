@@ -1236,12 +1236,16 @@ parts still post.
 `scripts/ensure-needs-you-digest.sh` declares both rows and converges on re-run. It
 exits non-zero, before touching the digest, when the reader's live row allows any tool
 beyond those two, is bound to a session or has a delivery, and after converging when
-the digest's allow-list is not exactly `read,exec,process`. The digest is a
-`current`-session agent turn bound to `agent:kit:main` with announce delivery: the
-reply is committed to the conversation's transcript, and that session has no external
-route, so nothing goes to Telegram; after converging, the script re-reads the live row
-and exits non-zero if its delivery or session binding could route outside the chat
-(cadence policy: vault `domains/agent-behavior.md`, "Adopted workflow policies P1-P6").
+the digest's allow-list is not exactly `read,exec,process`. The digest is an agent
+turn pinned to kit's main session (`--session session:agent:kit:main`) with no
+delivery: the turn runs in that conversation, its reply is a message there, and no
+route is resolved, so nothing goes to Telegram. (Until issue 751 it was a `current`
+job with announce delivery, whose default channel `last` resolved through the main
+session's remembered route; a stored literal `last` route failed every run with
+`Unsupported channel: last`.) After converging, the script re-reads the live row and
+exits non-zero unless its delivery is `none` with no channel, target or account and
+its session target is `session:agent:kit:main` (cadence policy: vault
+`domains/agent-behavior.md`, "Adopted workflow policies P1-P6").
 It always posts: the date line, then the needs-you
 part in the relay skill's Status format, which is the single line "Nothing needs you
 today." when the ledger and the fleet show no call and no to-do and no mail needs you. A run that cannot read
@@ -1249,7 +1253,7 @@ the ledger or the mail says so in the chat. A run that
 fails outright raises a failure alert after one failure. The alert goes through kit's
 `default` Telegram account to `LIFEKIT_TELEGRAM_CHAT` from the host env file, the same
 route as the career weekly alert, because a failure alert needs an outbound
-channel and the Control UI chat has none.
+channel and the digest has none.
 
 Operator steps, once per host. None of them restarts the gateway:
 
@@ -1281,8 +1285,8 @@ Operator steps, once per host. None of them restarts the gateway:
    refresh token is revoked (`invalid_grant` in `docker logs openclaw-google-workspace-mcp-1`),
    redo the consent in `docs/google-mcp-setup.md` first.
 
-**Verify:** `cron show <id>` previews the digest's delivery as `announce -> current
-session` and the reader's as none; `cron list --json` shows each row's
+**Verify:** `cron show <id>` shows the digest's session target as
+`session:agent:kit:main` and both rows' delivery as none; `cron list --json` shows each row's
 `payload.toolsAllow`. That is the stored field only; to see that a run is held to it,
 run the reader once, `cron run <reader id> --expect-final --json`, and confirm from
 `cron runs <reader id> --limit 1 --json` (or the `cron:<reader id>` session
