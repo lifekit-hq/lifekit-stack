@@ -4709,6 +4709,25 @@ def test_an_aged_note_is_stalled_under_firstmate_and_a_fresh_one_is_counted(home
     }
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 directory")
+def test_an_unreadable_inbox_is_said_not_read_as_empty(homes):
+    # README: an unreadable inbox adds an errors[] line and leaves the source
+    # read: false. Reading it as empty would hide every aged note.
+    home = side_home(homes)
+    inbox_note(home, "1-aged", NOW - 3 * DAY)
+    inbox = home / "state/inbox"
+    inbox.chmod(0o000)
+    try:
+        assert homes.run(home).returncode == 0
+    finally:
+        inbox.chmod(0o755)
+    page = status(homes)
+    assert not note_rows(page)
+    assert page["stalled_sources"]["inbox"]["read"] is False
+    assert "fm-vps" in page["stalled_sources"]["inbox"]["reason"]
+    assert any("fm-inbox unreadable" in e for e in page["errors"])
+
+
 def test_no_inbox_threshold_leaves_the_inbox_unread(homes):
     home = side_home(homes)
     inbox_note(home, "1-aged", NOW - 3 * DAY)

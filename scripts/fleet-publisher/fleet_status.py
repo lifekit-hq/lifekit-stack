@@ -1732,7 +1732,14 @@ def inbox_stalls(
             continue
         try:
             heads = []
-            for path in sorted(inbox.glob("*.note")):
+            # iterdir, not glob: glob swallows a PermissionError and would
+            # read an unreadable inbox as an empty one.
+            names = sorted(
+                p
+                for p in inbox.iterdir()
+                if p.name.endswith(".note") and not p.name.startswith(".")
+            )
+            for path in names:
                 try:
                     heads.append(note_head(path))
                 except FileNotFoundError:  # acknowledged while this run read
