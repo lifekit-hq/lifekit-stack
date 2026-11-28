@@ -1696,6 +1696,7 @@ ITEM_SOURCES = (
     "FLEET_FINANCE_OWNER",
     "FLEET_A2A_CMD",
     "FLEET_SCOUT_STATE",
+    "FLEET_DEVCLAW_CMD",
 )
 
 
@@ -1823,6 +1824,7 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         FLEET_FINANCE_OWNER="0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01",
         FLEET_A2A_CMD="/usr/local/bin/a2a-threads --json",
         FLEET_SCOUT_STATE="/home/denys/.local/state/lifekit-scout",
+        FLEET_DEVCLAW_CMD="python3 /usr/local/bin/lifekit-fleet-devclaw.py",
     )
     assert result.returncode == 0, result.stderr
     service = installed_service(tmp_path)
@@ -1832,6 +1834,7 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         ' "FLEET_FINANCE_CMD=python3 /usr/local/bin/lifekit-fleet-finance.py'
         ' --base-url https://finance.example"'
         ' "FLEET_A2A_CMD=/usr/local/bin/a2a-threads --json"'
+        ' "FLEET_DEVCLAW_CMD=python3 /usr/local/bin/lifekit-fleet-devclaw.py"'
         ' "FLEET_FINANCE_OWNER=0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01"'
         ' "FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout"'
     )
@@ -1840,6 +1843,9 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
     )
     # The finance command is installed beside the publisher.
     assert (tmp_path / "root/usr/local/bin/lifekit-fleet-finance.py").is_file()
+    devclaw = tmp_path / "root/usr/local/bin/lifekit-fleet-devclaw.py"
+    assert os.access(devclaw, os.X_OK)
+    assert devclaw.read_text() == (DIR / "devclaw_items.py").read_text()
 
 
 def test_installer_leaves_empty_item_sources_out_of_the_unit(tmp_path):
@@ -1864,6 +1870,8 @@ def test_installer_leaves_empty_item_sources_out_of_the_unit(tmp_path):
         ("FLEET_FINANCE_CMD", "echo %h"),
         ("FLEET_A2A_CMD", "echo $HOME"),
         ("FLEET_A2A_CMD", "a & b"),
+        ("FLEET_DEVCLAW_CMD", "docker exec x sh -c 'devclaw tasks'"),
+        ("FLEET_DEVCLAW_CMD", "devclaw tasks --json; rm x"),
         ("FLEET_FINANCE_OWNER", "owner"),
         ("FLEET_FINANCE_OWNER", "0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01 x"),
         ("FLEET_FINANCE_OWNER", "0b8f6a523c1d4e7a9f205d6c7b8a9e01"),
@@ -4936,6 +4944,7 @@ def test_unset_item_sources_say_so_and_the_existing_page_is_unchanged(homes):
         "needs_you": {"read": False, "reason": "FLEET_NEEDS_YOU_LEDGER is not set"},
         "jobq": {"read": False, "reason": "job queue skipped"},
         "doc_door": {"read": False, "reason": "doc-door skipped"},
+        "devclaw": {"read": False, "reason": "FLEET_DEVCLAW_CMD is not set"},
     }
     assert page["errors"] == []
 
@@ -5192,6 +5201,113 @@ def test_an_unreadable_door_is_said_not_guessed(homes):
     assert page["item_sources"]["doc_door"]["read"] is False
     assert page["stalled_sources"]["doc_door"]["read"] is False
     assert any("doc-door documents unreadable" in e for e in page["errors"])
+
+
+# --- devclaw: open goals and tasks through `devclaw tasks --json` ----------------
+
+
+def devclaw_world(homes, envelopes):
+    """A `devclaw tasks --json` export, printed by `cat` as the publisher's
+    FLEET_DEVCLAW_CMD."""
+    feed = homes.tmp / "devclaw.json"
+    feed.write_text(json.dumps(envelopes))
+    return {"FLEET_NOW": str(NOW), "FLEET_DEVCLAW_CMD": f"cat {feed}"}
+
+
+def devclaw_envelope(id_, since, **over):
+    return {
+        "id": f"devclaw:{id_}",
+        "kind": "goal",
+        "store": "devclaw",
+        "ref": "lifekit-hq/devclaw#1061",
+        "refs": ["lifekit-hq/devclaw#1061", "lifekit-hq/devclaw#1062"],
+        "stage": "build",
+        "state": "running",
+        "since": since,
+        "owner": "devclaw",
+        "class": "dev",
+        **over,
+    }
+
+
+def test_devclaw_envelopes_are_items_as_given_and_stall_after_the_threshold(homes):
+    env = devclaw_world(
+        homes,
+        [
+            devclaw_envelope("night-1", "2027-01-15T07:00:00Z"),
+            devclaw_envelope(
+                "goal-2",
+                "2027-01-12T08:00:00Z",
+                ref="lifekit-hq/lifekit-stack#754",
+                refs=["lifekit-hq/lifekit-stack#754"],
+                state="blocked",
+                owner="owner",
+            ),
+            devclaw_envelope(
+                "task-3", "2027-01-15T08:00:00Z", kind="task", state="pending"
+            ),
+            {**devclaw_envelope("other", NOW), "store": "jobq"},  # not devclaw's
+            {**devclaw_envelope("x", NOW), "id": "jobq:x"},
+            "garbage",
+        ],
+    )
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["devclaw"] == {"read": True, "reason": None}
+    got = items_by_id(page)
+    assert set(got) == {"devclaw:night-1", "devclaw:goal-2", "devclaw:task-3"}
+    assert got["devclaw:night-1"] == {
+        "id": "devclaw:night-1",
+        "source": "devclaw",
+        "kind": "goal",
+        "title": "lifekit-hq/devclaw#1061",
+        "owner": "devclaw",
+        "class": "dev",
+        "store": "devclaw",
+        "ref": "lifekit-hq/devclaw#1061",
+        "refs": ["lifekit-hq/devclaw#1061", "lifekit-hq/devclaw#1062"],
+        "since": NOW - 3600,
+        "stage": "build",
+        "state": "running",
+    }
+    blocked = got["devclaw:goal-2"]
+    assert blocked["owner"] == "owner" and blocked["state"] == "blocked"
+    assert got["devclaw:task-3"]["kind"] == "task"
+    rows = [i for g in page["stalled"] for i in g["items"] if i["source"] == "devclaw"]
+    assert [(r["id"], r["reason"]) for r in rows] == [("devclaw:goal-2", "idle")]
+    assert rows[0]["since"] == NOW - 3 * DAY and rows[0]["threshold"] == 2 * DAY
+    group = next(g for g in page["stalled"] if g["owner"] == "dev")
+    assert "devclaw:goal-2" in [i["id"] for i in group["items"]]
+    assert page["stalled_sources"]["devclaw"] == {
+        "read": True,
+        "reason": None,
+        "open": 3,
+    }
+    assert page["errors"] == []
+
+
+def test_an_empty_devclaw_export_reads_as_no_items(homes):
+    env = devclaw_world(homes, [])
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["items"] == []
+    assert page["item_sources"]["devclaw"] == {"read": True, "reason": None}
+    assert page["stalled_sources"]["devclaw"]["open"] == 0
+    assert page["errors"] == []
+
+
+@pytest.mark.parametrize("cmd", ["false", "echo {}", "echo [{"])
+def test_a_failing_devclaw_command_is_unread_and_the_page_still_publishes(homes, cmd):
+    env = {"FLEET_NOW": str(NOW), "FLEET_DEVCLAW_CMD": cmd}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert page["item_sources"]["devclaw"] == {
+        "read": False,
+        "reason": "devclaw tasks unreadable",
+    }
+    assert page["stalled_sources"]["devclaw"]["read"] is False
+    assert any("devclaw tasks unreadable" in e for e in page["errors"])
+    assert page["schema"] == "fleet-status-page.v1"
 
 
 # --- load: a busy host must not starve the stamp ------------------------------

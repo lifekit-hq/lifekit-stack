@@ -20,5 +20,6 @@
     "ask_label_prefixes": ["intake:"],
     "id_prefixes": ["shape-", "held-"]
   },
-  "doc_door": {"open_hours": 24, "owner": "life"}
+  "doc_door": {"open_hours": 24, "owner": "life"},
+  "devclaw": {"idle_hours": 48, "owner": "dev"}
 }
