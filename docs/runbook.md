@@ -4598,7 +4598,7 @@ Every deploy prints the same reading in its log (step "installed host components
 `scripts/release-gauge/installed-behind.sh` runs the gauge's drift half (`--installed-only`, no
 GitHub read) against the deploy checkout and prints one `✗ <component>: behind main since <time>
 (installed <commit>)` line per behind component, then one line listing the components with no
-usable stamp. It is report-only: the deploy never installs and never goes red on it.
+usable stamp. It is report-only: the lines print red, but the deploy never installs and never fails on it.
 
 ## Runner restart drop-ins
 
