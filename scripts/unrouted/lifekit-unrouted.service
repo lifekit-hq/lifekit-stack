@@ -1,0 +1,26 @@
+[Unit]
+Description=Daily unrouted check: every owner ask and agent promise in yesterday's chats has a receipt
+After=docker.service
+
+[Service]
+Type=oneshot
+# The admin account: it reaches the gateway (docker group), owns the firstmate
+# homes, has gh and Claude Code logged in, and runs the fleet publisher that
+# reads the state file (docs/runbook.md "Daily unrouted check").
+# scripts/unrouted/install-unrouted.sh substitutes the placeholders; the code
+# runs from the deploy checkout, so a merge is live on the next run.
+User=__ADMIN_USER__
+# It reads the intake index through the admin account's ACL; the gateway's
+# video.py clears the ACL mask on every run, so the root ExecStartPre re-applies
+# the same ACL as lifekit-intake-shape.service before every run.
+ExecStartPre=+/usr/bin/setfacl -R -m u:__ADMIN_USER__:rwX,m::rwX,d:u:__ADMIN_USER__:rwX,d:m::rwX /var/lib/lifekit/intake
+Environment="TASKS_AXI=__TASKS_AXI__" "PATH=__UNIT_PATH__" "UNROUTED_CLAUDE=__CLAUDE_BIN__"
+ExecStart=/usr/bin/python3 __REPO_DIR__/scripts/unrouted/unrouted.py --state /var/lib/lifekit-fleet/unrouted __HOME_ARGS__ --receipt-file /var/lib/lifekit/intake/index.md --receipt-file __ADMIN_HOME__/.local/state/lifekit-kit-held/filed.json
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+# Its own state, and Claude Code's home (session and credential refresh).
+ReadWritePaths=/var/lib/lifekit-fleet/unrouted -__ADMIN_HOME__/.claude -__ADMIN_HOME__/.claude.json
