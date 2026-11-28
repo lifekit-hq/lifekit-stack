@@ -4020,9 +4020,9 @@ mechanical age check over every queue; the thresholds are the one
 changing a number is a PR to that file and a re-install, never a code change.
 The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
 publisher can reach exists; the page says so. The queue items
-(`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD` and
-`FLEET_NEEDS_YOU_LEDGER`. The installer carries both, and `FLEET_A2A_CMD` and
-`FLEET_SCOUT_STATE`, into the unit the same way as `FLEET_PLAN_MAP`: only
+(`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD`,
+`FLEET_DEVCLAW_CMD` and `FLEET_NEEDS_YOU_LEDGER`. The installer carries them, and
+`FLEET_A2A_CMD` and `FLEET_SCOUT_STATE`, into the unit the same way as `FLEET_PLAN_MAP`: only
 when set and non-empty, so a re-install without them drops the line. The one
 exception is the ledger, which defaults to Kit's
 (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`, bound read-only
@@ -4031,7 +4031,9 @@ into the unit because Kit's workspace is not the admin account's to read, so
 `FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py"` (the
 read-only finance-sentry command the installer puts there; README "Queue items")
 with `FLEET_FINANCE_OWNER=<owner UserId GUID>` (a GUID: the command
-lists only that user's rows and reads nothing without it) and `FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout` beside `FM_HOMES`.
+lists only that user's rows and reads nothing without it),
+`FLEET_DEVCLAW_CMD="python3 /usr/local/bin/lifekit-fleet-devclaw.py"` (devclaw's
+own read-only `devclaw tasks --json` in its container, installed there too) and `FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout` beside `FM_HOMES`.
 Unset, their `item_sources` entry says `read: false` and they add no items. The
 `jobq` items need no setting: they come from the stalled jobs' read (`jobq.py
 list --json` in the gateway, README "Jobs"). Open doc-door documents need no
@@ -4130,17 +4132,19 @@ the default and needs no flag):
 sudo FM_HOMES="<fleet home> [<fleet home> ...]" \
   FLEET_FINANCE_CMD="python3 /usr/local/bin/lifekit-fleet-finance.py" \
   FLEET_FINANCE_OWNER=<owner UserId GUID> \
+  FLEET_DEVCLAW_CMD="python3 /usr/local/bin/lifekit-fleet-devclaw.py" \
   FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout \
   bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
 jq '.status_page | {items: [.items[].id], item_sources}' /var/lib/lifekit-fleet/home-summary.json
 ```
 
-After the next run, `item_sources.finance` and `item_sources.needs_you` are `read: true`
-and `items` lists the open finance items and needs-you decisions.
+After the next run, `item_sources.finance`, `item_sources.needs_you` and
+`item_sources.devclaw` are `read: true` and `items` lists the open finance items,
+needs-you decisions and devclaw goals and tasks.
 
 `bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
 set and skips it otherwise (it passes no `FLEET_PLAN_MAP`,
-`FLEET_FINANCE_CMD`, `FLEET_FINANCE_OWNER`, `FLEET_A2A_CMD` or `FLEET_SCOUT_STATE`, so re-run the installer by hand
+`FLEET_FINANCE_CMD`, `FLEET_FINANCE_OWNER`, `FLEET_DEVCLAW_CMD`, `FLEET_A2A_CMD` or `FLEET_SCOUT_STATE`, so re-run the installer by hand
 to restore one). Re-running the installer is how a home is
 added or removed: it reinstalls the script and rewrites the unit's `FM_HOMES`.
 The `lifekit-*.timer` glob in the unit gauge picks the timer up with no further

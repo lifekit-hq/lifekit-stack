@@ -34,6 +34,10 @@
 #                           finance command lists only that user's rows and
 #                           reads nothing without it.
 #   FLEET_A2A_CMD           prints the open A2A threads; none exists yet.
+#   FLEET_DEVCLAW_CMD       the devclaw items command; on the VPS
+#                           "python3 /usr/local/bin/lifekit-fleet-devclaw.py"
+#                           (devclaw_items.py, installed here: devclaw's own
+#                           read-only `devclaw tasks --json` in its container).
 #   FLEET_SCOUT_STATE       the scout's state dir; on the VPS
 #                           /home/denys/.local/state/lifekit-scout.
 #
@@ -85,7 +89,7 @@ if [[ -n "$FLEET_NEEDS_YOU_LEDGER" ]]; then
   needs_you_bind="\nBindReadOnlyPaths=-${FLEET_NEEDS_YOU_LEDGER%/*}:${NEEDS_YOU_BIND}"
   sources_env+=" \"FLEET_NEEDS_YOU_LEDGER=${NEEDS_YOU_BIND}/${FLEET_NEEDS_YOU_LEDGER##*/}\""
 fi
-for name in FLEET_FINANCE_CMD FLEET_A2A_CMD; do
+for name in FLEET_FINANCE_CMD FLEET_A2A_CMD FLEET_DEVCLAW_CMD; do
   value="${!name:-}"
   [[ -n "$value" ]] || continue
   [[ "$value" =~ ^/?[A-Za-z0-9._/=:,\ -]+$ ]] || {
@@ -154,6 +158,8 @@ install -m 755 "$HERE/activity_journal.py" "$INSTALL_ROOT/usr/local/bin/lifekit-
 install -m 755 "$HERE/scheduled.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-scheduled.py"
 # The finance items command (FLEET_FINANCE_CMD), read-only against finance-sentry.
 install -m 755 "$HERE/finance_items.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-finance.py"
+# The devclaw items command (FLEET_DEVCLAW_CMD), devclaw's read-only export.
+install -m 755 "$HERE/devclaw_items.py" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-devclaw.py"
 manifest_tmp="$(mktemp)"
 python3 -I "$HERE/scheduled.py" manifest --repo "$(cd "$HERE/../.." && pwd)" > "$manifest_tmp"
 install -m 644 "$manifest_tmp" "$INSTALL_ROOT/usr/local/bin/lifekit-fleet-scheduled.json"
