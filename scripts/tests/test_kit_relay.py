@@ -1189,7 +1189,11 @@ def test_digest_converges_an_existing_row_with_the_fleet_read(tmp_path):
 def test_digest_refuses_a_row_whose_delivery_could_reach_telegram(tmp_path):
     for override in (
         {"delivery": {"mode": "announce", "channel": "telegram", "to": "1"}},
-        {"delivery": {"mode": "none"}},
+        # the pre-751 shape: announce through the remembered "last" route
+        {"delivery": {"mode": "announce"}},
+        {"delivery": {"mode": "none", "channel": "telegram"}},
+        {"sessionTarget": "current"},
+        {"sessionTarget": "session:agent:kit:telegram:direct:1"},
         {"sessionKey": "agent:kit:telegram:direct:1"},
         {"sessionKey": "agent:kit:main:telegram:direct:1"},
     ):

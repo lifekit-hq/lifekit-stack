@@ -47,24 +47,31 @@
 # not in openclaw.json — same split as the other ensure-*.sh scripts. This
 # script IS the git-side declaration of the job.
 #
-# Why `--session current --session-key agent:kit:main`: a current-session job
-# with announce delivery commits its final reply into the bound conversation's
-# transcript, and WebChat gets it as a live session.message. kit's main
-# session has no external channel route, so the commit is the whole delivery
-# and nothing goes to Telegram (Telegram DMs are separate sessions under
-# dmScope per-channel-peer). Without a session key, a CLI-created `current`
-# job falls back to `isolated`, which has no conversation to post into.
-# `--session main` is no alternative: main jobs take only system events and
-# reject announce delivery. Do not set --channel webchat; announce with the
-# default channel ("last") is what resolves to the conversation commit.
+# Why `--session session:agent:kit:main` with no delivery: a job pinned to a
+# persistent session runs its turn in that session's own queue and transcript,
+# so the final reply is a message of kit's main conversation, and WebChat gets
+# it as a live session.message. With delivery none the runner resolves no
+# route at all: nothing is announced, so nothing goes to Telegram. The digest
+# turn itself (prompt, tool calls, reply) is part of kit's main conversation.
+# Not `--session current` with announce: that resolved the default channel
+# ("last") through the main session's remembered route, and once a turn in
+# that session stored the literal route "last" every run failed with
+# "Unsupported channel: last" (issue 751). Never set --channel webchat: it is
+# not a deliverable channel.
+# The digest waits in kit's main session turn queue behind any active turn,
+# but in OpenClaw 2026.11.9 that wait does not count toward --timeout-seconds:
+# the cron runner reports the session-turn admission as a lane wait
+# (withCronSessionPreparation -> onLaneWait), and the cron agent watchdog
+# pauses the job timer and the setup watchdog while the run is lane-waiting
+# (noteLaneWait/noteLaneAdmitted). So 300 s bounds only the digest's own turn.
 #
 # Never Telegram: the script does not trust that to stay an accident. After
 # converging it re-reads the live row and refuses to finish (exit 1, with the
-# offending field named) unless delivery is announce with the default channel
-# and no explicit target or account, and the row is bound to SESSION_KEY. A
-# row that could route externally fails the deploy instead of pinging the
-# owner. The cadence rule behind this is in the memory vault,
-# domains/agent-behavior.md, "Adopted workflow policies P1-P6" (P1).
+# offending field named) unless delivery is none with no channel, target or
+# account, and the row is pinned to session:SESSION_KEY. A row that could
+# route externally fails the deploy instead of pinging the owner. The cadence
+# rule behind this is in the memory vault, domains/agent-behavior.md,
+# "Adopted workflow policies P1-P6" (P1).
 #
 # Never silent: the prompt always posts, opening with the date line and the
 # needs-you part in the format of skills/secondmate-relay's Status rules
@@ -79,7 +86,7 @@
 # transcript commit) is counted by the scheduler, and the per-job failure
 # alert below tells the owner after the first failure. The alert cannot use
 # the job's own route: a failure alert needs an outbound channel, and the
-# Control UI chat is not one. So it goes through kit's `default` Telegram
+# job has none. So it goes through kit's `default` Telegram
 # account to the owner chat, the same route the career weekly cron uses for
 # its failure alert (docs/runbook.md). The owner chat id is read from the host
 # env file and never written to git.
@@ -346,14 +353,14 @@ if [ -z "$job_id" ]; then
   docker exec "$GATEWAY" openclaw cron add \
     --name "$JOB_NAME" \
     --display-name "Needs-you digest" \
-    --description "Twice-daily digest (09:00 and 17:00) of the decisions still open in kit's needs-you ledger, the fleet's open decisions and the summary of the new mail written by $READER_NAME, posted into kit's main Control UI chat; says \"Nothing needs you today.\" when none are. Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)." \
+    --description "Twice-daily digest (09:00 and 17:00) of the decisions still open in kit's needs-you ledger, the fleet's open decisions and the summary of the new mail written by $READER_NAME, posted into kit's main Control UI chat as a turn of that session (no delivery); says \"Nothing needs you today.\" when none are. Declared by scripts/ensure-needs-you-digest.sh (source: lifekit-stack)." \
     --cron "$CRON_EXPR" --tz "$CRON_TZ" \
-    --agent "$AGENT" --session current --session-key "$SESSION_KEY" \
+    --agent "$AGENT" --session "session:$SESSION_KEY" \
     --message "$MESSAGE" \
     --model "$DIGEST_MODEL" \
     --tools "$DIGEST_TOOLS" \
     --timeout-seconds 300 \
-    --announce \
+    --no-deliver \
     --json >/dev/null
   job_id="$(find_job_id "$JOB_NAME")"
   [ -n "$job_id" ] || { echo "cron add ran but no '$JOB_NAME' job is listed" >&2; exit 1; }
@@ -364,20 +371,20 @@ fi
 if [ "$CRON_CHECK" = 0 ]; then
   docker exec "$GATEWAY" openclaw cron edit "$job_id" \
     --cron "$CRON_EXPR" --tz "$CRON_TZ" \
-    --agent "$AGENT" --session current --session-key "$SESSION_KEY" \
+    --agent "$AGENT" --session "session:$SESSION_KEY" --clear-session-key \
     --message "$MESSAGE" \
     --model "$DIGEST_MODEL" \
     --tools "$DIGEST_TOOLS" \
     --timeout-seconds 300 \
-    --announce --no-best-effort-deliver \
+    --no-deliver --clear-channel --clear-to --clear-account \
     --failure-alert --failure-alert-after 1 \
     --failure-alert-mode announce --failure-alert-channel telegram \
     --failure-alert-account-id default --failure-alert-to "$ALERT_CHAT" \
     >/dev/null
   docker exec "$GATEWAY" openclaw cron enable "$job_id" >/dev/null
 fi
-# 5. Fail closed if the live delivery could resolve to Telegram (header: "Never
-#    Telegram"), or if the digest could call more than DIGEST_TOOLS. The
+# 5. Fail closed if the live row has any delivery or is not pinned to kit's
+#    main session (header: "Never Telegram"), or if the digest could call more than DIGEST_TOOLS. The
 #    failure alert is a separate field and is not checked here.
 jobs="$(live_jobs)" || cron_check_fail "could not read the automation list from $GATEWAY"
 printf '%s' "$jobs" | python3 -c '
@@ -388,16 +395,15 @@ if job is None:
     sys.exit(f"verify: job {job_id} is not listed after converging")
 d = job.get("delivery") or {}
 bad = []
-if d.get("mode") != "announce":
-    bad.append("delivery.mode=" + repr(d.get("mode")) + ", want announce")
-if d.get("channel") not in (None, "", "last"):
-    bad.append("delivery.channel=" + repr(d.get("channel")) + ", want the default last")
-for key in ("to", "accountId"):
+if d.get("mode") != "none":
+    bad.append("delivery.mode=" + repr(d.get("mode")) + ", want none")
+for key in ("channel", "to", "accountId", "target"):
     if d.get(key):
         bad.append("delivery." + key + " is set, want none")
-bound = job.get("sessionKey") or job.get("sessionTarget") or ""
-if str(bound) not in (session_key, "session:" + session_key):
-    bad.append("session binding " + repr(bound) + " is not " + session_key)
+if job.get("sessionTarget") != "session:" + session_key:
+    bad.append("sessionTarget=" + repr(job.get("sessionTarget")) + ", want " + repr("session:" + session_key))
+if job.get("sessionKey") not in (None, "", session_key):
+    bad.append("sessionKey=" + repr(job.get("sessionKey")) + ", want none")
 if bad:
     sys.exit("refusing: needs-you-digest delivery could route outside the chat: " + "; ".join(bad))
 allow = (job.get("payload") or {}).get("toolsAllow")
@@ -425,8 +431,8 @@ fi
 cron_check_agrees "$JOB_NAME" "$job_id"
 
 echo "cron '$READER_NAME' ($reader_id) converged: $READER_CRON @ $CRON_TZ, agent:$READER_AGENT isolated, model $DIGEST_MODEL, tools $READER_TOOLS only, no delivery (verified)$([ "$READER_GATED" -eq 1 ] && echo ', gated')"
-echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT -> $SESSION_KEY (announce, verified in-chat only), tools $DIGEST_TOOLS, failure alert after 1 via telegram:default"
-echo "verify: docker exec $GATEWAY openclaw cron show $job_id   # delivery preview: announce -> current session"
+echo "cron '$JOB_NAME' ($job_id) converged: $CRON_EXPR @ $CRON_TZ, agent:$AGENT -> $SESSION_KEY (no delivery, verified in-chat only), tools $DIGEST_TOOLS, failure alert after 1 via telegram:default"
+echo "verify: docker exec $GATEWAY openclaw cron show $job_id   # delivery preview: none; session session:$SESSION_KEY"
 echo "        docker exec $GATEWAY openclaw cron run $reader_id --expect-final --json   # the mail section, or 'No new mail.'"
 echo "        docker exec $GATEWAY openclaw cron run $job_id --expect-final --json   # within the hour after the reader run; posts \"Nothing needs you today.\" while the ledger and the fleet's decisions_open are empty and no mail needs you"
 
