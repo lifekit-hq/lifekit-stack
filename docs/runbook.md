@@ -2718,7 +2718,11 @@ and never messages the owner.
   same message, checked where it lives: a firstmate task note (`<home>/state/inbox[/handled]/<id>.note`),
   a `held-`/`shape-` item (`fm-captain-hold.sh` in each home), a `spool:` door receipt, a
   GitHub issue or pull request (`gh`), or a line of the intake index or Kit's held-item record.
-  A lookup that errors counts as a receipt and is listed in the run's `errors`.
+  A lookup that errors, or a receipt file that cannot be read (a missing one is fine), counts
+  as a receipt and is listed in the run's `errors`. The unit reads the intake index through
+  the admin account's ACL, which the gateway's `video.py` clears on every run, so it carries
+  the same root `ExecStartPre=+/usr/bin/setfacl` as the intake shape step ("Intake shape
+  step") and re-applies that ACL before every run.
 - **Filing.** Each unrouted item goes through the intake door's `file()` in the gateway
   (project `fleet`, owner `firstmate`, class `unclear`, fingerprint
   `unrouted-<agent>-<day>-<hash>`). `fleet` files into a public repo, so the item is

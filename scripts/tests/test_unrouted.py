@@ -156,6 +156,24 @@ def test_receipt_lookup_by_kind(tmp_path):
     assert errors and "held-broken" in errors[0]
 
 
+def test_an_unreadable_receipt_file_is_an_error_not_a_miss(env, tmp_path):
+    """A receipt file that cannot be read (here a directory, so even root
+    cannot read it) may hold the receipt of an id found nowhere else: that id
+    counts as a receipt and the run reports the file; a missing file is not an
+    error. Without the file, the 22:30 ask is filed (its cited note is gone)."""
+    unreadable = tmp_path / "index.md"
+    unreadable.mkdir()
+    absent = tmp_path / "absent.json"
+    extra = ("--receipt-file", str(unreadable), "--receipt-file", str(absent))
+    assert env.run(DAY_25, *extra) == 1
+    doc = env.doc()
+    assert doc["routed"] == 2 and len(doc["items"]) == 3
+    assert "2026-11-25 22:30" not in {minute(i["ask_at"]) for i in doc["items"]}
+    assert len(env.filed()) == 3
+    assert len(doc["errors"]) == 1
+    assert str(unreadable) in doc["errors"][0] and str(absent) not in doc["errors"][0]
+
+
 def test_unrouted_items_are_filed_once_without_the_session_key(env):
     assert env.run(DAY_25) == 0
     filed = env.filed()
@@ -596,6 +614,9 @@ def test_installer_renders_the_unit(tmp_path):
     assert '"UNROUTED_CLAUDE=/home/ops/.local/bin/claude"' in unit
     assert '"PATH=/home/ops/.nvm/bin:/home/ops/.local/bin:/usr/local/sbin' in unit
     assert "ProtectSystem=strict" in unit
+    (acl,) = [line for line in unit.splitlines() if line.startswith("ExecStartPre=")]
+    assert acl.startswith("ExecStartPre=+/usr/bin/setfacl ")
+    assert "u:ops:rwX" in acl and acl.endswith(" /var/lib/lifekit/intake")
     assert "/srv/lifekit-stack/scripts/unrouted/unrouted.py" in unit
     assert (root / "etc/systemd/system/lifekit-unrouted.timer").is_file()
     assert (root / "var/lib/lifekit-fleet/unrouted").is_dir()

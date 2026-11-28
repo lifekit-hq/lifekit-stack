@@ -34,7 +34,8 @@ This job is the mechanical safety net behind it. Once a day it:
 
 It never sends a chat message and never writes an agent's memory: a false
 positive costs one line on the fleet page. A receipt it cannot check (gh or the
-hub erroring) counts as a receipt and is reported in `errors`.
+hub erroring, a receipt file unreadable) counts as a receipt and is reported in
+`errors`.
 
 The state dir holds `unrouted.json` (schema lifekit-unrouted.v1: the last run's
 time, day, model, the unrouted items of the last WINDOW_DAYS days and the run's
@@ -384,6 +385,7 @@ class Receipts:
         self.receipt_files = receipt_files
         self.errors = errors
         self.cache: dict[str, str] = {}
+        self.unreadable: set[str] = set()
 
     def ids(self, text: str) -> list[str]:
         found: list[str] = []
@@ -412,18 +414,35 @@ class Receipts:
             best = (verdict, rid)
         return best
 
-    def in_files(self, rid: str) -> bool:
+    def in_files(self, rid: str) -> str | None:
+        """`found` when a receipt file names the id, `unchecked` when it does
+        not but one of them could not be read, None otherwise."""
+        unread = False
         for f in self.receipt_files:
             try:
-                if rid in Path(f).read_text(encoding="utf-8", errors="replace"):
-                    return True
-            except OSError:
+                text = Path(f).read_text(encoding="utf-8", errors="replace")
+            except FileNotFoundError:
                 continue
-        return False
+            except OSError as exc:
+                unread = True
+                if f not in self.unreadable:
+                    self.unreadable.add(f)
+                    self.errors.append(
+                        f"receipt file {f} unreadable: {exc.__class__.__name__}"
+                    )
+                continue
+            if rid in text:
+                return "found"
+        return "unchecked" if unread else None
 
     def lookup(self, rid: str) -> str:
-        if self.in_files(rid):
+        filed = self.in_files(rid)
+        if filed == "found":
             return "found"
+        verdict = self.lookup_where_it_lives(rid)
+        return filed if verdict == "missing" and filed else verdict
+
+    def lookup_where_it_lives(self, rid: str) -> str:
         if rid.startswith("spool:"):
             return "found"  # the door's own receipt: the spool files it later
         if NOTE_RE.fullmatch(rid):
