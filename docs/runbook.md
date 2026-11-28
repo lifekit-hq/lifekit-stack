@@ -4022,7 +4022,7 @@ The A2A source is `FLEET_A2A_CMD`, unset until a relay or session store the
 publisher can reach exists; the page says so. The queue items
 (`status_page.items`, README "Queue items") read `FLEET_FINANCE_CMD`,
 `FLEET_DEVCLAW_CMD` and `FLEET_NEEDS_YOU_LEDGER`. The installer carries them, and
-`FLEET_A2A_CMD` and `FLEET_SCOUT_STATE`, into the unit the same way as `FLEET_PLAN_MAP`: only
+`FLEET_A2A_CMD`, `FLEET_SCOUT_STATE` and `FLEET_SCOUT_JUDGE`, into the unit the same way as `FLEET_PLAN_MAP`: only
 when set and non-empty, so a re-install without them drops the line. The one
 exception is the ledger, which defaults to Kit's
 (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`, bound read-only
@@ -4033,7 +4033,7 @@ read-only finance-sentry command the installer puts there; README "Queue items")
 with `FLEET_FINANCE_OWNER=<owner UserId GUID>` (a GUID: the command
 lists only that user's rows and reads nothing without it),
 `FLEET_DEVCLAW_CMD="python3 /usr/local/bin/lifekit-fleet-devclaw.py"` (devclaw's
-own read-only `devclaw tasks --json` in its container, installed there too) and `FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout` beside `FM_HOMES`.
+own read-only `devclaw tasks --json` in its container, installed there too), `FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout` and `FLEET_SCOUT_JUDGE=<the scout note's FM_INBOX_HOME>` (from `/etc/lifekit/scout.env`) beside `FM_HOMES`.
 Unset, their `item_sources` entry says `read: false` and they add no items. The
 `jobq` items need no setting: they come from the stalled jobs' read (`jobq.py
 list --json` in the gateway, README "Jobs"). Open doc-door documents need no
@@ -4051,7 +4051,10 @@ buffer days and the stall check, `egress.json`, `queue-run.json`, `events.jsonl`
 waiting age). A missing directory or file is named once, in `stalled_sources.clip`'s
 reason, and its numbers are unavailable, never zero; it is not an `errors` line. The
 scout reads `FLEET_SCOUT_STATE` (its state dir), which the installer carries (above).
-Unset, the page says `read: false`. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
+Unset, the page says `read: false`. Scout judging is its own stalled source
+(`scout.judge_hours`, 24): a candidates day the scout announced (`.sent`) with no
+`judged.tsv` row and no `digest/<day>.md` in the judging home (`FLEET_SCOUT_JUDGE`)
+is a stalled row under `firstmate`, with its line count per lens. Kit's held items are one more (`kit_held.hours`, `FLEET_KIT_HELD_CMD`, also a
 drop-in: "Held items become shaping items"). Open doc-door documents are one more
 (`doc_door.open_hours`, 24, owner `life`), read by `docker exec` into the gateway like the job
 ages ("Document door").
@@ -4134,6 +4137,7 @@ sudo FM_HOMES="<fleet home> [<fleet home> ...]" \
   FLEET_FINANCE_OWNER=<owner UserId GUID> \
   FLEET_DEVCLAW_CMD="python3 /usr/local/bin/lifekit-fleet-devclaw.py" \
   FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout \
+  FLEET_SCOUT_JUDGE=<the scout note's FM_INBOX_HOME> \
   bash /srv/lifekit-stack/scripts/fleet-publisher/install-fleet-publisher.sh
 jq '.status_page | {items: [.items[].id], item_sources}' /var/lib/lifekit-fleet/home-summary.json
 ```
@@ -4144,7 +4148,7 @@ needs-you decisions and devclaw goals and tasks.
 
 `bootstrap-vps.sh` runs the same installer when `FM_HOMES` (or `FM_HOME`) is
 set and skips it otherwise (it passes no `FLEET_PLAN_MAP`,
-`FLEET_FINANCE_CMD`, `FLEET_FINANCE_OWNER`, `FLEET_DEVCLAW_CMD`, `FLEET_A2A_CMD` or `FLEET_SCOUT_STATE`, so re-run the installer by hand
+`FLEET_FINANCE_CMD`, `FLEET_FINANCE_OWNER`, `FLEET_DEVCLAW_CMD`, `FLEET_A2A_CMD`, `FLEET_SCOUT_STATE` or `FLEET_SCOUT_JUDGE`, so re-run the installer by hand
 to restore one). Re-running the installer is how a home is
 added or removed: it reinstalls the script and rewrites the unit's `FM_HOMES`.
 The `lifekit-*.timer` glob in the unit gauge picks the timer up with no further

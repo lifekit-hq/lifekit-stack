@@ -1697,6 +1697,7 @@ ITEM_SOURCES = (
     "FLEET_A2A_CMD",
     "FLEET_SCOUT_STATE",
     "FLEET_DEVCLAW_CMD",
+    "FLEET_SCOUT_JUDGE",
 )
 
 
@@ -1825,6 +1826,7 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         FLEET_A2A_CMD="/usr/local/bin/a2a-threads --json",
         FLEET_SCOUT_STATE="/home/denys/.local/state/lifekit-scout",
         FLEET_DEVCLAW_CMD="python3 /usr/local/bin/lifekit-fleet-devclaw.py",
+        FLEET_SCOUT_JUDGE="/srv/fleet-home",
     )
     assert result.returncode == 0, result.stderr
     service = installed_service(tmp_path)
@@ -1837,6 +1839,7 @@ def test_installer_carries_every_item_source_into_the_unit(tmp_path):
         ' "FLEET_DEVCLAW_CMD=python3 /usr/local/bin/lifekit-fleet-devclaw.py"'
         ' "FLEET_FINANCE_OWNER=0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01"'
         ' "FLEET_SCOUT_STATE=/home/denys/.local/state/lifekit-scout"'
+        ' "FLEET_SCOUT_JUDGE=/srv/fleet-home"'
     )
     assert service["BindReadOnlyPaths"] == (
         "-/srv/kit/needs-you:/run/lifekit-fleet-needs-you"
@@ -1877,6 +1880,8 @@ def test_installer_leaves_empty_item_sources_out_of_the_unit(tmp_path):
         ("FLEET_FINANCE_OWNER", "0b8f6a523c1d4e7a9f205d6c7b8a9e01"),
         ("FLEET_SCOUT_STATE", "relative/scout"),
         ("FLEET_SCOUT_STATE", "/srv/a b"),
+        ("FLEET_SCOUT_JUDGE", "relative/fm"),
+        ("FLEET_SCOUT_JUDGE", "/srv/a b"),
     ],
 )
 def test_installer_refuses_an_item_source_it_cannot_render(tmp_path, name, value):
@@ -4537,6 +4542,96 @@ def test_the_scout_is_stalled_when_its_output_is_older_than_the_interval(homes):
         i for g in page["stalled"] for i in g["items"] if i["source"] == "scout"
     ]
     assert page["stalled_sources"]["scout"] == {"read": True, "reason": None}
+
+
+def scout_days(homes, days, sent_age=2 * DAY):
+    """Candidates files for `days` ({day: lines}), each announced (`.sent`)
+    `sent_age` seconds before NOW; returns the scout state dir."""
+    cand = homes.tmp / "scout/candidates"
+    cand.mkdir(parents=True, exist_ok=True)
+    for day, lines in days.items():
+        (cand / f"{day}.txt").write_text("".join(f"{line}\n" for line in lines))
+        sent = cand / f"{day}.sent"
+        sent.write_text("")
+        os.utime(sent, (NOW - sent_age, NOW - sent_age))
+    return homes.tmp / "scout"
+
+
+def judge_rows(page):
+    return [
+        i for g in page["stalled"] for i in g["items"] if i["source"] == "scout-judge"
+    ]
+
+
+def test_an_announced_scout_day_without_a_judge_record_is_stalled(homes):
+    # Issue 736: the week of 2026-11-18..24 was fetched and announced, never judged.
+    week = [f"2026-11-{d}" for d in range(18, 25)]
+    state = scout_days(
+        homes,
+        {
+            "2026-11-17": ["harness\tgh:a x y"],
+            **{day: ["harness\tgh:a x y"] * 3 + ["agentic\tgh:b x y"] for day in week},
+            "2026-11-25": ["harness\tgh:a x y"],
+        },
+    )
+    judge = homes.tmp / "fm"
+    (judge / "data/scout/digest").mkdir(parents=True)
+    # 11-17 judged by a row, 11-25 by a digest alone.
+    (judge / "data/scout/judged.tsv").write_text("2026-11-17\tgh:a\taccept\n")
+    (judge / "data/scout/digest/2026-11-25.md").write_text("# digest\n")
+    # A day announced less than judge_hours ago is not stalled yet; a day never
+    # announced (no .sent) is the fetch's, not the judge's.
+    fresh = scout_days(homes, {"2026-11-26": ["harness\tgh:a x y"]}, sent_age=3600)
+    (fresh / "candidates/2026-11-27.txt").write_text("harness\tgh:a x y\n")
+    env = {
+        "FLEET_NOW": str(NOW),
+        "FLEET_SCOUT_STATE": str(state),
+        "FLEET_SCOUT_JUDGE": str(judge),
+    }
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    rows = judge_rows(page)
+    assert [r["id"] for r in rows] == week
+    row = rows[0]
+    assert row["reason"] == "not-judged" and row["threshold"] == 24 * 3600
+    assert row["since"] == NOW - 2 * DAY
+    assert row["lenses"] == {"agentic": 1, "harness": 3}
+    assert row["title"] == "scout 2026-11-18: 4 lines not judged (agentic 1, harness 3)"
+    (group,) = [g for g in page["stalled"] if any(i in g["items"] for i in rows)]
+    assert group["owner"] == "firstmate"
+    assert page["stalled_sources"]["scout_judge"] == {
+        "read": True,
+        "reason": None,
+        "announced": 10,
+    }
+    # The judge's row for a day clears it.
+    with (judge / "data/scout/judged.tsv").open("a") as fh:
+        fh.write("2026-11-18\tgh:a\tdrop\n")
+    assert homes.run(side_home(homes), **env).returncode == 0
+    assert [r["id"] for r in judge_rows(status(homes))] == week[1:]
+
+
+def test_a_missing_judge_record_leaves_scout_judging_unread(homes):
+    state = scout_days(homes, {"2026-11-18": ["harness\tgh:a x y"]})
+    judge = homes.tmp / "fm"
+    judge.mkdir()
+    env = {"FLEET_NOW": str(NOW), "FLEET_SCOUT_STATE": str(state)}
+    assert homes.run(side_home(homes), **env).returncode == 0
+    page = status(homes)
+    assert not judge_rows(page)
+    assert page["stalled_sources"]["scout_judge"] == {
+        "read": False,
+        "reason": "FLEET_SCOUT_JUDGE is not set",
+    }
+    assert (
+        homes.run(side_home(homes), FLEET_SCOUT_JUDGE=str(judge), **env).returncode == 0
+    )
+    page = status(homes)
+    assert not judge_rows(page)
+    assert page["stalled_sources"]["scout_judge"] == {
+        "read": False,
+        "reason": "no judge record in the judging home",
+    }
 
 
 def installed_prom(homes, *lines, age=0):

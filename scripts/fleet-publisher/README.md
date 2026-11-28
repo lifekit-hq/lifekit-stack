@@ -227,7 +227,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `intake_spool` | The intake door's held hand-offs: `{pending, oldest_epoch}` (`pending` = occurrences waiting for the retry, `oldest_epoch` = when the oldest was spooled, `null` when none is), or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
-| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`, `doc_door`, `devclaw`): `{read, reason}` (`kit_held`, `shape`, `doc_door` and `devclaw` add `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing (for `clip`, why it read only in part), or `null` with `stalled` |
+| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `scout_judge`, `kit_held`, `installed`, `shape`, `doc_door`, `devclaw`): `{read, reason}` (`kit_held`, `shape`, `doc_door` and `devclaw` add `open`, every listed item, stalled or not; `scout_judge` adds `announced`, every announced candidates day); `read: false` says why a source contributed nothing (for `clip`, why it read only in part), or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | Always `null` (retired, see "Side hustles"); the key stays so v1 consumers are unchanged |
 | `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when there is no clip queue directory |
@@ -321,6 +321,7 @@ line), never a guess.
 | A2A thread | open and past its own `deadline`, or no turn for 24 hours | `a2a.idle_hours` | the `deadline`, or the last turn | the thread's `owner` when it is one, else `firstmate` |
 | Clip channel | `buffer_days` under `clip.buffer_floor_days` (1), or no post inside `clip.slot_window_hours` (30; a channel that never posted counts) | `clip.buffer_floor_days`, `clip.slot_window_hours` | the last post (or the slot, never posted), or the check time for a short buffer | `clip.owner` (`firstmate`) |
 | Scout | no new candidates file for `scout.idle_hours` (96) | `scout.idle_hours` | the newest `candidates/*.txt` of `FLEET_SCOUT_STATE`, by modification time | `scout.owner` (`firstmate`) |
+| Scout judging | a candidates day announced (`candidates/<day>.sent`) for `scout.judge_hours` (24) with no row dated that day in the judging home's `data/scout/judged.tsv` and no `data/scout/digest/<day>.md` (`FLEET_SCOUT_JUDGE`): `.sent` is the announcement, only the judge's record clears it | `scout.judge_hours` | the day's `.sent` modification time | `scout.owner` (`firstmate`) |
 | Kit's held item | an open line of Kit's daily notes that names a fleet task and has no shaping item, for `kit_held.hours` (24) | `kit_held.hours` | when `kit_held.py check` first saw it unfiled | `kit_held.owner` (`firstmate`) |
 | Installed component (a host unit or workspace piece an `install-*`/`ensure-*` script deploys) | origin/main changed a path the component owns (`scripts/release-gauge/components.txt`) more than `installed.behind_hours` (24) ago and its installer has not run since | `installed.behind_hours` | the commit time of the oldest change on main not installed (`lifekit_component_behind_since_seconds` in `FLEET_INSTALLED_PROM`) | `installed.owner` (`ops`) |
 | Shape stage (decision 0019, amended 2026-11-26) | in Shape for `shape.days` (3): a captain-held backlog record whose id starts with one of `shape.id_prefixes` (`shape-`, the intake shape step's accepted idea; `held-`, Kit's held item), or an open issue of a registered project that carries an owner ask (a label starting with one of `shape.ask_label_prefixes`, the intake door's `intake:<fingerprint>` receipt) and not `shape.ready_label` (`ready`) | `shape.days`, `shape.id_prefixes`, `shape.ask_label_prefixes`, `shape.ready_label` | an issue's `createdAt`; a record's creation date, else the first run that saw it in Shape | `shape.owner` (`firstmate`) for a record; an issue's owner as in the GitHub row |
@@ -333,9 +334,9 @@ line), never a guess.
   duration, an exhausted job or a passed deadline). `stalled[]` is
   `[{owner, count, items: [{source, id, home_id, title, url, reason, since,
   threshold}]}]` in the config's `owners` order (a count of 0 is kept), oldest
-  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip`, `scout`, `held`, `installed`, `shape`, `doc` or `devclaw`; `reason` is
+  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip`, `scout`, `scout-judge`, `held`, `installed`, `shape`, `doc` or `devclaw`; `reason` is
   `no-status-line`, `no-update`, `attempts-exhausted`, `waiting`,
-  `past-deadline`, `no-turn`, `no-post`, `buffer-short`, `no-output`, `not-filed`, `behind-main`, `not-ready`, `open` or `idle` (an `installed` row's `id` and `title` are the component name; a `doc` row's `id` is the doc id and its `title` the report's, `null` before one is filed; a `devclaw` row's `id` is the envelope's `id` and its `title` the `ref`). The schema stays `fleet-status-page.v1`; these
+  `past-deadline`, `no-turn`, `no-post`, `buffer-short`, `no-output`, `not-judged`, `not-filed`, `behind-main`, `not-ready`, `open` or `idle` (an `installed` row's `id` and `title` are the component name; a `doc` row's `id` is the doc id and its `title` the report's, `null` before one is filed; a `devclaw` row's `id` is the envelope's `id` and its `title` the `ref`; a `scout-judge` row's `id` is the candidates file's name and it adds `lenses`, the file's line count per lens, also in its `title`). The schema stays `fleet-status-page.v1`; these
   are new optional keys, and a consumer that ignores them is unchanged. The
   dashboard's rendering is its own issue.
 - **GitHub issues** come from `gh issue list -R <owner/name> --state open`
@@ -359,6 +360,9 @@ line), never a guess.
   `FLEET_SCOUT_STATE` (its state dir, `~/.local/state/lifekit-scout` by default for
   the scout's own unit; the publisher does not guess it, so unset the source is
   `read: false`), and a state dir with no candidates file yet is unread, not stalled.
+  Scout judging (`scout_judge`) also needs `FLEET_SCOUT_JUDGE`, the firstmate home
+  that judges (the scout note's `FM_INBOX_HOME`); unset, a missing `judge_hours`, or a
+  home with neither `judged.tsv` nor `digest/` is `read: false`, never all-stalled.
 - **Kit's held items** (lifekit-stack#684) come from `FLEET_KIT_HELD_CMD`, a
   command printing the JSON list `scripts/kit-held/kit_held.py check` prints
   (`{id, note, title, since}`: open lines of Kit's daily notes that name a fleet
@@ -535,7 +539,7 @@ so the dashboard can link through. Read-only; no store is written.
   printing nothing, so the source reads `read: false` with an `errors[]` line
   and the rest of the page still publishes.
 - **Wiring.** The installer carries `FLEET_NEEDS_YOU_LEDGER`, `FLEET_FINANCE_CMD`,
-  `FLEET_FINANCE_OWNER` (refused unless a GUID), `FLEET_DEVCLAW_CMD` (and `FLEET_A2A_CMD`, `FLEET_SCOUT_STATE` for the stalled sources) into the
+  `FLEET_FINANCE_OWNER` (refused unless a GUID), `FLEET_DEVCLAW_CMD` (and `FLEET_A2A_CMD`, `FLEET_SCOUT_STATE`, `FLEET_SCOUT_JUDGE` for the stalled sources) into the
   unit, each only when set and non-empty. The ledger defaults to Kit's
   (`/srv/openclaw/config/agents/kit/workspace/needs-you/open.json`); since Kit's
   workspace is not the admin account's to read, the unit binds the ledger's
