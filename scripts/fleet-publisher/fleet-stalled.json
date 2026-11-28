@@ -21,5 +21,6 @@
     "id_prefixes": ["shape-", "held-"]
   },
   "doc_door": {"open_hours": 24, "owner": "life"},
-  "devclaw": {"idle_hours": 48, "owner": "dev"}
+  "devclaw": {"idle_hours": 48, "owner": "dev"},
+  "inbox": {"hours": 48, "owner": "firstmate"}
 }

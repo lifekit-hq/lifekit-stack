@@ -887,6 +887,7 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
             ("shape", ("days",)),
             ("doc_door", ("open_hours",)),
             ("devclaw", ("idle_hours",)),
+            ("inbox", ("hours",)),
         ):
             if key in cfg:  # optional: absent leaves that source unread
                 block = cfg[key]
@@ -1804,6 +1805,99 @@ def devclaw_stalls(
     return rows, {"read": True, "reason": None, "open": len(entries)}
 
 
+INBOX_DIR = ("state", "inbox")
+INBOX_HEAD = 4096
+INBOX_FIELD_RE = re.compile(r"^([a-z_]+)=(.*)$")
+
+
+def note_head(path: Path) -> dict[str, str]:
+    """A note's `key=value` header (up to the `--` line), never its body."""
+    with path.open("rb") as fh:
+        head = fh.read(INBOX_HEAD).decode("utf-8", "replace")
+    fields: dict[str, str] = {}
+    for line in head.splitlines():
+        if line == "--":
+            break
+        if m := INBOX_FIELD_RE.match(line):
+            fields[m.group(1)] = m.group(2)
+    return fields
+
+
+def inbox_stalls(
+    homes: list[tuple[str, str]],
+    cfg: dict[str, Any] | None,
+    now: int,
+    errors: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Each home's pending fm-inbox notes (`<home>/state/inbox/*.note`; an
+    acknowledged note has moved to `handled/`). A note is stalled once it has
+    waited `inbox.hours` since its `at`; `open` counts every pending note and
+    `oldest` is the oldest `at` (null with none). A home with no inbox
+    directory has no notes; an unreadable one leaves the source unread."""
+    if cfg is None or "inbox" not in cfg:
+        return [], {
+            "read": False,
+            "reason": "no inbox thresholds in fleet-stalled.json",
+        }
+    window = int(cfg["inbox"]["hours"] * 3600)
+    owner = cfg["inbox"].get("owner", "firstmate")
+    rows: list[dict[str, Any]] = []
+    listed, oldest, unread = 0, None, []
+    for home_id, home in homes:
+        inbox = Path(home).joinpath(*INBOX_DIR)
+        if not inbox.is_dir():
+            continue
+        try:
+            heads = []
+            # iterdir, not glob: glob swallows a PermissionError and would
+            # read an unreadable inbox as an empty one.
+            names = sorted(
+                p
+                for p in inbox.iterdir()
+                if p.name.endswith(".note") and not p.name.startswith(".")
+            )
+            for path in names:
+                try:
+                    heads.append(note_head(path))
+                except FileNotFoundError:  # acknowledged while this run read
+                    continue
+        except OSError as exc:
+            errors.append(f"{home_id}: fm-inbox unreadable ({exc.__class__.__name__})")
+            unread.append(home_id)
+            continue
+        for head in heads:
+            listed += 1
+            at = parse_time(head.get("at"))
+            if at is None:
+                continue
+            oldest = at if oldest is None else min(oldest, at)
+            if now - at < window:
+                continue
+            rows.append(
+                {
+                    "source": "note",
+                    "id": head.get("id") or str(at),
+                    "home_id": home_id,
+                    "title": one_line(
+                        f"fm-inbox note from {head.get('source') or 'unknown'}",
+                        TITLE_CUT,
+                    ),
+                    "url": None,
+                    "reason": "unacknowledged",
+                    "since": at,
+                    "threshold": window,
+                    "owner": owner,
+                }
+            )
+    source: dict[str, Any] = {
+        "read": not unread,
+        "reason": f"fm-inbox unreadable in {', '.join(unread)}" if unread else None,
+        "open": listed,
+        "oldest": oldest,
+    }
+    return rows, source
+
+
 def scout_stalls(
     cfg: dict[str, Any] | None, now: int
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -2206,6 +2300,7 @@ PROBLEM_SOURCE_KEY = {
     "shape": "shape",
     "doc": "doc_door",
     "devclaw": "devclaw",
+    "note": "inbox",
 }
 PROBLEM_PHRASE = {
     "no-status-line": "silent",
@@ -2223,6 +2318,7 @@ PROBLEM_PHRASE = {
     "not-ready": "stuck in Shape",
     "open": "document open",
     "idle": "idle",
+    "unacknowledged": "not acknowledged",
 }
 
 
@@ -2647,6 +2743,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         devclaw_rows, devclaw_stalled = devclaw_stalls(
             devclaw_entries, devclaw_source, cfg, args.now
         )
+        inbox_rows, inbox_source = inbox_stalls(homes, cfg, args.now, errors)
         stalled_rows = (
             found
             + issues
@@ -2660,6 +2757,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             + shape_rows
             + door_rows
             + devclaw_rows
+            + inbox_rows
         )
         stalled = stalled_section(stalled_rows, cfg["owners"])
         sources = {
@@ -2680,6 +2778,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "shape": shape_source,
             "doc_door": door_stalled,
             "devclaw": devclaw_stalled,
+            "inbox": inbox_source,
         }
     depth: dict[str, Any] | None = None
     if os.environ.get("FLEET_INTAKE_CMD") != "":
