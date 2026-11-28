@@ -227,7 +227,7 @@ directory on `PATH`) and `bin/fm-capacity.sh --json`. Per-home freshness stays i
 | `intake_spool` | The intake door's held hand-offs: `{pending, oldest_epoch}` (`pending` = occurrences waiting for the retry, `oldest_epoch` = when the oldest was spooled, `null` when none is), or `null` |
 | `how_it_works[]` | `{id, title, url}` for `intake`, `queue-to-merge`, `monday-loop`: the workflow's vault owner page (`system/workflows/<id>.md`), `url: null` when the vault lacks it |
 | `stalled[]` | The stalled items grouped by owner (see "Stalled items"): one group per configured owner, `{owner, count, items[]}`, or `null` when the thresholds could not be read |
-| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`, `doc_door`): `{read, reason}` (`kit_held`, `shape` and `doc_door` add `open`, every listed item, stalled or not); `read: false` says why a source contributed nothing (for `clip`, why it read only in part), or `null` with `stalled` |
+| `stalled_sources` | Per source (`backlog`, `github`, `jobq`, `a2a`, `clip`, `scout`, `kit_held`, `installed`, `shape`, `doc_door`, `inbox`): `{read, reason}` (`kit_held`, `shape`, `doc_door` and `inbox` add `open`, every listed item, stalled or not; `inbox` adds `oldest` too, the oldest pending note's `at` as epoch seconds, `null` with none); `read: false` says why a source contributed nothing (for `clip`, why it read only in part), or `null` with `stalled` |
 | `problems` | The brief's Problems line (below): `{count, shown[], more, line}`, or `null` when there are none |
 | `side_hustles` | Always `null` (retired, see "Side hustles"); the key stays so v1 consumers are unchanged |
 | `clip_queue` | One row per clip channel (see "Clip queue"): `{schema, channels[], egress, queue_run, unavailable[]}`, or `null` when there is no clip queue directory |
@@ -325,6 +325,7 @@ line), never a guess.
 | Installed component (a host unit or workspace piece an `install-*`/`ensure-*` script deploys) | origin/main changed a path the component owns (`scripts/release-gauge/components.txt`) more than `installed.behind_hours` (24) ago and its installer has not run since | `installed.behind_hours` | the commit time of the oldest change on main not installed (`lifekit_component_behind_since_seconds` in `FLEET_INSTALLED_PROM`) | `installed.owner` (`ops`) |
 | Shape stage (decision 0019, amended 2026-11-26) | in Shape for `shape.days` (3): a captain-held backlog record whose id starts with one of `shape.id_prefixes` (`shape-`, the intake shape step's accepted idea; `held-`, Kit's held item), or an open issue of a registered project that carries an owner ask (a label starting with one of `shape.ask_label_prefixes`, the intake door's `intake:<fingerprint>` receipt) and not `shape.ready_label` (`ready`) | `shape.days`, `shape.id_prefixes`, `shape.ask_label_prefixes`, `shape.ready_label` | an issue's `createdAt`; a record's creation date, else the first run that saw it in Shape | `shape.owner` (`firstmate`) for a record; an issue's owner as in the GitHub row |
 | Open doc-door document | open (report, Drive filing, report copy or vault log line still to do) for `doc_door.open_hours` (24) | `doc_door.open_hours` | when the door took the document in | `doc_door.owner` (`life`) |
+| fm-inbox note (`<home>/state/inbox/*.note` of each home; acknowledging moves it to `handled/`) | pending for `inbox.hours` (48) | `inbox.hours` | the note's `at` | `inbox.owner` (`firstmate`) |
 | Captain call | unchanged: days waited, as before | - | - | - |
 
 - **Shape.** `records[].stalled` and `queue.top[].stalled` are `null` or
@@ -332,9 +333,9 @@ line), never a guess.
   duration, an exhausted job or a passed deadline). `stalled[]` is
   `[{owner, count, items: [{source, id, home_id, title, url, reason, since,
   threshold}]}]` in the config's `owners` order (a count of 0 is kept), oldest
-  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip`, `scout`, `held`, `installed`, `shape` or `doc`; `reason` is
+  `since` first. `source` is `backlog`, `issue`, `job`, `thread`, `clip`, `scout`, `held`, `installed`, `shape`, `doc` or `note`; `reason` is
   `no-status-line`, `no-update`, `attempts-exhausted`, `waiting`,
-  `past-deadline`, `no-turn`, `no-post`, `buffer-short`, `no-output`, `not-filed`, `behind-main`, `not-ready` or `open` (an `installed` row's `id` and `title` are the component name; a `doc` row's `id` is the doc id and its `title` the report's, `null` before one is filed). The schema stays `fleet-status-page.v1`; these
+  `past-deadline`, `no-turn`, `no-post`, `buffer-short`, `no-output`, `not-filed`, `behind-main`, `not-ready`, `open` or `unacknowledged` (an `installed` row's `id` and `title` are the component name; a `doc` row's `id` is the doc id and its `title` the report's, `null` before one is filed; a `note` row's `id` is the note's `id` and its `title` `fm-inbox note from <source>`, never the body). The schema stays `fleet-status-page.v1`; these
   are new optional keys, and a consumer that ignores them is unchanged. The
   dashboard's rendering is its own issue.
 - **GitHub issues** come from `gh issue list -R <owner/name> --state open`
@@ -391,6 +392,12 @@ line), never a guess.
   command (empty skips); unset, it is skipped when `FLEET_INTAKE_CMD` is set. One
   read feeds both the stalled rows and the queue items below. Their threshold is
   an optional `doc_door` block; without it the stalled source is `read: false`.
+- **fm-inbox notes** (issue 735) are an optional `inbox` block. Each home's
+  `state/inbox/*.note` is read for its header (`id`, `at`, `source`; the body
+  is never read past the header); a note is a `note` row (`reason`
+  `unacknowledged`) once its `at` is `inbox.hours` old. A home with no inbox
+  directory has no notes; an unreadable one adds an `errors[]` line and leaves
+  `stalled_sources.inbox` `read: false`.
 - **Failure** of one source empties only its own rows, sets its
   `stalled_sources` entry to `read: false` and adds an `errors[]` line.
 

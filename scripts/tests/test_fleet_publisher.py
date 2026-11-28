@@ -4650,6 +4650,78 @@ def test_unset_or_unreadable_held_items_are_said_not_guessed(homes):
     assert any("held items unreadable" in e for e in page["errors"])
 
 
+# --- fm-inbox notes stall unacknowledged (issue 735) -----------------------------
+
+
+def inbox_note(home, note_id, at, source="text", body="a private body"):
+    inbox = home / "state/inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
+    (inbox / f"{note_id}.note").write_text(
+        f"id={note_id}\nat={iso}\nsource={source}\nannounce_marker=1\n--\n{body}\n"
+    )
+
+
+def note_rows(page):
+    return [i for g in page["stalled"] for i in g["items"] if i["source"] == "note"]
+
+
+def test_an_empty_inbox_is_read_with_no_notes(homes):
+    home = side_home(homes)
+    inbox_note(home, "old-handled", NOW - 9 * DAY)
+    (home / "state/inbox/handled").mkdir()
+    (home / "state/inbox/old-handled.note").rename(
+        home / "state/inbox/handled/old-handled.note"
+    )
+    assert homes.run(home).returncode == 0
+    page = status(homes)
+    assert not note_rows(page)
+    assert page["stalled_sources"]["inbox"] == {
+        "read": True,
+        "reason": None,
+        "open": 0,
+        "oldest": None,
+    }
+
+
+def test_an_aged_note_is_stalled_under_firstmate_and_a_fresh_one_is_counted(homes):
+    home = side_home(homes)
+    inbox_note(home, "1-aged", NOW - 3 * DAY, source="alert")
+    inbox_note(home, "2-fresh", NOW - 3600)
+    assert homes.run(home).returncode == 0
+    page = status(homes)
+    rows = note_rows(page)
+    assert [r["id"] for r in rows] == ["1-aged"]
+    row = rows[0]
+    assert row["home_id"] == "fm-vps"
+    assert row["reason"] == "unacknowledged"
+    assert row["since"] == NOW - 3 * DAY
+    assert row["threshold"] == 48 * 3600
+    assert row["title"] == "fm-inbox note from alert"
+    assert "private body" not in json.dumps(page)
+    group = next(g for g in page["stalled"] if g["owner"] == "firstmate")
+    assert "1-aged" in [i["id"] for i in group["items"]]
+    assert page["stalled_sources"]["inbox"] == {
+        "read": True,
+        "reason": None,
+        "open": 2,
+        "oldest": NOW - 3 * DAY,
+    }
+
+
+def test_no_inbox_threshold_leaves_the_inbox_unread(homes):
+    home = side_home(homes)
+    inbox_note(home, "1-aged", NOW - 3 * DAY)
+    cfg = json.loads((DIR / "fleet-stalled.json").read_text())
+    del cfg["inbox"]
+    path = homes.tmp / "stalled.json"
+    path.write_text(json.dumps(cfg))
+    assert homes.run(home, FLEET_STALLED_CONFIG=str(path)).returncode == 0
+    page = status(homes)
+    assert not note_rows(page)
+    assert page["stalled_sources"]["inbox"]["read"] is False
+
+
 # --- the Shape stage stalls on a clock (decision 0019, issue 695) ---------------
 
 
