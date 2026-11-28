@@ -2729,8 +2729,9 @@ and never messages the owner.
   that opened the item's turn and the item's place among that turn's unrouted items, not
   from the model's quote, from how it linked a promise to an ask or from whether it listed
   an item that has a receipt, so a rerun that quotes, links or lists differently maps to
-  the same fingerprint; `filed.json` in the state dir keeps the door's
-  receipt, so a rerun files nothing twice.
+  the same fingerprint; `filed.json` in the state dir keeps the door's receipt. A rerun
+  refiles nothing the model returns the same way; a model that splits or merges an item
+  (for example an ask plus its linked promise) may file it again.
 - **State.** `/var/lib/lifekit-fleet/unrouted/unrouted.json` keeps the last run's time and the
   unrouted items of the last 7 days. The fleet publisher reads it through
   `FLEET_UNROUTED_STATE` and shows a stalled `unrouted-check` row after 26 hours with no run

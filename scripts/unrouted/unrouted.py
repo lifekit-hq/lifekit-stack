@@ -26,7 +26,9 @@ This job is the mechanical safety net behind it. Once a day it:
      (`file_intake` in the gateway, project `fleet`, redacted to the agent, the
      day and the thread - no chat words; one fingerprint per item, from the
      conversation, the time of the owner message that opened its turn and its
-     place among that turn's unrouted items, so a rerun never files twice)
+     place among that turn's unrouted items; a rerun refiles nothing the
+     model returns the same way, but a model that splits or merges an item,
+     for example an ask plus its linked promise, may file it again)
      and writes the state file the fleet publisher lists on the fleet page as
      `unrouted` (FLEET_UNROUTED_STATE), the one place the quote is kept.
 
