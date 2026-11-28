@@ -40,6 +40,9 @@
 #                           read-only `devclaw tasks --json` in its container).
 #   FLEET_SCOUT_STATE       the scout's state dir; on the VPS
 #                           /home/denys/.local/state/lifekit-scout.
+#   FLEET_SCOUT_JUDGE       the firstmate home that judges the scout (its
+#                           data/scout/judged.tsv and digest/); on the VPS the
+#                           scout note's FM_INBOX_HOME (/etc/lifekit/scout.env).
 #
 # Tests set INSTALL_ROOT (a prefix for every installed path), SYSTEMCTL and SU; an
 # INSTALL_ROOT run needs no root and does not chown.
@@ -106,14 +109,15 @@ if [[ -n "$FLEET_FINANCE_OWNER" ]]; then
   }
   sources_env+=" \"FLEET_FINANCE_OWNER=${FLEET_FINANCE_OWNER}\""
 fi
-FLEET_SCOUT_STATE="${FLEET_SCOUT_STATE:-}"
-if [[ -n "$FLEET_SCOUT_STATE" ]]; then
-  [[ "$FLEET_SCOUT_STATE" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
-    echo "FLEET_SCOUT_STATE must be an absolute path of [A-Za-z0-9._/-]" >&2
+for name in FLEET_SCOUT_STATE FLEET_SCOUT_JUDGE; do
+  value="${!name:-}"
+  [[ -n "$value" ]] || continue
+  [[ "$value" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+    echo "$name must be an absolute path of [A-Za-z0-9._/-]" >&2
     exit 1
   }
-  sources_env+=" \"FLEET_SCOUT_STATE=${FLEET_SCOUT_STATE}\""
-fi
+  sources_env+=" \"${name}=${value}\""
+done
 owner=(-o "$ADMIN_USER" -g "$ADMIN_USER")
 if [[ -n "$INSTALL_ROOT" ]]; then
   owner=()

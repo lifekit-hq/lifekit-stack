@@ -60,6 +60,9 @@ FLEET_DEVCLAW_CMD (prints `devclaw tasks --json`; unset: not read),
 FLEET_NEEDS_YOU_LEDGER (Kit's needs-you/open.json; unset: not read),
 FLEET_SCOUT_STATE (the scout's state dir, `candidates/<date>.txt` inside; unset:
 the scout is not read),
+FLEET_SCOUT_JUDGE (the firstmate home that judges the scout's candidates, its
+`data/scout/judged.tsv` and `data/scout/digest/<day>.md`; unset: judging is not
+read),
 FLEET_KIT_HELD_CMD (prints the held fleet tasks in Kit's daily notes that have
 no shaping item, as JSON - `kit_held.py check`; unset: not read),
 FLEET_DOC_DOOR_CMD (the same for doc-door's open documents, `door.py list
@@ -880,6 +883,10 @@ def stalled_config(errors: list[str]) -> dict[str, Any] | None:
                     for f in fields
                 )
                 assert block.get("owner", "firstmate") in owners
+        if "judge_hours" in cfg.get("scout", {}):  # optional: absent, judging unread
+            judge = cfg["scout"]["judge_hours"]
+            assert isinstance(judge, (int, float)) and not isinstance(judge, bool)
+            assert judge > 0
         if "shape" in cfg:
             shape = cfg["shape"]
             assert isinstance(shape.get("ready_label", "ready"), str)
@@ -1213,6 +1220,7 @@ FINANCE_ENVELOPE = {"owner": "finance", "class": "finance", "store": "finance-db
 NEEDS_YOU_ENVELOPE = {"owner": "kit", "class": "life", "store": "needs-you"}
 FINANCE_KINDS = ("alert", "companion-event", "thesis-revision", "recommendation")
 SCOUT_CANDIDATES = "candidates"
+SCOUT_DAY_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 ADDED_RE = re.compile(r"^added:\s*(\S+)\s*$", re.M)
 
 
@@ -1832,6 +1840,85 @@ def scout_stalls(
     ], {"read": True, "reason": None}
 
 
+def scout_judge_stalls(
+    cfg: dict[str, Any] | None, now: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """A candidates day the scout announced (`candidates/<day>.sent` beside
+    `<day>.txt` in FLEET_SCOUT_STATE) is judged once the judging home
+    (FLEET_SCOUT_JUDGE) holds a `data/scout/judged.tsv` row dated that day or a
+    `data/scout/digest/<day>.md`. A day announced longer than
+    `scout.judge_hours` ago and not judged is stalled, from its `.sent` time, with
+    the day's line count per lens. `.sent` is the announcement, not the judge's
+    claim, so only the judge's own record clears it. Unset paths, a missing
+    threshold or a judging home with neither record: unread, never guessed."""
+    if cfg is None or "judge_hours" not in cfg.get("scout", {}):
+        return [], {
+            "read": False,
+            "reason": "no scout.judge_hours in fleet-stalled.json",
+        }
+    state = os.environ.get("FLEET_SCOUT_STATE", "")
+    judge = os.environ.get("FLEET_SCOUT_JUDGE", "")
+    if not state:
+        return [], {"read": False, "reason": "FLEET_SCOUT_STATE is not set"}
+    if not judge:
+        return [], {"read": False, "reason": "FLEET_SCOUT_JUDGE is not set"}
+    record = Path(judge) / "data" / "scout"
+    judged_tsv, digests = record / "judged.tsv", record / "digest"
+    judged: set[str] = set()
+    try:
+        if not judged_tsv.is_file() and not digests.is_dir():
+            return [], {"read": False, "reason": "no judge record in the judging home"}
+        if judged_tsv.is_file():
+            for line in judged_tsv.read_text(errors="replace").splitlines():
+                day = line.split("\t", 1)[0].strip()
+                if SCOUT_DAY_RE.fullmatch(day):
+                    judged.add(day)
+        if digests.is_dir():
+            judged.update(
+                f.stem for f in digests.glob("*.md") if SCOUT_DAY_RE.fullmatch(f.stem)
+            )
+        cand = Path(state) / SCOUT_CANDIDATES
+        announced = []
+        for f in sorted(cand.glob("*.txt")):
+            sent = cand / f"{f.stem}.sent"
+            day = SCOUT_DAY_RE.match(f.stem)
+            if f.is_file() and day and sent.exists():
+                announced.append((f, day.group(1), int(sent.stat().st_mtime)))
+    except OSError:
+        return [], {"read": False, "reason": "scout output or judge record unreadable"}
+    window = int(cfg["scout"]["judge_hours"] * 3600)
+    owner = cfg["scout"].get("owner", "firstmate")
+    rows = []
+    for f, day, since in announced:
+        if day in judged or now - since < window:
+            continue
+        lenses: dict[str, int] = {}
+        try:
+            for line in f.read_text(errors="replace").splitlines():
+                if line.strip():
+                    lens = line.split("\t", 1)[0]
+                    lenses[lens] = lenses.get(lens, 0) + 1
+        except OSError:
+            pass
+        counts = ", ".join(f"{k} {v}" for k, v in sorted(lenses.items()))
+        rows.append(
+            {
+                "source": "scout-judge",
+                "id": f.stem,
+                "home_id": None,
+                "title": f"scout {f.stem}: {sum(lenses.values())} lines not judged"
+                + (f" ({counts})" if counts else ""),
+                "url": None,
+                "reason": "not-judged",
+                "since": since,
+                "threshold": window,
+                "owner": owner,
+                "lenses": lenses,
+            }
+        )
+    return rows, {"read": True, "reason": None, "announced": len(announced)}
+
+
 def held_stalls(
     cfg: dict[str, Any] | None, now: int, errors: list[str]
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -2109,6 +2196,7 @@ PROBLEM_SOURCE_KEY = {
     "thread": "a2a",
     "clip": "clip",
     "scout": "scout",
+    "scout-judge": "scout_judge",
     "held": "kit_held",
     "installed": "installed",
     "shape": "shape",
@@ -2125,6 +2213,7 @@ PROBLEM_PHRASE = {
     "no-post": "no post",
     "buffer-short": "buffer short",
     "no-output": "no output",
+    "not-judged": "not judged",
     "not-filed": "held, not filed",
     "behind-main": "behind main",
     "not-ready": "stuck in Shape",
@@ -2536,6 +2625,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         jobs = job_stalls(cfg, args.now, job_doc) if job_doc else []
         threads, a2a = thread_stalls(cfg, args.now, errors)
         scout_rows, scout_source = scout_stalls(cfg, args.now)
+        judge_rows, judge_source = scout_judge_stalls(cfg, args.now)
         held_rows, held_source = held_stalls(cfg, args.now, errors)
         installed_rows, installed_source = installed_stalls(cfg, args.now)
         shape_rows, shape_source = shape_stalls(
@@ -2560,6 +2650,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             + threads
             + clip_rows
             + scout_rows
+            + judge_rows
             + held_rows
             + installed_rows
             + shape_rows
@@ -2579,6 +2670,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "a2a": a2a,
             "clip": clip_source,
             "scout": scout_source,
+            "scout_judge": judge_source,
             "kit_held": held_source,
             "installed": installed_source,
             "shape": shape_source,
