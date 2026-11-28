@@ -33,7 +33,14 @@
 #   FLEET_FINANCE_OWNER     the owner's finance-sentry UserId (a GUID); the
 #                           finance command lists only that user's rows and
 #                           reads nothing without it.
-#   FLEET_A2A_CMD           prints the open A2A threads; none exists yet.
+#   FLEET_A2A_CMD           prints the open A2A threads; none exists yet, so
+#                           the VPS leaves it unset (the page says why).
+#   FLEET_KIT_HELD_CMD      Kit's held items with no shaping item; on the VPS
+#                           "python3 /srv/lifekit-stack/scripts/kit-held/kit_held.py
+#                           check --notes /srv/memory/agents/kit/memory --home
+#                           <main home> --home <second-mate home> --seen
+#                           /var/lib/lifekit-fleet/kit-held-seen.json"
+#                           (docs/runbook.md "Held items become shaping items").
 #   FLEET_DEVCLAW_CMD       the devclaw items command; on the VPS
 #                           "python3 /usr/local/bin/lifekit-fleet-devclaw.py"
 #                           (devclaw_items.py, installed here: devclaw's own
@@ -92,7 +99,7 @@ if [[ -n "$FLEET_NEEDS_YOU_LEDGER" ]]; then
   needs_you_bind="\nBindReadOnlyPaths=-${FLEET_NEEDS_YOU_LEDGER%/*}:${NEEDS_YOU_BIND}"
   sources_env+=" \"FLEET_NEEDS_YOU_LEDGER=${NEEDS_YOU_BIND}/${FLEET_NEEDS_YOU_LEDGER##*/}\""
 fi
-for name in FLEET_FINANCE_CMD FLEET_A2A_CMD FLEET_DEVCLAW_CMD; do
+for name in FLEET_FINANCE_CMD FLEET_A2A_CMD FLEET_DEVCLAW_CMD FLEET_KIT_HELD_CMD; do
   value="${!name:-}"
   [[ -n "$value" ]] || continue
   [[ "$value" =~ ^/?[A-Za-z0-9._/=:,\ -]+$ ]] || {

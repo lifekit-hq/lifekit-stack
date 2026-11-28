@@ -50,9 +50,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# The production gateway, as scripts/lib/openclaw-gateway.sh finds it (issue
+# 716): a `docker run` of the image (a canary, a rehearsal) carries the project
+# and service labels too, so the compose-only labels pick the deployed one.
 GATEWAY_LABELS = (
     "label=com.docker.compose.project=openclaw",
     "label=com.docker.compose.service=openclaw-gateway",
+    "label=com.docker.compose.oneoff=False",
+    "label=com.docker.compose.project.working_dir="
+    + os.environ.get("OPENCLAW_GATEWAY_WORKDIR", "/srv/lifekit-stack/compose/openclaw"),
 )
 # Standing intents live in the owning agent's SQLite database (OpenClaw docs,
 # concepts/standing-intents: agents/<agentId>/agent/openclaw-agent.sqlite).
@@ -203,6 +209,8 @@ def gateway_container() -> str:
     ).split()
     if not found:
         raise OSError("no running openclaw-gateway container")
+    if len(found) > 1:
+        raise OSError("more than one openclaw-gateway container")
     return found[0]
 
 

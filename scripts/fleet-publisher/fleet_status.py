@@ -123,9 +123,16 @@ SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 # outside world ends an external wait, and firstmate's own parked holds (and
 # any kind it does not know) restart on its date.
 HOLD_OWNER = {"captain": "captain", "external": "external"}
+# The production gateway, as scripts/lib/openclaw-gateway.sh finds it (issue
+# 716): the image carries the project and service labels itself, so any
+# `docker run` of it (a canary, a rehearsal) matches those two. Only the
+# container compose started from the deploy checkout also has these.
 GATEWAY_LABELS = (
     "label=com.docker.compose.project=openclaw",
     "label=com.docker.compose.service=openclaw-gateway",
+    "label=com.docker.compose.oneoff=False",
+    "label=com.docker.compose.project.working_dir="
+    + os.environ.get("OPENCLAW_GATEWAY_WORKDIR", "/srv/lifekit-stack/compose/openclaw"),
 )
 GATEWAY_JOBQ = "/home/node/.openclaw/skills/job-queue/jobq.py"
 GATEWAY_SPOOL = "/home/node/.openclaw/extensions/intake-door/spool.mjs"
@@ -779,12 +786,16 @@ def queue(records: list[dict[str, Any]], paths: list[str], now: int) -> dict[str
 
 
 def gateway() -> str:
+    """The production gateway's container id; more than one match is refused,
+    never guessed between."""
     found = run(
         ["docker", "ps", "-q", *(a for f in GATEWAY_LABELS for a in ("--filter", f))],
         timeout=10,
     ).split()
     if not found:
         raise OSError("no running openclaw-gateway container")
+    if len(found) > 1:
+        raise OSError("more than one openclaw-gateway container")
     return found[0]
 
 
@@ -1036,21 +1047,10 @@ def read_jobs(errors: list[str]) -> tuple[dict[str, Any] | None, dict[str, Any]]
         return None, {"read": False, "reason": "job queue skipped"}
     try:
         if not argv:
-            found = run(
-                [
-                    "docker",
-                    "ps",
-                    "-q",
-                    *(a for f in GATEWAY_LABELS for a in ("--filter", f)),
-                ],
-                timeout=10,
-            ).split()
-            if not found:
-                raise OSError("no running openclaw-gateway container")
             argv = [
                 "docker",
                 "exec",
-                found[0],
+                gateway(),
                 "python3",
                 GATEWAY_JOBQ,
                 "list",
@@ -1160,13 +1160,14 @@ def thread_stalls(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Open A2A threads past their own deadline, or with no turn inside the
     threshold, from FLEET_A2A_CMD (a JSON list of `{thread, owner, deadline,
-    last_turn, state}`). With no such source the section says so: a thread's age
-    is never guessed."""
+    last_turn, state}`). No relay or session store holds such threads yet, so
+    unset is the deliberate default and the page says why: a thread's age is
+    never guessed."""
     argv = shlex.split(os.environ.get("FLEET_A2A_CMD") or "")
     if not argv:
         return [], {
             "read": False,
-            "reason": "no relay or session records reachable",
+            "reason": "intentionally unread: no A2A thread store exists yet",
         }
     try:
         doc = json.loads(run(argv, timeout=15))
